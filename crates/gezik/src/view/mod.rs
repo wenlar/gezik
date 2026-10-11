@@ -1667,19 +1667,12 @@ impl View {
         self.0.data.borrow().results.as_ref().is_some_and(|set| set.is_duplicates())
     }
 
-    /// How many duplicate groups shown have every row selected (Delete asks then).
-    pub fn duplicate_groups_all_selected(&self) -> usize {
-        let data = self.0.data.borrow();
-        let Listing::Results(set) = &data.listing else { return 0 };
-        let mut groups: HashMap<u32, (usize, usize)> = HashMap::new();
-        for i in 0..set.len() {
-            if let Some(id) = set.dup_group(i) {
-                let group = groups.entry(id).or_default();
-                group.0 += 1;
-                group.1 += usize::from(data.selection.is_selected(i));
-            }
-        }
-        groups.values().filter(|(rows, selected)| rows == selected).count()
+    /// How many duplicate groups deleting `paths` leaves without a copy (spec 11 §9.3): every
+    /// other copy is among `paths`, taken by another delete (`busy`) or gone from the disk
+    /// (looked at now). `None`: no duplicates shown, or none of `paths` is a row of them.
+    pub fn duplicate_groups_all_in(&self, paths: &[PathBuf], busy: &[PathBuf]) -> Option<usize> {
+        let set = self.results()?;
+        set.groups_left_without_copy(paths, busy, &|path| std::fs::symlink_metadata(path).is_ok())
     }
 
     /// "Select all but one" in a duplicates search (spec 11 §9.3): `keep` from the focused row
@@ -3006,9 +2999,11 @@ mod tests {
         assert!(view.shows_duplicates());
         assert_eq!(view.select_duplicates(|_| Some(Keep::Newest)), Some(0));
         assert_eq!(view.selected_paths(), [PathBuf::from("/w/a/x"), PathBuf::from("/w/b/z")]);
-        assert_eq!(view.duplicate_groups_all_selected(), 0);
+        // /w is not on the disk: no other copy is there, so even one row leaves its group empty.
+        assert_eq!(view.duplicate_groups_all_in(&view.selected_paths(), &[]), Some(2));
         view.select_all();
-        assert_eq!(view.duplicate_groups_all_selected(), 2, "Delete asks then");
+        assert_eq!(view.duplicate_groups_all_in(&view.selected_paths(), &[]), Some(2), "Delete asks then");
+        assert_eq!(view.duplicate_groups_all_in(&[PathBuf::from("/elsewhere")], &[]), None, "not a row");
         assert_eq!(view.select_duplicates(|_| None), None, "a rule that needs a focus there is none of");
     }
 

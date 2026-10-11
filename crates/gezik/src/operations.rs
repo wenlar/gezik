@@ -319,6 +319,9 @@ struct JobView {
     /// Duplicates go only to the trash (spec 11 §9.3): what cannot is left, never offered for
     /// a permanent delete.
     trash_only: bool,
+    /// A duplicates delete's paths: while it runs, another delete does not count them as the
+    /// copy that stays.
+    deleting: Vec<PathBuf>,
 }
 
 /// The note of a `{files}` run in the panel (spec 7).
@@ -333,6 +336,15 @@ pub fn with_note(detail: String, note: Option<&str>) -> String {
 }
 
 impl JobView {
+    /// What a retry of `job` keeps: a duplicates delete stays one (trash only).
+    fn retried(job: &JobView) -> impl FnOnce(&mut JobView) + use<> {
+        let (trash_only, deleting) = (job.trash_only, job.deleting.clone());
+        move |new: &mut JobView| {
+            new.trash_only = trash_only;
+            new.deleting = deleting;
+        }
+    }
+
     fn new(id: JobId, title: String) -> JobView {
         JobView {
             id,
@@ -353,6 +365,7 @@ impl JobView {
             note: None,
             bins: false,
             trash_only: false,
+            deleting: Vec::new(),
         }
     }
 
@@ -1055,42 +1068,22 @@ impl Operations {
         if crate::panes::active_view().shows_trash() {
             return crate::trash_view::delete_selection(&crate::panes::active_view());
         }
-        let view = crate::panes::active_view();
-        if view.shows_duplicates() {
-            return self.trash_duplicates(view.selected_paths(), view.duplicate_groups_all_selected());
-        }
-        self.trash_paths(view.selected_paths(), permanent);
+        self.trash_paths(crate::panes::active_view().selected_paths(), permanent);
     }
 
-    /// Delete (and Shift+Delete) in a duplicates search (spec 11 §9.3): to the trash only, one
-    /// job and one undo; asks once when `whole` groups have every copy selected.
-    fn trash_duplicates(&self, paths: Vec<PathBuf>, whole: usize) {
-        let paths = self.without_roots(paths, "trash");
-        if paths.is_empty() {
-            return;
-        }
-        let ops = self.clone();
-        let what = items_text(&paths);
-        let go = move |choice: Option<usize>| {
-            if choice == Some(0) {
-                let id = ops.trash_now(paths.clone());
-                ops.with_job(id, |job| job.trash_only = true);
-            }
-        };
-        let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
-        if whole > 0 {
-            let files = if whole == 1 { "1 file".to_owned() } else { format!("{whole} files") };
-            self.dialogs().ask(
-                format!("This deletes every copy of {files}"),
-                format!("Move {what} to the {bin}?"),
-                &["Trash", "Cancel"],
-                go,
-            );
-        } else if self.0.files.get().confirm_trash {
-            self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], go);
-        } else {
-            go(Some(0));
-        }
+    /// The paths running duplicates deletes take (spec 11 §9.3).
+    fn busy_duplicates(&self) -> Vec<PathBuf> {
+        let jobs = self.0.jobs.borrow();
+        jobs.iter().filter(|job| job.trash_only && job.report.is_none()).flat_map(|job| job.deleting.clone()).collect()
+    }
+
+    /// Runs a duplicates delete: to the trash only, one job and one undo.
+    fn trash_duplicates_now(&self, paths: Vec<PathBuf>) {
+        let id = self.trash_now(paths.clone());
+        self.with_job(id, |job| {
+            job.trash_only = true;
+            job.deleting = paths;
+        });
     }
 
     pub fn trash_paths(&self, paths: Vec<PathBuf>, permanent: bool) {
@@ -1104,15 +1097,33 @@ impl Operations {
         self.trash_with(paths, permanent, true);
     }
 
+    /// Every delete comes here (Delete, Shift+Delete, the row menus, Explorer's verb): rows of a
+    /// duplicates search go only to the trash (spec 11 §9.3).
     fn trash_with(&self, paths: Vec<PathBuf>, permanent: bool, always_ask: bool) {
         let paths = self.without_roots(paths, if permanent { "delete" } else { "trash" });
         if paths.is_empty() {
             return;
         }
         let what = items_text(&paths);
+        let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+        let dups = crate::panes::active_view().duplicate_groups_all_in(&paths, &self.busy_duplicates());
         let ops = self.clone();
-        if permanent {
-            self.dialogs().ask(
+        match delete_route(dups, permanent, always_ask || self.0.files.get().confirm_trash) {
+            DeleteRoute::DuplicatesAsk(whole) => {
+                let title = match whole {
+                    0 => format!("Move {what} to the {bin}?"),
+                    1 => "This deletes every copy of 1 file".to_owned(),
+                    n => format!("This deletes every copy of {n} files"),
+                };
+                let detail = if whole > 0 { format!("Move {what} to the {bin}?") } else { String::new() };
+                self.dialogs().ask(title, detail, &["Trash", "Cancel"], move |choice| {
+                    if choice == Some(0) {
+                        ops.trash_duplicates_now(paths);
+                    }
+                });
+            }
+            DeleteRoute::Duplicates => self.trash_duplicates_now(paths),
+            DeleteRoute::Permanent => self.dialogs().ask(
                 format!("Delete {what} permanently?"),
                 "This cannot be undone.",
                 &["Delete", "Cancel"],
@@ -1121,16 +1132,17 @@ impl Operations {
                         ops.delete_now(paths);
                     }
                 },
-            );
-        } else if always_ask || self.0.files.get().confirm_trash {
-            let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
-            self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
-                if choice == Some(0) {
-                    ops.trash_now(paths);
-                }
-            });
-        } else {
-            self.trash_now(paths);
+            ),
+            DeleteRoute::AskTrash => {
+                self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
+                    if choice == Some(0) {
+                        ops.trash_now(paths);
+                    }
+                });
+            }
+            DeleteRoute::Trash => {
+                self.trash_now(paths);
+            }
         }
     }
 
@@ -1816,13 +1828,14 @@ impl Operations {
     /// skipped).
     pub fn retry(&self, id: i32) {
         let id = Self::id(id);
-        let (retry, again) = match self.0.jobs.borrow().iter().find(|j| j.id == id) {
-            Some(job) => (job.retry.clone(), job.again.clone()),
+        let (retry, again, kept) = match self.0.jobs.borrow().iter().find(|j| j.id == id) {
+            Some(job) => (job.retry.clone(), job.again.clone(), JobView::retried(job)),
             None => return,
         };
         if let Some(retry) = retry {
             self.remove(id);
-            self.submit(retry(), Some(retry.clone()), After::Select);
+            let new = self.submit(retry(), Some(retry.clone()), After::Select);
+            self.with_job(new, kept);
         } else if let Some(again) = again {
             self.remove(id);
             again();
@@ -1933,6 +1946,30 @@ impl Operations {
     }
 }
 
+/// Where a delete goes.
+#[derive(Debug, PartialEq, Eq)]
+enum DeleteRoute {
+    /// Rows of a duplicates search, asked first; the number of groups left without a copy.
+    DuplicatesAsk(usize),
+    Duplicates,
+    Permanent,
+    AskTrash,
+    Trash,
+}
+
+/// `dups`: how many duplicate groups the delete leaves without a copy (`None`: no duplicates
+/// rows); `ask`: the trash asks first (the setting, or Explorer's Delete on a sidebar entry).
+/// Duplicates go to the trash even with Shift (spec 11 §9.3).
+fn delete_route(dups: Option<usize>, permanent: bool, ask: bool) -> DeleteRoute {
+    match dups {
+        Some(whole) if whole > 0 || ask => DeleteRoute::DuplicatesAsk(whole),
+        Some(_) => DeleteRoute::Duplicates,
+        None if permanent => DeleteRoute::Permanent,
+        None if ask => DeleteRoute::AskTrash,
+        None => DeleteRoute::Trash,
+    }
+}
+
 /// What is said of `paths` the trash could not take: nothing for a job that may delete them
 /// for good instead (it asks), why they stay for one that goes only to the trash (duplicates).
 fn trash_only_note(trash_only: bool, paths: &[PathBuf]) -> Option<String> {
@@ -1978,6 +2015,30 @@ fn history_row(record: &crate::op_history::Record) -> OpRow {
 mod tests {
     use super::*;
     use gezik_ops::{Failure, TaskKind};
+
+    #[test]
+    fn every_delete_of_duplicates_goes_to_the_trash() {
+        // Delete, Shift+Delete, the row menu's Delete permanently, Explorer's verb with Shift.
+        for permanent in [false, true] {
+            assert_eq!(delete_route(Some(0), permanent, false), DeleteRoute::Duplicates);
+            assert_eq!(delete_route(Some(0), permanent, true), DeleteRoute::DuplicatesAsk(0), "confirm-trash");
+            assert_eq!(delete_route(Some(2), permanent, false), DeleteRoute::DuplicatesAsk(2), "every copy: asks");
+        }
+        assert_eq!(delete_route(None, true, false), DeleteRoute::Permanent);
+        assert_eq!(delete_route(None, false, true), DeleteRoute::AskTrash);
+        assert_eq!(delete_route(None, false, false), DeleteRoute::Trash);
+    }
+
+    #[test]
+    fn a_retried_duplicates_delete_stays_trash_only() {
+        let mut job = JobView::new(1, "Moving to the Recycle Bin".into());
+        job.trash_only = true;
+        job.deleting = vec![PathBuf::from("/w/a")];
+        let mut again = JobView::new(2, String::new());
+        JobView::retried(&job)(&mut again);
+        assert!(again.trash_only);
+        assert_eq!(again.deleting, [PathBuf::from("/w/a")]);
+    }
 
     #[test]
     fn duplicates_without_a_trash_stay() {

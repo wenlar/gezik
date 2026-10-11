@@ -128,11 +128,11 @@ pub fn duplicates_text((groups, files, freed): (usize, usize, u64), summary: &Su
     text
 }
 
-/// A "select all but one" item (`ids::DUP_SELECT_FIRST`…) on the active pane's duplicates
-/// (spec 11 §9.3); the status bar says when a group kept a copy because all were in the folder.
-pub fn select_duplicates(id: u32) {
+/// A "select all but one" item (`ids::DUP_SELECT_FIRST`…, spec 11 §9.3) on `view`'s duplicates
+/// (the pane whose bar or row menu it came from); the status bar says when a group kept a copy
+/// because all were in the folder.
+pub fn select_duplicates(view: &View, id: u32) {
     use gezik_core::duplicates::Keep;
-    let view = crate::panes::active_view();
     let kept = view.select_duplicates(|focus| match id.checked_sub(ids::DUP_SELECT_FIRST) {
         Some(0) => Some(Keep::Newest),
         Some(1) => Some(Keep::Oldest),
@@ -1508,7 +1508,7 @@ impl Searches {
         match id {
             ids::SEARCH_NEW_TAB => return self.go(true),
             id if (ids::DUP_SELECT_FIRST..ids::DUP_SELECT_FIRST + ids::DUP_SELECT_COUNT).contains(&id) => {
-                return select_duplicates(id);
+                return select_duplicates(&self.0.view, id);
             }
             ids::SEARCH_PROBLEMS => return self.show_problems(),
             ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN => return self.ask_criterion(id),

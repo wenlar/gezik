@@ -1963,7 +1963,7 @@ impl Menus {
             (id, Subject::Row(_) | Subject::Rows(_))
                 if (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).contains(&id) =>
             {
-                crate::search::select_duplicates(id);
+                crate::search::select_duplicates(&crate::panes::active_view(), id);
             }
             (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());

@@ -227,6 +227,36 @@ impl ResultSet {
         Some(gezik_core::group::GroupKey::Duplicates { id, size: self.entries.rows[i].size })
     }
 
+    /// How many duplicate groups deleting `paths` would leave without a copy: no other row of the
+    /// group is still on disk (`exists`) and not being deleted already (`busy`, other jobs).
+    /// `None` when this is no duplicates search or no path is a row of it.
+    pub fn groups_left_without_copy(
+        &self,
+        paths: &[PathBuf],
+        busy: &[PathBuf],
+        exists: &dyn Fn(&Path) -> bool,
+    ) -> Option<usize> {
+        let dups = self.dups.as_ref()?;
+        let rows = self.rows_of(paths);
+        if rows.is_empty() {
+            return None;
+        }
+        // Each touched group: whether a copy stays. One pass over the rows; the disk is asked
+        // only until a group has one.
+        let mut touched: std::collections::HashMap<u32, bool> = rows.iter().map(|&i| (dups[i], false)).collect();
+        let gone: std::collections::HashSet<&Path> = paths.iter().chain(busy).map(PathBuf::as_path).collect();
+        for (i, id) in dups.iter().enumerate() {
+            if touched.get(id) == Some(&false)
+                && let Some(path) = self.path_at(i)
+                && !gone.contains(path.as_path())
+                && exists(&path)
+            {
+                touched.insert(*id, true);
+            }
+        }
+        Some(touched.values().filter(|kept| !**kept).count())
+    }
+
     /// A duplicates search's groups, files, and the bytes deleting all but one of each frees.
     pub fn dup_counts(&self) -> (usize, usize, u64) {
         let Some(dups) = &self.dups else { return (0, 0, 0) };
@@ -1150,6 +1180,36 @@ mod tests {
         assert_eq!((0..set.len()).map(|i| set.name(i).unwrap()).collect::<Vec<_>>(), ["c", "b", "a"]);
         assert_eq!(set.dup_counts(), (1, 3, 2));
         assert_eq!(set.into_batch().dups, [0, 0, 0]);
+    }
+
+    #[test]
+    fn a_group_without_a_copy_left_is_seen_on_disk_and_across_jobs() {
+        let mut set = ResultSet::duplicates(PathBuf::from("/w"));
+        set.append(Batch {
+            folders: vec!["".into()],
+            entries: ["a", "b", "c", "d"].map(entry).to_vec(),
+            parent: vec![0; 4],
+            matches: vec![None; 4],
+            dups: vec![0, 0, 0, 1],
+        });
+        let w = PathBuf::from("/w");
+        let all = |_: &Path| true;
+        assert_eq!(set.groups_left_without_copy(&[w.join("a")], &[], &all), Some(0));
+        assert_eq!(set.groups_left_without_copy(&[w.join("a"), w.join("b"), w.join("c")], &[], &all), Some(1));
+        assert_eq!(
+            set.groups_left_without_copy(&[w.join("a")], &[w.join("b"), w.join("c")], &all),
+            Some(1),
+            "another delete is taking the other copies"
+        );
+        let c_gone = |p: &Path| p != w.join("c");
+        assert_eq!(
+            set.groups_left_without_copy(&[w.join("a")], &[w.join("b")], &c_gone),
+            Some(1),
+            "the last copy is gone from the disk since the search"
+        );
+        assert_eq!(set.groups_left_without_copy(&[w.join("a")], &[], &c_gone), Some(0), "b is still there");
+        assert_eq!(set.groups_left_without_copy(&[w.join("zz")], &[], &all), None, "no row of it");
+        assert_eq!(sample().groups_left_without_copy(&[w.join("x.txt")], &[], &all), None, "no duplicates");
     }
 
     fn folder_entry(name: &str) -> Entry {
