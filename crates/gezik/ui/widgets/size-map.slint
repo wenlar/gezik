@@ -1,0 +1,106 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+
+// One rectangle of the size map; size_map.rs lays them out (labels only where they fit).
+export struct MapRect {
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    color: color,
+    ink: color,
+    label: string,
+}
+
+// The size map layer (size_map.rs, spec 11 §10): the folder's path, Up and Close, the boxes,
+// and a status line. Keys reach Rust through the window (`key-event`); the pointer is one
+// TouchArea whose places Rust looks up.
+export component SizeMapLayer inherits Rectangle {
+    in property <string> path;
+    in property <string> status;
+    in property <[MapRect]> rects;
+    in property <int> current: -1;
+    callback resized(length, length);
+    callback hover(length, length);
+    callback clicked(length, length);
+    callback activated(length, length);
+    callback menu(length, length, length, length);
+    callback up();
+    callback close();
+
+    background: Theme.overlay;
+    TouchArea { }
+
+    Rectangle {
+        x: 24px;
+        y: 24px;
+        width: root.width - 48px;
+        height: root.height - 48px;
+        background: Theme.surface-raised;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        VerticalLayout {
+            padding: Theme.spacing * 2;
+            spacing: Theme.spacing;
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.path;
+                    font-weight: 600;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    color: Theme.foreground;
+                }
+                TextButton { text: "Up"; clicked => { root.up(); } }
+                TextButton { text: "Close"; clicked => { root.close(); } }
+            }
+            area := Rectangle {
+                vertical-stretch: 1;
+                clip: true;
+                accessible-role: list;
+                accessible-label: root.status;
+                init => { root.resized(self.width, self.height); }
+                changed width => { root.resized(self.width, self.height); }
+                changed height => { root.resized(self.width, self.height); }
+                for r[i] in root.rects: Rectangle {
+                    x: r.x;
+                    y: r.y;
+                    width: r.w;
+                    height: r.h;
+                    background: r.color;
+                    border-width: i == root.current ? 2px : 1px;
+                    border-color: i == root.current ? Theme.foreground : Theme.surface-raised;
+                    Text {
+                        x: 4px;
+                        y: 2px;
+                        width: max(0px, parent.width - 8px);
+                        text: r.label;
+                        overflow: elide;
+                        font-size: 11px;
+                        color: r.ink;
+                    }
+                }
+                TouchArea {
+                    clicked => { root.clicked(self.mouse-x, self.mouse-y); }
+                    double-clicked => { root.activated(self.mouse-x, self.mouse-y); }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.move {
+                            root.hover(self.mouse-x, self.mouse-y);
+                        }
+                        if event.button == PointerEventButton.right && event.kind == PointerEventKind.up {
+                            root.menu(self.mouse-x, self.mouse-y, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                }
+            }
+            Text {
+                text: root.status;
+                overflow: elide;
+                color: Theme.foreground-muted;
+            }
+        }
+    }
+}

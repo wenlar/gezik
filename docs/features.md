@@ -112,6 +112,9 @@ ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH
 [tools]
 download = true           # offer to download 7-Zip, ffmpeg and pdfium when needed
 seven-zip = ""            # path to 7-Zip; empty = Gezik's download, then PATH
+diff = ""                 # an external compare program; empty = Gezik's own
+diff-args = ["{left}", "{right}"]
+folder-diff = false       # also hand it two folders
 ```
 
 ## Filter and selection
@@ -143,6 +146,14 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
   selected file is previewed in a last column (unless the preview pane is open). Drag files
   onto any column's rows or empty space; drag a column's edge to set every column's width.
   Search results, the flat view, the Trash and This PC show the list instead.
+- **Compare** (Shift+F2, ⌃⌘C on macOS, or right-click ▸ Tools ▸ Compare): two selected
+  files, or one selected in each pane, side by side. Changed lines and the changed part of
+  each are marked; added and removed lines are tinted; line-ending and encoding differences
+  are named in the header but do not count. Ignore whitespace and Ignore case are remembered.
+  Alt+↓ / Alt+↑ (⌥↓ / ⌥↑) go to the next / previous change, Ctrl+C copies the line, F5
+  reads the files again, Esc closes. Binary files and files over 16 MB are compared byte by
+  byte. To use WinMerge, Meld, Beyond Compare or FileMerge instead, set `[tools] diff`
+  (`diff-args` defaults to `["{left}", "{right}"]`; a macOS `.app` opens with `open -a`).
 - **Open terminal** (Shift+F4 or Ctrl+Alt+T, ⌘⌥T on macOS) opens one in the folder; on
   Windows also as administrator. **Copy path** (Ctrl+Shift+C, ⌘⌥C on macOS) copies the
   selected paths; **Copy path as ▸** has quoted, forward slashes, name, folder, `file://` and
@@ -184,8 +195,7 @@ content-max-size = "64 MB" # larger files are not read for text
 
 ## Tools
 
-A row's right-click menu (next to Compress and Convert), the command palette, and on macOS the
-Tools menu.
+Right-click ▸ Tools, the command palette, and on macOS the Tools menu.
 
 - **Calculate Checksums…** shows CRC32, MD5, SHA-1, SHA-256 and SHA-512 of the selected files
   (folders: every file in them), each file read once. A value on the clipboard fills
@@ -196,6 +206,9 @@ Tools menu.
   `.crc` or `SHA256SUMS` file names: OK, FAILED, MISSING.
 - Both run as jobs in the operations panel (pause, cancel); files that are only in the cloud
   are downloaded only if you agree.
+## Export list
+
+Tools ▸ Export list… (right-click a row or the background; the palette's `Export List…`; Tools on the macOS menu bar) writes the list the pane shows, sorted and filtered as it is, to a file or the clipboard. The name's extension picks the format: `.txt` (one name, or with "Full paths in text" one path, per line), `.csv` (the columns shown plus Path, sizes in bytes and ISO dates; on Windows the system's list separator, `;` in Turkish, and a BOM so Excel reads it as UTF-8) or `.html` (one page, light and dark). With a selection, only the selected items go unless you untick the box. Search results and the flat view export their folders too; for the files in subfolders use the flat view first. Saving is a normal operation: a taken name asks, Ctrl+Z (⌘Z) removes the file.
 
 ## System integration
 

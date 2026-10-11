@@ -14,7 +14,9 @@ import { RenameBatch, RuleRow, RenamePreviewRow, RuleOptions } from "widgets/ren
 import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
+import { SizeMapLayer, MapRect } from "widgets/size-map.slint";
 import { InfoLayer, InfoView } from "widgets/info.slint";
+import { DiffLayer, DiffRow, DiffView } from "widgets/diff.slint";
 import { ToolTable, ToolRow, ToolToggle } from "widgets/tool-table.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
 import { Picker, PickRow } from "widgets/picker.slint";
@@ -24,7 +26,7 @@ import { ColumnItem } from "widgets/column-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -195,8 +197,13 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: "Tools";
+            MenuItem { title: "Compare"; shortcut: root.menu-keys ? @keys(Control + Meta + C) : @keys(); activated => { root.menu-command("compare"); } }
+            MenuSeparator { }
             MenuItem { title: "Calculate Checksums…"; activated => { root.menu-command("checksums"); } }
             MenuItem { title: "Verify Checksums"; activated => { root.menu-command("verify-checksums"); } }
+            MenuItem { title: "Size Map"; activated => { root.menu-command("size-map"); } }
+            MenuSeparator { }
+            MenuItem { title: "Export List…"; activated => { root.menu-command("export-list"); } }
         }
         if root.bar-commands.length > 0: Menu {
             title: "Commands";
@@ -651,6 +658,19 @@ export component AppWindow inherits Window {
     callback tool-field-edited();
     callback tool-pressed(int, bool, bool);
     callback tool-button(int);
+    // The size map (size_map.rs, spec 11 §10).
+    in property <bool> sm-open;
+    in property <string> sm-path;
+    in property <string> sm-status;
+    in property <[MapRect]> sm-rects;
+    in property <int> sm-current: -1;
+    callback sm-resized(length, length);
+    callback sm-hover(length, length);
+    callback sm-clicked(length, length);
+    callback sm-activated(length, length);
+    callback sm-menu(length, length, length, length);
+    callback sm-up();
+    callback sm-close();
     // The Info window (info.rs, spec 9 §4.4).
     in property <bool> info-open;
     property <int> info-focus-seq;
@@ -669,6 +689,19 @@ export component AppWindow inherits Window {
     callback info-change-all();
     callback info-as-admin();
     callback info-close();
+
+    // The file compare (diff.rs, spec 11 §6).
+    in property <bool> df-open;
+    property <int> df-focus-seq;
+    property <int> df-reveal-seq;
+    in property <DiffView> df-view;
+    in property <[DiffRow]> df-rows;
+    in-out property <int> df-current;
+    // 0 Ignore whitespace, 1 Ignore case, 2 Close.
+    callback df-button(int);
+    public function df-reveal() {
+        root.df-reveal-seq += 1;
+    }
 
     // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
     in property <bool> tp-open;
@@ -697,10 +730,11 @@ export component AppWindow inherits Window {
     // gets the field's text as it is typed.
     in property <string> dialog-note;
     in property <bool> dialog-note-error;
-    // The question's check box (dialog.rs `ask_text_choice`); empty: none.
-    in property <string> dialog-check;
-    in-out property <bool> dialog-checked;
+    // Its check boxes (dialog.rs `ask_form`); `dialog-check-toggled` gets one's index.
+    in property <[string]> dialog-check-labels;
+    in property <[bool]> dialog-checks;
     callback dialog-chosen(int);
+    callback dialog-check-toggled(int);
     callback dialog-edited(string);
     callback key-event(KeyEvent) -> bool;
 
@@ -777,6 +811,8 @@ export component AppWindow inherits Window {
             root.tool-focus-seq += 1;
         } else if root.info-open {
             root.info-focus-seq += 1;
+        } else if root.df-open {
+            root.df-focus-seq += 1;
         } else if root.tp-open {
             root.tp-focus-seq += 1;
         } else {
@@ -856,6 +892,19 @@ export component AppWindow inherits Window {
                 }
             }
             for entry in root.menu-subs[3].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[4].entries.length > 0: Menu {
+                title: root.menu-subs[4].title;
+                for entry in root.menu-subs[4].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[4].after: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
@@ -1481,6 +1530,23 @@ export component AppWindow inherits Window {
             pressed(i, c, s) => { root.tool-pressed(i, c, s); }
             button(i) => { root.tool-button(i); }
         }
+        if root.sm-open: SizeMapLayer {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            path: root.sm-path;
+            status: root.sm-status;
+            rects: root.sm-rects;
+            current: root.sm-current;
+            resized(w, h) => { root.sm-resized(w, h); }
+            hover(x, y) => { root.sm-hover(x, y); }
+            clicked(x, y) => { root.sm-clicked(x, y); }
+            activated(x, y) => { root.sm-activated(x, y); }
+            menu(x, y, wx, wy) => { root.sm-menu(x, y, wx, wy); }
+            up => { root.sm-up(); }
+            close => { root.sm-close(); }
+        }
         if root.tp-open: Picker {
             x: 0;
             y: 0;
@@ -1520,6 +1586,22 @@ export component AppWindow inherits Window {
             change-all => { root.info-change-all(); }
             as-admin => { root.info-as-admin(); }
             close => { root.info-close(); }
+        }
+        if root.df-open: DiffLayer {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            open: root.df-open;
+            focus-request: root.df-focus-seq;
+            reveal-request: root.df-reveal-seq;
+            dialog-open: root.dialog-open || root.conflicts-open;
+            view: root.df-view;
+            rows: root.df-rows;
+            current: root.df-current;
+            mono-font: root.mono-font;
+            pick(i) => { root.df-current = i; }
+            button(k) => { root.df-button(k); }
         }
         if root.conflicts-open: ConflictList {
             x: 0;
@@ -1570,8 +1652,9 @@ export component AppWindow inherits Window {
             show-secret <=> root.dialog-show-secret;
             note: root.dialog-note;
             note-error: root.dialog-note-error;
-            check-text: root.dialog-check;
-            checked <=> root.dialog-checked;
+            check-labels: root.dialog-check-labels;
+            checks: root.dialog-checks;
+            check-toggled(i) => { root.dialog-check-toggled(i); }
             chosen(i) => { root.dialog-chosen(i); }
             edited(text) => { root.dialog-edited(text); }
         }

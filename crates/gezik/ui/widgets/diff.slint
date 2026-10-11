@@ -1,0 +1,169 @@
+import { ListView } from "scrollbar.slint";
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { Glyph } from "../glyphs.slint";
+
+// One row of the compare (diff.rs builds it when it is on screen): each side's text with its
+// line number in front (monospace columns), a changed line's text before its changed part and
+// the changed part (measured with the font to place the mark; "" for none), and what a screen
+// reader says.
+export struct DiffRow {
+    label: string,
+    l: string,
+    lp: string,
+    lc: string,
+    r: string,
+    rp: string,
+    rc: string,
+    // 0 same, 1 changed, 2 added (right only), 3 removed (left only).
+    kind: int,
+}
+
+export struct DiffView {
+    // `Compare a.txt ↔ b.txt · 3 changes`.
+    title: string,
+    // `UTF-8 · CRLF ↔ UTF-8 · LF`, and "too different" when it is; marked when they differ.
+    info: string,
+    marked: bool,
+    ignore-whitespace: bool,
+    ignore-case: bool,
+}
+
+// The compare (diff.rs, spec 11 §6.3): two files side by side over the window, read only.
+// Esc, F5, Alt+↑/↓, Ctrl+C and the list keys reach diff.rs through main.rs. Kept small: one
+// button and one side element, each repeated (exe size).
+export component DiffLayer inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in property <int> focus-request;
+    in property <int> reveal-request;
+    in property <DiffView> view;
+    in property <[DiffRow]> rows;
+    in property <int> current;
+    in property <string> mono-font;
+    // 0 Ignore whitespace, 1 Ignore case, 2 Close.
+    callback button(int);
+    callback pick(int);
+
+    init => {
+        if root.open && !root.dialog-open {
+            scope.focus();
+        }
+    }
+    changed focus-request => {
+        if !root.dialog-open {
+            scope.focus();
+        }
+    }
+    changed reveal-request => {
+        if root.current * Theme.row-height < -list.content-y {
+            list.content-y = -root.current * Theme.row-height;
+        } else if (root.current + 1) * Theme.row-height > -list.content-y + list.visible-height {
+            list.content-y = -((root.current + 1) * Theme.row-height - list.visible-height);
+        }
+    }
+
+    background: Theme.overlay;
+    TouchArea { }
+    scope := FocusScope { }
+
+    Rectangle {
+        x: 24px;
+        y: 24px;
+        width: root.width - 48px;
+        height: root.height - 48px;
+        background: Theme.surface-raised;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.view.title;
+
+        VerticalLayout {
+            padding: Theme.spacing * 2;
+            spacing: Theme.spacing;
+
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.view.title;
+                    font-weight: 600;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.foreground;
+                }
+                for b[k] in [
+                    { t: "Ignore whitespace", on: root.view.ignore-whitespace, l: "Ignore whitespace", i: "" },
+                    { t: "Ignore case", on: root.view.ignore-case, l: "Ignore case", i: "" },
+                    // The tab's close glyph: the UI font may have no ✕.
+                    { t: "", on: false, l: "Close", i: Glyph.close },
+                ]: TextButton {
+                    compact: k == 2;
+                    text: b.t;
+                    icon: b.i;
+                    label: b.l;
+                    checked: b.on;
+                    clicked => { root.button(k); }
+                }
+            }
+
+            Text {
+                text: root.view.info;
+                overflow: elide;
+                color: root.view.marked ? Theme.accent : Theme.foreground-muted;
+            }
+
+            list := ListView {
+                vertical-stretch: 1;
+                for row[i] in root.rows: line := Rectangle {
+                    height: Theme.row-height;
+                    border-width: i == root.current ? 1px : 0px;
+                    border-color: Theme.focus-ring;
+                    accessible-role: list-item;
+                    accessible-label: row.label;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: i == root.current;
+                    accessible-item-index: i;
+                    TouchArea {
+                        clicked => {
+                            scope.focus();
+                            root.pick(i);
+                        }
+                    }
+                    // A side's tint: a changed row on both, a removed line on the left, an added one on
+                    // the right.
+                    for side[k] in [{ t: row.l, p: row.lp, m: row.lc, c: row.kind == 3 }, { t: row.r, p: row.rp, m: row.rc, c: row.kind == 2 }]: Rectangle {
+                        x: k * line.width / 2;
+                        width: line.width / 2 - 1px;
+                        background: (row.kind == 1 ? Theme.accent : !side.c ? Colors.transparent : k == 0 ? Theme.danger : Theme.success).transparentize(0.8);
+                        clip: true;
+                        before := Text {
+                            visible: false;
+                            text: side.p;
+                            font-family: root.mono-font;
+                        }
+                        changed := Text {
+                            visible: false;
+                            text: side.m;
+                            font-family: root.mono-font;
+                        }
+                        Rectangle {
+                            x: before.preferred-width;
+                            width: side.m == "" ? 0px : changed.preferred-width;
+                            background: Theme.accent.transparentize(0.55);
+                        }
+                        Text {
+                            x: 0;
+                            width: self.preferred-width;
+                            text: side.t;
+                            vertical-alignment: center;
+                            font-family: root.mono-font;
+                            color: Theme.foreground;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

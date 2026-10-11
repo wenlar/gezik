@@ -533,23 +533,22 @@ pub fn to_other(moving: bool) {
     let field = base.display().to_string();
     let typed_base = base;
     crate::operations::with_current(|ops| {
-        let check = (!restoring).then_some(("Verify copies", ops.verify_default()));
-        ops.dialogs().ask_text_choice(
+        let checks = if restoring { Vec::new() } else { vec![("Verify copies".to_owned(), ops.verify_default())] };
+        ops.dialogs().ask_form(
             title,
             message,
-            field,
+            (field, checks),
             &[verb, "Don't Ask Again", "Cancel"],
             note,
-            check,
             move |answer| {
-                let Some((choice, typed, verify)) = answer else { return };
+                let Some((choice, typed, marks)) = answer else { return };
                 let Some(target) = typed_target(&typed_base, &typed) else {
                     return panes::active_view().note("No folder was typed".to_owned());
                 };
                 if choice == 1 {
                     dont_ask_again();
                 }
-                go(target, Some(verify));
+                go(target, marks.first().copied());
             },
         );
     });
