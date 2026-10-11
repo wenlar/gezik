@@ -57,6 +57,36 @@ runs its own tests.
 `[patch.crates-io]` line once all three are covered upstream; otherwise copy the new release
 here and apply the remaining changes.
 
+## i-slint-backend-winit 1.18.1 (patched)
+
+The published `i-slint-backend-winit` 1.18.1, unchanged except for three small changes marked
+"Gezik patch", all for Windows only (`cfg(target_os = "windows")`). The root `Cargo.toml`
+uses it through `[patch.crates-io]`.
+
+**The problem.** The software renderer draws into softbuffer's surface, which keeps one DIB of
+width x height x 4 bytes (4 MB at 1280x800). On Windows, Slint keeps the native window and
+this surface while the window is hidden (in the tray) or minimized, so the buffer stays
+committed although nothing is drawn. `SLINT_DESTROY_WINDOW_ON_HIDE` would free it but destroys
+the native window itself (position, drop target, the tray's window).
+
+**The fix.**
+1. `renderer/sw.rs`, `occluded(true)`: the surface is replaced by a fresh one on the same
+   window and context, which has no buffer until the next frame (that frame is drawn whole;
+   `occluded` already asked for that).
+2. `renderer/sw.rs`, `render`: a minimized window does not draw (Windows still asks it to;
+   drawing would allocate the buffer again).
+3. `winitwindowadapter.rs`, `set_visible(false)`: calls `occluded(true)`, since Windows sends
+   no `Occluded` event for a hidden window (a minimized one gets it through the zero-size
+   resize).
+
+**Check.** With the window in the tray or minimized, private memory drops by the buffer and
+showing or restoring draws the whole window again (Gezik's own restore redraw is in
+`windows.rs`); `scripts/perf/hidden.ps1` measures both.
+
+**Updating Slint.** If the new release frees the software renderer's surface while hidden or
+minimized on Windows, remove this folder and its `[patch.crates-io]` line; otherwise copy the
+new release here and apply the same three changes.
+
 ## C++ exceptions on MSVC (`.cargo/config.toml`)
 
 UnRAR reports errors and a user break by throwing. The `cc` crate does not pass `/EHsc` to

@@ -2250,3 +2250,35 @@ Derleme: `final.exe` (feat/layout-10g, 7596d4b, release). Yalnız birincil ekran
    - b) Kayıtlı `[window]` (1400×900 @200,150) ve `[system] tray = true` ile `--background` başlatıldı: görünür pencere yoktu. İkinci başlatma pencereyi gösterdi: @200,150, dış ölçü 1416×939. Bu, 1400×900 kayıtla tutarlı (madde 1'de 1264×761 kayıt da 1280×800 dış ölçüydü). 617 genişlik değil. Görüntü: `shots\Fn5-final-revealed.png`.
 
 Temizlik: Başlattığım bütün `final`/`base2` süreçleri kapandı. `col\drop` eski halinde (8 öğe, in1/in2 boş). Kaynak değişmedi, commit yok.
+
+## Boşta bellek: çerçeve arabelleği ve tembel paneller
+
+Dal `perf/idle-memory` (10g'den, PR #71'den sonra master'a). Ölçümler `measure` derlemeleri arasında, yalnız birincil ekranda, taze `%TEMP%` yapılandırmasıyla.
+
+### Beş pencere aç-kapa büyümesi: sızıntı değil, yığın parçalanması
+
+- `windows.ps1 -Cycles 12`, ölçü derlemesine geçici sayan bir global ayırıcı eklenerek (commit'lenmedi): Rust'ın canlı baytları her kapanıştan sonra aynı (1,599 → 1,603 MB, ilk turdan sonra +4 KB, 12 turda sabit; canlı ayırma sayısı +52/+55'te sabit).
+- Aynı koşuda private 1. turdan 12. tura +0,2 → +1,0 MB büyüdü.
+- `HeapSummary` (süreç yığını): kapanıştan sonra ayrılmış 2,52–2,56 MB'de sabit, taahhüt edilen 3,09 → 3,45 → 3,53 → 3,61 → 3,72 → 3,73 → 3,77 MB (artışlar küçülüyor). Diğer yığınlar 0,05/0,13 MB'de sabit, handle'lar artmıyor.
+- Sonuç: büyüme canlı veri değil, varsayılan yığının boş bloklarının geri verilmemesi (parçalanma). Kapanış sonrası `HeapCompact` denendi, değiştirmedi (+0,59 MB, öncesi +0,57). Kodda değişiklik yok.
+
+### Gizli/küçültülmüş pencerenin çerçeve arabelleği
+
+- `vendor/i-slint-backend-winit` (yama, `vendor/README.md`): Windows'ta pencere tepsiye gizlenince ya da küçültülünce yazılım çizicinin softbuffer yüzeyi yenisiyle değiştiriliyor (arabellek bırakılıyor), küçültülmüşken çizim yapılmıyor. Gösterince/geri getirince tam kare çiziliyor.
+- `scripts/perf/hidden.ps1`, 1280×800 istemci alanı, 3 koşu (WorkingSetPrivate / private commit, MB):
+
+| Durum | Önce | Sonra |
+|---|---|---|
+| Görünür | 8,38–8,51 / 10,90–11,02 | 8,37–8,42 / 10,89–10,93 |
+| Tepside | 8,38–8,51 / 10,90–11,02 | 4,47–4,52 / 6,98–7,03 |
+| Küçültülmüş | 8,36–8,49 / 10,88–11,01 | 4,46–4,48 / 6,97–7,01 |
+| Tekrar gösterilince | 8,36–8,49 | 8,37–8,39 |
+
+- Gösterme ve geri getirmede pencere (sekme şeridinin altı) gizlemeden önceki görüntüyle piksel piksel aynı: tepsiden sonra 20–24 ms (önce 18–31), küçültmeden sonra 16–23 ms (önce 18–19).
+- macOS ve Linux'a dokunulmadı (yama yalnız Windows).
+
+### Tembel paneller
+
+- `app.slint`'teki seyrek açılan katmanlar (diyaloglar, toplu ad değiştirme, sıkıştırma, dönüştürme, bilgi, çakışma listesi, işlemler paneli, yığın, önizleme) zaten `if` ile kuruluyor.
+- `visible:` ile kalan gizli parçaların maliyeti, bir ölçü derlemesine kopyalarını ekleyerek ölçüldü: `PopupMenu` +11 KB canlı (~150 ayırma), bölme başına iki `FilterBar` + yol `TextField`'ı +31 KB. Private farkı ölçüm gürültüsü içinde (~0,1 MB).
+- Bunların hepsi odak ve konum bağlarıyla bağlı (`popup-menu.show`, `search-bar.field-focused`/`select-all`/`absolute-position`, yol alanının odağı). Pencere başına ~40 KB için odak riski alınmadı, değişiklik yok.

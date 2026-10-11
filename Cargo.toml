@@ -36,4 +36,5 @@ incremental = true
 # Slint and unrar-ng with fixes that are not released yet; see vendor/README.md.
 [patch.crates-io]
 i-slint-core = { path = "vendor/i-slint-core" }
+i-slint-backend-winit = { path = "vendor/i-slint-backend-winit" }
 unrar-ng = { path = "vendor/unrar-ng" }
