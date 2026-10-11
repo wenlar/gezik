@@ -3,7 +3,7 @@
 # config folder (one small folder as its tab), opens windows with Ctrl+N and closes each extra
 # one with Ctrl+W on its only tab.
 # The explicit test: after closing, private memory is within 0.3 MB of one window and the
-# handles within 5 ("FAIL" otherwise). Each extra window's cost is shown beside its bound,
+# handles at most 5 more ("FAIL" otherwise; fewer handles than at the start is no leak). Each extra window's cost is shown beside its bound,
 # its frame buffer (client width x height x 4, physical pixels, so the scale squared is in it)
 # + 2.5 MB. -Cycles repeats open-to-five-and-close (a leak shows as a rising "after closing").
 # Keys go only to Gezik's windows: before every key the script checks that the window in the
@@ -151,7 +151,7 @@ try {
         if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) { throw "Gezik quit with its first window open" }
     }
     if ($closed.Mb - $base.Mb -gt 0.3) { $fail += "{0:N2} MB over one window after closing (0.3 allowed)" -f ($closed.Mb - $base.Mb) }
-    if ([math]::Abs($closed.Handles - $base.Handles) -gt 5) { $fail += "{0:+0;-0} handles after closing (5 allowed)" -f ($closed.Handles - $base.Handles) }
+    if ($closed.Handles - $base.Handles -gt 5) { $fail += "{0:+0;-0} handles after closing (5 more allowed; fewer is fine)" -f ($closed.Handles - $base.Handles) }
     if ($fail.Count -eq 0) { "PASS" } else { $fail | ForEach-Object { "FAIL: $_" } }
 } finally {
     if ($p) {
