@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use gezik_config::settings::ExportState;
 use gezik_core::export::{self, Column, Format, Sheet};
 use gezik_core::nav::Location;
+use gezik_core::ops::names::{NameRules, validate_name};
 use gezik_core::view::ColumnKey;
 use gezik_platform::clipboard::{self, ClipboardError};
 
@@ -55,17 +56,29 @@ fn typed_target(base: &Path, typed: &str) -> Option<PathBuf> {
     path.file_name().is_some().then_some(path)
 }
 
-/// The line under the field: the format and the folder, or what is wrong.
+/// The file `typed` names and its format, or what is wrong with it: no name, a name (or a
+/// folder on the way) this system cannot have (`|` on Windows, `CON`, a trailing dot…), or no
+/// known extension.
+fn checked_target(base: &Path, typed: &str, rules: NameRules) -> Result<(PathBuf, Format), String> {
+    let target = typed_target(base, typed).ok_or("Type a file name")?;
+    for part in target.components() {
+        if let std::path::Component::Normal(part) = part {
+            validate_name(&part.to_string_lossy(), rules).map_err(|err| err.to_string())?;
+        }
+    }
+    let format = Format::from_path(&target).ok_or(BAD_EXTENSION)?;
+    Ok((target, format))
+}
+
+/// The line under the field: the format and the folder, or what is wrong (red: Save and Copy
+/// wait).
 fn field_note(base: &Path, typed: &str) -> (String, bool) {
-    match typed_target(base, typed) {
-        None => ("Type a file name".to_owned(), true),
-        Some(target) => match Format::from_path(&target) {
-            None => (BAD_EXTENSION.to_owned(), true),
-            Some(format) => {
-                let folder = target.parent().map(|p| p.display().to_string()).unwrap_or_default();
-                (format!("{} into {folder}", format.title()), false)
-            }
-        },
+    match checked_target(base, typed, NameRules::current()) {
+        Err(problem) => (problem, true),
+        Ok((target, format)) => {
+            let folder = target.parent().map(|p| p.display().to_string()).unwrap_or_default();
+            (format!("{} into {folder}", format.title()), false)
+        }
     }
 }
 
@@ -149,8 +162,10 @@ pub fn ask(nav: &Navigator, view: &View) {
                 let Some((button, typed, marks)) = answer else { return };
                 let only_selected = selected > 0 && marks.first().copied().unwrap_or(false);
                 let full_paths = marks.last().copied().unwrap_or(false);
-                let Some(target) = typed_target(&base, &typed) else { return view.note("Type a file name".to_owned()) };
-                let Some(format) = Format::from_path(&target) else { return view.note(BAD_EXTENSION.to_owned()) };
+                let (target, format) = match checked_target(&base, &typed, NameRules::current()) {
+                    Ok(checked) => checked,
+                    Err(problem) => return view.note(problem),
+                };
                 if let Some(store) = ops2.store() {
                     let state = ExportState { format: Some(format.as_str().to_owned()), full_paths };
                     store.update_state(|saved| saved.export = state);
@@ -317,6 +332,29 @@ mod tests {
         assert_eq!(field_note(&base, "sub/list.HTM").0, format!("HTML into {}", base.join("sub").display()));
         assert_eq!(field_note(&base, "list.doc"), (BAD_EXTENSION.to_owned(), true));
         assert_eq!(field_note(&base, " "), ("Type a file name".to_owned(), true));
+    }
+
+    #[test]
+    fn a_name_the_system_cannot_have_is_refused() {
+        let base = root();
+        let windows = |typed: &str| checked_target(&base, typed, NameRules::Windows);
+        for typed in ["bad|name.csv", "a<b.csv", "a>b.csv", "a\"b.csv", "a?b.csv", "a*b.csv", "tab\tname.csv"] {
+            assert!(windows(typed).is_err(), "{typed}");
+        }
+        assert_eq!(windows("bad|name.csv").unwrap_err(), "A name cannot contain |");
+        assert_eq!(windows("CON.csv").unwrap_err(), "CON is reserved by Windows");
+        assert!(windows("nul.txt").is_err() && windows("lpt1.html").is_err());
+        assert_eq!(windows("list.csv.").unwrap_err(), "A name cannot end with a dot or a space");
+        assert!(windows("list.csv ").is_ok(), "the field is trimmed: a typed trailing space goes");
+        assert!(windows("sub|dir/list.csv").is_err(), "a folder on the way too");
+        assert!(windows("../list.csv").is_ok(), "a step up is no name");
+        let unix = |typed: &str| checked_target(&base, typed, NameRules::Unix);
+        assert!(unix("bad|name.csv").is_ok(), "| is a plain character on Unix");
+        assert!(unix("nul\0x.csv").is_err());
+        assert!(unix("CON.csv").is_ok());
+        if cfg!(windows) {
+            assert!(field_note(&base, "bad|name.csv").1, "the line turns red");
+        }
     }
 
     #[test]
