@@ -1657,6 +1657,9 @@ fn compare_options(table: Option<&toml::Table>) -> gezik_core::compare::Options 
     o.content = flag("content", o.content);
     o.ignore_dates = flag("ignore-dates", o.ignore_dates);
     o.ignore_hour = flag("ignore-hour", o.ignore_hour);
+    if let Some(mode) = table.get("mode").and_then(|v| v.as_str()).and_then(gezik_core::compare::Mode::from_key) {
+        o.mode = mode;
+    }
     o
 }
 
@@ -2065,6 +2068,7 @@ impl State {
             ] {
                 compare.insert(key.into(), toml::Value::Boolean(on));
             }
+            compare.insert("mode".into(), toml::Value::String(o.mode.key().to_owned()));
             root.insert("compare".into(), toml::Value::Table(compare));
         }
         if !self.servers_recent.is_empty() {
@@ -3371,9 +3375,11 @@ shortcut = \"shift+f8\"
             content: true,
             ignore_dates: false,
             ignore_hour: true,
+            mode: gezik_core::compare::Mode::Mirror,
         };
         let text = State { compare, ..State::default() }.to_toml();
         assert!(text.contains("[compare]") && text.contains(r#"show = ["→", "=", "←", "2×"]"#), "{text}");
+        assert!(text.contains(r#"mode = "mirror""#), "{text}");
         assert_eq!(State::parse(&text).compare, compare);
         assert!(!State::default().to_toml().contains("[compare]"), "the default is not written");
         let partial = State::parse(

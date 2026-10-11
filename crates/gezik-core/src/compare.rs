@@ -29,6 +29,8 @@ pub struct Options {
     pub ignore_dates: bool,
     /// Exactly an hour apart (±2 s) is the same time: FAT's daylight saving shift.
     pub ignore_hour: bool,
+    /// What Synchronize does by default (spec 11 §8.1).
+    pub mode: Mode,
 }
 
 impl Default for Options {
@@ -40,8 +42,140 @@ impl Default for Options {
             content: false,
             ignore_dates: false,
             ignore_hour: false,
+            mode: Mode::TwoWay,
         }
     }
+}
+
+/// The sync modes (spec 11 §8.1), always read from left to right (Swap turns them around).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    TwoWay,
+    /// Update: what is new or newer on the left goes right; nothing goes left.
+    LeftToRight,
+    /// A backup: the right becomes the left, what only the right has goes to its trash.
+    Mirror,
+}
+
+impl Mode {
+    pub const ALL: [Mode; 3] = [Mode::TwoWay, Mode::LeftToRight, Mode::Mirror];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::TwoWay => "Two-way",
+            Mode::LeftToRight => "Left to right",
+            Mode::Mirror => "Mirror",
+        }
+    }
+
+    /// Its name in settings.toml and state.toml.
+    pub fn key(self) -> &'static str {
+        match self {
+            Mode::TwoWay => "two-way",
+            Mode::LeftToRight => "left-to-right",
+            Mode::Mirror => "mirror",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Mode> {
+        Mode::ALL.into_iter().find(|m| m.key() == key)
+    }
+
+    pub fn next(self) -> Mode {
+        match self {
+            Mode::TwoWay => Mode::LeftToRight,
+            Mode::LeftToRight => Mode::Mirror,
+            Mode::Mirror => Mode::TwoWay,
+        }
+    }
+}
+
+/// A row's sync direction: which side is made like the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Dir {
+    #[default]
+    Skip,
+    /// The right becomes the left: a copy to the right, or (only the right has it) the
+    /// right's item to the trash.
+    ToRight,
+    ToLeft,
+}
+
+/// What a direction does to a row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Act {
+    CopyRight,
+    CopyLeft,
+    TrashRight,
+    TrashLeft,
+}
+
+impl Act {
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Act::CopyRight => "→",
+            Act::CopyLeft => "←",
+            Act::TrashRight => "×→",
+            Act::TrashLeft => "←×",
+        }
+    }
+}
+
+/// Whether `row` may take `dir`: only a counted row, and one that is not a mismatch or
+/// unreadable (those are never synchronized).
+pub fn allowed(row: &Row, dir: Dir) -> bool {
+    dir == Dir::Skip || row.unit && !matches!(row.state, State::Mismatch | State::Unreadable)
+}
+
+/// `row`'s direction in `mode` (spec 11 §8.1's table). Stateless: a file deleted on one side
+/// since the last sync is only on the other side now, and two-way copies it back.
+pub fn default_dir(row: &Row, mode: Mode) -> Dir {
+    if !row.unit {
+        return Dir::Skip;
+    }
+    match (row.state, mode) {
+        (State::LeftOnly | State::LeftNewer, _) => Dir::ToRight,
+        (State::RightOnly | State::RightNewer, Mode::TwoWay) => Dir::ToLeft,
+        (State::RightOnly | State::RightNewer | State::Differs, Mode::Mirror) => Dir::ToRight,
+        _ => Dir::Skip,
+    }
+}
+
+/// What `dir` does to `row` (`None`: nothing).
+pub fn act(row: &Row, dir: Dir) -> Option<Act> {
+    if !allowed(row, dir) {
+        return None;
+    }
+    match dir {
+        Dir::Skip => None,
+        Dir::ToRight if row.left.is_some() => Some(Act::CopyRight),
+        Dir::ToRight => Some(Act::TrashRight),
+        Dir::ToLeft if row.right.is_some() => Some(Act::CopyLeft),
+        Dir::ToLeft => Some(Act::TrashLeft),
+    }
+}
+
+/// The direction after `dir` when the row's arrow is turned: →, ←, nothing.
+pub fn cycle(row: &Row, dir: Dir) -> Dir {
+    let next = match dir {
+        Dir::ToRight => Dir::ToLeft,
+        Dir::ToLeft => Dir::Skip,
+        Dir::Skip => Dir::ToRight,
+    };
+    if allowed(row, next) { next } else { Dir::Skip }
+}
+
+/// The counted rows a direction given to row `i` goes to: itself, or every counted row under a
+/// folder both sides have; none for a row inside a folder only one side has.
+pub fn units_under(rows: &[Row], i: usize) -> Vec<u32> {
+    let Some(row) = rows.get(i) else { return Vec::new() };
+    if row.unit {
+        return vec![u32::try_from(i).unwrap_or(u32::MAX)];
+    }
+    if !row.folder || row.one_sided() {
+        return Vec::new();
+    }
+    (i + 1..row.end as usize).filter(|&j| rows[j].unit).map(|j| u32::try_from(j).unwrap_or(u32::MAX)).collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -624,5 +758,129 @@ mod tests {
         let right = [item("a", false, T + 1), item("b", false, T), item("c", false, T), item("d", true, T + 99)];
         assert_eq!(differences(&left, &right), (vec![1, 3], vec![2]));
         assert_eq!(differences(&[], &right).1, [0, 1, 2, 3]);
+    }
+
+    /// Each counted row's name and what `mode` does to it by default.
+    fn acts(mode: Mode) -> Vec<(String, Option<Act>)> {
+        let left = tree(&[
+            ("same.txt", 5, T),
+            ("newer.txt", 5, T + 60),
+            ("older.txt", 5, T),
+            ("size.txt", 5, T),
+            ("mixed", 1, T),
+            ("only-left.txt", 1, T),
+            ("only-left/", 0, T),
+            ("only-left/in.txt", 1, T),
+            ("gone!", 0, T),
+        ]);
+        let right = tree(&[
+            ("same.txt", 5, T),
+            ("newer.txt", 5, T),
+            ("older.txt", 5, T + 60),
+            ("size.txt", 6, T),
+            ("mixed/", 0, T),
+            ("only-right.txt", 1, T),
+            ("gone/", 0, T),
+        ]);
+        let rows = build(&left, &right, &Options::default());
+        let names = states(&rows, &left, &right);
+        rows.iter().zip(names).filter(|(r, _)| r.unit).map(|(r, (n, _))| (n, act(r, default_dir(r, mode)))).collect()
+    }
+
+    #[test]
+    fn every_cell_of_the_mode_table() {
+        use Act::*;
+        let names = [
+            "gone",
+            "mixed",
+            "newer.txt",
+            "older.txt",
+            "only-left",
+            "only-left.txt",
+            "only-right.txt",
+            "same.txt",
+            "size.txt",
+        ];
+        let expect = |want: [Option<Act>; 9]| names.iter().map(|n| (*n).to_owned()).zip(want).collect::<Vec<_>>();
+        // gone (unreadable) and mixed (file and folder) are never synchronized; the same stays.
+        assert_eq!(
+            acts(Mode::TwoWay),
+            expect([
+                None,
+                None,
+                Some(CopyRight),
+                Some(CopyLeft),
+                Some(CopyRight),
+                Some(CopyRight),
+                Some(CopyLeft),
+                None,
+                None
+            ]),
+            "two-way: newer wins, only one side is copied over, a size difference on the same date is the user's"
+        );
+        assert_eq!(
+            acts(Mode::LeftToRight),
+            expect([None, None, Some(CopyRight), None, Some(CopyRight), Some(CopyRight), None, None, None]),
+            "left to right: nothing goes left"
+        );
+        assert_eq!(
+            acts(Mode::Mirror),
+            expect([
+                None,
+                None,
+                Some(CopyRight),
+                Some(CopyRight),
+                Some(CopyRight),
+                Some(CopyRight),
+                Some(TrashRight),
+                None,
+                Some(CopyRight),
+            ]),
+            "mirror: the left wins everywhere, what only the right has goes to the trash"
+        );
+    }
+
+    #[test]
+    fn directions_turn_and_go_down_into_folders() {
+        let left = tree(&[("d/", 0, T), ("d/a.txt", 1, T + 60), ("d/sub/", 0, T), ("d/sub/b.txt", 1, T), ("x/", 0, T)]);
+        let right = tree(&[("d/", 0, T), ("d/a.txt", 1, T), ("d/c.txt", 1, T)]);
+        let rows = build(&left, &right, &Options::default());
+        let names: Vec<String> = states(&rows, &left, &right).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["d", "d/a.txt", "d/c.txt", "d/sub", "d/sub/b.txt", "x"]);
+        // The folder both sides have: its counted rows; the one-sided folder `d/sub` is one of
+        // them, what is inside it is not.
+        assert_eq!(units_under(&rows, 0), [1, 2, 3]);
+        assert_eq!(units_under(&rows, 3), [3]);
+        assert!(units_under(&rows, 4).is_empty());
+        // →, ←, nothing; a one-sided row's ← (the right has nothing) is a delete on the left.
+        let pair = &rows[1];
+        assert_eq!(cycle(pair, Dir::Skip), Dir::ToRight);
+        assert_eq!(cycle(pair, Dir::ToRight), Dir::ToLeft);
+        assert_eq!(cycle(pair, Dir::ToLeft), Dir::Skip);
+        assert_eq!(act(&rows[3], Dir::ToLeft), Some(Act::TrashLeft));
+        assert_eq!(act(&rows[2], Dir::ToRight), Some(Act::TrashRight));
+        assert_eq!(act(&rows[2], Dir::ToLeft), Some(Act::CopyLeft));
+        // Rows that are not counted take no direction.
+        assert_eq!(cycle(&rows[0], Dir::Skip), Dir::Skip);
+        assert_eq!(act(&rows[4], Dir::ToRight), None);
+    }
+
+    #[test]
+    fn two_way_copies_back_a_file_deleted_on_one_side() {
+        // Stateless (spec 11 §8.2, §19): what one side lost since the last sync comes back.
+        let left = tree(&[("kept.txt", 1, T), ("deleted-on-right.txt", 1, T)]);
+        let right = tree(&[("kept.txt", 1, T)]);
+        let rows = build(&left, &right, &Options::default());
+        assert_eq!(act(&rows[0], default_dir(&rows[0], Mode::TwoWay)), Some(Act::CopyRight));
+        assert_eq!(act(&rows[0], Dir::ToLeft), Some(Act::TrashLeft), "the user's ← spreads the delete");
+    }
+
+    #[test]
+    fn modes_read_and_turn() {
+        for mode in Mode::ALL {
+            assert_eq!(Mode::from_key(mode.key()), Some(mode));
+        }
+        assert_eq!(Mode::from_key("both"), None);
+        assert_eq!(Mode::TwoWay.next().next().next(), Mode::TwoWay);
     }
 }
