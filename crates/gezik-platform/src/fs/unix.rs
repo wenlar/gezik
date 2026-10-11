@@ -226,8 +226,13 @@ pub fn free_space(path: &Path) -> io::Result<u64> {
 pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     let existing = nearest_existing(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let dev = std::fs::metadata(&existing)?.dev();
+    // A share's trash would be on the server, if it works at all: it counts as none.
+    let trash = !is_network(&existing).unwrap_or(false);
+    // Linux: a mount whose trash folder is not safe to use has none either.
+    #[cfg(target_os = "linux")]
+    let trash = trash && trash_dir_for(&existing, dev).is_ok();
     // FAT on Unix is not told apart yet: a too big file there pauses as "disk full".
-    Ok(DriveFacts { id: format!("{dev:x}"), kind: disk_kind(dev), trash: true, max_file: None })
+    Ok(DriveFacts { id: format!("{dev:x}"), kind: disk_kind(dev), trash, max_file: None })
 }
 
 /// Whether `path` (which exists) is on a file system that lives elsewhere: an NFS or SMB
