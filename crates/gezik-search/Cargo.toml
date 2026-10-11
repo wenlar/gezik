@@ -11,3 +11,5 @@ gezik-platform.workspace = true
 # gezik-batch's regex features plus the Unicode classes (p{L}, p{Latin}) and the fast engines
 # ("perf": content search), which the RAR build (unrar-ng) already links into the app.
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl", "unicode-gencat", "unicode-script"] }
+# NFC names for the folder compare (spec 11 §7.4); Slint already links it with its data.
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }

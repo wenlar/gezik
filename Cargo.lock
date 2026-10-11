@@ -1834,6 +1834,7 @@ version = "0.1.0"
 dependencies = [
  "gezik-core",
  "gezik-platform",
+ "icu_normalizer",
  "regex",
 ]
 
