@@ -1,18 +1,20 @@
 import { ListView } from "scrollbar.slint";
 import { Theme } from "../theme.slint";
 import { TextButton } from "text-button.slint";
+import { Glyph } from "../glyphs.slint";
 
 // One row of the compare (diff.rs builds it when it is on screen): each side's text with its
-// line number in front (monospace columns), a changed line's changed part as character offsets
-// (start, end) into that text, and what a screen reader says.
+// line number in front (monospace columns), a changed line's text before its changed part and
+// the changed part (measured with the font to place the mark; "" for none), and what a screen
+// reader says.
 export struct DiffRow {
     label: string,
     l: string,
-    ls: int,
-    le: int,
+    lp: string,
+    lc: string,
     r: string,
-    rs: int,
-    re: int,
+    rp: string,
+    rc: string,
     // 0 same, 1 changed, 2 added (right only), 3 removed (left only).
     kind: int,
 }
@@ -61,17 +63,9 @@ export component DiffLayer inherits Rectangle {
         }
     }
 
-    // One character of the monospace font: where a changed part's mark starts and ends.
-    property <length> char-width: probe.preferred-width / 10;
-
     background: Theme.overlay;
     TouchArea { }
     scope := FocusScope { }
-    probe := Text {
-        visible: false;
-        text: "0000000000";
-        font-family: root.mono-font;
-    }
 
     Rectangle {
         x: 24px;
@@ -100,12 +94,14 @@ export component DiffLayer inherits Rectangle {
                     color: Theme.foreground;
                 }
                 for b[k] in [
-                    { t: "Ignore whitespace", on: root.view.ignore-whitespace, l: "Ignore whitespace" },
-                    { t: "Ignore case", on: root.view.ignore-case, l: "Ignore case" },
-                    { t: "✕", on: false, l: "Close" },
+                    { t: "Ignore whitespace", on: root.view.ignore-whitespace, l: "Ignore whitespace", i: "" },
+                    { t: "Ignore case", on: root.view.ignore-case, l: "Ignore case", i: "" },
+                    // The tab's close glyph: the UI font may have no ✕.
+                    { t: "", on: false, l: "Close", i: Glyph.close },
                 ]: TextButton {
                     compact: k == 2;
                     text: b.t;
+                    icon: b.i;
                     label: b.l;
                     checked: b.on;
                     clicked => { root.button(k); }
@@ -137,14 +133,24 @@ export component DiffLayer inherits Rectangle {
                     }
                     // A side's tint: a changed row on both, a removed line on the left, an added one on
                     // the right.
-                    for side[k] in [{ t: row.l, s: row.ls, e: row.le, c: row.kind == 3 }, { t: row.r, s: row.rs, e: row.re, c: row.kind == 2 }]: Rectangle {
+                    for side[k] in [{ t: row.l, p: row.lp, m: row.lc, c: row.kind == 3 }, { t: row.r, p: row.rp, m: row.rc, c: row.kind == 2 }]: Rectangle {
                         x: k * line.width / 2;
                         width: line.width / 2 - 1px;
                         background: (row.kind == 1 ? Theme.accent : !side.c ? Colors.transparent : k == 0 ? Theme.danger : Theme.success).transparentize(0.8);
                         clip: true;
+                        before := Text {
+                            visible: false;
+                            text: side.p;
+                            font-family: root.mono-font;
+                        }
+                        changed := Text {
+                            visible: false;
+                            text: side.m;
+                            font-family: root.mono-font;
+                        }
                         Rectangle {
-                            x: side.s * root.char-width;
-                            width: (side.e - side.s) * root.char-width;
+                            x: before.preferred-width;
+                            width: side.m == "" ? 0px : changed.preferred-width;
                             background: Theme.accent.transparentize(0.55);
                         }
                         Text {

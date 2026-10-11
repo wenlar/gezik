@@ -16,7 +16,7 @@ use gezik_config::settings::ToolsSettings;
 use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_config::store::ConfigStore;
 use gezik_core::diff::{self, Kind, Options, Row};
-use slint::{ComponentHandle, Model, ModelRc, ModelTracker, SharedString};
+use slint::{ComponentHandle, Model, ModelRc, ModelTracker};
 
 use crate::dialog::Dialogs;
 use crate::{AppWindow, DiffRow, DiffView};
@@ -205,9 +205,15 @@ fn run_external(external: &External, left: &Path, right: &Path, view: &crate::vi
             Some(text) => crate::panes::active_view().note(text),
             None => {
                 let folders = left.is_dir();
-                crate::panes::active_view().note(not_found_text(&program, folders));
-                if !folders {
-                    with_current(|d| d.read(left, right, false));
+                let text = not_found_text(&program, folders);
+                if folders {
+                    crate::panes::active_view().note(text);
+                } else {
+                    // Told where the compare's answer shows: the layer's line or the question.
+                    with_current(|d| {
+                        *d.0.told.borrow_mut() = text;
+                        d.read(left, right, false);
+                    });
                 }
             }
         });
@@ -421,14 +427,17 @@ pub fn shown(line: &str) -> String {
     out
 }
 
-/// A changed pair's changed parts, as character offsets (start, end) into each side: the layer
-/// marks them at offset × the monospace character width.
-// shortcut: a double-width character (CJK) before the span shifts the mark; measure the text
-// before it if that matters.
-pub fn char_spans(left: &str, right: &str) -> ((i32, i32), (i32, i32)) {
-    let (a, b) = diff::inline_span(left, right);
-    let chars = |text: &str, at: usize| i32::try_from(text[..at].chars().count()).unwrap_or(i32::MAX);
-    ((chars(left, a.start), chars(left, a.end)), (chars(right, b.start), chars(right, b.end)))
+/// A side as the layer draws it: `number` and `text` with the number in front, right-aligned
+/// to `digits` (monospace columns), and the text before the changed part (`span`, bytes of
+/// `text`) and the changed part itself. The layer measures those two with the font, so the
+/// mark sits on the characters whatever their widths.
+pub fn side_parts(number: u32, digits: usize, text: &str, span: Option<std::ops::Range<usize>>) -> [String; 3] {
+    let front = format!("{number:>digits$}  ");
+    let (before, changed) = match span {
+        Some(span) if !span.is_empty() => (format!("{front}{}", &text[..span.start]), text[span].to_owned()),
+        _ => (String::new(), String::new()),
+    };
+    [format!("{front}{text}"), before, changed]
 }
 
 /// What a screen reader says for a row.
@@ -456,21 +465,25 @@ impl Model for RowsModel {
         let (left, right) = (&self.0.texts.0, &self.0.texts.1);
         let l = row.left.map(|n| shown(left.line(n))).unwrap_or_default();
         let r = row.right.map(|n| shown(right.line(n))).unwrap_or_default();
-        let ((ls, le), (rs, re)) = if row.kind == Kind::Changed { char_spans(&l, &r) } else { ((0, 0), (0, 0)) };
-        // The line number in front, right-aligned in monospace columns: the marks move with it.
-        let digits = left.lines.len().max(right.lines.len()).to_string().len();
-        let front = i32::try_from(digits + 2).unwrap_or(0);
-        let side = |n: Option<u32>, text: &str| -> SharedString {
-            n.map(|n| format!("{:>digits$}  {text}", n + 1).into()).unwrap_or_default()
+        let (ls, rs) = if row.kind == Kind::Changed {
+            let (a, b) = diff::inline_span(&l, &r);
+            (Some(a), Some(b))
+        } else {
+            (None, None)
         };
+        let digits = left.lines.len().max(right.lines.len()).to_string().len();
+        let side =
+            |n: Option<u32>, text: &str, span| n.map(|n| side_parts(n + 1, digits, text, span)).unwrap_or_default();
+        let [l_all, l_before, l_changed] = side(row.left, &l, ls);
+        let [r_all, r_before, r_changed] = side(row.right, &r, rs);
         Some(DiffRow {
             label: row_label(row.kind, &l, &r).into(),
-            l: side(row.left, &l),
-            ls: ls + front,
-            le: le + front,
-            r: side(row.right, &r),
-            rs: rs + front,
-            re: re + front,
+            l: l_all.into(),
+            lp: l_before.into(),
+            lc: l_changed.into(),
+            r: r_all.into(),
+            rp: r_before.into(),
+            rc: r_changed.into(),
             kind: kind_index(row.kind),
         })
     }
@@ -586,6 +599,9 @@ struct Inner {
     /// The files are being read (the layer's reload): an option change reads them again too,
     /// so the reload's new text is not dropped.
     reading: Cell<bool>,
+    /// Said with the next answer ("The compare program … was not found; using Gezik's own"):
+    /// the status bar's note would go when the answer comes.
+    told: RefCell<String>,
 }
 
 #[derive(Clone)]
@@ -603,6 +619,7 @@ impl Diff {
             state: RefCell::default(),
             generation: Cell::new(0),
             reading: Cell::new(false),
+            told: RefCell::default(),
         }));
         let d = diff.clone();
         window.on_df_button(move |k| if k == 2 { d.close() } else { d.toggle(k) });
@@ -650,24 +667,32 @@ impl Diff {
         }
         self.0.reading.set(false);
         let view = crate::panes::active_view();
+        let told = std::mem::take(&mut *self.0.told.borrow_mut());
+        let with_told = |text: String| if told.is_empty() { text } else { format!("{told}.\n{text}") };
         match answer {
-            Answer::Failed(text) => view.note(text),
+            Answer::Failed(text) => view.note(with_told(text).replace('\n', " ")),
             Answer::Bytes(first, size) => {
                 view.clear_note();
                 let names = format!("{} and {}", file_name(&paths.0), file_name(&paths.1));
-                self.0.dialogs.ask("Compare", format!("{names}\n{}", bytes_text(first, size)), &["OK"], |_| {});
+                let message = with_told(format!("{names}\n{}", bytes_text(first, size)));
+                self.0.dialogs.ask("Compare", message, &["OK"], |_| {});
             }
             Answer::Lines(compared) => {
                 view.clear_note();
-                self.show(paths, compared);
+                self.show(paths, compared, told);
             }
         }
     }
 
-    fn show(&self, paths: (PathBuf, PathBuf), compared: Compared) {
+    /// Shows `compared`; `told` (if any) on the layer's line with the encodings.
+    fn show(&self, paths: (PathBuf, PathBuf), compared: Compared, told: String) {
         let Some(window) = self.0.window.upgrade() else { return };
         let changes = gezik_core::diff::changes(&compared.rows);
-        let note = if compared.aligned { String::new() } else { TOO_DIFFERENT.to_owned() };
+        let note = match (compared.aligned, told.is_empty()) {
+            (true, _) => told,
+            (false, true) => TOO_DIFFERENT.to_owned(),
+            (false, false) => format!("{told}  ·  {TOO_DIFFERENT}"),
+        };
         let opening = self.0.state.borrow().is_none();
         let model = Rc::new(RowsModel(compared));
         window.set_df_rows(ModelRc::from(model.clone()));
@@ -911,13 +936,21 @@ mod tests {
         let right = Text::new("b".into(), "the lazy cat\nsame\nnew\n".into(), "UTF-8");
         let model = RowsModel(line_up(Arc::new((left, right)), Options::default()));
         let row = model.row_data(0).unwrap();
-        assert_eq!((row.l.as_str(), row.ls, row.le), ("1  the lazy dog", 12, 15), "after the number");
-        assert_eq!((row.rs, row.re, row.kind), (12, 15, 1));
+        assert_eq!((row.l.as_str(), row.lp.as_str(), row.lc.as_str()), ("1  the lazy dog", "1  the lazy ", "dog"));
+        assert_eq!((row.rp.as_str(), row.rc.as_str(), row.kind), ("1  the lazy ", "cat", 1));
+        assert!(row.l.starts_with(&format!("{}{}", row.lp, row.lc)), "the measured parts are the drawn text's start");
         assert_eq!(row.label.as_str(), "Changed: the lazy dog to the lazy cat");
         let added = model.row_data(2).unwrap();
         assert_eq!((added.l.as_str(), added.r.as_str(), added.kind), ("", "3  new", 2));
         assert_eq!(added.label.as_str(), "Added: new");
-        assert_eq!(char_spans("çay ılık", "çay sıcak"), ((4, 7), (4, 8)), "characters, not bytes");
+        let [all, before, changed] = side_parts(7, 3, "çay ılık", Some(5..11));
+        assert_eq!((all.as_str(), before.as_str(), changed.as_str()), ("  7  çay ılık", "  7  çay ", "ılık"));
+        assert_eq!(side_parts(7, 1, "same", None), ["7  same".to_owned(), String::new(), String::new()]);
+        assert_eq!(
+            side_parts(7, 1, "x", Some(1..1)),
+            ["7  x".to_owned(), String::new(), String::new()],
+            "nothing changed: no mark"
+        );
         assert_eq!(gezik_core::diff::changes(&model.0.rows), [0, 2]);
     }
 
