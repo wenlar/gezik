@@ -1824,3 +1824,429 @@ Başka yerde maliyet (bir koşu; master / düzeltme):
 - `measure.ps1` (3'er açılış, iki tur): açılış 49 / 47 ms ve 44 / 34 ms. Boşta bellek 9,2 / 8,8 MB ve 9,3 / 8,8 MB.
 - 100.000 dosyalı klasör (stress, güvenli kopya): yükleme CPU'su 359 / 266 ms. Yükleme sonrası 18,9 / 16,8 MB WS (commit 22,0 / 19,7). Kaydırma CPU'su 406 / 438 ms. Önceki 3 koşuluk A/B'de kaydırma CPU'su master 391–500 ms, segment heap 422–484 ms; fark gürültü içinde.
 - exe: 25.662.464 B (master 25.661.440 B, +1.024 B).
+
+## Adım 10, alt parça 10g (Tek süreçte çok pencere) sonrası
+
+- Yapı: `windows.rs` pencere kaydını, odak sırasını, olayı işlenen pencereyi (`current`) ve pencere başına parçaları (`Slot<T>`, 18 yuva; unutulan yuvayı bir test yakalar) tutar. `main.rs`'in pencere kurulumu `windows::open`'a taşındı; süreç parçaları (ayarlar, `Media`, `ViewMemory`, iş motoru, tek örnek, tepsi) `main`'de kaldı. Her pencerenin kancası `windows::route`'tur; arka plan sonuçları ve zamanlayıcılar başladıkları pencereye bağlıdır, kapanmış pencereninki düşer. `apply_config` süreç kısmı + her pencerede `apply_to_window`. Kare sınırı pencere başına.
+- Davranış: Ctrl+N / ⌘N aynı süreçte etkin klasörde, +24 px kaymış yeni pencere açar. Son olmayan pencere kapanınca yalnız o kapanır (işler sürer, bekleyen soru ya da çakışma listesi öbür pencereye geçer); son pencere tepsi, iş sorusu ve çıkış kuralından geçer. Tepsi Gezik'i bütün olarak gösterir ve gizler. Oturum: `[session]` en son odaklanan pencere, ek pencereler `[[session.window]]`; tek pencerede `state.toml` eskisi gibi. Sekme menüsü `Move to new window` (2021) ve birden çok pencerede `Move to window ▸` (2100–2163); eylem `move-tab-to-new-window` (tuşsuz), `Action::ALL` 102. Windows ve macOS'ta sekme pencereden koparılır (boşluğa: yeni pencere, sekme imlecin altında; başka pencerenin şeridine: o yuvaya; tek sekmeli kaynak kapanır; Esc iptal); Linux'ta dışarı sürükleme iptal olur. `--new-window` çalışan Gezik'te pencere açar (tek örnek iletisinde `NEW_WINDOW` bayrağı); eski ya da asılı bir Gezik'te kendi sürecini açar; `single-instance = false` iken ayrı süreçtir ve `state.toml`'a yazmaz. Adres geçmişi, palet son kullanılanları, seçim kalıbı, arşiv ve dönüştürme son değerleri bütün pencerelerde ortak. macOS'ta Window menüsü açık pencereleri listeler (Slint AppKit listesini bağlamadığı için Gezik kurar).
+- Ölçüm (sürüm, Windows, 2026-10-11; taban master): exe **25.663.488 → 25.798.144 bayt** (+134.656, bütçe 262.144). `measure.ps1`: açılış ve boşta bellek tabanla aynı (8,9 MB). `stress.ps1` 100k gürültü içinde. Ek pencere +4,8–5,2 MB (sınır 6,2; çerçeve arabelleği kapanınca geri verilir); tek ek pencereyle 10 aç-kapa sonrası +0,09 MB. Beş pencere birlikte 6 tur aç-kapa (`windows.ps1 -Cycles 6`): kapanış sonrası 9,0 → 9,3 / 9,3 / 9,5 / 9,7 / 9,7 / 9,8 MB, yani tur başına +0–0,3 MB, yavaşlıyor ama tam durmuyor; tutamaklar artmıyor. Spec §12'nin "taban + 0,3 MB" ölçütü tek ek pencerede tutuyor, beş pencerede tutmuyor (+0,84 MB). Kodda kapanan pencereden bir şey tutan yer bulunmadı (yuvalar, `CLOSING`, iş parçacığı yerelleri, Slint kayıtları); ayırıcı parçalanmasına benziyor, kanıtlanmadı. 10g sonrası bellek işinde yeniden bakılacak.
+- Bilinen sınırlar: başka bir Gezik penceresinden gelen sürüklemede hedef pencere sürükleme boyunca yeniden çizilmez (kaynağın OLE döngüsü winit'in olaylarını kuyruğa alır), bu yüzden orada yaylı sekme ve kenarda kayma yoktur; sekmeye bırakılan dosya o sekmenin klasörüne gider. Pencere dışında sekme hayaleti yok. Üst üste pencerelerde bırakma hedefi odak sırasıyla seçilir (winit z sırası vermez). Görev çubuğu ilerlemesi en son odaklanan pencerede. Tepsi kapalıyken "Close all windows" yalnız son kapanan pencerenin sekmelerini saklar (birlikte saklamanın yolu tepsi Quit).
+- İncelemelerde ve ekran testlerinde bulunup düzeltilen: erken çıkışlarda pencerenin Slint'ten sonra bırakılması; aynı turda iki pencere kapanınca görünmez süreç ve silinen oturum; Linux pano ve Windows UAC sahibinin kapanışta öne geçmemesi; `single-instance = false` iken `--new-window`'un oturumu çoğaltması; `Move to window ▸` sonrası ölü klavye; sağ ekran kenarında koparılan pencerenin birincil ekrana atlaması; büyütülmüş kaynaktan koparılan pencerenin kaynağın üstünde açılması; ikinci pencerenin adres geçmişine yazılmaması; tepsideyken bir pencerenin erişilemez kalması; oturumda arka pencerelerin ters sırası; paylaşılmayan son kullanılanlar; `--new-window <olmayan yol>` notunun ilk listeyle silinmesi; başka pencereden gelip sekmenin üstünden geçen bırakmanın yutulması.
+- macOS denetim listesi 260–270, Linux 200–206 bekliyor (§9.2 yoklamasının gerçek koşu isteyen maddeleri bu listelerde).
+
+## Windows ekran testleri: 10g Task 2–3 (2026-10-11 01:05-01:55, ajan)
+
+- Derlemeler kopyalandı, yeniden derlenmedi (oturumun scratchpad'inden `%TEMP%\gezik-gui-10g\bin\`'e):
+  - TABAN `base.exe` = `m10e\dead.exe` (10e, 10g'den önce; 25.661.440 B).
+  - SONRA `after.exe` = `m10g\task3-fix.exe` (`50a2b33`, 25.745.920 B; +84.480 B, bütçe 262.144).
+  - İkisinde de segment heap bildirimi yok; bellek sayıları karşılaştırılabilir.
+- Yöntem 10e ile aynı: Win32 `keybd_event`/`mouse_event` + `SendInput` (yazı) + UI Automation + `PrintWindow` piksel karşılaştırması (alfa dışında birebir). Betikler `m10eg`'den türetildi, `scratchpad\m10gg\` (`g.ps1`, `d.ps1`, `c.ps1`, çok pencere için `w.ps1`; testler `P`, `tM`, `W1`–`W6`, `WH`, `WT`, `WB`, `WM`, `WS`, `tJ`).
+  - `w.ps1`: bir süreçteki pencereleri listeler; `Front` artık PID'e değil seçilen pencerenin HWND'sine bakar (yalnız kendi başlık çubuğuna tıklar); tepsi için Gezik'in kendi gizli `Gezik tray` penceresine bildirim alanının göndereceği iletinin aynısı (`WM_APP+1`, `NIN_SELECT` / `WM_CONTEXTMENU`) gönderilir: başka sürece girdi yok.
+  - Win32 menülerinde UI Automation bu oturumda öğe döndürmedi (ilk koşu dışında); tepsi menüsünde Quit klavyeyle (↑ Enter), kabuk menüsünde Rename, önceden çekilmiş menü görüntüsüyle karşılaştırılıp konumla seçildi.
+- Pencere yerleşimi: birincil ekran (0,0 2560×1440). Tek pencere 1280×800 @ 40,40; yan yana testlerde A 1200×800 @ 40,40, B 1200×800 @ 1300,40.
+- Güvenlik:
+  - Her tuş/tıklama/tekerlekten önce ön plan penceresinin bu koşuda başlatılan bir Gezik PID'i, tıklamada noktanın altının da öyle olduğu denetlendi. Kullanıcı girdisinde 5 s boşta beklendi: 3 kez (01:14, 01:29, 01:44), hepsi kendiliğinden sürdü.
+  - Başka pencereye girdi gitmedi. Tepsi simgesine, Explorer'a tıklanmadı.
+  - Kendi PID'lerim 8 kez öldürüldü: tepsi açık ayarlarda `WM_CLOSE` pencereyi gizlediği için (W5 hata ayıklama koşuları) ve bir kez sağ sürükleme menüsü açık kaldığında (W4 ilk koşu). Kayıtlı 60 PID'in hiçbiri çalışmıyor.
+- Her oturumda taze `GEZIK_CONFIG_DIR` = `%TEMP%\gezik-gui-10g\cfg\<ad>`, `state.toml`'da `[hints] f3-moved = true`.
+- Veri `%TEMP%\gezik-gui-10g\data`: `px`, `dual`, `col`, `chain` (10e'den kopya); `job\src20k` (20.000 × 2 KB), `job\conf\src|dst` (5 aynı adlı dosya). `stress.ps1` 10e'nin `stress-100000` klasörünü okudu.
+- Kurallar: kabuğa dosya açtırılmadı, kayıt defterine yazılmadı, Geri Dönüşüm Kutusu'na dokunulmadı (çakışma listesinde Replace seçilmedi, çöp görüntülenmedi), UAC tetiklenmedi.
+- Klavye düzeni değiştirilmedi: başta ve sonda `Get-WinUserLanguageList` = `en-US=0409:0000041F`.
+- Ekran görüntüleri `%TEMP%\gezik-gui-10g\shots\` (98 dosya).
+
+### Sonuçlar
+
+**Genel: FAIL** (10g'ye ait 2 FAIL + 1 küçük FAIL + 1 bellek ölçütü; ayrıca iki derlemede de olan 2 eski hata).
+
+1. **Tek pencere TABAN ↔ SONRA — PASS** (iki eski hata ayrıca, FAIL 5 ve 6).
+   - Piksel eşliği birebir: liste, ızgara, süzgeç, arama, ad değiştirme kutusu (2 kare), palet, sütunlar (Ctrl+Shift+3), sağ kenar çubuğu + önizleme, gizli kenar çubuğu, iki bölme (F3, seçim, Tab, ızgara), açık tema, koyu tema, ayar yeniden yükleme (koyu + sağ kenar çubuğu) (`P-*`).
+   - Gizli kenar çubuğunda 4 px fark TABAN↔TABAN koşusunda da var (zamanlama gürültüsü). View menüsü ve Hızlı Bakış ekran görüntülerindeki farklar yalnız pencere dışındaki masaüstü duvar kağıdında (`P-diff-viewmenu.png`, `P-diff-quicklook.png`).
+   - Tab sırası aynı: Up > Refresh > adres > … > pencere > Up.
+   - View menüsü öğeleri aynı. Hızlı Bakış: Space açtı, → sonraki dosya, Esc kapattı (ikisi aynı).
+   - Ctrl+Shift+3 (Türkçe Q, ölü tuş): sütunlar; Ctrl+Shift+1 liste (ikisi aynı).
+   - Yan fare tuşları: XB1 geri, XB2 ileri (ikisi aynı).
+   - Kapatıp açınca oturum: `px,col` sekmeleri geri geldi; `state.toml`'da `[[session.window]]` **yok**, `[session]` TABAN'la aynı biçimde.
+   - İş paneli / çakışma listesi tek pencerede çalışıyor (madde 3d).
+2. **Ctrl+N — PASS (bir gözlem).**
+   - Tek süreç (`after` tek PID), yeni pencere etkin klasörde (`Alpha`), tek bölme, aynı boyutta (1280×800), +24 px (40,40 → 64,64), önde ve odakta.
+   - Arama sonuçlarında ve This PC'deyken Ctrl+N → başlangıç klasörü (`Home`).
+   - Gözlem 1: büyütülmüş pencereden Ctrl+N yeni pencereyi de büyütülmüş açıyor (@-8,-8 2576×1408).
+   - Bağımsızlık: B'de gezinme, yeni sekme, palet (yalnız B'de açık), kenar çubuğu tıklaması (Home), XB1 yalnız B'yi değiştirdi; A aynı kaldı.
+   - Yan yana, A odaktayken B'nin üstünde tekerlek: B `b001..b024` → `b012..b035`, A yerinde, odak A'da. B'nin satırında üzerine gelme vurgusu (24.700 px, satır bandı); A'nın karesi birebir.
+   - Ayar yeniden yükleme iki pencerede: `theme`/`sidebar` değişikliği ikisinde de (arka plan `#1B1C20` → `#FFFFFF`).
+   - Tek örnek: A en son odaktayken `after.exe …\Gamma` → A'da yeni sekme, A önde, ikinci süreç çıktı.
+   - **FAIL 1** (adres geçmişi, aşağıda).
+3. **Kapatma — PASS (tepsi FAIL 2 hariç).**
+   - a) B'nin X'i: yalnız B kapandı, soru yok, süreç sürüyor, A odakta.
+   - b) B'nin tek sekmesinde Ctrl+W: B kapandı.
+   - c) B'de 20.000 dosyalık kopya sürerken B'yi kapat: iş sürdü, panel A'da (`Copying src20k … 38%`), 5 s'de 20.000 dosya, A'da `Done`.
+   - d) B'de çakışma listesi, `a.txt` için `Keep both` seçili; B kapatıldı → liste A'da aynı kararlarla (`Keep both,Skip,Skip,Skip,Skip`), A'da Start → `a (2).txt` oluştu (betikle silindi) (`W2-d-B.png`, `W2-d-A.png`).
+   - e) Son pencerenin X'i iş sürerken: `1 operation is running` / `Keep open` / `Cancel them and quit` sorusu (`W2-e-question.png`); Keep open, iş bitti.
+   - f) Tepsi kapalı, iki pencereye aynı turda `WM_CLOSE` (görev çubuğu "Close all windows" gibi): ikisi 3/19 ms'de gizlendi, 519 ms'de süreç çıktı. Yeniden gösterilme (titreme) yok (2 ms'lik görünürlük yoklaması). `state.toml`'da `[session]` duruyor; yalnız son kapanan B'nin sekmesi var (A "kapanıyor" sayıldığı için düştü, tasarım gereği).
+   - g) Tepsi açık, aynı turda iki `WM_CLOSE`: ikisi gizlendi (titreme yok), süreç tepside → **FAIL 2**.
+   - h) Bir pencere tepsiye gizli (tepsi tıklaması A'yı gizledi), öbürü kapatıldı: B kapanmadı, son pencere kuralıyla tepsiye gizlendi (doğru). Sonrası FAIL 2 ile aynı.
+4. **Pencereler arası dosya sürükleme — PASS (küçük FAIL 3).**
+   - A'dan B'nin listesine: aynı sürücü, taşıdı; B listesi `src1.txt`, A listesi hemen güncel. Ctrl+Z geri taşıdı.
+   - Ctrl ile sürükleme kopyaladı, Ctrl+Z kopyayı geri aldı.
+   - Sağ tuşla: `Copy here / Move here / Cancel` menüsü (154×72; pencere içinde klasör satırına sağ sürüklemede `Create link here` dahil 180×94). Esc ile iş yok; `Move here` taşıdı, Ctrl+Z geri aldı (`W4-rightdrag.png`).
+   - B'nin öbür sekmesine (`in2`) bırakma `in2`'ye taşıdı, Ctrl+Z geri aldı.
+   - Sürükleyerek çakışma: liste B'de (hedef pencere) açıldı; Cancel operation ile iş yok.
+   - Bırakmalardan sonra A'da tıklama (`src2` seçili), ↓ (`src3`), Ctrl+A (8 seçili) A'da; B'nin seçimi ve başlığı değişmedi; odak A'da.
+   - Gözlem 2: bırakmadan sonra odak kaynak pencerede (A) kalıyor.
+   - Explorer'dan B'ye bırakma ve kenar çubuğu pinine bırakma **denenmedi** (başka uygulamaya girdi yok; pinler kullanıcının klasörleri).
+5. **Hızlı Bakış tek — PASS.** A'da Space: `src1.txt` Hızlı Bakış'ı. B'de Space: A'nınki kapandı, yalnız `note.txt` açık. B'yi kapatınca Hızlı Bakış da kapandı, A ve süreç kaldı (`W4-ql-B.png`).
+6. **Oturum, üç pencere — PASS (bir gözlem).**
+   - A iki bölme + eşli gezinme, B büyütülmüş (2 sekme), C 1000×700 @ 900,400; en son A odakta; tepsi menüsünden Quit.
+   - `state.toml`: `[session]` A (`dual = true`, `sync = true`, sağ sekmeler), `[[session.window]]` C, sonra B (`maximized = true`, 2 sekme).
+   - Yeniden açılış: üçü yerinde, A önde, iki bölmeyle; B büyütülmüş `Beta,Pics`; C 900,400 1000×700.
+   - Gözlem 3: arka iki pencerenin üst üste sırası ters geldi (önce A, C, B; sonra A, B, C).
+   - `[session] restore = false`: tek pencere (başlangıç klasörü), çıkışta `[session]` ve liste yazılmadı.
+   - Bozuk girdiler: `tabs = 3` olan girdi atlandı. `width = "wide"` olan girdi **atlanmadı**: varsayılan boyutla (900×600, 312,312) geri geldi, yalnız bozuk alan yok sayıldı (Gözlem 4).
+7. **`--background` ve kabuk menüsü — PASS (eski FAIL 6).**
+   - Tepsi açık, iki pencere kayıtlıyken `--background`: pencere görünmüyor, tepsi var. İlk tepsi tıklamasında iki pencere birlikte geldi. Boyutları yanlış (617 px genişlik): TABAN'da da aynı, FAIL 6.
+   - Kabuk bağlam menüsü: A'da `src2.txt`'ye sağ tık (Windows menüsü 265×674). Menü açıkken imleç B'nin listesinde gezdirildi, sonra `Rename` seçildi: ad kutusu **A'da** açıldı (A'da 2 Edit, B'de 0), odak A'da; Esc ile ad değişmedi (`W6-rename.png`).
+   - Kısayol tuşu (`[system] hotkey = "ctrl+alt+shift+f9"`) bu yapılandırmada pencereyi gizlemedi; nedeni araştırılmadı (System Integration'dan kurulum gerekebilir). Tepsiye gizleme bunun yerine tepsi tıklamasıyla yapıldı.
+8. **Bellek ve CPU — `measure.ps1` / `stress.ps1` PASS, boşta CPU PASS; aç-kapa ölçütü FAIL 4.**
+   - İkinci pencere açıkken +5,3 MB özel çalışma kümesi; kapanınca geri veriliyor (çerçeve arabelleği bırakılıyor). Tutamak/GDI/USER tabanda ya da altında (394→385, 50, 17→16).
+   - Ama tabana dönüş +0,3 MB'ın üstünde (ayrıntı Ölçümler'de).
+   - Boşta CPU: iki pencere 10 s 0 ms, tek pencere 10 s 0 ms. 500 ms arayla iki kare birebir.
+- **Denenmedi:**
+  - UAC'nin odaktaki pencerenin önünde çıkması: UAC kuralı.
+  - Explorer'dan bırakma; kenar çubuğu pinine bırakma.
+  - Çöp görünümünde Ctrl+N: çöpe dokunmama kuralı.
+  - Kısayol tuşuyla göster/gizle (yukarıda).
+  - Toplu adlandırma, sıkıştır, dönüştür, Info, System Integration katmanları; sekme sürükleme, yığın. Task 2 listesinin 8. maddesi: zaman yetmedi, tek pencere piksel eşliğinin dışında.
+
+### FAIL 1: ikinci pencerede gezilen klasörler adres geçmişine yazılmıyor
+
+- Yeniden üretme (`WH.ps1`):
+  1. Taze ayar, `after.exe …\data\col`; A'da adresle `col\Alpha`.
+  2. Ctrl+N (B), B'de adresle `col\Gamma`, sonra `col\Pics`.
+  3. B'yi kapat (ya da açık bırak), A'da adresle `col\Beta`, çık.
+  4. `state.toml` `[[history.folders]]`: yalnız `Alpha` ve `Beta`. `Gamma` ve `Pics` yok. B açık kalıp en son kapanan pencere olsa da aynı (bu durumda `[session]` B'nin `Pics`'i, geçmiş yine yalnız A'nınkiler).
+- Tek pencerede (TABAN ve SONRA) adresle gidilen her klasör yazılıyor.
+- Muhtemel neden: Task 3 raporundaki risk (yeni pencerenin süreç değerleri açılıştaki state'in kopyası); B'nin ziyaretleri kaydedilen geçmişe katılmıyor.
+
+### FAIL 2: tepsi açıkken iki pencere aynı turda kapanınca biri erişilemez gizli kalıyor
+
+- Yeniden üretme (`W3.ps1 g`):
+  1. `settings.toml` `[system] tray = true`, `state.toml` `[tray] told = true`.
+  2. `after.exe …\col`, A `Alpha`'ya; Ctrl+N, B `Beta`'ya.
+  3. A ve B'ye arka arkaya `WM_CLOSE` (görev çubuğu "Close all windows").
+  4. İkisi de gizli ve kayıtta (`Alpha` hidden, `Beta` hidden).
+  5. Tepsi tıklaması (ya da tepsi menüsünde Show Gezik) yalnız A'yı gösteriyor. B gizli kalıyor ve oturumda hiçbir yoldan gösterilemiyor; tepsi tıklaması hep odaktakini aç/kapa yapıyor.
+  6. Quit sonrası yeniden açılışta B de geri geliyor (`[[session.window]]` `Beta`). Kullanıcı kapattığını sanıyor.
+- Aynı kök `W3.ps1 h`'de de var:
+  1. A tepsi tıklamasıyla gizlendi, B'nin X'i → B de tepsiye gizlendi.
+  2. Tepsi tıklaması yalnız B'yi gösteriyor. A gizli ve erişilemez kalıyor, belleği de kalıyor.
+- Titreme yok: 2 ms'lik yoklamada hiçbir pencere gizlendikten sonra yeniden gösterilmedi.
+- Beklenen: tepsiden gösterme gizli bütün pencereleri göstermeli (ilk `--background` gösterimi gibi `show_all`), ya da aynı turda kapanan öbür pencere gerçekten kapanmalı.
+
+### FAIL 3 (küçük): başka pencereden sürüklerken sekmenin üzerinde beklemek sekmeyi açmıyor
+
+- `WT.ps1`: pencere içinde dosyayı öbür sekmenin (`in2`) üstünde 2,5 s tutunca sekme açılıyor (`in2 — Gezik`). A'dan B'nin `in2` sekmesine aynı bekleme B'de sekmeyi değiştirmiyor (`in1` kalıyor).
+- Bırakma yine doğru: `in2`'ye taşıyor. Sekmede bekleme zamanlayıcısı muhtemelen kaynak pencerenin `ACTING`'iyle kuruluyor.
+
+### FAIL 4 (ölçüt): ikinci pencere aç-kapa sonrası bellek +0,3 MB'ın üstünde
+
+- `WM.ps1`, `col`, 1280×800. Her döngüde Ctrl+N, 2,5 s bekleme, `WM_CLOSE`, 4 s bekleme. Özel çalışma kümesi (WSP), özel bayt (Priv), tutamak:
+
+  | | 5 döngü (koşu 1) | 10 döngü (koşu 2) |
+  |---|---|---|
+  | taban | 9,50 / 12,34 MB, 394 | 9,73 / 12,57 MB, 394 |
+  | açıkken | 14,7–14,9 / 17,6–17,8 MB | 15,0–15,4 / 18,0–18,3 MB |
+  | 1. kapanış | +0,29 / +0,33 MB | +0,39 / +0,43 MB |
+  | 3. kapanış | +0,49 / +0,70 MB | +0,82 / +1,38 MB |
+  | son | +0,49 / +0,54 MB, 385 | +1,02 / +1,42 MB, 385 |
+
+- Çerçeve arabelleği bırakılıyor (+5,3 MB geri geliyor). Tutamak, GDI (50) ve USER (16–17) artmıyor.
+- Özel bayt 3. döngüden sonra ~+1,4 MB'ta duruyor. WSP yavaş artıyor (10 döngüde +0,4 → +1,0). 10b/10e'deki ayırıcı tutmasına benziyor, ama spec §12'nin +0,3 MB ölçütü karşılanmıyor. Task 3'ün açık riski (kapanan pencerenin bölmelerinde `Rc` döngüsü) ayrı denetlenmeli.
+
+### FAIL 5 (eski, iki derlemede de): simge durumundan dönüşte pencere yalnız kısmen çiziliyor
+
+- Yeniden üretme (`tM.ps1`): taze ayar, `px`. `WM_SYSCOMMAND SC_MINIMIZE`, sonra `SC_RESTORE` (görev çubuğunun yaptığı); `ShowWindow` 6/9 ile de aynı.
+- Sonuç: yalnız dosya listesi çiziliyor. Sekme şeridi, araç çubuğu, kenar çubuğu, durum satırı siyah (ekrandan `CopyFromScreen` ile de; `M-after-post-scr.png`, `M-base-post-scr.png`). 4 s sonra ve imleç pencerede gezince de düzelmiyor; yalnız üzerine gelinen öğe (ör. kenar çubuğundaki Home) çiziliyor (`M-base-post-move2.png`).
+- TABAN (10e) ve SONRA'da birebir aynı: 10g'den değil. Checklist "simge durumundan dönüşte boş alan kalmaması" maddesine göre FAIL.
+
+### FAIL 6 (eski, iki derlemede de): `--background` başlangıcında pencere en küçük genişlikte gösteriliyor
+
+- `WB.ps1`: `[system] tray = true`, `state.toml` `[window] width = 1084, height = 661, x = 700, y = 300`. `--background` başlat, tepsi tıklaması: pencere 700,300'de ama **617×700** (yükseklik doğru, genişlik en küçük). TABAN ve SONRA aynı.
+- Çıkışta bu genişlik `state.toml`'a yazılıyor (`width = 601`). Kalıcı oluyor.
+- 10g'de iki kayıtlı pencerenin ikisi de 617 genişlikle geliyor.
+
+### Gözlemler (FAIL değil)
+
+1. Büyütülmüş pencereden Ctrl+N yeni pencereyi büyütülmüş açıyor.
+2. Pencereler arası bırakmadan sonra odak kaynak pencerede kalıyor (Explorer gibi).
+3. Üç pencereli oturum dönüşünde öndeki pencere doğru, arka iki pencerenin sırası ters.
+4. Tek alanı bozuk `[[session.window]]` (ör. `width = "wide"`) atlanmıyor, varsayılan boyutla açılıyor; tamamen bozuk girdi (`tabs = 3`) atlanıyor.
+5. Tepsi kapalıyken "Close all windows" yalnız son kapanan pencerenin sekmelerini saklıyor (öbürü "kapanıyor" sayılır). Tepsi kapalıyken birden çok pencereyi birlikte saklamanın yolu yok (yalnız tepsi Quit ya da oturum kapanışı).
+
+### Ölçümler
+
+| Ölçüm | TABAN (10e) | SONRA (`50a2b33`) |
+|---|---|---|
+| exe | 25.661.440 B | 25.745.920 B (+84.480; bütçe 262.144) |
+| `measure.ps1` (5 koşu, 2 tur): açılış | 49 / 33 ms | 38 / 46 ms |
+| `measure.ps1`: Görev Yöneticisi belleği | 9,2 / 9,3 MB | 9,3 / 9,3 MB |
+| `stress.ps1` 100.000 dosya, yükleme sonrası | 18,8 MB | 18,8 MB |
+| `stress.ps1` kaydırma sonrası | 19,0 MB | 18,9 MB |
+| `stress.ps1` kaydırma CPU'su (60 tekerlek) | 406 ms (2,65 s) | 359 ms (2,71 s) |
+| Tek pencere `col` (WSP / özel / tutamak) | — | 9,41–9,73 MB / 12,25–12,57 MB / 394–397 |
+| İki pencere | — | 14,7–16,2 MB / 17,6–19,2 MB / 398–424 |
+| Boşta CPU 10 s: iki pencere / tek pencere | — | 0 / 0 ms |
+| 5 / 10 aç-kapa sonrası (taban farkı, WSP / özel) | — | +0,49 / +0,54 MB; +1,02 / +1,42 MB (FAIL 4) |
+
+- `measure.ps1` özgün haliyle `-Config` ile koşuldu (`[window]` 40,40, `[hints] f3-moved = true`). `stress.ps1` 10e kopyası (`stress-copy.ps1`), her tekerlekten önce ön plan + imleç altı denetimi.
+
+### Temizlik
+
+- Başlattığım bütün Gezik süreçleri kapandı (60 kayıtlı PID, hiçbiri çalışmıyor; `gezik`/`base`/`after` süreci yok).
+- Veri eski halinde: `col\drop` 8 öğe, `in1..3` boş; `job\out` boş; `job\conf\dst` 5 dosya. `cfg\`, `shots\` (98 dosya), `bin\` duruyor.
+- Kayıt defterine yazılmadı, Geri Dönüşüm Kutusu'na dokunulmadı, kaynak değişmedi, commit yok.
+- `Get-WinUserLanguageList` sonda yine `en-US=0409:0000041F`.
+
+### Son tur (fix2)
+
+- 2026-10-11 02:33-03:42, ajan. Birincil ekran (0,0 2560×1440).
+- Derlemeler (`%TEMP%\gezik-gui-10g\bin\`):
+  - TABAN `base2.exe`: master `05d775c`, bu turda derlendi (`RUST_MIN_STACK=67108864 cargo build -j 4 --release -p gezik`, ilk denemede temiz), 25.662.464 B.
+  - SONRA `after2.exe` = `m10g\fix2.exe` (`1fe027c`, segment heap dahil), 25.797.632 B (+135.168, bütçe 262.144).
+- Betikler `scratchpad\m10gg2\`:
+  - `m10gg`'den kopyalar (`after` → `after2`): `g`, `d`, `c`, `w`, `WH`, `W3`, `WT`, `W5`, `WM2`, `P`, `diff`, `stress-copy`.
+  - `run.ps1`: kullanıcı 8 s boşta olana dek bekler.
+  - `tear.ps1`: sekme sürükleme. Bırakma yalnız nokta benim Gezik'imin üstündeyse ya da yakalamanın (capture) benim Gezik'imde olduğu `GetGUIThreadInfo` ile görülürse yapılır; değilse imleç başlangıca döner, sonra bırakılır.
+  - Yeni testler: `WT2`, `WT3`, `WD`, `WD2`, `WR`, `WMp`, `WK`, `WN`, `WN4`, `WC`, `WC2`, `WC9`, `W3x`, `WI`, `windows-copy.ps1`.
+- Masaüstüne koparma:
+  - "Masaüstü" yerine başka süreçte kendi Gezik'im (`base2.exe`, ayrı ayar) arka plan penceresi olarak kullanıldı; bırakma hep kendi pencereme düştü.
+  - Tek istisna C9: büyütülmüş pencere ekranı kapladığı için bırakma görev çubuğu şeridinde (y 1418). Yakalama Gezik'teydi, girdi Gezik'e gitti.
+- Güvenlik:
+  - Her girdiden önce ön plan penceresi ve imleç altı denetlendi.
+  - Kullanıcı girdisi nedeniyle 3 kez beklendi. 2 koşu 2 dk sonra vazgeçti; WT3 yeniden koşuldu, WI tamamlanmadı (aşağıda).
+  - Win32 menülerinde UI Automation bir kez askıda kaldı (WMp ilk koşu): betik ve kendi Gezik'im öldürüldü. Menüler bundan sonra yalnız ekran görüntüsü ve konumla okundu.
+- Klavye düzeni değiştirilmedi: başta ve sonda `en-US=0409:0000041F`.
+- Kayıt defterine yazılmadı, Geri Dönüşüm Kutusu'na dokunulmadı, UAC yok, kabuğa dosya açtırılmadı. `--new-window` olmayan yol denemesinde yeni pencere başlangıç klasörünü (kullanıcının Home'u) yalnız listeledi.
+- Kullanıcının `%APPDATA%\gezik\state.toml`'u değişmedi (10.10 13:02). `windows-copy.ps1`'in bozuk yolla ilk koşusundan sonra denetlendi.
+- Ekran görüntüleri `%TEMP%\gezik-gui-10g\shots\`; bu turdakiler `WT2-*`, `WT3-*`, `WD-*`, `WR-*`, `WMp-*`, `WK-*`, `WN*`, `WC-*`, `P-base2-*`, `P-after-*`.
+
+#### Sonuçlar
+
+**Genel: FAIL.** 4 FAIL var (ikisi yeni). Geri kalan maddeler PASS.
+
+**A. Önceki FAIL'ler ve düzeltmeler**
+
+1. **FAIL 1 (adres geçmişi) — PASS.** `WH.ps1`: `[[history.folders]]` Alpha, Gamma, Pics, Beta. B önce kapansa da, en son kapansa da aynı.
+2. **FAIL 2 (tepsi) — PASS.**
+   - `W3 g`: aynı turda iki `WM_CLOSE` → ikisi de 16 ms'de gizlendi, süreç tepside. Tepsi tıklaması **ikisini de** getirdi, A önde. Quit sonrası `[session]` A, `[[session.window]]` B.
+   - `W3 h`: iki pencere görünürken tepsi tıklaması **ikisini de** gizledi. Tek pencere artık gizlenemediği için eski h senaryosu kurulamıyor. Tepsi tıklaması ikisini de getirdi.
+   - `W3 f` (tepsi kapalı): ikisi 13 ms'de gizlendi, 392 ms'de süreç çıktı, titreme yok.
+   - `W3x`:
+     - Pencereler tepsideyken `--new-window Gamma`: gizli iki pencere ve yeni pencere görünür, yeni pencere önde.
+     - İki pencere görünürken X ile kapatılan pencere gerçekten kapandı (`IsWindow` false).
+     - Son pencerenin X'i onu tepsiye gizledi; tepsi tıklaması yalnız onu getirdi.
+3. **FAIL 3 (yaylı sekme) — FAIL, sürüyor.** Ayrıntı FAIL 7'de; ayrıca yeni FAIL 8.
+4. **Kenarda otomatik kaydırma (A'dan B'ye) — kısmen.**
+   - `WD.ps1` 3: B `col\many`'de (60 klasör). İmleç B listesinin alt kenarında 1,5 s, sonra Esc.
+   - Sürükleme sırasında B'nin ekranı ve UIA `f00..f23`'te kaldı (`WD-after-3-B.png`). Esc'ten sonra B `f28..f51`.
+   - Yani liste içeride kayıyor ama **sürükleme boyunca B yeniden çizilmiyor**; kullanıcı kaydırmayı görmüyor. Kök FAIL 3 ile aynı (FAIL 7).
+5. **Üç pencereli oturum sırası — FAIL (Gözlem 3 sürüyor).** `W5.ps1` iki kez koşuldu.
+   - Çıkıştan önce z sırası: A, C (Gamma), B (Pics, büyütülmüş).
+   - `state.toml`: `[session]` A, `[[session.window]]` C, sonra B. Bu doğru.
+   - Yeniden açılışta iki koşuda da A, **B, C**. A önde ve iki bölmeli; konumlar ve sekmeler doğru.
+6. **Kayıtlı dikdörtgeni olmayan / büyütülmüş pencereden koparma — PASS (notla).**
+   - `WC9`: `[window] maximized = true` boyutsuz yazıldı. Bu ayarla pencere büyütülmüş **açılmadı**: boyut bozuk sayıldı, 916×639 normal açıldı, kayıtlı dikdörtgen yok. Koparınca yeni pencere 1376,1369'da 916×639 (900×600 iç). İlk sekmesinin ortası tam imleçte (1500,1418).
+   - `WC2` C9: kaydı yok, ama `MoveWindow` ile 1200×800 yapılıp büyütülmüş pencere. Ekranı kapladığından bırakma görev çubuğu şeridine (yakalama Gezik'te). Yeni pencere büyütülmüş değil, 1776,1369'da **1200×800** (kaynağın normal boyutu, `placed()`'in kuralı). İlk sekmenin ortası imleçte.
+   - Not 1: iki durumda da pencere birincil ekranın sağına ve altına taşıyor. 1776 + 1200 > 2560: sağ kısmı öbür monitörde, alt kısmı ekran dışında. Başlık çubuğu birincil ekranda, tutulabiliyor.
+   - Not 2: "gerçekten büyütülmüş açılmış, hiç normal boyutu olmamış pencere" ayar dosyasıyla kurulamadı (Gözlem 4'teki kural). Onun yerine yukarıdaki iki durum denendi.
+7. **Paylaşılan son kullanılanlar — PASS.** `WR.ps1`.
+   - B'de paletle `Invert Selection` ve `Select by Pattern…` (`r0*.txt`) çalıştırıldı.
+   - A'nın paleti (boş sorgu) en üstte `Select by Pattern…`, `Invert Selection` gösteriyor (`WR-pal-2000265615.png`).
+   - A'da Select by Pattern kutusu `r0*.txt` ile geldi.
+   - `state.toml`: `[selection] last-pattern = "r0*.txt"`, `[palette] recent = ["action:select-pattern", "action:invert-selection"]`.
+   - Yeniden açılışta ikisi de aynı (`WR-pal-363789272.png`).
+
+**B. Task 4 (menüyle taşıma, `--new-window`) — PASS, bir FAIL (FAIL 9)**
+
+- Sekme menüsü:
+  - Tek pencerede: Duplicate, Move to other pane, Move to new window, Lock tab, Close, Close other tabs, Save tabs as…. `Move to window ▸` yok (`WMp-one.png`).
+  - İki pencerede `Move to window ▸` var (`WMp-two.png`).
+- `WK.ps1`:
+  1. `Move to new window` (iki sekmeli A'nın `Beta`'sı):
+     - Yeni pencere 64,64 1200×800 (+24, aynı boyut), önde, tek süreç.
+     - Sekmeleri yalnız `[Beta]`. Seçim `b003.txt` geldi, Back etkin, Alt+← → `Alpha`.
+     - A'da yalnız `[col]` kaldı.
+  2. Tek sekmede `Move to new window`: hiçbir şey olmadı (yeni pencere 0).
+  3. Palet `Move Tab to New Window`: yeni pencere `[Gamma]`, A'da sekme gitti.
+  4. `Move to window ▸`:
+     - Alt menüde yalnız öbür iki pencere, açılış sırasıyla: `Beta — Gezik`, `Gamma — Gezik` (`WK-4-submenu.png`).
+     - İlki seçildi: sekme hedefin etkin sekmesinin ardına gitti (`[Beta, many, Pics]`), hedef öne geldi.
+     - Kaynak A yalnız başlık çubuğuyla öne alındı, içeriğe tıklanmadı. ↓↓ seçimi değiştirdi, Ctrl+T sekme açtı: klavye çalışıyor.
+  5. D'nin tek sekmesi `Move to window ▸` ile A'ya: D kapandı, süreç sürdü, A `[col, Gamma]`.
+  6. Oturum: tepsi Quit → `[[session.window]]` `Beta, many, Pics`. Yeniden açılışta iki pencere sekmeleriyle geri geldi.
+- `WN.ps1`:
+  1. Gezik çalışırken `--new-window Gamma`: çağıran çıktı, tek süreç, yeni pencere 64,64'te önde, `[Gamma]`.
+  2. İki yol (`Alpha` + `Beta\b002.txt`): yeni pencere `[Alpha, Beta]`, Beta önde, `b002.txt` seçili.
+  3. Olmayan yol: yeni pencere başlangıç klasöründe açıldı ama "not found" notu **hiç görünmedi** → FAIL 9.
+  4. Bayraksız `gezik Pics`: son kullanılan pencerede yeni sekme, yeni pencere yok.
+  5. Gezik kapalıyken `--new-window Gamma`: ilk pencere oldu, süreç sürüyor. Ardından bayraksız `gezik Pics` ona gitti (çağıran çıktı, sekme eklendi). Çıkışta `[session]`'a Gamma ve Pics yazıldı.
+  6. `single-instance = false`:
+     - `--new-window` ayrı süreç oldu, yalnız 1 penceresi var (`Gamma`), eski pencereler çoğalmadı, tepsi penceresi yok. Ana süreçte 1 pencere.
+     - İkinci süreç kapanınca `state.toml` bayt bayt aynı, değişiklik zamanı da aynı.
+- `gezik --help`: `--new-window      a new window in the running Gezik (a new process if none answers)` satırı var.
+
+**C. Task 5 (sekme koparma ve bırakma) — PASS** (`WC.ps1`, `WC2.ps1`)
+
+- **C1, masaüstüne (arka plan penceresine):**
+  - Yeni pencere tek süreçte açıldı. İlk sekmenin ortası tam bırakma noktasında (1900,1100).
+  - Seçim `b003.txt` ve geçmiş (Back) geldi, pencere büyütülmüş değil.
+  - Sekme pencere dışındayken A'nın şeridinde çizgi yok (`WC-1-A-mid-strip.png`).
+  - Not: yeni pencere 1776,1051 1200×800; sağı öbür monitöre taşıyor.
+- **C2, öbür pencerenin şeridine** (Pics'in sağ ucu): B'de Pics ile many arasında çizgi var (`WC-2-B-mid-strip.png`). Bırakınca `[Beta, Pics, Gamma, many]`, B önde, Gamma etkin.
+- **C3, öbür pencerenin listesine:** çizgi yok (`WC-3-B-mid-strip.png`), sekme sona gitti (`…, wsrc`), B önde.
+- **C4, tek sekmeli pencere:** arka plana bırakınca hiçbir şey olmadı (pencere ve sekme yerinde). B'nin listesine bırakınca sekme B'nin sonuna gitti, kaynak pencere kapandı, süreç sürüyor.
+- **C5, üst üste pencereler:** E, B'nin üstüne bindirildi ve en son o tıklandı. Kesişime bırakılan sekme E'ye gitti, E önde.
+- **C6, Esc:** B'nin şeridi üstünde çizgi vardı (`WC-6-B-before-esc-strip.png`), Esc'ten sonra yok (`WC-6-B-after-esc-strip.png`). Bırakınca iki pencerede de değişiklik yok.
+- **C7, görünmez kenarlık:** A'nın görünür çerçevesi 47,40-1233,833 (GetWindowRect 40-1240).
+  - Görünür sağ kenarın 3 px dışına (1236; görünmez kenarlık, `WindowFromPoint` A) bırakma: yeni pencere açıldı (koparma).
+  - 3 px içine bırakma: koparma yok, sıralama değişti.
+- **C8, pencere içi sıralama:** `col` → Alpha'nın ardına doğru gitti. Kendi başlık çubuğuna, Gamma'nın x'inde bırakma sıralamayı değiştirdi (`Alpha` sona), yeni pencere açılmadı.
+- C6'dan sonraki "sonraki sürükleme normal" adımı o betikte koşmadı (A'da sekme kalmamıştı). C8'deki sürüklemeler bunu karşılıyor.
+- Denenmedi: farklı ölçekli ikinci monitör (madde 9). Öbür monitör kullanıcının; yalnız birincil ekran kullanıldı.
+
+**D. Tek pencere TABAN ↔ SONRA — PASS** (`P.ps1`, `base2` / `after`)
+
+- Birebir aynı: liste, ızgara, süzgeç, arama, ad değiştirme (2 kare), palet, sütunlar, sağ kenar çubuğu + önizleme, iki bölme (F3, seçim, Tab, ızgara), açık tema, koyu tema, ayar yeniden yükleme.
+- Gizli kenar çubuğunda 4 px fark: önceki turdaki zamanlama gürültüsü.
+- View menüsü ve Hızlı Bakış farkları yalnız pencere dışındaki duvar kağıdında (`P-diff-viewmenu.png`).
+- Metin çıktıları iki derlemede aynı: odak, Tab sırası, View menüsü (246×688), Hızlı Bakış, Ctrl+Shift+3/1, XB1/XB2, oturum, `[[session.window]]` yok.
+- Simge durumundan dönüş farkı (eski FAIL 5) iki derlemede aynı.
+
+**E. Ölçümler** (tablo aşağıda)
+
+- `windows.ps1 -Cycles 3`: ölçüte göre **FAIL 10**.
+- `WM2` (tek ek pencere, 10 döngü): +0,09 MB, PASS.
+- `measure` ve `stress`: TABAN ile aynı.
+- Boşta CPU: koşulamadı (kullanıcı etkin; aşağıda).
+
+#### FAIL 7 (FAIL 3'ün devamı): başka pencereden sürüklerken hedef pencere yeniden çizilmiyor, yaylı sekme görünmüyor
+
+- Yeniden üretme (`WT2.ps1`, `WT2.ps1 -Wiggle`):
+  1. A 1200×800 @40,40, `col\drop`.
+  2. B (Ctrl+N) @1300,40, sekmeleri `in1` (etkin) ve `in2`.
+  3. A'dan `src4.txt`'yi B'nin `in2` sekmesine sürükle, 3 s bekle (hareketsiz ya da 1 px kıpırdatarak).
+- Sonuç:
+  - 100 ms arayla okunan B başlığı 3 s boyunca `in1 — Gezik`. Ekran görüntüsünde de B hâlâ `in1`'de (`WT2-B-hold.png`).
+  - Bırakınca dosya `in2`'ye taşındı ve B'nin başlığı `in2` oldu. Yani sekme bir noktada içeride açılıyor, ama sürükleme bitene dek ekrana gelmiyor.
+  - Kenarda kaydırma da aynı: liste içeride kayıyor (bırakınca `f28..f51`), sürüklerken ekran `f00..f23`'te (`WD-after-3-B.png`).
+- Pencere içinde (A'dan A'nın sekmesine) yaylı sekme 1,2 s'de açılıyor ve görünüyor (`WT.ps1 -Hold 1200`).
+
+#### FAIL 8 (yeni): başka pencerenin sekmesi üzerinden geçen sürükleme B'nin listesine bırakılamıyor
+
+Veri kaybı yok, ama bırakma yutuluyor.
+
+- Yeniden üretme (`WD2.ps1`, `WD.ps1` 2):
+  1. Kurulum FAIL 7'deki gibi.
+  2. A'dan `src4.txt`'yi sürükle; B'nin `in2` sekmesinin üstünde 300 ms ya da 1,5 s dur.
+  3. B'nin listesinin ortasına git, 0,8 s bekle, bırak.
+- Sonuç (üç denemede de): **hiçbir şey taşınmadı**. `in1` ve `in2` boş, `src4.txt` yerinde. B'nin başlığı bırakmadan sonra `in2` oldu. Sürüklerken B'nin listesinde imleç "bırakılamaz" gösteriyor (`WD-after-2-B.png`, `WT3-B-onlist.png`).
+- Sekmeye uğramadan aynı listeye bırakma çalışıyor (`WD.ps1` 1: dosya `in1`'e taşındı, Ctrl+Z geri aldı).
+- Muhtemel neden (incelenmedi): `open_rested` sekmeyi açarken `p == active_index()` ise `grab_lost` kuruyor ve `pressed = None` yapıyor. Sürükleme başka pencereden geldiğinde bu, kaynak pencerenin değil hedef pencerenin durumunu bozuyor olabilir.
+- Not: ekran görüntülerindeki "yasak" imleç düz bırakmada da görünüyor (`WD-after-1-B.png`). İmleç tek başına kanıt değil; karar dosyalara bakılarak verildi.
+
+#### FAIL 9: `--new-window <olmayan-yol>` notu hiç görünmüyor
+
+- Yeniden üretme (`WN4.ps1`): Gezik çalışırken `after2.exe --new-window "…\col\nope-missing"`. Yeni pencerenin durum satırı, pencere görünür olduktan sonra 3,5 s boyunca 100 ms arayla okundu.
+- Sonuç:
+  - Durum satırı hep `62 items` (başlangıç klasörü); hiç "not found" yok.
+  - `--new-window Alpha nope-missing` ile de hep `13 items`.
+- Karşılaştırma: bayraksız `gezik nope-missing` A'da `…\nope-missing: not found` notunu gösteriyor (TABAN ve SONRA aynı).
+- Not ya hiç yazılmıyor ya da ilk 50 ms içinde liste sayısı üstüne yazıyor (Task 4 raporundaki risk).
+
+#### FAIL 10 (ölçüt): `windows.ps1 -Cycles 3` sonunda +0,5–0,6 MB
+
+- `scripts/perf/windows.ps1`'in kopyasıyla ölçüldü (`windows-copy.ps1`). Farklar: yollar `%TEMP%\gezik-gui-10g` altında, `[window]` 40,40 1264×761, her tuştan önce kullanıcı 2,5 s boşta.
+- İki koşuda da kapanış sonrası taban farkı döngüden döngüye arttı:
+  - Koşu 1: +0,3 → +0,5 → +0,5 MB.
+  - Koşu 2: +0,3 → +0,5 → +0,6 MB.
+  - Commit de aynı biçimde (+0,3 → +0,5). Betik `FAIL: 0,54 / 0,61 MB over one window after closing` yazdı.
+- Tutamaklar tabanın **altına** indi (−5 … −9). Betik bunu da FAIL sayıyor (`abs > 5`), oysa bu sızıntı değil; denetim tek yönlü olmalı.
+- Tek ek pencereyle 10 döngü (`WM2.ps1`) **PASS**, artış yok:
+  - Taban 9,11 / 11,93 MB, 394 tutamak.
+  - Her kapanışta 9,14–9,23 / 11,90–12,06 MB.
+  - Son: +0,09 / +0,02 MB, 385 tutamak, GDI 50, USER 16.
+- Artış yalnız beş pencerede var: dört ek pencere aynı anda açılıp kapanınca bir şey tutuluyor (ayırıcı ya da pencere başına bir şey). Ayrıca incelenmeli.
+- Çerçeve arabelleği bırakılıyor: açıkken +4,8–5,2 MB, kapanınca geri geliyor. Ek pencere başına 4,9–5,2 MB (sınır 6,2 MB, sınırın içinde).
+
+#### Gözlemler
+
+1. Koparılan pencere imlecin yerine konuyor ama sağ ve alt kenarı ekrana sığdırılmıyor:
+   - 1900,1100'e bırakılan 1200×800 pencere x 2976'ya, yani öbür monitöre taşıyor.
+   - Görev çubuğu şeridine bırakılan pencere y 1369'dan başlıyor, çoğu ekran dışında.
+   - Yalnız başlık çubuğu ekranda tutuluyor (commit `937962b`'nin kuralı). Explorer ile aynı sayılabilir; bu bir tasarım kararı.
+2. "Büyütülmüş açılmış, normal boyutu hiç olmamış pencere" ayar dosyasıyla kurulamıyor: boyutsuz `maximized = true` normal varsayılanla açılıyor.
+3. `windows.ps1` tutamakların tabanın altına düşmesini de FAIL sayıyor (FAIL 10).
+
+#### Ölçümler
+
+| Ölçüm | TABAN `base2` (master `05d775c`) | SONRA `after2` (`1fe027c`) |
+|---|---|---|
+| exe | 25.662.464 B | 25.797.632 B (+135.168; bütçe 262.144) |
+| `measure.ps1` 5 koşu × 2 tur: açılış | 51 / 34 ms | 47 / 42 ms |
+| `measure.ps1`: Görev Yöneticisi belleği | 8,9 / 8,8 MB | 8,9 / 8,9 MB |
+| `stress.ps1` (bir koşu): yükleme sonrası | 16,9 MB | 16,9 MB |
+| `stress.ps1`: kaydırma sonrası | 17,0 MB | 16,9 MB |
+| `stress.ps1`: kaydırma CPU'su (60 tekerlek) | 344 ms (2,67 s) | 359 ms (2,72 s) |
+| `windows.ps1`: tek pencere (özel / commit / tutamak) | — | 9,0–9,1 / 11,8–11,9 MB / 394 |
+| `windows.ps1`: iki pencere | — | +4,8–5,2 MB (sınır 6,2) |
+| `windows.ps1`: beş pencere | — | +19,6–19,9 MB (ek pencere başına 4,9–5,0) |
+| `windows.ps1`: kapanış sonrası, döngü 1 / 2 / 3 | — | +0,3 / +0,5 / +0,5–0,6 MB; tutamak −5 / −5 / −9 (FAIL 10) |
+| `WM2`: tek ek pencere, 10 aç-kapa (WSP / özel) | — | +0,09 / +0,02 MB, 385 tutamak (PASS) |
+| Boşta CPU, iki pencere | — | ölçülemedi (aşağıda) |
+
+- `stress-copy.ps1`'in ilk iki koşusu `Gezik window not found` ile, bir koşusu da kullanıcı etkin olduğu için düştü. Tabloda başarılı tek koşular var.
+
+#### Denenmedi / atlananlar
+
+- **Boşta CPU (iki pencere):** `WI.ps1` iki kez koşuldu, ikisi de tamamlanmadı.
+  - İlkinde kullanıcı 8 dk boyunca etkindi.
+  - İkincisinde 4 dk beklendi. Sonra ön planda benim Gezik'im varken kullanıcı girdisi görüldü (03:40, `pauses.txt`); 2 dk beklenip vazgeçildi.
+  - Koordinatörün bitirme isteği üzerine yeniden denenmedi. Önceki turda 0 ms idi.
+- `measure.ps1` istendiği gibi 5 koşu × 2 tur koşuldu. `stress.ps1` derleme başına bir koşu.
+- Task 5:
+  - Farklı ölçekli iki monitörde koparma (madde 9) ve 150/200 % ölçek: yalnız birincil ekran kullanılabildi.
+  - Öbür pencere iki bölmeliyken sağ bölmenin şeridine bırakma.
+- Task 4:
+  - İki bölmede sağ bölmenin son sekmesini taşıma.
+  - Tepsiye gizli pencerenin `Move to window ▸` listesinde olmaması: tepsi artık bütün pencereleri birlikte gizlediği için bu durum kurulamıyor.
+  - `--background` + `--new-window` sonrası dosya sürükle-bırak.
+
+#### Temizlik
+
+- Başlattığım bütün Gezik süreçleri kapandı (`after2`/`base2` süreci yok). WMp'nin askıda kalan koşusunda kendi `after2` PID'im ve betiğin PowerShell'i öldürüldü.
+- Veri eski halinde: `col\drop` 8 öğe, `in1..3` boş. `data\perf-windows` ve `cfg\perf-windows`'u `windows-copy.ps1` sildi.
+- Kaynak değişmedi, commit yok.
+
+### Son kontroller (final)
+
+Derleme: `final.exe` (feat/layout-10g, 7596d4b, release). Yalnız birincil ekran; her koşu `%TEMP%\gezik-gui-10g\cfg\` altında taze yapılandırmayla. Betikler `m10gg2/` içinde final.exe'ye çevrilmiş kopyalar: `Fn1` (W5f), `Fn2` (WN5), `Fn4d` (WD2d), `Fn4t` (WT2d), `Fn5` (yeni, madde 5).
+
+1. **W5f, üç pencere, tepsiden gerçek çıkış ve yeniden açılış: GEÇTİ.**
+   - Çıkıştan önce (öndeki önce): A `col` (iki bölme, sync) @40,40 1280×800 → C `Gamma` @900,400 1000×700 → B `Pics` (sekmeler Beta, Pics) büyütülmüş.
+   - Yeniden açılınca sıra ve yerler aynı: A önde (19 öğe), sonra C, sonra B (büyütülmüş, 2 sekme). İki çıkışta da süreç kalmadı.
+2. **WN5, çalışan Gezik'e `--new-window <olmayan yol>`: GEÇTİ.**
+   - Yeni pencere 52 ms'de görüldü, durum çubuğunda 0 ms'den itibaren `...\nope-missing: not found` yazıyor.
+   - Düz istekte (A) ve `--new-window Alpha + olmayan` durumunda da not çıktı.
+3. **`windows-fix3.ps1 -Cycles 6`: KALDI (eşik), büyüme yavaşlıyor ama tam durmuyor.**
+   - Tek pencere: 9,0 MB private, 394 handle. Fazladan pencere başına 4,9–5,4 MB (sınır 6,2 MB, hepsi uygun).
+   - Kapattıktan sonra private (tek pencereye göre): 1. tur 9,3 (+0,3), 2. tur 9,3 (+0,4), 3. tur 9,5 (+0,5), 4. tur 9,7 (+0,7), 5. tur 9,7 (+0,7), 6. tur 9,8 MB (+0,8).
+   - Turdan tura artış: +0,3 / +0,1 / +0,1 / +0,2 / 0 / +0,1 MB. Handle'lar artmıyor (389 → 384).
+   - Betik sonucu: `FAIL: 0,84 MB over one window after closing (0.3 allowed)`.
+   - base2 ile karşılaştırma denendi, ama base2'de Ctrl+N ikinci pencere açmadı ("expected 2 windows, there are 1"). base2 süreci kapatıldı, karşılaştırma yok.
+4. **WD2d ve WT2d: GEÇTİ.**
+   - WD2d: üç sürüklemede de (in2 sekmesinde 1500 / 300 / 1500 ms bekleyip B'nin listesine bırakma) B `in1`'de kaldı ve dosya in1'e düştü (`in1=[src4.txt] in2=[]`). Her seferinde Ctrl+Z geri aldı.
+   - WT2d: in2 sekmesi üzerinde 3 s beklerken 30 örneğin hepsinde B başlığı `in1 — Gezik` kaldı. Sekmeye bırakınca dosya in2'ye gitti (`in2=[src4.txt]`), Ctrl+Z geri aldı.
+5. **Küçültmeden geri getirme ve `--background`: GEÇTİ.**
+   - a) `ShowWindow` ile küçültme (iconic=True) ve geri getirme (SW_RESTORE). Pencere etkinleştirilmeden en üste alınıp ekrandan görüntü alındı (`shots\Fn5-final-restored.png`): sekme şeridi, araç çubuğu, kenar çubuğu, liste ve durum çubuğu ("2 items") tam çizili.
+   - b) Kayıtlı `[window]` (1400×900 @200,150) ve `[system] tray = true` ile `--background` başlatıldı: görünür pencere yoktu. İkinci başlatma pencereyi gösterdi: @200,150, dış ölçü 1416×939. Bu, 1400×900 kayıtla tutarlı (madde 1'de 1264×761 kayıt da 1280×800 dış ölçüydü). 617 genişlik değil. Görüntü: `shots\Fn5-final-revealed.png`.
+
+Temizlik: Başlattığım bütün `final`/`base2` süreçleri kapandı. `col\drop` eski halinde (8 öğe, in1/in2 boş). Kaynak değişmedi, commit yok.
