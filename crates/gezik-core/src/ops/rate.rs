@@ -49,9 +49,102 @@ pub fn format_rate(per_second: f64, format: crate::view::SizeFormat) -> String {
     format!("{}/s", crate::format_size_in(per_second.max(0.0) as u64, format))
 }
 
+/// A copy job's speed limit (spec 11 §5.2): a token bucket all its workers share, holding at
+/// most one second's bytes. It starts empty, so a short copy does not start with a burst.
+#[derive(Debug, Default)]
+pub struct Bucket {
+    /// Bytes that may go now; below 0, bytes already gone that are not due yet.
+    tokens: f64,
+    last: Option<Instant>,
+}
+
+impl Bucket {
+    /// Takes `bytes` at `now` at `rate` bytes a second; returns how long the taker waits before
+    /// they are due (zero: at once). What it waits is the bucket's debt, so takers share `rate`.
+    pub fn take(&mut self, rate: u64, bytes: u64, now: Instant) -> Duration {
+        let rate = rate.max(1) as f64;
+        let earned = self.last.map_or(0.0, |last| now.saturating_duration_since(last).as_secs_f64() * rate);
+        self.last = Some(now);
+        self.tokens = (self.tokens + earned).min(rate) - bytes as f64;
+        if self.tokens >= 0.0 { Duration::ZERO } else { Duration::from_secs_f64(-self.tokens / rate) }
+    }
+}
+
+/// `[files] max-speed`: `"20 MB/s"`, `"500 KB/s"`, `"1.5 GB/s"`, `"300 B/s"` in decimal units
+/// (`/s` may be left out, any case) as bytes a second; `None` for anything else, zero included.
+pub fn parse_speed(text: &str) -> Option<u64> {
+    let lower = text.trim().to_ascii_lowercase();
+    let lower = lower.strip_suffix("/s").unwrap_or(&lower);
+    let split = lower.find(|c: char| !(c.is_ascii_digit() || c == '.'))?;
+    let (number, unit) = lower.split_at(split);
+    let scale = match unit.trim() {
+        "b" => 1.0,
+        "kb" => 1e3,
+        "mb" => 1e6,
+        "gb" => 1e9,
+        _ => return None,
+    };
+    let value = number.parse::<f64>().ok()? * scale;
+    (1.0..1e15).contains(&value).then_some(value as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Copies `total` bytes in `chunk`s through `bucket` at `rate`, sleeping on a fake clock;
+    /// returns how long it took.
+    fn fake_copy(bucket: &mut Bucket, rate: u64, total: u64, chunk: u64, t0: Instant) -> Duration {
+        let mut now = t0;
+        let mut left = total;
+        while left > 0 {
+            let n = chunk.min(left);
+            left -= n;
+            now += bucket.take(rate, n, now);
+        }
+        now - t0
+    }
+
+    #[test]
+    fn a_limited_copy_takes_as_long_as_the_rate_says() {
+        let took = fake_copy(&mut Bucket::default(), 10_000_000, 50_000_000, 1 << 20, Instant::now());
+        let secs = took.as_secs_f64();
+        assert!((secs - 5.0).abs() <= 0.25, "50 MB at 10 MB/s took {secs} s");
+        // Large chunks (Linux's 8 MiB) keep the average.
+        let took = fake_copy(&mut Bucket::default(), 1_000_000, 64 << 20, 8 << 20, Instant::now());
+        assert!((took.as_secs_f64() / 67.108_864 - 1.0).abs() <= 0.05, "{took:?}");
+    }
+
+    #[test]
+    fn workers_share_the_rate() {
+        let (t0, mut bucket) = (Instant::now(), Bucket::default());
+        // Two workers taking 1 MB each at the same moment: the second waits for both.
+        assert_eq!(bucket.take(1_000_000, 1_000_000, t0), Duration::from_secs(1));
+        assert_eq!(bucket.take(1_000_000, 1_000_000, t0), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn idle_time_saves_up_at_most_one_second() {
+        let (t0, mut bucket) = (Instant::now(), Bucket::default());
+        assert!(bucket.take(1000, 0, t0).is_zero());
+        let later = t0 + Duration::from_secs(60);
+        assert!(bucket.take(1000, 1000, later).is_zero(), "one second's worth is there");
+        assert_eq!(bucket.take(1000, 500, later), Duration::from_millis(500), "not more");
+        // The rate changes on the next take.
+        assert_eq!(bucket.take(100, 0, later + Duration::from_secs(1)), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn speeds_parse_in_decimal_units() {
+        assert_eq!(parse_speed("20 MB/s"), Some(20_000_000));
+        assert_eq!(parse_speed("500 KB/s"), Some(500_000));
+        assert_eq!(parse_speed("1.5 GB/s"), Some(1_500_000_000));
+        assert_eq!(parse_speed(" 300 B/s "), Some(300));
+        assert_eq!(parse_speed("5mb"), Some(5_000_000));
+        for bad in ["", "0 MB/s", "20", "fast", "-1 MB/s", "1.2.3 MB/s", "10 MiB/s", "MB/s", "0.1 B/s"] {
+            assert_eq!(parse_speed(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn speed_over_the_window() {
