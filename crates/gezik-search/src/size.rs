@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use gezik_core::ops::paths::path_key;
+use gezik_core::treemap::SizeTree;
 use gezik_platform::fs::DirItem;
 
 use crate::walk::{self, Visit, Walk, WalkRules, WalkStats};
@@ -73,7 +74,15 @@ impl Adder {
 /// `cancel` was set before it ended (a thread stuck on a dead share is left behind, as the
 /// search leaves it). Reads folder listings only: no file is opened. Off the UI thread.
 pub fn measure(folder: &Path, threads: usize, cancel: &Arc<AtomicBool>) -> Option<FolderTotal> {
-    // Unix: the folder's own file system only (spec 3.4); unknown: no rule, the reads fail.
+    let rules = size_rules(folder);
+    let adder = Arc::new(Adder::default());
+    let stats = walk::run(Walk::new(vec![folder.to_path_buf()], false, threads, rules), cancel.clone(), adder.clone());
+    (!stats.cancelled).then(|| adder.total(&stats))
+}
+
+/// The walk's rules for adding up `folder`: hidden items too, no cloud folder gone into, the
+/// folder's own file system on Unix (spec 3.4; unknown: no rule, the reads fail).
+fn size_rules(folder: &Path) -> WalkRules {
     let devices = if cfg!(unix) {
         gezik_platform::fs::device_of(folder).map(|d| vec![d]).unwrap_or_default()
     } else {
@@ -81,9 +90,97 @@ pub fn measure(folder: &Path, threads: usize, cancel: &Arc<AtomicBool>) -> Optio
     };
     let mut rules = WalkRules::new(None, &[], devices);
     rules.enter_offline = false;
-    let adder = Arc::new(Adder::default());
-    let stats = walk::run(Walk::new(vec![folder.to_path_buf()], false, threads, rules), cancel.clone(), adder.clone());
-    (!stats.cancelled).then(|| adder.total(&stats))
+    rules
+}
+
+/// How often a scan going on says it has more (spec 11 §10.1: at most twice a second).
+const TICK_EVERY: Duration = Duration::from_millis(500);
+
+/// Builds the size map's tree as the walk hands folders over.
+struct TreeBuilder {
+    tree: Arc<Mutex<SizeTree>>,
+    /// The folders found and not read yet, by their path under the root.
+    waiting: Mutex<HashMap<String, u32>>,
+    rules: WalkRules,
+    tick: Box<dyn Fn() + Send + Sync>,
+    ticked: Mutex<Instant>,
+}
+
+impl Visit for TreeBuilder {
+    fn wants_meta(&self, _: &str, is_dir: bool) -> bool {
+        !is_dir
+    }
+
+    fn folder(&self, dir: &Path, relative: &str, items: Vec<DirItem>) {
+        {
+            let mut waiting = self.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(id) = waiting.remove(relative) else { return };
+            let mut tree = self.tree.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            for item in items {
+                if !item.is_dir {
+                    let node = tree.node_mut(id);
+                    node.own_bytes = node.own_bytes.saturating_add(item.size);
+                    node.own_files += 1;
+                    if id == 0 {
+                        tree.files.push((item.name, item.size));
+                    }
+                } else if item.is_link {
+                    // Neither gone into nor counted, as `Adder` does.
+                } else if walk::goes_into(&item, &self.rules)
+                    && walk::same_device(&self.rules.devices, item.device)
+                    && !(cfg!(target_os = "macos") && walk::walked_twice(&dir.join(&item.name)))
+                {
+                    let child = tree.add(id, &item.name, item.modified);
+                    waiting.insert(crate::results::relative_key(relative, &item.name), child);
+                } else {
+                    // A folder the walk does not go into still counts as one (`Adder`); a
+                    // cloud folder makes the total partial.
+                    let node = tree.node_mut(id);
+                    node.other_folders += 1;
+                    node.unread |= item.offline;
+                }
+            }
+        }
+        let mut ticked = self.ticked.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if ticked.elapsed() >= TICK_EVERY {
+            *ticked = Instant::now();
+            drop(ticked);
+            (self.tick)();
+        }
+    }
+}
+
+/// Walks `folder` into `tree` (a new one, of the folder) as `measure` adds it up (spec 11
+/// §10.1): folders only, with their files added up; the folder's own files one by one.
+/// `tick` is called at most every 500 ms while it goes on. Whether it ended (not cancelled);
+/// the tree's totals are added up then. Off the UI thread.
+pub fn scan_tree(
+    folder: &Path,
+    threads: usize,
+    cancel: &Arc<AtomicBool>,
+    tree: Arc<Mutex<SizeTree>>,
+    tick: Box<dyn Fn() + Send + Sync>,
+) -> bool {
+    tree.lock().unwrap_or_else(std::sync::PoisonError::into_inner).node_mut(0).stamp =
+        std::fs::metadata(folder).and_then(|m| m.modified()).ok();
+    let rules = size_rules(folder);
+    let builder = Arc::new(TreeBuilder {
+        tree: tree.clone(),
+        waiting: Mutex::new(HashMap::from([(String::new(), 0)])),
+        rules: rules.clone(),
+        tick,
+        ticked: Mutex::new(Instant::now()),
+    });
+    let stats =
+        walk::run(Walk::new(vec![folder.to_path_buf()], false, threads, rules), cancel.clone(), builder.clone());
+    let waiting = std::mem::take(&mut *builder.waiting.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    let mut tree = tree.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Not read: it could not be, or was too deep.
+    for id in waiting.into_values() {
+        tree.node_mut(id).unread = true;
+    }
+    tree.sum();
+    !stats.cancelled
 }
 
 pub const CACHE_MAX: usize = 50_000;
@@ -220,6 +317,60 @@ mod tests {
         let total = measure(&root, 2, &Arc::default()).unwrap();
         assert_eq!(total, FolderTotal { bytes: 60, counts: Some((3, 3)), partial: false });
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_tree_scan_adds_up_as_measure_does() {
+        let root = tree("map");
+        write(&root.join("a.txt"), 10);
+        write(&root.join("sub/b.txt"), 20);
+        write(&root.join("sub/deeper/c.txt"), 30);
+        std::fs::create_dir_all(root.join("empty")).unwrap();
+        let map = Arc::new(Mutex::new(SizeTree::new("map")));
+        assert!(scan_tree(&root, 2, &Arc::default(), map.clone(), Box::new(|| {})));
+        let map = map.lock().unwrap();
+        let top = map.node(0);
+        let measured = measure(&root, 2, &Arc::default()).unwrap();
+        assert_eq!((top.bytes, Some((top.files, top.folders)), top.partial), (measured.bytes, measured.counts, false));
+        assert_eq!(map.files, [("a.txt".to_owned(), 10)], "the folder's own files, one by one");
+        let sub = map.children(0).find(|&c| map.name(c) == "sub").unwrap();
+        assert_eq!((map.node(sub).bytes, map.node(sub).own_bytes, map.node(sub).files), (50, 20, 2));
+        assert!(map.node(sub).stamp.is_some(), "the cache's stamp");
+        assert_eq!(map.len(), 4, "folders only");
+        drop(map);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_cloud_folder_counts_in_the_tree_as_in_measure() {
+        let builder = TreeBuilder {
+            tree: Arc::new(Mutex::new(SizeTree::new("x"))),
+            waiting: Mutex::new(HashMap::from([(String::new(), 0)])),
+            rules: size_rules(Path::new("x")),
+            tick: Box::new(|| {}),
+            ticked: Mutex::new(Instant::now()),
+        };
+        let cloud = DirItem { name: "OneDrive folder".into(), is_dir: true, offline: true, ..file_item(0) };
+        let link = DirItem { name: "link".into(), is_dir: true, is_link: true, ..file_item(0) };
+        builder.folder(Path::new("x"), "", vec![file_item(5), cloud.clone(), link.clone()]);
+        let mut tree = builder.tree.lock().unwrap();
+        tree.sum();
+        let adder = Adder::default();
+        adder.folder(Path::new("x"), "", vec![file_item(5), cloud, link]);
+        let measured = adder.total(&walk::WalkStats::default());
+        let top = tree.node(0);
+        assert_eq!((top.bytes, Some((top.files, top.folders)), top.partial), (measured.bytes, measured.counts, true));
+        assert_eq!(tree.len(), 1, "no node for either");
+    }
+
+    #[test]
+    fn a_cancelled_or_unreadable_tree_scan() {
+        let map = Arc::new(Mutex::new(SizeTree::new("x")));
+        assert!(!scan_tree(&std::env::temp_dir(), 1, &Arc::new(AtomicBool::new(true)), map, Box::new(|| {})));
+        let map = Arc::new(Mutex::new(SizeTree::new("x")));
+        let gone = std::env::temp_dir().join("gezik-size-no-such-folder");
+        assert!(scan_tree(&gone, 1, &Arc::default(), map.clone(), Box::new(|| {})));
+        assert!(map.lock().unwrap().node(0).partial);
     }
 
     #[test]

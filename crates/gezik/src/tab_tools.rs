@@ -48,6 +48,8 @@ pub(crate) fn over_another_layer(window: &AppWindow) -> bool {
         || window.get_cp_open()
         || window.get_cv_open()
         || window.get_info_open()
+        || window.get_df_open()
+        || window.get_sm_open()
         || window.get_tool_open()
 }
 

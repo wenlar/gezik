@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_core::checksum_file::{self, Algo};
+use gezik_core::export;
 use gezik_ops::{HashResults, HashRow, HashTask, JobId, NewTask, Report, RowState, SharedResults, Task, Verdict};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
@@ -680,7 +681,7 @@ impl Checksums {
                     {
                         return with_current(|c| c.say(&err.to_string()));
                     }
-                    tasks.push(Box::new(NewTask::asking(&dir, &file, move || Ok(bytes.clone()))));
+                    tasks.push(Box::new(NewTask::written(&dir, &file, move |out| out.write_all(&bytes))));
                 }
                 ops2.submit_chain(tasks, Some(label), None, After::Select);
             });
@@ -693,11 +694,6 @@ impl Checksums {
         if rows.is_empty() {
             return self.say("Nothing to export yet");
         }
-        let mut text = String::new();
-        if cfg!(windows) {
-            // Excel opens UTF-8 names right only with the BOM (spec 11 §11.2).
-            text.push('\u{feff}');
-        }
         // Verify: each row's own algorithm, value and result; else the ticked columns.
         let algos = self.ticked();
         let mut header = vec!["Path".to_owned(), "Size".to_owned()];
@@ -706,7 +702,22 @@ impl Checksums {
         } else {
             header.extend(algos.iter().map(|a| a.name().to_owned()));
         }
-        gezik_core::csv::push_row(&mut text, &header, ',');
+        // The list export's CSV writer (11h): the system's list separator, a BOM and CRLF on
+        // Windows, formula-safe fields.
+        let windows = cfg!(windows);
+        let sheet = export::Sheet {
+            format: export::Format::Csv,
+            headers: header,
+            right: Vec::new(),
+            separator: gezik_platform::list_separator(),
+            bom: windows,
+            eol: if windows { "\r\n" } else { "\n" },
+            title: String::new(),
+            note: String::new(),
+        };
+        let mut bytes = Vec::new();
+        // Writing into memory cannot fail.
+        let _ = export::begin(&mut bytes, &sheet);
         for r in &rows {
             let mut fields = vec![r.name.clone(), r.size.to_string()];
             match &r.expected {
@@ -718,12 +729,13 @@ impl Checksums {
                 ]),
                 _ => fields.extend(algos.iter().map(|a| r.digest(*a).unwrap_or_default().to_owned())),
             }
-            gezik_core::csv::push_row(&mut text, &fields, ',');
+            let _ = export::row(&mut bytes, &sheet, &fields);
         }
+        let _ = export::end(&mut bytes, &sheet);
         let what = if self.verify { "results" } else { "checksums" };
         let message = format!("Writes the list in {}", self.base.display());
         let initial = format!("{} {what}.csv", self.save_name);
-        self.ask_and_write("Export CSV", message, initial, vec![(String::new(), text.into_bytes())]);
+        self.ask_and_write("Export CSV", message, initial, vec![(String::new(), bytes)]);
     }
 
     /// Esc closes; Ctrl+C / Ctrl+A (⌘ on macOS) copy and select and the arrow, page and Home/End
