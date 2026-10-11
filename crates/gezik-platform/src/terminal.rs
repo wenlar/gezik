@@ -412,6 +412,27 @@ fn resolve(
     Ok(launch)
 }
 
+/// Starts `program` (a name on PATH or a path) with `args` in `dir` as "Open terminal" starts a
+/// terminal (the compare program, spec 11 §6.4): looked up in PATH's absolute folders only, it
+/// lives on after Gezik and Gezik does not wait for it. A program that runs through cmd (a
+/// `.bat` or `.cmd` file) gets no argument cmd would read as more than text.
+pub fn start_program(program: &str, args: Vec<OsString>, dir: &Path) -> Result<(), TerminalError> {
+    let launch = Launch { program: program.into(), args, dir: dir.to_path_buf(), elevated: false };
+    let pathext = std::env::var("PATHEXT").ok();
+    let path = std::env::var_os("PATH");
+    let launch = resolve(launch, path.as_deref(), pathext.as_deref(), cfg!(windows))?;
+    if let Some(cmd) = cmd_refuses(&launch, cfg!(windows)) {
+        return Err(TerminalError::UnsafeFolder(cmd));
+    }
+    start(&launch)
+}
+
+/// The cmd-run program's name when one of `launch`'s arguments is not safe for cmd (Windows).
+fn cmd_refuses(launch: &Launch, windows: bool) -> Option<String> {
+    let cmd = through_cmd([&*launch.program.to_string_lossy()]).filter(|_| windows)?;
+    launch.args.iter().any(|arg| !cmd_safe(Path::new(arg))).then_some(cmd)
+}
+
 /// Through the Shell, as Explorer starts programs: a console program gets a console of its
 /// own, nothing of Gezik's is handed on. "runas" asks UAC (probe 4.1: `ShellExecuteW`,
 /// `ShellExecuteExW` would need the Registry feature).
@@ -505,6 +526,22 @@ mod tests {
 
     fn program(launch: &Launch) -> String {
         launch.program.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_program_through_cmd_gets_only_plain_arguments() {
+        let launch = |program: &str, arg: &str| Launch {
+            program: program.into(),
+            args: vec![OsString::from(arg)],
+            dir: PathBuf::from("/"),
+            elevated: false,
+        };
+        assert_eq!(cmd_refuses(&launch(r"C:\tools\diff.cmd", r"C:\a&b.txt"), true).as_deref(), Some("diff.cmd"));
+        assert_eq!(cmd_refuses(&launch(r"C:\tools\diff.cmd", r"C:\a b.txt"), true), None);
+        assert_eq!(cmd_refuses(&launch(r"C:\tools\WinMergeU.exe", r"C:\a&b.txt"), true), None, "no cmd");
+        assert_eq!(cmd_refuses(&launch("/usr/bin/diff.cmd", "/a&b"), false), None, "only on Windows");
+        let missing = start_program("gezik-no-such-compare-program", Vec::new(), Path::new("/"));
+        assert_eq!(missing, Err(TerminalError::NotFound));
     }
 
     #[test]

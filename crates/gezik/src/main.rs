@@ -5,6 +5,7 @@ mod actions;
 mod admin;
 mod archives;
 mod batch_rename;
+mod checksums;
 mod cli;
 mod cloud;
 mod conflicts;
@@ -14,10 +15,12 @@ mod convert;
 mod copy_path;
 mod copy_to;
 mod dialog;
+mod diff;
 mod drag;
 mod dual;
 mod eject;
 mod elevated;
+mod export;
 mod filter;
 mod finder_menu;
 mod folder_sizes;
@@ -47,6 +50,7 @@ mod select_tools;
 mod sidebar;
 mod sidebar_model;
 mod single_instance;
+mod size_map;
 mod stack;
 mod start;
 mod system_changes;
@@ -139,6 +143,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     operations::with_current(|ops| ops.set_files(loaded.settings.files));
     batch_rename::set_presets(loaded.settings.rename_presets.clone());
     archives::set_settings(loaded.settings.tools.clone(), loaded.settings.archives);
+    diff::set_settings(&loaded.settings.tools);
     preview::set_quick_look(loaded.settings.system.quick_look);
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
@@ -342,6 +347,11 @@ fn perform(
         | Action::SwapPanes
         | Action::OtherPaneSameFolder
         | Action::MoveTabToNewWindow
+        | Action::Compare
+        | Action::ExportList
+        | Action::SizeMap
+        | Action::Checksums
+        | Action::VerifyChecksums
         | Action::CopyTo
         | Action::MoveTo
         | Action::SplitFile
@@ -397,11 +407,37 @@ fn handle_key(
         }
         return used;
     }
+    // The Checksums layer (the tool table): Esc, the row keys, and Ctrl+C / Ctrl+A unless its
+    // field has the keyboard.
+    if window.get_tool_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            checksums::with_current(|layer| used = layer.chord(chord, window.get_tool_field_focused()));
+        }
+        return used;
+    }
+    // The size map: every key is its own.
+    if window.get_sm_open() {
+        if let Some(chord) = &chord {
+            size_map::with_current(|map| {
+                map.chord(chord);
+            });
+        }
+        return true;
+    }
     // The Info window: Esc wherever its focus is, other keys to its fields.
     if window.get_info_open() {
         let mut used = false;
         if let Some(chord) = &chord {
             info::with_current(|info| used = info.chord(chord));
+        }
+        return used;
+    }
+    // The file compare: its keys wherever its focus is.
+    if window.get_df_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            diff::with_current(|d| used = d.chord(chord));
         }
         return used;
     }

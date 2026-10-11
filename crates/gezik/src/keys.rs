@@ -526,6 +526,8 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::Checksums
+            | Action::VerifyChecksums
             | Action::CopyTo
             | Action::MoveTo
             | Action::SplitFile
@@ -562,6 +564,8 @@ pub fn needs_list(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::Checksums
+            | Action::VerifyChecksums
             | Action::CopyTo
             | Action::MoveTo
             | Action::SplitFile
@@ -841,6 +845,7 @@ mod tests {
                 Action::ConnectToServer => "ctrl+k",
                 Action::ToggleDualPane => "f3",
                 Action::SwapPanes => "ctrl+u",
+                Action::Compare => "shift+f2",
                 Action::FocusOtherPane | Action::CopyToOtherPane | Action::MoveToOtherPane => {
                     let text = match action {
                         Action::FocusOtherPane => "tab",
@@ -884,6 +889,10 @@ mod tests {
                 | Action::SyncBrowsing
                 | Action::OtherPaneSameFolder
                 | Action::MoveTabToNewWindow
+                | Action::ExportList
+                | Action::SizeMap
+                | Action::Checksums
+                | Action::VerifyChecksums
                 | Action::CopyTo
                 | Action::MoveTo
                 | Action::SplitFile
