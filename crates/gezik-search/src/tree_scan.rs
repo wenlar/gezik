@@ -59,20 +59,22 @@ pub fn path_of(root: &Path, tree: &Tree, i: u32) -> PathBuf {
     path
 }
 
+/// A side the filter leaves out as a whole: its folder alone, nothing in it.
+pub fn left_out() -> Scan {
+    let mut scan = Scan::default();
+    scan.tree.nodes.push(root_node());
+    scan
+}
+
+fn root_node() -> Node {
+    Node { name: "".into(), key: None, size: 0, modified: NO_TIME, parent: 0, first: 0, count: 0, kind: Kind::Folder }
+}
+
 /// Reads `root`'s tree. `read` counts the folders read; `stop` ends the scan soon.
 pub fn scan(root: &Path, rules: &Rules, stop: &AtomicBool, read: &AtomicUsize) -> Scan {
     let mut scan = Scan::default();
     let tree = &mut scan.tree;
-    tree.nodes.push(Node {
-        name: "".into(),
-        key: None,
-        size: 0,
-        modified: NO_TIME,
-        parent: 0,
-        first: 0,
-        count: 0,
-        kind: Kind::Folder,
-    });
+    tree.nodes.push(root_node());
     // (node, path, whether its files are taken, depth)
     let mut pending = vec![(0u32, root.to_path_buf(), rules.root_taken, 0usize)];
     while let Some((at, dir, taken, depth)) = pending.pop() {

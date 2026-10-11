@@ -828,23 +828,30 @@ struct Job {
 /// Reads both sides at once, compares them and (asked) reads the same-size pairs; `say` hears
 /// how far it is (at most every 250 ms). Err: what to say instead of rows.
 fn run(job: &Job, say: &mut dyn FnMut(String)) -> Result<Done, String> {
-    let root_name = job.left.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let rules = Rules {
-        subfolders: job.options.subfolders,
-        filter: &job.filter,
-        root_taken: job.filter.top_folder(&root_name) != Some(false),
-        shown: job.shown,
-        case_sensitive: CASE_SENSITIVE,
-        max_items: tree_scan::MAX_ITEMS,
+    // Each side by its own folder's name (11i's `top_folder`): a taken folder pattern it does
+    // not match leaves its own files out; a left-out pattern it matches leaves it all out.
+    let rules = |root: &Path| {
+        let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        job.filter.top_folder(&name).map(|root_taken| Rules {
+            subfolders: job.options.subfolders,
+            filter: &job.filter,
+            root_taken,
+            shown: job.shown,
+            case_sensitive: CASE_SENSITIVE,
+            max_items: tree_scan::MAX_ITEMS,
+        })
     };
     let read = AtomicUsize::new(0);
     let (left, right) = std::thread::scope(|s| {
         let scan_side = |root: &Path| {
-            let (rules, stop, read) = (&rules, &job.stop, &read);
+            let (rules, stop, read) = (rules(root), &job.stop, &read);
             let root = root.to_path_buf();
-            s.spawn(move || {
-                gezik_platform::priority::lower_this_thread();
-                tree_scan::scan(&root, rules, stop, read)
+            s.spawn(move || match rules {
+                Some(rules) => {
+                    gezik_platform::priority::lower_this_thread();
+                    tree_scan::scan(&root, &rules, stop, read)
+                }
+                None => tree_scan::left_out(),
             })
         };
         let (l, r) = (scan_side(&job.left), scan_side(&job.right));
@@ -1042,6 +1049,37 @@ mod tests {
         late.stop.store(true, Ordering::Relaxed);
         read_contents(&late, &left, &right, &mut rows, &mut |_| {});
         assert!(rows[0].check, "not read");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn each_side_takes_the_root_filter_by_its_own_name() {
+        let root = dir("roots");
+        let (left, right) = (root.join("src"), root.join("lib"));
+        write(&left.join("a.txt"), "a", T);
+        write(&right.join("a.txt"), "a", T);
+        write(&right.join("src/b.txt"), "b", T);
+        write(&right.join("docs/c.txt"), "c", T);
+        // `src` is taken: the left (named src) gives its files, the right only its src folder.
+        let done = run(&job(&left, &right, Options::default(), "src\\"), &mut |_| {}).unwrap();
+        assert_eq!(
+            found(&done),
+            [
+                ("a.txt".to_owned(), State::LeftOnly),
+                ("src".to_owned(), State::RightOnly),
+                ("src/b.txt".to_owned(), State::RightOnly)
+            ]
+        );
+        // `src` left out: the left folder is out as a whole.
+        let done = run(&job(&left, &right, Options::default(), "| src\\"), &mut |_| {}).unwrap();
+        assert_eq!(
+            found(&done),
+            [
+                ("a.txt".to_owned(), State::RightOnly),
+                ("docs".to_owned(), State::RightOnly),
+                ("docs/c.txt".to_owned(), State::RightOnly)
+            ]
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
