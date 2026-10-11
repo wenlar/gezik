@@ -288,6 +288,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::GetInfo
+        | Action::Checksums
+        | Action::VerifyChecksums
         | Action::MakeAlias
         | Action::ShowPackageContents
         | Action::Share

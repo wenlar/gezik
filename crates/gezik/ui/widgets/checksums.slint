@@ -1,0 +1,268 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { TextField } from "text-field.slint";
+import { Check } from "check.slint";
+import { ListView } from "scrollbar.slint";
+
+// A row of the Checksums layer (checksums.rs).
+export struct ChecksumRow {
+    name: string,
+    size: string,
+    // The shown algorithms' values, in the columns' order ("" until read).
+    values: [string],
+    // Per value: 0 nothing, 1 the expected value, 2 not it.
+    marks: [int],
+    status: string,
+    // 0 plain, 1 good (OK), 2 bad (FAILED, MISSING, UNREADABLE).
+    tone: int,
+    selected: bool,
+}
+
+// A value column: its title and its share of the room the values get.
+export struct ChecksumColumn {
+    title: string,
+    share: float,
+}
+
+component Mark inherits Path {
+    in property <int> mark;
+    width: 10px;
+    height: 10px;
+    viewbox-width: 10;
+    viewbox-height: 10;
+    stroke-width: 1.6px;
+    stroke: root.mark == 1 ? Theme.success : Theme.danger;
+    commands: root.mark == 1 ? "M 1.5 5 L 4 7.5 L 8.5 2.5" : "M 2 2 L 8 8 M 8 2 L 2 8";
+}
+
+// The Checksums layer: the algorithms to compute, the expected value, a row per file with its
+// values, and Copy / Save / Export CSV. In verify mode a checksum file's rows with their
+// results. Esc closes, Ctrl+C copies, Ctrl+A selects all (main.rs routes them).
+export component ChecksumsLayer inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in property <int> focus-request;
+    in property <string> title;
+    in property <bool> verify;
+    in property <string> mono-font;
+    // Which of CRC32, MD5, SHA-1, SHA-256, SHA-512 are ticked.
+    in property <[bool]> algos;
+    in property <[ChecksumColumn]> columns;
+    // The columns' shares together (the name has the rest).
+    in property <float> value-total;
+    in property <[ChecksumRow]> rows;
+    in-out property <string> expected;
+    in property <string> summary;
+    // 0 plain, 1 good, 2 bad.
+    in property <int> summary-tone;
+    in property <bool> only-failed;
+    in property <bool> can-save;
+    // The Expected field has the keyboard: Ctrl+C and Ctrl+A are its own then.
+    in-out property <bool> field-focused;
+    in-out property <length> scroll;
+    callback toggle-algo(int);
+    callback expected-edited();
+    callback toggle-only-failed();
+    callback pressed(int, bool, bool);
+    callback copy();
+    callback save();
+    callback export();
+    callback close();
+
+    // Built when it opens (an `if` in app.slint): the list takes the keyboard then, and again
+    // each time `focus-request` changes.
+    init => {
+        if root.open && !root.dialog-open {
+            scope.focus();
+        }
+    }
+    changed focus-request => {
+        if !root.dialog-open {
+            scope.focus();
+        }
+    }
+
+    background: Theme.overlay;
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    Rectangle {
+        width: min(1100px, root.width - 48px);
+        height: min(640px, root.height - 48px);
+        x: (root.width - self.width) / 2;
+        y: max(24px, (root.height - self.height) / 3);
+        background: Theme.surface-raised;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.title;
+
+        VerticalLayout {
+            padding: Theme.spacing * 3;
+            spacing: Theme.spacing * 1.5;
+
+            HorizontalLayout {
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: root.title;
+                    font-weight: 600;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    color: Theme.foreground;
+                }
+                if !root.verify: HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    horizontal-stretch: 0;
+                    for name[i] in ["CRC32", "MD5", "SHA-1", "SHA-256", "SHA-512"]: Check {
+                        text: name;
+                        checked: root.algos[i];
+                        toggled => { root.toggle-algo(i); }
+                    }
+                }
+            }
+            if !root.verify: HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: "Expected";
+                    width: 72px;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                TextField {
+                    text <=> root.expected;
+                    edited => { root.expected-edited(); }
+                    changed has-focus => { root.field-focused = self.has-focus; }
+                }
+            }
+            if root.verify: HorizontalLayout {
+                Check {
+                    text: "Failed and missing only";
+                    checked: root.only-failed;
+                    toggled => { root.toggle-only-failed(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+
+            // The column titles.
+            header := HorizontalLayout {
+                property <length> room: self.width - 80px - 110px - (root.columns.length + 2) * Theme.spacing * 2;
+                padding-left: Theme.spacing;
+                padding-right: 10px;
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: "Name";
+                    width: header.room * (1 - root.value-total);
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: "Size";
+                    width: 80px;
+                    horizontal-alignment: right;
+                    color: Theme.foreground-muted;
+                }
+                for column in root.columns: Text {
+                    text: column.title;
+                    width: header.room * column.share;
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: "Status";
+                    width: 110px;
+                    color: Theme.foreground-muted;
+                }
+            }
+            Rectangle { height: 1px; background: Theme.border; }
+
+            scope := FocusScope {
+                vertical-stretch: 1;
+                list := ListView {
+                    content-y <=> root.scroll;
+                    for row[i] in root.rows: line := Rectangle {
+                        property <color> fg: row.selected ? Theme.selection-foreground : Theme.foreground;
+                        property <color> muted: row.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                        height: Theme.row-height;
+                        background: row.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: list-item;
+                        accessible-label: row.name;
+                        accessible-description: row.status;
+                        accessible-item-selectable: true;
+                        accessible-item-selected: row.selected;
+                        accessible-item-index: i;
+
+                        touch := TouchArea {
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                                    scope.focus();
+                                    root.pressed(i, event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: Theme.spacing;
+                            spacing: Theme.spacing * 2;
+                            Text {
+                                text: row.name;
+                                width: header.room * (1 - root.value-total);
+                                vertical-alignment: center;
+                                overflow: elide;
+                                color: line.fg;
+                            }
+                            Text {
+                                text: row.size;
+                                width: 80px;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                color: line.muted;
+                            }
+                            for value[k] in row.values: HorizontalLayout {
+                                width: header.room * root.columns[k].share;
+                                spacing: 4px;
+                                if row.marks[k] != 0: VerticalLayout {
+                                    alignment: center;
+                                    Mark { mark: row.marks[k]; }
+                                }
+                                Text {
+                                    text: value;
+                                    font-family: root.mono-font;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    color: row.marks[k] == 1 ? Theme.success : row.marks[k] == 2 ? Theme.danger : line.fg;
+                                }
+                            }
+                            Text {
+                                text: row.status;
+                                width: 110px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                color: row.tone == 1 ? Theme.success : row.tone == 2 ? Theme.danger : line.muted;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text {
+                text: root.summary;
+                wrap: word-wrap;
+                color: root.summary-tone == 1 ? Theme.success : root.summary-tone == 2 ? Theme.danger : Theme.foreground-muted;
+                accessible-role: text;
+            }
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                TextButton { text: "Copy"; clicked => { root.copy(); } }
+                if root.can-save: TextButton { text: "Save…"; clicked => { root.save(); } }
+                TextButton { text: "Export CSV…"; clicked => { root.export(); } }
+                Rectangle { horizontal-stretch: 1; }
+                TextButton {
+                    text: "Close";
+                    primary: true;
+                    clicked => { root.close(); }
+                }
+            }
+        }
+    }
+}

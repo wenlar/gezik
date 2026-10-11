@@ -65,6 +65,7 @@ thread_local! {
 const FORGETS: &[fn(WindowId)] = &[
     |id| crate::archives::CURRENT.with(|s| s.forget(id)),
     |id| crate::batch_rename::CURRENT.with(|s| s.forget(id)),
+    crate::checksums::forget,
     |id| crate::convert::CURRENT.with(|s| s.forget(id)),
     |id| crate::drag::CURRENT.with(|s| s.forget(id)),
     |id| crate::dual::DUAL.with(|s| s.forget(id)),
@@ -317,6 +318,11 @@ pub fn set_process(process: Rc<Process>) {
 
 fn process() -> Option<Rc<Process>> {
     PROCESS.with(|p| p.borrow().clone())
+}
+
+/// Where the config files and state.toml are (none: nothing is saved).
+pub fn config() -> Option<ConfigStore> {
+    process().and_then(|p| p.config.clone())
 }
 
 /// What a window opens with.
@@ -937,6 +943,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let _archives =
         archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), state.archive.clone());
     let _info = info::Info::new(&window, ops.clone(), dialogs.clone());
+    crate::checksums::install(&window);
     let _convert = convert::Convert::new(&window, ops.clone(), dialogs.clone(), config.clone(), state.convert.clone());
     window.on_op_pause({
         let ops = ops.clone();

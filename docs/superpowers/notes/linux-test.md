@@ -588,6 +588,15 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its
 205. **Second launch and session.** As macOS 267–268 (`gezik <folder>` from a terminal; FileManager1 "Show in folder" from a browser's downloads opens in the window used last).
 206. **Focus order.** As macOS 270 with Gezik's own menus (`gezik <folder>` from a terminal); on Wayland write whether the window used last really gets the folder (the compositor may not say which window has the focus).
 
+### 11a, checksums
+
+Numbers stay as they are when branches merge. 11a uses 207–210. GNOME and KDE, X11 and Wayland.
+
+207. **Tests first.** As macOS 271; paste.
+208. **Tools menu and compute.** As macOS 272–273 with Gezik's own menu (the row menu's `Tools ▸`; there is no menu bar). Memory: `ps -o rss= -p $(pgrep -x gezik)` before opening and after closing the layer.
+209. **sha256sum both ways.** As macOS 274 with `sha256sum -c <folder>.sha256`, and `sha256sum * > SHA256SUMS` then Verify Checksums on `SHA256SUMS`; also `md5sum * > x.md5` and a `.sfv` from another tool if you have one. A file name with a backslash (`touch 'a\b.txt'`): Save writes a line starting with `\` and `sha256sum -c` passes it.
+210. **Expected value.** As macOS 275 with Ctrl+C on X11 and on Wayland (write whether the clipboard value is picked up on Wayland).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

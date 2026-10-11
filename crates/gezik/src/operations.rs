@@ -1433,6 +1433,7 @@ impl Operations {
             }
         }
         self.update();
+        crate::checksums::engine_progress();
     }
 
     /// A job found existing items: the list shows them, the job waits for Start.
@@ -1623,6 +1624,7 @@ impl Operations {
         crate::convert::with_current(|convert| convert.job_finished(id, &report));
         crate::stack::with_current(|stack| stack.job_finished(id, &report));
         crate::info::with_current(|info| info.job_finished(id, &report));
+        crate::checksums::job_finished(id, &report);
     }
 
     /// `show-in-folder` (spec 4.6): the focused result's folder with it selected; Back comes

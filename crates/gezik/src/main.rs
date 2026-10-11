@@ -5,6 +5,7 @@ mod actions;
 mod admin;
 mod archives;
 mod batch_rename;
+mod checksums;
 mod cli;
 mod cloud;
 mod conflicts;
@@ -340,7 +341,9 @@ fn perform(
         | Action::SyncBrowsing
         | Action::SwapPanes
         | Action::OtherPaneSameFolder
-        | Action::MoveTabToNewWindow => return actions::run(action, nav, view),
+        | Action::MoveTabToNewWindow
+        | Action::Checksums
+        | Action::VerifyChecksums => return actions::run(action, nav, view),
     }
     true
 }
@@ -389,6 +392,14 @@ fn handle_key(
         let mut used = false;
         if let Some(chord) = &chord {
             convert::with_current(|layer| used = layer.chord(chord));
+        }
+        return used;
+    }
+    // The Checksums layer: Esc, and Ctrl+C / Ctrl+A unless its field has the keyboard.
+    if window.get_ck_open() {
+        let mut used = false;
+        if let Some(chord) = &chord {
+            checksums::with_current(|layer| used = layer.chord(chord, window.get_ck_field_focused()));
         }
         return used;
     }

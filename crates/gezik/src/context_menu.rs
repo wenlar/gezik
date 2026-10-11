@@ -490,6 +490,10 @@ pub const COLLAPSE_GROUPS: u32 = 2010;
 pub const EXPAND_GROUPS: u32 = 2011;
 /// View ▸ Columns (spec 10 §10.3, 10e).
 pub const VIEW_COLUMNS: u32 = 2040;
+/// Tools ▸ (spec 11 §13.3; 2200–2219 in the macOS Tools menu's order: Compare 2200, Select
+/// Differences 2201, …).
+pub const TOOLS_CHECKSUMS: u32 = 2202;
+pub const TOOLS_VERIFY: u32 = 2203;
 /// View ▸ "Reset to rule N" (spec 10 §8.2, §10.3): the folder forgets its own view, rule N applies.
 pub const RESET_TO_RULE: u32 = 2041;
 /// View ▸ "View rule N applies", greyed: which rule set the folder's view.
@@ -530,7 +534,7 @@ pub const GEZIK_IDS_END: u32 = 4096;
 #[cfg(windows)]
 const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
 /// Most submenus a menu shows: app.slint and popup-menu.slint have this many places.
-pub const MAX_SUBMENUS: usize = 4;
+pub const MAX_SUBMENUS: usize = 5;
 
 /// A submenu among a menu's items ("Commands ▸"): its title, its place among the items (0:
 /// first), and its items (id, title, enabled).
@@ -539,6 +543,18 @@ pub struct Submenu {
     pub title: String,
     pub at: usize,
     pub items: Vec<(u32, String, bool)>,
+}
+
+/// Tools ▸ for `rows` at place `at`: Calculate checksums…, and Verify checksums for one
+/// checksum file (spec 11 §3.3: what does not fit is left out).
+pub fn tools_sub(rows: &[(PathBuf, bool)], at: usize) -> Submenu {
+    let mut items = vec![(TOOLS_CHECKSUMS, "Calculate checksums…".to_owned(), true)];
+    if let [(path, false)] = rows
+        && crate::checksums::is_checksum_file(path)
+    {
+        items.push((TOOLS_VERIFY, "Verify checksums".to_owned(), true));
+    }
+    Submenu { title: "Tools".to_owned(), at, items }
 }
 
 /// What a search result's row menu adds.
@@ -1186,14 +1202,16 @@ impl Menus {
         let mut extra = crate::archives::menu_items(&rows);
         let (convert, commands) = crate::convert::menu_items(&rows);
         extra.extend(convert);
-        *self.rows.borrow_mut() = rows;
         let start = if native { 0 } else { list.len() };
+        let tools = tools_sub(&rows, start + extra.len());
+        *self.rows.borrow_mut() = rows;
         if native {
             for sub in subs.iter_mut() {
                 sub.at += extra.len();
             }
         }
         subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
+        subs.push(tools);
         if native {
             list.splice(0..0, extra);
         } else {
@@ -1904,6 +1922,11 @@ impl Menus {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::run_menu_command((id - COMMAND_FIRST) as usize, rows);
             }
+            (TOOLS_CHECKSUMS, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
+            }
+            (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
             (EXTRACT_HERE..=COMPRESS_TO, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 let paths: Vec<PathBuf> = rows.iter().map(|(path, _)| path.clone()).collect();
@@ -2303,6 +2326,7 @@ fn from_submenu(id: u32) -> bool {
         || (QUICK_ACTION_FIRST..QUICK_ACTION_FIRST + QUICK_ACTION_MAX).contains(&id)
         || (MODIFIED_FIRST..=MODIFIED_BETWEEN).contains(&id)
         || (KIND_FIRST..KIND_FIRST + gezik_core::search::KindFilter::ALL.len() as u32).contains(&id)
+        || matches!(id, TOOLS_CHECKSUMS | TOOLS_VERIFY)
         || matches!(
             id,
             NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
@@ -2380,10 +2404,11 @@ mod tests {
         assert!(before.is_empty());
         let shown: Vec<(&str, Vec<&str>)> = parts.iter().map(|(s, after)| (s.title.as_str(), after.clone())).collect();
         assert_eq!(shown, [("First", vec!["a", "b"]), ("Mid", vec!["c", "d"]), ("Late", vec![])]);
-        let many: Vec<Submenu> = (0..6).map(|i| sub("S", i, 1)).collect();
-        let (_, parts) = split_menu(&items, &many);
+        let five = ["a", "b", "c", "d", "e"];
+        let many: Vec<Submenu> = (0..7).map(|i| sub("S", i, 1)).collect();
+        let (_, parts) = split_menu(&five, &many);
         assert_eq!(parts.len(), MAX_SUBMENUS);
-        assert_eq!(parts.last().unwrap().1, ["d"], "the items after one left out stay");
+        assert_eq!(parts.last().unwrap().1, ["e"], "the items after one left out stay");
         let (before, parts) = split_menu(&items, &[]);
         assert_eq!((before.len(), parts.len()), (4, 0));
     }
@@ -2577,10 +2602,16 @@ mod tests {
     }
 
     #[test]
-    fn a_macos_row_keeps_all_four_submenus() {
+    fn a_macos_row_keeps_all_five_submenus() {
         let list: Vec<(u32, String)> = (0..10).map(|i| (i + 100, String::new())).collect();
         let sub = |title: &str, at: usize| Submenu { title: title.into(), at, items: vec![(1, String::new(), true)] };
-        let subs = [sub("Open With", 2), sub("Copy path as", 4), sub("Commands", 6), sub("Quick Actions", 10)];
+        let subs = [
+            sub("Open With", 2),
+            sub("Copy path as", 4),
+            sub("Commands", 6),
+            sub("Tools", 6),
+            sub("Quick Actions", 10),
+        ];
         let (_, parts) = split_menu(&list, &subs);
         assert_eq!(parts.len(), MAX_SUBMENUS, "none is dropped");
     }
@@ -2747,6 +2778,8 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            TOOLS_CHECKSUMS,
+            TOOLS_VERIFY,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -2784,6 +2817,21 @@ mod tests {
         assert!(!ranges.iter().any(|r| r.contains(&HEADING)), "a heading is never an item");
         let encodings = gezik_batch::convert::text::encodings().len() as u32;
         assert!(encodings < ENCODING_MAX, "{encodings} encodings and the first choice fit");
+    }
+
+    #[test]
+    fn tools_offer_verify_only_for_one_checksum_file() {
+        let ids = |rows: &[(PathBuf, bool)]| -> Vec<u32> {
+            tools_sub(rows, 3).items.into_iter().map(|(id, ..)| id).collect()
+        };
+        assert_eq!(ids(&[(PathBuf::from("a.txt"), false)]), [TOOLS_CHECKSUMS]);
+        assert_eq!(ids(&[(PathBuf::from("a.iso.sha256"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
+        assert_eq!(ids(&[(PathBuf::from("SHA256SUMS"), false)]), [TOOLS_CHECKSUMS, TOOLS_VERIFY]);
+        assert_eq!(ids(&[(PathBuf::from("x.sha256"), true)]), [TOOLS_CHECKSUMS], "a folder");
+        let two = [(PathBuf::from("a.md5"), false), (PathBuf::from("b.md5"), false)];
+        assert_eq!(ids(&two), [TOOLS_CHECKSUMS]);
+        assert!(from_submenu(TOOLS_CHECKSUMS) && from_submenu(TOOLS_VERIFY));
+        assert_eq!(tools_sub(&two, 3).at, 3);
     }
 
     fn ids(v: Vec<(u32, &str)>) -> Vec<u32> {

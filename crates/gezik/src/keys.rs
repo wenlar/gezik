@@ -526,6 +526,8 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::Checksums
+            | Action::VerifyChecksums
     )
 }
 
@@ -558,6 +560,8 @@ pub fn needs_list(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::Checksums
+            | Action::VerifyChecksums
             | Action::FocusOtherPane
             | Action::CopyToOtherPane
             | Action::MoveToOtherPane
@@ -875,7 +879,9 @@ mod tests {
                 | Action::MoveTabToOtherPane
                 | Action::SyncBrowsing
                 | Action::OtherPaneSameFolder
-                | Action::MoveTabToNewWindow => continue,
+                | Action::MoveTabToNewWindow
+                | Action::Checksums
+                | Action::VerifyChecksums => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }
