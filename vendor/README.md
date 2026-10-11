@@ -86,9 +86,12 @@ showing or restoring draws the whole window again (Gezik's own restore redraw is
 4. `renderer/sw.rs`, `render_to_window`: the window is drawn line by line
    (`SoftwareRenderer::render_by_line`) and copied to the window in bands of up to 16 lines with
    GDI (`StretchDIBits` on the window's DC), so no frame buffer exists while the window is shown
-   either: only the bands of one frame (at most 3 x 16 lines x the dirty width x 4 bytes), freed
-   after it. DWM keeps the window's content, so as with softbuffer's reused buffer only the dirty
-   region is drawn; the first frame, a frame after a size change and one after `occluded` are
+   either: only the band buffers (16 lines x the dirty width x 4 bytes each, one per distinct
+   line range), kept between frames and freed by `occluded(true)`. DWM keeps the window's
+   content, so as with softbuffer's reused buffer only the dirty region is drawn; the first
+   frame, a frame after a size or scale factor change, one after `occluded`, and one while
+   Windows has an update region of its own (`GetUpdateRect`, e.g. after a display change) are
+   drawn whole. A guard releases the DC even if rendering panics, and the next frame is then
    drawn whole. The environment variable `GEZIK_SOFTBUFFER` (any value) goes back to softbuffer,
    for comparisons or if something draws wrong. Line rendering needs paths, see
    `i-slint-renderer-software` below.
@@ -114,7 +117,9 @@ icon drawn with a path (sidebar, toolbar, breadcrumb arrows, tab close buttons) 
 
 **The fix.** A path is rendered, clipped, with the buffer renderer's own code
 (`path::render_filled_path` / `render_stroked_path`) into a premultiplied RGBA buffer of the clip's
-size, which goes into the scene as a texture. The pixels are the same as with `render`.
+size (straight into the texture's own buffer), which goes into the scene as a texture. The pixels
+are the same as with `render`. The `path` feature comes with the default `std` feature, as
+before.
 
 **Updating Slint.** If the new release draws paths in `render_by_line`, remove this folder and its
 `[patch.crates-io]` line; otherwise copy the new release here and apply the same change.

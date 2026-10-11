@@ -23,10 +23,12 @@ pub struct WinitSoftwareRenderer {
     surface: RefCell<
         Option<softbuffer::Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>>,
     >,
-    /// Gezik patch: the size of the last frame drawn straight to the window (0 = none yet,
-    /// the next frame is drawn whole).
+    /// Gezik patch: size and scale factor of the last frame drawn straight to the window
+    /// (`None`: the next frame is drawn whole), and the band buffers kept between frames.
     #[cfg(target_os = "windows")]
-    drawn_size: core::cell::Cell<(u32, u32)>,
+    drawn: core::cell::Cell<Option<(u32, u32, u64)>>,
+    #[cfg(target_os = "windows")]
+    bands: RefCell<Vec<Vec<SoftBufferPixel>>>,
 }
 
 #[repr(transparent)]
@@ -83,7 +85,9 @@ impl WinitSoftwareRenderer {
             _context: RefCell::new(None),
             surface: RefCell::new(None),
             #[cfg(target_os = "windows")]
-            drawn_size: Default::default(),
+            drawn: Default::default(),
+            #[cfg(target_os = "windows")]
+            bands: Default::default(),
         }))
     }
 }
@@ -105,63 +109,86 @@ impl WinitSoftwareRenderer {
         };
         let hwnd = HWND(handle.hwnd.get() as _);
 
-        let full = self.drawn_size.replace((width, height)) != (width, height);
+        // Drawn whole: the first frame, after a size or scale change, after `occluded`, and when
+        // Windows invalidated part of the window itself (e.g. a display change), since Slint's
+        // dirty region knows nothing of that.
+        let drawn = (width, height, window.scale_factor().to_bits());
+        let invalidated = unsafe { Gdi::GetUpdateRect(hwnd, None, false) }.as_bool();
+        let full = self.drawn.replace(Some(drawn)) != Some(drawn) || invalidated;
         self.renderer.set_repaint_buffer_type(if full {
             RepaintBufferType::NewBuffer
         } else {
             RepaintBufferType::ReusedBuffer
         });
 
-        // Lines of one range, `y` being the first; a dirty region has at most 3 ranges per line.
+        // Lines of one range, `y` being the first.
         struct Band {
             range: core::ops::Range<usize>,
             y: usize,
             lines: usize,
             pixels: Vec<SoftBufferPixel>,
         }
-        struct Window {
+        // Releases the DC even if rendering panics; then the next frame is drawn whole.
+        struct Target<'a> {
+            hwnd: HWND,
             dc: Gdi::HDC,
             bands: Vec<Band>,
+            pool: &'a RefCell<Vec<Vec<SoftBufferPixel>>>,
+            drawn: &'a core::cell::Cell<Option<(u32, u32, u64)>>,
         }
-        impl Window {
-            fn flush(dc: Gdi::HDC, band: &mut Band) {
-                if band.lines == 0 {
-                    return;
+        impl Drop for Target<'_> {
+            fn drop(&mut self) {
+                if std::thread::panicking() {
+                    self.drawn.set(None);
+                } else {
+                    for band in &mut self.bands {
+                        flush(self.dc, band);
+                    }
                 }
-                let (w, h) = (band.range.len() as i32, band.lines as i32);
-                let info = Gdi::BITMAPINFO {
-                    bmiHeader: Gdi::BITMAPINFOHEADER {
-                        biSize: core::mem::size_of::<Gdi::BITMAPINFOHEADER>() as u32,
-                        biWidth: w,
-                        biHeight: -h, // top-down
-                        biPlanes: 1,
-                        biBitCount: 32,
-                        biCompression: Gdi::BI_RGB.0,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                };
+                self.pool.borrow_mut().extend(self.bands.drain(..).map(|band| band.pixels));
                 unsafe {
-                    Gdi::StretchDIBits(
-                        dc,
-                        band.range.start as i32,
-                        band.y as i32,
-                        w,
-                        h,
-                        0,
-                        0,
-                        w,
-                        h,
-                        Some(band.pixels.as_ptr().cast()),
-                        &info,
-                        Gdi::DIB_RGB_COLORS,
-                        Gdi::SRCCOPY,
-                    );
+                    Gdi::ReleaseDC(Some(self.hwnd), self.dc);
+                    let _ = Gdi::ValidateRect(Some(self.hwnd), None);
                 }
-                band.lines = 0;
             }
         }
-        impl i_slint_renderer_software::LineBufferProvider for &mut Window {
+        fn flush(dc: Gdi::HDC, band: &mut Band) {
+            if band.lines == 0 {
+                return;
+            }
+            let (w, h) = (band.range.len() as i32, band.lines as i32);
+            let info = Gdi::BITMAPINFO {
+                bmiHeader: Gdi::BITMAPINFOHEADER {
+                    biSize: core::mem::size_of::<Gdi::BITMAPINFOHEADER>() as u32,
+                    biWidth: w,
+                    biHeight: -h, // top-down
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: Gdi::BI_RGB.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            unsafe {
+                Gdi::StretchDIBits(
+                    dc,
+                    band.range.start as i32,
+                    band.y as i32,
+                    w,
+                    h,
+                    0,
+                    0,
+                    w,
+                    h,
+                    Some(band.pixels.as_ptr().cast()),
+                    &info,
+                    Gdi::DIB_RGB_COLORS,
+                    Gdi::SRCCOPY,
+                );
+            }
+            band.lines = 0;
+        }
+        impl i_slint_renderer_software::LineBufferProvider for &mut Target<'_> {
             type TargetPixel = SoftBufferPixel;
             fn process_line(
                 &mut self,
@@ -169,18 +196,18 @@ impl WinitSoftwareRenderer {
                 range: core::ops::Range<usize>,
                 render_fn: impl FnOnce(&mut [SoftBufferPixel]),
             ) {
-                let dc = self.dc;
                 let i = match self.bands.iter().position(|b| b.range == range) {
                     Some(i) => i,
                     None => {
-                        let pixels = vec![SoftBufferPixel(0); range.len() * BAND];
+                        let mut pixels = self.pool.borrow_mut().pop().unwrap_or_default();
+                        pixels.resize(range.len() * BAND, SoftBufferPixel(0));
                         self.bands.push(Band { range: range.clone(), y: line, lines: 0, pixels });
                         self.bands.len() - 1
                     }
                 };
                 let band = &mut self.bands[i];
                 if band.lines == BAND || band.y + band.lines != line {
-                    Window::flush(dc, band);
+                    flush(self.dc, band);
                 }
                 if band.lines == 0 {
                     band.y = line;
@@ -193,19 +220,13 @@ impl WinitSoftwareRenderer {
 
         let dc = unsafe { Gdi::GetDC(Some(hwnd)) };
         if dc.is_invalid() {
-            self.drawn_size.set((0, 0));
+            self.drawn.set(None);
             return;
         }
-        let mut target = Window { dc, bands: Vec::new() };
         window.pre_present_notify();
+        let mut target =
+            Target { hwnd, dc, bands: Vec::new(), pool: &self.bands, drawn: &self.drawn };
         self.renderer.render_by_line(&mut target);
-        for band in &mut target.bands {
-            Window::flush(dc, band);
-        }
-        unsafe {
-            Gdi::ReleaseDC(Some(hwnd), dc);
-            let _ = Gdi::ValidateRect(Some(hwnd), None);
-        }
     }
 }
 
@@ -320,7 +341,12 @@ impl super::WinitCompatibleRenderer for WinitSoftwareRenderer {
         // and the buffer age doesn't respect that, so clean the partial rendering cache
         self.renderer.set_repaint_buffer_type(RepaintBufferType::NewBuffer);
         #[cfg(target_os = "windows")]
-        self.drawn_size.set((0, 0));
+        {
+            self.drawn.set(None);
+            if _occluded {
+                self.bands.take();
+            }
+        }
         // Gezik patch: a hidden or minimized window gives its frame buffer (a DIB of
         // width x height x 4 bytes) back; a fresh surface on the same window and context has
         // none until the next frame, which is drawn whole (NewBuffer above).

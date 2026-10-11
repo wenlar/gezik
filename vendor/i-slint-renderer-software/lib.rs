@@ -2219,16 +2219,16 @@ impl PrepareScene {
         if width == 0 || height == 0 {
             return;
         }
-        let mut pixels = alloc::vec![PremultipliedRgbaColor::default(); width * height];
+        // Both pixel types are 4 bytes r, g, b, a: render straight into the shared buffer.
+        let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width as u32, height as u32);
         render(
             &path_geometry.translate(-clip.origin.to_vector()),
             &PhysicalRect::from_size(clip.size),
-            &mut TargetPixelSlice { data: &mut pixels, pixel_stride: width },
+            &mut TargetPixelSlice {
+                data: bytemuck::cast_slice_mut(buffer.make_mut_bytes()),
+                pixel_stride: width,
+            },
         );
-        let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width as u32, height as u32);
-        for (to, from) in buffer.make_mut_slice().iter_mut().zip(&pixels) {
-            *to = Rgba8Pixel::new(from.red, from.green, from.blue, from.alpha);
-        }
         let shared_buffer_index = self.vectors.shared_buffers.len() as u16;
         self.vectors.shared_buffers.push(SharedBufferCommand {
             buffer: SharedBufferData::SharedImage(SharedImageBuffer::RGBA8Premultiplied(buffer)),
