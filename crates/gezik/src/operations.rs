@@ -17,7 +17,7 @@ use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
 use gezik_ops::{
     Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MaterializeTask, MoveTask,
-    NewTask, PauseReason, Progress, Question, Report, RestoreTask, Settings, Task, TrashTask,
+    NewTask, PauseReason, Pick, Progress, Question, Report, RestoreTask, Settings, Task, TrashTask,
 };
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::dnd::VirtualFiles;
@@ -1005,16 +1005,18 @@ impl Operations {
     /// Like `transfer` into `dir`, making the folders from `anchor` (`dir` or one above it) down
     /// to `dir` that are not there (F5/F6 to a typed folder, spec 10 §4.4); Ctrl+Z takes away
     /// the ones it made.
-    pub fn transfer_making(&self, paths: Vec<PathBuf>, dir: &Path, anchor: PathBuf, moving: bool) {
+    /// `pick`: only what a filter takes, under a name mask (spec 11 §12; empty: everything).
+    pub fn transfer_making(&self, paths: Vec<PathBuf>, dir: &Path, anchor: PathBuf, moving: bool, pick: Pick) {
         let under: PathBuf = dir.components().skip(anchor.components().count()).collect();
         let items: Vec<(PathBuf, PathBuf)> =
             paths.iter().map(|path| (path.clone(), under.join(path.file_name().unwrap_or_default()))).collect();
         self.remember_for(&paths);
+        let to = dir.to_path_buf();
         let retry: Retry = Rc::new(move || -> Box<dyn Task> {
             if moving {
-                Box::new(MoveTask::with_folders(items.clone(), &anchor))
+                Box::new(MoveTask::with_folders(items.clone(), &anchor).picking(pick.clone()))
             } else {
-                Box::new(CopyTask::with_folders(items.clone(), &anchor))
+                Box::new(CopyTask::with_folders(items.clone(), &anchor).picking(pick.clone()).titled(&to))
             }
         });
         self.submit(retry(), Some(retry), After::Select);

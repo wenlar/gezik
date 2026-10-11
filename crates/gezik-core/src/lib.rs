@@ -11,6 +11,7 @@ pub mod drag;
 pub mod drop_names;
 pub mod elevated;
 pub mod export;
+pub mod file_filter;
 pub mod group;
 pub mod history;
 pub mod kind;

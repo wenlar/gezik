@@ -229,6 +229,10 @@ confirm = true
 # size-map = ""   # Size Map: the selected folder (else the one shown) as nested boxes by size
 # checksums = ""   # Calculate Checksums…: CRC32, MD5, SHA-1, SHA-256, SHA-512 of the selected files
 # verify-checksums = ""   # checks the files a selected .sha256, .md5, .sfv, SHA256SUMS… names
+# copy-to = ""   # Copy To…: into a typed folder; a name mask (D:\Yedek\*.bak) and Filter… (*.jpg | thumbs\)
+# move-to = ""   # Move To…: the same, moving
+# split-file = ""   # Split File…: the selected file into .001, .002… parts and a .crc
+# join-files = ""   # Join Files: the parts of the selected .001 (or .crc) into one file, checked by CRC
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
