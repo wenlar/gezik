@@ -188,10 +188,11 @@ fn tool_row(done: &Done, at: u32, open: bool, selected: bool) -> ToolRow {
     let l = row.left.map(|i| &done.left.nodes[i as usize]);
     let r = row.right.map(|i| &done.right.nodes[i as usize]);
     let named = l.or(r).map_or("", |n| &n.name);
+    // Plain characters: the UI font lacks ▾ and ▸ (a row's name is text, nothing is drawn).
     let mark = match (row.folder, open) {
         (false, _) => "",
-        (true, true) => "▾ ",
-        (true, false) => "▸ ",
+        (true, true) => "- ",
+        (true, false) => "+ ",
     };
     let slash = if row.folder { std::path::MAIN_SEPARATOR_STR } else { "" };
     let name = format!("{}{mark}{named}{slash}", "   ".repeat(usize::from(row.depth)));
@@ -1107,6 +1108,29 @@ mod tests {
             assert_eq!(layer.0.rows.row_count(), 0, "the old rows are not shown as this run's");
             assert!(layer.0.done.borrow().is_none());
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn esc_on_a_running_compare_stops_it_and_says_so() {
+        let layer =
+            FolderCompare::new(slint::Weak::default(), ("/l".into(), "/r".into()), Options::default(), String::new());
+        layer.0.running.set(true);
+        layer.0.generation.set(7);
+        let stop = layer.0.stop.borrow().clone();
+        let esc = Chord { ctrl: false, alt: false, shift: false, meta: false, key: Key::Escape };
+        assert!(layer.chord(&esc, false));
+        assert!(stop.load(Ordering::Relaxed), "the reading threads are told to stop");
+        assert!(layer.0.running.get(), "the layer stays: the threads answer");
+        // What the stopped threads answer is what shows.
+        let root = dir("esc");
+        write(&root.join("L/a.txt"), "a", T);
+        write(&root.join("R/a.txt"), "a", T);
+        let stopped = job(&root.join("L"), &root.join("R"), Options::default(), "");
+        stopped.stop.store(true, Ordering::Relaxed);
+        layer.heard(7, Message::Done(Box::new(run(&stopped, &mut |_| {}))));
+        assert!(!layer.0.running.get());
+        assert!(layer.summary().0.starts_with("Stopped"), "{}", layer.summary().0);
         let _ = std::fs::remove_dir_all(&root);
     }
 

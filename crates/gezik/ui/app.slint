@@ -1407,11 +1407,18 @@ export component AppWindow inherits Window {
                             accessible-role: button;
                             accessible-label: "Close the compare";
                             accessible-action-default => { root.tool-chip-close(); }
-                            Text {
-                                text: "✕";
-                                font-size: Theme.font-size-small;
-                                vertical-alignment: center;
-                                color: close-touch.has-hover ? Theme.foreground : Theme.foreground-muted;
+                            // Drawn: the UI font may lack ✕.
+                            Path {
+                                x: (parent.width - 8px) / 2;
+                                y: (parent.height - 8px) / 2;
+                                width: 8px;
+                                height: 8px;
+                                viewbox-width: 8;
+                                viewbox-height: 8;
+                                commands: Glyph.close;
+                                stroke: close-touch.has-hover ? Theme.foreground : Theme.foreground-muted;
+                                stroke-width: 1.2px;
+                                stroke-line-cap: round;
                             }
                             close-touch := TouchArea {
                                 mouse-cursor: pointer;
