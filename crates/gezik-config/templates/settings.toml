@@ -223,6 +223,7 @@ confirm = true
 # move-tab-to-new-window = ""   # the active tab into a new window (a window's only tab stays)
 # checksums = ""   # Calculate Checksums…: CRC32, MD5, SHA-1, SHA-256, SHA-512 of the selected files
 # verify-checksums = ""   # checks the files a selected .sha256, .md5, .sfv, SHA256SUMS… names
+# find-duplicates = ""   # Find Duplicates: the search bar finds files with the same content, in groups
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
@@ -255,7 +256,8 @@ confirm = true
 # keys are the search bar's: pattern (the filter's language), content (text in files),
 # name-regex, content-regex, match-case, hidden, skipped (true or false), size-min, size-max
 # ("500 MB"), modified (today | 7d | 30d | year | 2026-01-01..2026-06-30) and type (files |
-# folders | pictures | videos | audio | documents | archives | code). At most 30.
+# folders | pictures | videos | audio | documents | archives | code). duplicates = true finds
+# duplicate files instead (Find Duplicates). At most 30.
 # [[searches]]
 # name = "Large videos"
 # folder = "{home}"

@@ -530,6 +530,21 @@ impl Searches {
         self.go(false);
     }
 
+    /// `find-duplicates` (spec 11 §9.1): the bar in its duplicates mode on the selected folder
+    /// (This PC: the selected drive), else on the place shown; Enter starts it.
+    pub fn find_duplicates(&self) {
+        let selected = self.0.view.single_selected().and_then(|i| self.0.view.entry_path(i));
+        let scope = match (selected, self.0.nav.active_location()) {
+            (Some((folder, true)), _) => Scope::Folder(folder),
+            (_, Location::Search(spec)) => spec.scope.clone(),
+            (_, Location::Path(folder) | Location::Flat(folder)) => Scope::Folder(folder),
+            (_, Location::Drives | Location::Trash) => Scope::AllDrives,
+        };
+        let origin = scope.folder().map(Path::to_path_buf);
+        self.show_bar(SearchSpec { duplicates: true, ..SearchSpec::new(scope) }, origin);
+        self.focus_later();
+    }
+
     /// "Search in this folder…": the bar on `folder`, empty.
     pub fn open_in(&self, folder: PathBuf) {
         self.show_bar(SearchSpec::new(Scope::Folder(folder.clone())), Some(folder));
@@ -587,7 +602,11 @@ impl Searches {
         }
         crate::panes::edit(id, |d| {
             d.search_open = self.0.open.get();
-            d.search_scope = scope_label(&draft.scope).into();
+            d.search_scope = if draft.duplicates {
+                format!("Find duplicates {}", scope_label(&draft.scope)).into()
+            } else {
+                scope_label(&draft.scope).into()
+            };
             d.search_content_open = self.0.content_open.get();
             d.search_filters = match draft.filter_count() {
                 0 => "Filters".into(),
@@ -637,6 +656,9 @@ impl Searches {
     }
 
     fn content_toggle(&self) {
+        if self.0.draft.borrow().duplicates {
+            return self.0.view.note("Duplicates compare whole files; text in files is not used".to_owned());
+        }
         let open = !self.0.content_open.get();
         self.0.content_open.set(open);
         if !open {
@@ -661,7 +683,8 @@ impl Searches {
     /// can answer at once; text in files and a scope too large for the cache wait for Enter.
     fn follow_typing(&self) {
         let draft = self.0.draft.borrow().clone();
-        if !draft.content.is_empty() || !draft.is_query() {
+        // Duplicates read files: only Enter starts them.
+        if !draft.content.is_empty() || !draft.is_query() || draft.duplicates {
             return;
         }
         if !self.name_ok() {
@@ -1377,7 +1400,7 @@ impl Searches {
                 }
                 ids::FILTERS_CLEAR => {
                     let (scope, pattern, content) = (draft.scope.clone(), draft.pattern.clone(), draft.content.clone());
-                    *draft = SearchSpec { pattern, content, ..SearchSpec::new(scope) };
+                    *draft = SearchSpec { pattern, content, duplicates: draft.duplicates, ..SearchSpec::new(scope) };
                 }
                 id if (ids::SCOPE_FIRST..ids::SCOPE_FIRST + ids::SCOPE_MAX).contains(&id) => {
                     let Some(scope) = self.0.scopes.borrow().get((id - ids::SCOPE_FIRST) as usize).cloned() else {

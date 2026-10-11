@@ -290,6 +290,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::GetInfo
         | Action::Checksums
         | Action::VerifyChecksums
+        | Action::FindDuplicates
         | Action::MakeAlias
         | Action::ShowPackageContents
         | Action::Share
@@ -615,6 +616,7 @@ mod tests {
             Action::NewFolderWithSelection,
             Action::CalculateFolderSizes,
             Action::SaveSearch,
+            Action::FindDuplicates,
         ] {
             assert!(!allowed(blocked), "{blocked:?}");
         }

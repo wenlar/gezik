@@ -881,7 +881,8 @@ mod tests {
                 | Action::OtherPaneSameFolder
                 | Action::MoveTabToNewWindow
                 | Action::Checksums
-                | Action::VerifyChecksums => continue,
+                | Action::VerifyChecksums
+                | Action::FindDuplicates => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

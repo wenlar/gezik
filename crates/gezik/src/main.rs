@@ -343,7 +343,8 @@ fn perform(
         | Action::OtherPaneSameFolder
         | Action::MoveTabToNewWindow
         | Action::Checksums
-        | Action::VerifyChecksums => return actions::run(action, nav, view),
+        | Action::VerifyChecksums
+        | Action::FindDuplicates => return actions::run(action, nav, view),
     }
     true
 }

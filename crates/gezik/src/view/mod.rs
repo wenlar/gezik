@@ -1771,7 +1771,7 @@ impl View {
         let spawned = std::thread::Builder::new().name("gezik-sort".into()).spawn(move || {
             let plain =
                 |e: &Entry| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir));
-            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain };
+            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row: None };
             let order = full.sort_order(spec, folders_first, plain, (by != GroupBy::None).then_some(&grouping));
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
@@ -2243,7 +2243,8 @@ impl View {
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, None)
         } else {
             let dates = self.fresh_dates();
-            let grouping = Grouping { by, spec: view.sort, folders_first, dates: &dates, type_name: &type_name };
+            let grouping =
+                Grouping { by, spec: view.sort, folders_first, dates: &dates, type_name: &type_name, row: None };
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, Some(&grouping))
         };
         (Rc::new(entries), order)
@@ -2347,6 +2348,7 @@ impl View {
                     folders_first: self.0.options.get().folders_first,
                     dates: &dates,
                     type_name,
+                    row: None,
                 };
                 let collapsed = self.0.collapsed.borrow();
                 let listing = &data.listing;

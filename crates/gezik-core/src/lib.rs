@@ -9,6 +9,7 @@ pub mod complete;
 pub mod csv;
 pub mod drag;
 pub mod drop_names;
+pub mod duplicates;
 pub mod elevated;
 pub mod group;
 pub mod history;
