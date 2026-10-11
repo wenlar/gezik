@@ -63,6 +63,15 @@ pub fn detect(head: &[u8]) -> Detected {
     Detected::Text(detector.guess(None, Utf8Detection::Allow), false)
 }
 
+/// A whole file's text and its encoding's name ([`name`]): the encoding [`detect`] finds, a BOM
+/// taken off; `None` when it looks binary (the file compare, spec 11 §6.2). Bytes that are not
+/// valid in it become U+FFFD.
+pub fn decode(bytes: &[u8]) -> Option<(String, &'static str)> {
+    let Detected::Text(encoding, _) = detect(&bytes[..bytes.len().min(SNIFF)]) else { return None };
+    let (text, used, _) = encoding.decode(bytes);
+    Some((text.into_owned(), name(used)))
+}
+
 /// The encodings offered, as (label, name shown): encoding_rs name, display name, list name.
 /// The common ones first, then the rest of WHATWG's (without "replacement" and
 /// "x-user-defined", which are not text encodings one picks).
@@ -515,6 +524,19 @@ mod tests {
         assert_eq!(detect("Işık ağaç".as_bytes()), Detected::Text(UTF_8, false));
         let (cp1254, _, _) = encoding_rs::WINDOWS_1254.encode("Işık ağaç şöyle güzel çiçekler\n");
         assert_eq!(detect(&cp1254), Detected::Text(encoding_rs::WINDOWS_1254, false));
+    }
+
+    #[test]
+    fn decodes_whole_files_by_their_encoding() {
+        let utf16: Vec<u8> =
+            [0xFF, 0xFE].into_iter().chain("Işık\r\n".encode_utf16().flat_map(u16::to_le_bytes)).collect();
+        assert_eq!(decode(&utf16), Some(("Işık\r\n".to_owned(), "UTF-16 LE")));
+        assert_eq!(decode("\u{FEFF}abc".as_bytes()), Some(("abc".to_owned(), "UTF-8")), "the BOM is not text");
+        assert_eq!(decode("ağaç".as_bytes()), Some(("ağaç".to_owned(), "UTF-8")));
+        let (cp1254, _, _) = encoding_rs::WINDOWS_1254.encode("Işık ağaç şöyle güzel çiçekler\n");
+        assert_eq!(decode(&cp1254), Some(("Işık ağaç şöyle güzel çiçekler\n".to_owned(), "Windows-1254")));
+        assert_eq!(decode(b"MZ\0\x90"), None);
+        assert_eq!(decode(b""), Some((String::new(), "UTF-8")));
     }
 
     #[test]
