@@ -93,24 +93,7 @@ pub fn open(left: PathBuf, right: PathBuf, told: String) {
         old.0.stop.borrow().store(true, Ordering::Relaxed);
     }
     let options = crate::windows::config().map(|c| c.load_state().compare).unwrap_or_default();
-    let rows = Rc::new(Rows::default());
-    let layer = FolderCompare(Rc::new(Inner {
-        window,
-        paths: RefCell::new((left, right)),
-        options: Cell::new(options),
-        filter_text: RefCell::default(),
-        scanned_filter: RefCell::default(),
-        rows,
-        done: RefCell::default(),
-        generation: Cell::new(0),
-        stop: RefCell::new(Arc::new(AtomicBool::new(false))),
-        running: Cell::new(false),
-        progress: RefCell::default(),
-        told: RefCell::new(told),
-        hidden: Cell::new(false),
-        stale: Cell::new(false),
-        anchor: Cell::new(None),
-    }));
+    let layer = FolderCompare::new(window, (left, right), options, told);
     CURRENT.with(|s| s.set(crate::windows::current(), layer.clone()));
     layer.show();
     layer.start();
@@ -273,6 +256,26 @@ enum Message {
 }
 
 impl FolderCompare {
+    fn new(window: slint::Weak<AppWindow>, paths: (PathBuf, PathBuf), options: Options, told: String) -> Self {
+        FolderCompare(Rc::new(Inner {
+            window,
+            paths: RefCell::new(paths),
+            options: Cell::new(options),
+            filter_text: RefCell::default(),
+            scanned_filter: RefCell::default(),
+            rows: Rc::default(),
+            done: RefCell::default(),
+            generation: Cell::new(0),
+            stop: RefCell::new(Arc::new(AtomicBool::new(false))),
+            running: Cell::new(false),
+            progress: RefCell::default(),
+            told: RefCell::new(told),
+            hidden: Cell::new(false),
+            stale: Cell::new(false),
+            anchor: Cell::new(None),
+        }))
+    }
+
     /// A job changed `dirs`: marks the result out of date if they are in its folders (and says
     /// whether it did).
     fn touched_by(&self, dirs: &[PathBuf]) -> bool {
@@ -449,7 +452,15 @@ impl FolderCompare {
                         self.0.anchor.set(None);
                         self.refilter();
                     }
-                    Err(text) => *self.0.progress.borrow_mut() = text,
+                    Err(text) => {
+                        // The earlier result is not this one's: it goes, the reason shows.
+                        *self.0.progress.borrow_mut() = text;
+                        *self.0.done.borrow_mut() = None;
+                        *self.0.rows.done.borrow_mut() = None;
+                        self.0.rows.selected.borrow_mut().clear();
+                        self.0.stale.set(false);
+                        self.refilter();
+                    }
                 }
             }
         }
@@ -1031,6 +1042,33 @@ mod tests {
         late.stop.store(true, Ordering::Relaxed);
         read_contents(&late, &left, &right, &mut rows, &mut |_| {});
         assert!(rows[0].check, "not read");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_failed_run_drops_the_earlier_result() {
+        let root = dir("failed");
+        write(&root.join("L/a.txt"), "a", T);
+        write(&root.join("R/b.txt"), "b", T);
+        let layer = FolderCompare::new(
+            slint::Weak::default(),
+            (root.join("L"), root.join("R")),
+            Options::default(),
+            String::new(),
+        );
+        let ok = run(&job(&root.join("L"), &root.join("R"), Options::default(), ""), &mut |_| {});
+        layer.0.generation.set(1);
+        layer.heard(1, Message::Done(Box::new(ok)));
+        assert_eq!(layer.0.rows.row_count(), 2);
+        assert!(layer.summary().0.contains("2 items compared"));
+        for why in
+            ["Stopped. Compare Again (F5) reads both folders again", "Cannot read x: gone", "More than 2,000,000 items"]
+        {
+            layer.heard(1, Message::Done(Box::new(Err(why.to_owned()))));
+            assert_eq!(layer.summary().0, why);
+            assert_eq!(layer.0.rows.row_count(), 0, "the old rows are not shown as this run's");
+            assert!(layer.0.done.borrow().is_none());
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
