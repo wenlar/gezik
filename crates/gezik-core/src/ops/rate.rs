@@ -17,6 +17,11 @@ impl Rate {
     /// `done` bytes in total at `now`.
     pub fn record(&mut self, now: Instant, done: u64) {
         self.samples.push_back((now, done));
+        // Time before the first bytes moved (scanning, waiting for the drive) is not speed:
+        // the window starts at the last sample before they did.
+        while self.samples.len() > 1 && self.samples[0].1 == self.samples[1].1 {
+            self.samples.pop_front();
+        }
         // Keep one sample older than the window, so the span covers all of it.
         while self.samples.len() > 2 && now.saturating_duration_since(self.samples[1].0) > self.window {
             self.samples.pop_front();
@@ -197,6 +202,17 @@ mod tests {
         }
         let speed = rate.per_second().unwrap();
         assert!((speed - 100.0).abs() < 1.0, "{speed}");
+    }
+
+    #[test]
+    fn the_speed_starts_when_the_first_bytes_move() {
+        let t0 = Instant::now();
+        let mut rate = Rate::new(Duration::from_secs(5));
+        for i in 0..4 {
+            rate.record(t0 + Duration::from_secs(i), 0);
+        }
+        rate.record(t0 + Duration::from_secs(4), 1000);
+        assert_eq!(rate.per_second(), Some(1000.0), "not 1000 bytes over 4 idle seconds");
     }
 
     #[test]
