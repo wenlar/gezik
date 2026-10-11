@@ -79,6 +79,11 @@ impl FileFilter {
         *self == FileFilter::default()
     }
 
+    /// Whether it has `A>B` (the walk then looks at a chosen file's neighbours).
+    pub fn has_related(&self) -> bool {
+        !self.related.is_empty()
+    }
+
     /// Whether a file of this name is taken by itself (not as a related file).
     pub fn takes_file(&self, name: &str) -> bool {
         (self.files.is_empty() || any(&self.files, name)) && !any(&self.skip_files, name)

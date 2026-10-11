@@ -7,6 +7,7 @@ use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::{Decision, Facts};
 use gezik_core::ops::paths::{is_within, same_path};
 
+use super::pick::{Pick, Picked, Picker};
 use super::what;
 use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
 use crate::walk::{Step, facts_of, walk};
@@ -27,6 +28,8 @@ pub struct CopyTask {
     parents: Vec<PathBuf>,
     /// Copy with folders: items whose relative path would leave the target folder.
     refused: Vec<PathBuf>,
+    /// Only what a filter picks, under a name mask (spec 11 §12.2).
+    pick: Option<Pick>,
 }
 
 impl CopyTask {
@@ -43,7 +46,15 @@ impl CopyTask {
                 (source, target)
             })
             .collect();
-        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None, parents: Vec::new(), refused: Vec::new() }
+        CopyTask {
+            pairs,
+            presets,
+            dir: Some(dir.to_path_buf()),
+            new: None,
+            parents: Vec::new(),
+            refused: Vec::new(),
+            pick: None,
+        }
     }
 
     /// Copies each source to `dir` joined with its path under a search's scope, making the
@@ -55,7 +66,13 @@ impl CopyTask {
         let super::Relative { pairs, parents, refused } = super::relative_targets(items, dir);
         let presets =
             pairs.iter().map(|(source, target)| same_path(source, target).then_some(Decision::KeepBoth)).collect();
-        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None, parents, refused }
+        CopyTask { pairs, presets, dir: Some(dir.to_path_buf()), new: None, parents, refused, pick: None }
+    }
+
+    /// Copies only what `pick` takes, under its name mask (an empty one changes nothing).
+    pub fn picking(mut self, pick: Pick) -> CopyTask {
+        self.pick = (!pick.is_empty()).then_some(pick);
+        self
     }
 
     /// Copies each source next to itself as `name (2)`.
@@ -68,6 +85,7 @@ impl CopyTask {
             new: None,
             parents: Vec::new(),
             refused: Vec::new(),
+            pick: None,
         }
     }
 
@@ -83,6 +101,7 @@ impl CopyTask {
             new: Some(kind),
             parents: Vec::new(),
             refused: Vec::new(),
+            pick: None,
         }
     }
 
@@ -128,6 +147,7 @@ impl Task for CopyTask {
         if !super::plan_parents(sink, &self.parents, MAKE_PARENT) {
             return;
         }
+        let mut picker = self.pick.as_ref().map(Picker::new);
         for (root, ((source, target), preset)) in self.pairs.iter().zip(&self.presets).enumerate() {
             if super::refuse_root(sink, source, "copy") {
                 continue;
@@ -144,6 +164,20 @@ impl Task for CopyTask {
                 sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, "Cannot copy a folder into itself"));
                 continue;
             }
+            if let Some(picker) = &mut picker {
+                let emit = &mut |sink: &mut dyn ScanSink, p: Picked<'_>| {
+                    let stage = if p.facts.is_dir { Stage::Before } else { Stage::Parallel };
+                    // Onto itself (a mask that changed nothing): a numbered copy, never a replace.
+                    let preset =
+                        if p.top { *preset } else { same_path(p.source, p.target).then_some(Decision::KeepBoth) };
+                    let item = PlanItem::new(stage, p.facts).source(p.source).target(p.target).checked().preset(preset);
+                    sink.item(if p.top { item.top(root) } else { item.under(root) })
+                };
+                if !picker.root(sink, source, target, facts, emit) {
+                    return;
+                }
+                continue;
+            }
             let stage = if facts.is_dir { Stage::Before } else { Stage::Parallel };
             let item = PlanItem::new(stage, facts).source(source).target(target).checked().top(root).preset(*preset);
             if !sink.item(item) {
@@ -155,10 +189,15 @@ impl Task for CopyTask {
         }
     }
 
+    /// A name mask may bring two files to one name: the later one meets the conflict list.
+    fn same_targets(&self) -> bool {
+        self.pick.as_ref().is_some_and(|pick| pick.mask.is_some())
+    }
+
     fn as_admin(&self, denied: &[PathBuf]) -> Vec<Op> {
         // A plain copy into a folder only: not a duplicate, a template, a "keep both" copy into
         // its own folder, or a copy with folders.
-        if self.new.is_some() || self.dir.is_none() || !self.parents.is_empty() {
+        if self.new.is_some() || self.dir.is_none() || !self.parents.is_empty() || self.pick.is_some() {
             return Vec::new();
         }
         self.pairs
@@ -513,6 +552,7 @@ mod tests {
             new: None,
             parents: Vec::new(),
             refused: Vec::new(),
+            pick: None,
         };
         let engine = engine();
         // Replace set beforehand.
@@ -700,6 +740,7 @@ mod tests {
                     new: None,
                     parents: Vec::new(),
                     refused: Vec::new(),
+                    pick: None,
                 };
                 let (report, _) = finish(&engine, engine.submit(Box::new(task)), |c| vec![Decision::Replace; c.len()]);
                 assert!(report.failures.is_empty(), "{target:?}: {:?}", report.failures);
