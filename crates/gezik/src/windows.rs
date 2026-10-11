@@ -581,15 +581,21 @@ pub fn open_for(opens: Vec<crate::cli::Open>, missing: Vec<std::path::PathBuf>, 
     let start = panes::active_nav().start();
     let (session, select) = new_window_tabs(opens, trash, &start);
     open_beside_with(session, select, None, move |_| {
-        if !missing.is_empty() {
-            let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
-            panes::active_view().note(format!("{}: not found", names.join(", ")));
-        }
+        say_missing(&panes::active_nav(), &missing);
         // As a request in the window used last does: after a --background start the windows
         // count as shown from now on (what waits for that runs), and the new one (in front of
         // the focus order) is raised.
         resident::reveal();
     });
+}
+
+/// "… not found" for `missing` in a new window's status bar: through its navigator, as its
+/// first listing still loads and would take a note given to the view now away.
+pub(crate) fn say_missing(nav: &navigation::Navigator, missing: &[std::path::PathBuf]) {
+    if !missing.is_empty() {
+        let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
+        nav.note(format!("{}: not found", names.join(", ")));
+    }
 }
 
 /// The tabs of a window opened for `opens` (`--new-window`): a tab each and the trash after

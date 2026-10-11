@@ -1551,6 +1551,22 @@ mod tests {
         assert!(nav.0.borrow().note_next.is_none(), "nothing loads: shown at once");
     }
 
+    /// Fix 9: a new window's "not found" waits for its first listing (its item count would
+    /// take a note given to the view at once away).
+    #[test]
+    fn a_new_windows_missing_path_waits_for_its_first_listing() {
+        let id = crate::panes::next_id();
+        let window = slint::Weak::default();
+        let view = View::new(id, window.clone(), crate::media::Media::idle(), Default::default(), None);
+        let nav = Navigator::new(id, window, view, Session::single(Location::Drives), Vec::new(), Location::Drives);
+        nav.install();
+        crate::windows::say_missing(&nav, &[]);
+        assert!(nav.0.borrow().note_next.is_none(), "nothing missing: no note");
+        let missing = PathBuf::from("nope");
+        crate::windows::say_missing(&nav, std::slice::from_ref(&missing));
+        assert_eq!(nav.0.borrow().note_next, Some(format!("{}: not found", missing.display())));
+    }
+
     #[test]
     fn a_bare_server_is_listed_by_its_shares_on_windows_only() {
         assert_eq!(server_of(Path::new(r"\\nas")).as_deref(), if cfg!(windows) { Some("nas") } else { None });
