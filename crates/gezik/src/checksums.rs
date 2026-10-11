@@ -341,7 +341,12 @@ impl Checksums {
             (values.join("  ").trim_end().to_owned(), status, tone)
         };
         let size =
-            if row.state == RowState::Missing { String::new() } else { crate::view_options::size_text(row.size) };
+            // A missing file, or an entry outside the folder (never looked at), has no size.
+            if row.state == RowState::Missing || row.path.as_os_str().is_empty() {
+                String::new()
+            } else {
+                crate::view_options::size_text(row.size)
+            };
         let values = format!("{size:>SIZE_WIDTH$}  {values}");
         ToolRow {
             name: row.name.as_str().into(),
