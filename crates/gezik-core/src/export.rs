@@ -6,6 +6,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use crate::batch::date::DateParts;
+use crate::view::ColumnKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -53,6 +54,40 @@ impl Format {
             Format::Text => "Text",
             Format::Csv => "CSV",
             Format::Html => "HTML",
+        }
+    }
+}
+
+/// A column of an exported list: the name, the full path (CSV's last), or one the list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Column {
+    Name,
+    Path,
+    Shown(ColumnKey),
+}
+
+impl Column {
+    pub fn title(self) -> &'static str {
+        match self {
+            Column::Name => "Name",
+            Column::Path => "Path",
+            Column::Shown(key) => key.title(),
+        }
+    }
+}
+
+/// The columns `format` writes when the list shows `shown` (in its order; Name is always first):
+/// text one (the name, or the path with `full_paths`), CSV all of them and the path, HTML all.
+pub fn columns(format: Format, shown: &[ColumnKey], full_paths: bool) -> Vec<Column> {
+    match format {
+        Format::Text => vec![if full_paths { Column::Path } else { Column::Name }],
+        Format::Csv | Format::Html => {
+            let mut out = vec![Column::Name];
+            out.extend(shown.iter().map(|&key| Column::Shown(key)));
+            if format == Format::Csv {
+                out.push(Column::Path);
+            }
+            out
         }
     }
 }
@@ -281,6 +316,17 @@ mod tests {
         for format in Format::ALL {
             assert_eq!(Format::parse(format.as_str()), Some(format));
         }
+    }
+
+    #[test]
+    fn each_format_takes_its_columns() {
+        let shown = [ColumnKey::Folder, ColumnKey::Size, ColumnKey::Modified];
+        assert_eq!(columns(Format::Text, &shown, false), [Column::Name]);
+        assert_eq!(columns(Format::Text, &shown, true), [Column::Path]);
+        let csv = columns(Format::Csv, &shown, true);
+        let titles: Vec<&str> = csv.iter().map(|c| c.title()).collect();
+        assert_eq!(titles, ["Name", "Folder", "Size", "Modified", "Path"]);
+        assert_eq!(columns(Format::Html, &shown, false).last(), Some(&Column::Shown(ColumnKey::Modified)));
     }
 
     #[test]

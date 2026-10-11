@@ -962,6 +962,78 @@ impl View {
         (index < data.listing.len()).then(|| model::file_row(&data, index))
     }
 
+    /// The columns on screen right of Name, in their order (Match only when a result has a line).
+    pub fn shown_column_keys(&self) -> Vec<ColumnKey> {
+        let matches = self.results().is_some_and(|set| set.has_matches());
+        let shown = self.columns_shown().into_iter().filter(|c| c.visible);
+        shown.map(|c| c.key).filter(|&key| key != ColumnKey::Match || matches).collect()
+    }
+
+    /// The rows an export writes (spec 11 §11): each entry shown (the filter's, in list order),
+    /// or with `selected_only` each selected one, as `columns` of cells: `raw` as CSV takes them
+    /// (bytes, ISO local times), else as the list shows them. Read from the view's data, nothing
+    /// asked of the file system; one row at a time. `None` for This PC.
+    pub fn export_rows(
+        &self,
+        columns: &[gezik_core::export::Column],
+        raw: bool,
+        selected_only: bool,
+        mut each: impl FnMut(&[String]) -> std::io::Result<()>,
+    ) -> Option<std::io::Result<usize>> {
+        use gezik_core::export::Column;
+        let data = self.0.data.borrow();
+        if matches!(data.listing, Listing::Drives(_)) {
+            return None;
+        }
+        let (listing, options, now) = (&data.listing, data.options, SystemTime::now());
+        let date = |time: Option<SystemTime>| match time {
+            Some(time) if raw => gezik_platform::local_date_parts(time)
+                .map(|parts| gezik_core::export::iso_seconds(&parts))
+                .unwrap_or_default(),
+            Some(time) => gezik_platform::format_date(time, options.date_format, now),
+            None => String::new(),
+        };
+        let mut cells = vec![String::new(); columns.len()];
+        let mut write = |i: usize| {
+            let entry = listing.entry(i);
+            for (cell, column) in cells.iter_mut().zip(columns) {
+                *cell = match column {
+                    Column::Name => listing.name_at(i).unwrap_or_default().to_owned(),
+                    Column::Path => listing.path_at(i).map(|(path, _)| path.display().to_string()).unwrap_or_default(),
+                    Column::Shown(ColumnKey::Folder) => match listing {
+                        Listing::Results(set) => set.shown_folder(i).unwrap_or_default().to_owned(),
+                        _ => String::new(),
+                    },
+                    Column::Shown(ColumnKey::Match) => match listing {
+                        Listing::Results(set) => {
+                            set.found(i).map(|(line, text)| format!("{line}: {text}")).unwrap_or_default()
+                        }
+                        _ => String::new(),
+                    },
+                    Column::Shown(ColumnKey::Size) => match entry.as_deref() {
+                        Some(e) if raw => e.known_size().map(|n| n.to_string()).unwrap_or_default(),
+                        Some(e) => model::size_cell(e, options.size_format),
+                        None => String::new(),
+                    },
+                    Column::Shown(ColumnKey::Modified) => date(entry.as_deref().and_then(|e| e.modified)),
+                    Column::Shown(ColumnKey::Created) => date(entry.as_deref().and_then(|e| e.created)),
+                    Column::Shown(ColumnKey::Type) => model::type_name_for(&data, i),
+                };
+            }
+            each(&cells)
+        };
+        let mut count = 0;
+        let rows: Box<dyn Iterator<Item = usize>> =
+            if selected_only { Box::new(data.selection.iter()) } else { Box::new(0..listing.len()) };
+        for i in rows {
+            if let Err(err) = write(i) {
+                return Some(Err(err));
+            }
+            count += 1;
+        }
+        Some(Ok(count))
+    }
+
     /// How many entries the view shows.
     pub fn len(&self) -> usize {
         self.0.data.borrow().listing.len()
@@ -2942,6 +3014,58 @@ mod tests {
         let sorted = listing::results(&[("b", "x.txt"), ("a", "x.txt")]);
         assert_eq!(sorted.index_of(&key), Some(0), "not the other x.txt");
         assert_eq!(listing::results(&[("a", "x.txt")]).index_of(&key), None, "gone: the rename ends");
+    }
+
+    /// Rows as `View::export_rows` gives them.
+    fn exported(view: &View, columns: &[gezik_core::export::Column], raw: bool, selected: bool) -> Vec<Vec<String>> {
+        let mut rows = Vec::new();
+        let count = view.export_rows(columns, raw, selected, |cells| {
+            rows.push(cells.to_vec());
+            Ok(())
+        });
+        assert_eq!(count.unwrap().unwrap(), rows.len());
+        rows
+    }
+
+    #[test]
+    fn an_export_writes_the_rows_shown_in_their_order() {
+        use gezik_core::export::Column;
+        let view = View::new(crate::panes::next_id(), slint::Weak::default(), Media::idle(), Default::default(), None);
+        let Listing::Files(_, full) = files("/x", &["sub/", "c.png", "a,b.txt", "d.png"]) else { unreachable!() };
+        {
+            let mut data = view.0.data.borrow_mut();
+            // The filter shows the pictures, in the list's order.
+            let (listing, rows) = filtered_listing(Path::new("/x"), &full, &Pattern::compile("*.png").unwrap());
+            (data.listing, data.rows, data.full) = (listing, rows, full);
+            data.selection = Selection::from_indices(2, [1], Some(1));
+        }
+        let columns = [Column::Name, Column::Shown(ColumnKey::Size), Column::Path];
+        let path = |name: &str| Path::new("/x").join(name).display().to_string();
+        assert_eq!(
+            exported(&view, &columns, true, false),
+            [vec!["c.png".to_owned(), "10".into(), path("c.png")], vec!["d.png".into(), "10".into(), path("d.png")]]
+        );
+        assert_eq!(exported(&view, &columns, true, true), [vec!["d.png".to_owned(), "10".into(), path("d.png")]]);
+        let shown = exported(&view, &[Column::Shown(ColumnKey::Size)], false, true);
+        assert_eq!(shown[0][0], gezik_core::format_size_in(10, gezik_core::view::ViewOptions::default().size_format));
+
+        // A folder's size is written only once known.
+        view.0.data.borrow_mut().listing = files("/x", &["sub/"]);
+        assert_eq!(exported(&view, &[Column::Shown(ColumnKey::Size)], true, false), [vec![String::new()]]);
+    }
+
+    #[test]
+    fn an_export_of_results_has_their_folders_and_paths() {
+        use gezik_core::export::Column;
+        let view = View::new(crate::panes::next_id(), slint::Weak::default(), Media::idle(), Default::default(), None);
+        view.0.data.borrow_mut().listing = listing::results(&[("a", "x.txt"), ("b", "x.txt")]);
+        let columns = [Column::Name, Column::Shown(ColumnKey::Folder), Column::Path];
+        let rows = exported(&view, &columns, true, false);
+        let path = |folder: &str| Path::new("/w").join(folder).join("x.txt").display().to_string();
+        assert_eq!(rows[0], ["x.txt".to_owned(), "a".into(), path("a")]);
+        assert_eq!(rows[1], ["x.txt".to_owned(), "b".into(), path("b")]);
+        view.0.data.borrow_mut().listing = Listing::Drives(Vec::new());
+        assert!(view.export_rows(&columns, true, false, |_| Ok(())).is_none(), "This PC is no list of files");
     }
 
     #[test]

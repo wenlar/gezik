@@ -510,6 +510,16 @@ pub const SWAP_PANES: u32 = 2032;
 pub const SAME_FOLDER: u32 = 2033;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
+// Step 11 (spec 11 §13.3): 2200–2399. Tools ▸ 2200–2219 in the macOS Tools menu's order: Compare
+// 2200, Select Differences 2201, Calculate Checksums 2202, Verify Checksums 2203, Find Duplicates
+// 2204, Size Map 2205, Export List 2206, Copy To 2207, Move To 2208, Split File 2209, Join Files 2210.
+/// Tools ▸ Export list… (11h).
+pub const TOOLS_EXPORT_LIST: u32 = 2206;
+
+/// Tools ▸ (spec 11 §3.3) at place `at`: the tools that work on the list or the selection.
+pub fn tools_sub(at: usize) -> Submenu {
+    Submenu { title: "Tools".to_owned(), at, items: vec![(TOOLS_EXPORT_LIST, "Export list…".to_owned(), true)] }
+}
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
@@ -529,8 +539,9 @@ pub const HEADING: u32 = 0;
 pub const GEZIK_IDS_END: u32 = 4096;
 #[cfg(windows)]
 const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
-/// Most submenus a menu shows: app.slint and popup-menu.slint have this many places.
-pub const MAX_SUBMENUS: usize = 4;
+/// Most submenus a menu shows: app.slint and popup-menu.slint have this many places (a macOS
+/// row: Open With, Copy path as, Commands, Tools, Quick Actions).
+pub const MAX_SUBMENUS: usize = 5;
 
 /// A submenu among a menu's items ("Commands ▸"): its title, its place among the items (0:
 /// first), and its items (id, title, enabled).
@@ -1194,6 +1205,7 @@ impl Menus {
             }
         }
         subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
+        subs.push(tools_sub(start + extra.len()));
         if native {
             list.splice(0..0, extra);
         } else {
@@ -1318,11 +1330,14 @@ impl Menus {
             .map(|(id, title)| (id, title, true))
             .collect();
             let mut list = list;
+            let mut subs = Vec::new();
             if crate::panes::active_view().shows_trash() {
                 list.push((EMPTY_TRASH, empty_title(), true));
+            } else {
+                subs.push(tools_sub(list.len()));
             }
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
-            return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
+            return self.open_slint_entries(&list, subs, Anchor::point(x, y));
         }
         if crate::panes::active_view().shows_drives() {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
@@ -1349,6 +1364,7 @@ impl Menus {
         list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
+        subs.push(tools_sub(list.len()));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -2046,6 +2062,7 @@ impl Menus {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
             (REVEAL_IN_TREE, _) => self.sidebar.reveal_current(),
+            (TOOLS_EXPORT_LIST, _) => crate::export::ask(&crate::panes::active_nav(), &crate::panes::active_view()),
             (CALC_FOLDER_SIZES, _) => {
                 crate::panes::with_active(|p| p.folder_sizes.calculate());
             }
@@ -2296,6 +2313,7 @@ fn from_submenu(id: u32) -> bool {
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
+        || id == TOOLS_EXPORT_LIST
         || id == GROUP_NONE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
@@ -2380,7 +2398,8 @@ mod tests {
         assert!(before.is_empty());
         let shown: Vec<(&str, Vec<&str>)> = parts.iter().map(|(s, after)| (s.title.as_str(), after.clone())).collect();
         assert_eq!(shown, [("First", vec!["a", "b"]), ("Mid", vec!["c", "d"]), ("Late", vec![])]);
-        let many: Vec<Submenu> = (0..6).map(|i| sub("S", i, 1)).collect();
+        // Six submenus, two pairs at one place: the last is left out.
+        let many: Vec<Submenu> = [0, 1, 2, 2, 3, 3].into_iter().map(|at| sub("S", at, 1)).collect();
         let (_, parts) = split_menu(&items, &many);
         assert_eq!(parts.len(), MAX_SUBMENUS);
         assert_eq!(parts.last().unwrap().1, ["d"], "the items after one left out stay");
@@ -2566,6 +2585,14 @@ mod tests {
     }
 
     #[test]
+    fn the_tools_ids_stay_in_their_range() {
+        assert_eq!(TOOLS_EXPORT_LIST, 2206, "spec 11 §13.3");
+        let tools = tools_sub(3);
+        assert_eq!((tools.title.as_str(), tools.at), ("Tools", 3));
+        assert!(tools.items.iter().all(|(id, _, _)| (2200..2220).contains(id) && from_submenu(*id)));
+    }
+
+    #[test]
     fn the_9a3_ids_stay_in_their_range() {
         assert_eq!(GET_INFO, 1742);
         for id in [INFO_GROUP_FIRST, INFO_GROUP_FIRST + INFO_GROUP_MAX - 1] {
@@ -2577,10 +2604,11 @@ mod tests {
     }
 
     #[test]
-    fn a_macos_row_keeps_all_four_submenus() {
+    fn a_macos_row_keeps_all_five_submenus() {
         let list: Vec<(u32, String)> = (0..10).map(|i| (i + 100, String::new())).collect();
         let sub = |title: &str, at: usize| Submenu { title: title.into(), at, items: vec![(1, String::new(), true)] };
-        let subs = [sub("Open With", 2), sub("Copy path as", 4), sub("Commands", 6), sub("Quick Actions", 10)];
+        let subs =
+            [sub("Open With", 2), sub("Copy path as", 4), sub("Commands", 6), tools_sub(6), sub("Quick Actions", 10)];
         let (_, parts) = split_menu(&list, &subs);
         assert_eq!(parts.len(), MAX_SUBMENUS, "none is dropped");
     }
@@ -2659,6 +2687,7 @@ mod tests {
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
             REVEAL_IN_TREE,
+            TOOLS_EXPORT_LIST,
             UNDO,
             REDO,
             PASTE,

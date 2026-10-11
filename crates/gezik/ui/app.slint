@@ -192,6 +192,10 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Clear Folder History"; activated => { root.menu-command("clear-history"); } }
         }
+        Menu {
+            title: "Tools";
+            MenuItem { title: "Export List…"; activated => { root.menu-command("export-list"); } }
+        }
         if root.bar-commands.length > 0: Menu {
             title: "Commands";
             for entry in root.bar-commands: MenuItem {
@@ -829,6 +833,19 @@ export component AppWindow inherits Window {
                 }
             }
             for entry in root.menu-subs[3].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[4].entries.length > 0: Menu {
+                title: root.menu-subs[4].title;
+                for entry in root.menu-subs[4].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[4].after: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }

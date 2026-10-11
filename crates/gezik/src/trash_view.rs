@@ -267,8 +267,9 @@ pub fn allowed(action: Action) -> bool {
         | Action::MoveTabToNewWindow
         // Out of the trash it puts the items back into the other pane's folder (spec 10 §4.4).
         | Action::MoveToOtherPane => true,
-        // No drive to eject in the trash.
+        // No drive to eject in the trash; its list is no folder's.
         Action::Eject
+        | Action::ExportList
         | Action::Rename
         | Action::NewFolder
         | Action::Copy
