@@ -402,10 +402,27 @@ pub enum Action {
     OtherPaneSameFolder,
     /// Moves the active tab into a new window (no key; 10g): nothing for a window's only tab.
     MoveTabToNewWindow,
+    /// Compares two files side by side (11c; two folders in 11d), by the selection.
+    Compare,
+    /// Writes the list shown as text, CSV or HTML, to a file or the clipboard (no key; 11h).
+    ExportList,
+    /// The size map of the selected folder, else the folder shown (no key; spec 11 §10).
+    SizeMap,
+    /// The Checksums layer for the selection's files (no key; spec 11 §4).
+    Checksums,
+    /// Checks the files the selected checksum file names (no key).
+    VerifyChecksums,
+    /// The selection into a typed folder, with a filter and a name mask (no key; spec 11 §12).
+    CopyTo,
+    MoveTo,
+    /// The selected file into `.001` parts and a `.crc` (no key).
+    SplitFile,
+    /// The parts of the selected `.001` (or `.crc`) into one file, checked by CRC (no key).
+    JoinFiles,
 }
 
 impl Action {
-    pub const ALL: [Action; 102] = [
+    pub const ALL: [Action; 111] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -508,6 +525,15 @@ impl Action {
         Action::SwapPanes,
         Action::OtherPaneSameFolder,
         Action::MoveTabToNewWindow,
+        Action::Compare,
+        Action::ExportList,
+        Action::SizeMap,
+        Action::Checksums,
+        Action::VerifyChecksums,
+        Action::CopyTo,
+        Action::MoveTo,
+        Action::SplitFile,
+        Action::JoinFiles,
     ];
 
     pub fn name(self) -> &'static str {
@@ -614,6 +640,15 @@ impl Action {
             Action::SwapPanes => "swap-panes",
             Action::OtherPaneSameFolder => "other-pane-same-folder",
             Action::MoveTabToNewWindow => "move-tab-to-new-window",
+            Action::Compare => "compare",
+            Action::ExportList => "export-list",
+            Action::SizeMap => "size-map",
+            Action::Checksums => "checksums",
+            Action::VerifyChecksums => "verify-checksums",
+            Action::CopyTo => "copy-to",
+            Action::MoveTo => "move-to",
+            Action::SplitFile => "split-file",
+            Action::JoinFiles => "join-files",
         }
     }
 
@@ -734,6 +769,15 @@ impl Action {
             Action::SwapPanes => "Swap Panes",
             Action::OtherPaneSameFolder => "Same Folder in the Other Pane",
             Action::MoveTabToNewWindow => "Move Tab to New Window",
+            Action::Compare => "Compare",
+            Action::ExportList => "Export List…",
+            Action::SizeMap => "Size Map",
+            Action::Checksums => "Calculate Checksums…",
+            Action::VerifyChecksums => "Verify Checksums",
+            Action::CopyTo => "Copy To…",
+            Action::MoveTo => "Move To…",
+            Action::SplitFile => "Split File…",
+            Action::JoinFiles => "Join Files",
         }
     }
 
@@ -926,9 +970,20 @@ impl Action {
                 | Action::MoveTabToOtherPane
                 | Action::SyncBrowsing
                 | Action::OtherPaneSameFolder
-                | Action::MoveTabToNewWindow,
+                | Action::MoveTabToNewWindow
+                | Action::ExportList
+                | Action::SizeMap
+                | Action::Checksums
+                | Action::VerifyChecksums
+                | Action::CopyTo
+                | Action::MoveTo
+                | Action::SplitFile
+                | Action::JoinFiles,
                 _,
             ) => &[],
+            // TC's compare key; ⌃⌘C goes on 10b's ⌃⌘ row (spec 11 §3.3).
+            (Action::Compare, Platform::Mac) => &["mod+ctrl+c"],
+            (Action::Compare, Platform::Other) => &["shift+f2"],
             (Action::SwapPanes, Platform::Mac) => &["mod+ctrl+u"],
             (Action::SwapPanes, Platform::Other) => &["ctrl+u"],
             (Action::ToggleDualPane, Platform::Mac) => &["mod+ctrl+p"],
@@ -1165,7 +1220,7 @@ mod tests {
             assert_eq!(fixed_owner(&cmd_option, Platform::Mac), None);
         }
         assert_eq!((Action::pin(0), Action::pin(10)), (None, None));
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
         assert_eq!(other.action_for(&chord("ctrl+1")), Some(Action::Tab1), "Ctrl+1 is still tab 1");
         assert_eq!(other.action_for(&chord("ctrl+alt+1")), None, "AltGr+1 types");
     }
@@ -1634,7 +1689,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["search", "flat-view", "show-in-folder", "copy-with-folders", "cut-with-folders"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1656,7 +1711,7 @@ clear-history = \"ctrl+shift+h\"
         for name in ["command-palette", "quick-open", "calculate-folder-sizes", "save-search"] {
             assert!(Action::from_name(name).is_some(), "{name}");
         }
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1676,7 +1731,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::MakeAlias.title(), "Make Alias");
         assert_eq!(Action::ShowPackageContents.title(), "Show Package Contents");
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1686,7 +1741,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("share"), Some(Action::Share));
         assert_eq!(Action::Share.title(), "Share…");
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1700,7 +1755,7 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+i", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("get-info"), Some(Action::GetInfo));
         assert_eq!(Action::GetInfo.title(), "Get Info");
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1713,7 +1768,7 @@ clear-history = \"ctrl+shift+h\"
         }
         assert_eq!(Action::from_name("connect-to-server"), Some(Action::ConnectToServer));
         assert_eq!(Action::ConnectToServer.title(), "Connect to Server…");
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1732,7 +1787,7 @@ clear-history = \"ctrl+shift+h\"
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1742,7 +1797,7 @@ clear-history = \"ctrl+shift+h\"
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::RevealInTree), None);
         }
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1780,7 +1835,31 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(fixed_owner(&chord("mod+ctrl+u", Platform::Mac), Platform::Mac), None);
         assert_eq!(Action::from_name("sync-browsing"), Some(Action::SyncBrowsing));
         assert_eq!(Action::from_name("other-pane-same-folder"), Some(Action::OtherPaneSameFolder));
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
+    }
+
+    #[test]
+    fn compare_has_its_keys_and_they_are_free() {
+        let chord = |t: &str, p| parse_chord(t, p).unwrap().unwrap();
+        for (text, platform) in [("shift+f2", Platform::Other), ("mod+ctrl+c", Platform::Mac)] {
+            let c = chord(text, platform);
+            assert_eq!(Shortcuts::defaults(platform).action_for(&c), Some(Action::Compare), "{text}");
+            assert_eq!(fixed_owner(&c, platform), None, "{text}");
+            let others = Shortcuts::defaults(platform);
+            assert!(
+                Action::ALL.iter().filter(|a| **a != Action::Compare).all(|a| others.chord_for(*a) != Some(c)),
+                "{text} is no other action's"
+            );
+        }
+        // F2 stays Rename, ⌘C stays Copy.
+        assert_eq!(
+            Shortcuts::defaults(Platform::Other).action_for(&chord("f2", Platform::Other)),
+            Some(Action::Rename)
+        );
+        assert_eq!(Shortcuts::defaults(Platform::Mac).action_for(&chord("mod+c", Platform::Mac)), Some(Action::Copy));
+        assert_eq!(Action::from_name("compare"), Some(Action::Compare));
+        assert_eq!(Action::Compare.title(), "Compare");
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1797,7 +1876,17 @@ clear-history = \"ctrl+shift+h\"
         assert_eq!(mac.action_for(&chord("mod+3", Platform::Mac)), Some(Action::Tab3));
         assert_eq!(Action::from_name("view-columns"), Some(Action::ViewColumns));
         assert_eq!(Action::ViewColumns.title(), "View as Columns");
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
+    }
+
+    #[test]
+    fn export_list_has_no_key() {
+        assert_eq!(Action::from_name("export-list"), Some(Action::ExportList));
+        assert_eq!(Action::ExportList.title(), "Export List…");
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::ExportList), None);
+        }
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -1877,7 +1966,7 @@ refresh = [\"f5\", \"ctrl+r\"]
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::Eject), None);
         assert_eq!(Action::from_name("eject"), Some(Action::Eject));
         assert_eq!(Action::Eject.title(), "Eject");
-        assert_eq!(Action::ALL.len(), 102);
+        assert_eq!(Action::ALL.len(), 111);
     }
 
     #[test]
@@ -2008,5 +2097,37 @@ refresh = [\"f5\", \"ctrl+r\"]
         let chord = parse_hotkey("shift+alt+win+f3", Platform::Other).unwrap().unwrap();
         assert_eq!(hotkey_text(&chord, "super"), "super+alt+shift+f3");
         assert!(parse_hotkey("e+shift+win", Platform::Other).is_err(), "the key comes last");
+    }
+
+    #[test]
+    fn the_checksum_actions_have_no_key() {
+        for (action, name, title) in [
+            (Action::Checksums, "checksums", "Calculate Checksums…"),
+            (Action::VerifyChecksums, "verify-checksums", "Verify Checksums"),
+        ] {
+            assert_eq!(Action::from_name(name), Some(action));
+            assert_eq!(action.title(), title);
+            for platform in [Platform::Other, Platform::Mac] {
+                assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
+            }
+        }
+        assert_eq!(Action::ALL.len(), 111);
+    }
+
+    #[test]
+    fn the_copy_to_and_split_actions_have_no_key() {
+        for (action, name, title) in [
+            (Action::CopyTo, "copy-to", "Copy To…"),
+            (Action::MoveTo, "move-to", "Move To…"),
+            (Action::SplitFile, "split-file", "Split File…"),
+            (Action::JoinFiles, "join-files", "Join Files"),
+        ] {
+            assert_eq!(Action::from_name(name), Some(action));
+            assert_eq!(action.title(), title);
+            for platform in [Platform::Other, Platform::Mac] {
+                assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
+            }
+        }
+        assert_eq!(Action::ALL.len(), 111);
     }
 }

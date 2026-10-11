@@ -637,6 +637,11 @@ pub const FILES_ALONE: &str = "{files} can't be used with {in}, {name}, {ext}, {
 
 /// Splits `text` into literal pieces and placeholders; `{{` and `}}` are literal braces.
 fn pieces(text: &str) -> Result<Vec<Result<String, &str>>, String> {
+    pieces_of(text, &PLACEHOLDERS)
+}
+
+/// `pieces` with the placeholders `known`.
+fn pieces_of<'t>(text: &'t str, known: &[&str]) -> Result<Vec<Result<String, &'t str>>, String> {
     let mut out = Vec::new();
     let mut literal = String::new();
     let mut rest = text;
@@ -654,7 +659,7 @@ fn pieces(text: &str) -> Result<Vec<Result<String, &str>>, String> {
         } else {
             let Some(end) = tail.find('}') else { return Err(format!("a {{ is not closed in \"{text}\"")) };
             let field = &tail[1..end];
-            if !PLACEHOLDERS.contains(&field) {
+            if !known.contains(&field) {
                 return Err(format!("unknown placeholder {{{field}}}"));
             }
             if !literal.is_empty() {
@@ -683,6 +688,32 @@ pub fn check_dir_command(run: &[String]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The placeholders of `[tools] diff-args` (spec 11 §6.4).
+const DIFF_PLACEHOLDERS: [&str; 2] = ["left", "right"];
+
+/// Checks `[tools] diff-args`: `{left}` and `{right}` the only placeholders.
+pub fn check_diff_args(args: &[String]) -> Result<(), String> {
+    args.iter().try_for_each(|arg| pieces_of(arg, &DIFF_PLACEHOLDERS).map(drop))
+}
+
+/// The compare program's arguments with `{left}` and `{right}` put in; each argument stays one
+/// argument whatever the paths hold (spaces, quotes).
+pub fn expand_diff_args(args: &[String], left: &Path, right: &Path) -> Result<Vec<OsString>, String> {
+    args.iter()
+        .map(|arg| {
+            let mut expanded = OsString::new();
+            for piece in pieces_of(arg, &DIFF_PLACEHOLDERS)? {
+                match piece {
+                    Ok(text) => expanded.push(text),
+                    Err("left") => expanded.push(left),
+                    Err(_) => expanded.push(right),
+                }
+            }
+            Ok(expanded)
+        })
+        .collect()
 }
 
 /// The terminal's command with `{dir}` put in; each argument stays one argument.
@@ -913,6 +944,31 @@ mod tests {
         assert!(check_dir_command(&run(&["x", "{dir"])).unwrap_err().contains("not closed"));
         assert_eq!(check_dir_command(&[]), Err("the command has no program".to_owned()));
         assert_eq!(check_dir_command(&run(&[" "])), Err("the command has no program".to_owned()));
+    }
+
+    #[test]
+    fn diff_args_take_left_and_right_each_as_one_argument() {
+        let args = |list: &[&str]| list.iter().map(|a| (*a).to_owned()).collect::<Vec<String>>();
+        let (left, right) = (Path::new(r"C:\My Files\a b.txt"), Path::new("/tmp/it's \"q\".txt"));
+        assert_eq!(
+            expand_diff_args(&args(&["{left}", "{right}"]), left, right).unwrap(),
+            [OsString::from(r"C:\My Files\a b.txt"), "/tmp/it's \"q\".txt".into()]
+        );
+        // WinMerge's titles, a placeholder twice, braces and a flag's value.
+        assert_eq!(
+            expand_diff_args(&args(&["/e", "/dl", "{{{left}}}", "--out={right}", "{right}"]), left, right).unwrap(),
+            [
+                OsString::from("/e"),
+                "/dl".into(),
+                r"{C:\My Files\a b.txt}".into(),
+                "--out=/tmp/it's \"q\".txt".into(),
+                "/tmp/it's \"q\".txt".into()
+            ]
+        );
+        assert_eq!(check_diff_args(&args(&["{in}"])), Err("unknown placeholder {in}".to_owned()));
+        assert!(check_diff_args(&args(&["{left"])).unwrap_err().contains("not closed"));
+        assert!(check_diff_args(&[]).is_ok(), "no arguments: the program alone");
+        assert!(expand_diff_args(&args(&["{dir}"]), left, right).is_err());
     }
 
     fn strings(list: &[OsString]) -> Vec<&str> {

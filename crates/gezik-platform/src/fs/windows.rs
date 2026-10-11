@@ -744,6 +744,29 @@ pub fn open_regular(path: &Path) -> io::Result<Option<(std::fs::File, u64)>> {
     Ok(Some((file, meta.len())))
 }
 
+/// Opens `path` to read it once from start to end (a checksum): the system reads further ahead.
+pub fn open_sequential(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::FILE_FLAG_SEQUENTIAL_SCAN;
+    std::fs::OpenOptions::new().read(true).custom_flags(FILE_FLAG_SEQUENTIAL_SCAN.0).open(path)
+}
+
+/// Opens `path` so that its reads come from the disk, past the system's cache
+/// (`FILE_FLAG_NO_BUFFERING`): reads then need a 4096-aligned buffer of a whole number of
+/// sectors (`super::Uncached`). Where the drive refuses that, a plain sequential read.
+pub fn open_uncached(path: &Path) -> io::Result<super::Uncached> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows::Win32::Storage::FileSystem::{FILE_FLAG_NO_BUFFERING, FILE_FLAG_SEQUENTIAL_SCAN};
+    let flags = FILE_FLAG_NO_BUFFERING.0 | FILE_FLAG_SEQUENTIAL_SCAN.0;
+    match std::fs::OpenOptions::new().read(true).custom_flags(flags).open(path) {
+        Ok(file) => Ok(super::Uncached { file, direct: true }),
+        Err(err) if err.kind() == io::ErrorKind::InvalidInput => {
+            Ok(super::Uncached { file: open_sequential(path)?, direct: false })
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// A FILETIME (100 ns since 1601) as a time; `None` for zero.
 pub(crate) fn file_time(time: FILETIME) -> Option<std::time::SystemTime> {
     let ticks = (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);

@@ -14,6 +14,22 @@ pub fn decode_ansi(bytes: &[u8]) -> Option<String> {
     }
 }
 
+/// The legacy code page the user's text files are most likely in: the user's locale's ANSI
+/// code page on Windows (1254 for Turkish); elsewhere Windows-1254 for a Turkish `LANG`
+/// (files from Turkish Windows), else none.
+pub fn ansi_code_page() -> Option<u32> {
+    #[cfg(windows)]
+    {
+        let page = win::code_page();
+        (page != windows::Win32::Globalization::CP_ACP).then_some(page)
+    }
+    #[cfg(not(windows))]
+    {
+        let lang = ["LC_ALL", "LC_CTYPE", "LANG"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()));
+        lang.filter(|l| l.starts_with("tr")).map(|_| 1254)
+    }
+}
+
 #[cfg(windows)]
 mod win {
     use windows::Win32::Globalization::{
@@ -25,7 +41,7 @@ mod win {
     /// The user's locale's ANSI code page. It can differ from the system's (`CP_ACP`, set by
     /// the "language for non-Unicode programs"): a Turkish user on an English system has
     /// 1254 here but 1252 there, and their Turkish files are in 1254.
-    fn code_page() -> u32 {
+    pub(super) fn code_page() -> u32 {
         let mut number = [0u16; 2];
         // SAFETY: a null name means the user's default locale; with LOCALE_RETURN_NUMBER the
         // value is a u32 written into the two-unit buffer.

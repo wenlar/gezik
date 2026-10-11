@@ -21,6 +21,7 @@
 | Two panes / switch to the other pane | F3 / Tab (file list) | ⌃⌘P / Tab (file list) |
 | Copy / move to the other pane (two panes; asks first) | F5 / F6 | F5 / F6 |
 | Swap the panes' tabs | Ctrl+U | ⌃⌘U |
+| Compare two files (two selected, or one in each pane) | Shift+F2 | ⌃⌘C |
 | Command palette / quick open | Ctrl+Shift+P / Ctrl+P | ⌘⇧P / ⌘P |
 | Copy / cut / paste | Ctrl+C / Ctrl+X / Ctrl+V | ⌘C / ⌘X / ⌘V (⌘⌥V moves) |
 | Delete / delete permanently | Delete / Shift+Delete | ⌘⌫ / ⌘⌥⌫ |

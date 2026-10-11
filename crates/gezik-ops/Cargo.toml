@@ -8,6 +8,13 @@ license.workspace = true
 [dependencies]
 gezik-core.workspace = true
 gezik-platform.workspace = true
+# Checksums (spec 11 §3.2): sha1, sha2 and crc32fast are linked already (zip's AES, the tool
+# downloads, flate2); md-5 is the only new code (the same RustCrypto `digest` 0.11 family).
+# No `oid`/`alloc` defaults: only the digests are used.
+md-5 = { version = "0.11", default-features = false }
+sha1 = { version = "0.11", default-features = false }
+sha2 = { version = "0.11", default-features = false }
+crc32fast = "1.5"
 
 [target.'cfg(unix)'.dependencies]
 # The uid and home that name this user's bins (a delete from the trash checks its items).

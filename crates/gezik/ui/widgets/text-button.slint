@@ -17,6 +17,8 @@ export component TextButton inherits Rectangle {
     // No 72 px floor: just its content (a glyph-only button in a narrow pane).
     in property <bool> compact;
     callback clicked();
+    // Whether it has the keyboard (a layer that keeps Tab inside it follows it).
+    out property <bool> has-focus: scope.has-focus;
 
     // The lead glyph, the label and the icon, centered together.
     property <length> gap: root.text != "" && root.icon != "" ? Theme.spacing : 0px;

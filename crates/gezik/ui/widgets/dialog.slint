@@ -20,7 +20,11 @@ export component Dialog inherits Rectangle {
     // A line under the field (dialog.rs `ask_text_noted`), red if `note-error`.
     in property <string> note;
     in property <bool> note-error;
+    // Check boxes under the field (dialog.rs `ask_form`): their labels and marks.
+    in property <[string]> check-labels;
+    in property <[bool]> checks;
     callback chosen(int);
+    callback check-toggled(int);
     // The field's text changed (typed, not set).
     callback edited(string);
 
@@ -114,6 +118,42 @@ export component Dialog inherits Rectangle {
                 text: root.note;
                 wrap: word-wrap;
                 color: root.note-error ? Theme.danger : Theme.foreground-muted;
+            }
+            // Tab goes field, boxes, buttons; on a box Space toggles it, Enter and Esc answer as
+            // in the field. The keys and the ring are here, not in Check: Check is in many
+            // layers, and each instance would pay for them.
+            for label[i] in root.check-labels: box := FocusScope {
+                height: check.height;
+                key-pressed(event) => {
+                    if event.text == " " {
+                        root.check-toggled(i);
+                        return accept;
+                    }
+                    if event.text == Key.Return {
+                        root.chosen(0);
+                        return accept;
+                    }
+                    if event.text == Key.Escape {
+                        root.chosen(root.escape);
+                        return accept;
+                    }
+                    return reject;
+                }
+                check := Check {
+                    text: label;
+                    checked: root.checks[i];
+                    toggled => { root.check-toggled(i); }
+                }
+                // The focus ring, as on the buttons: around the box and its label.
+                Rectangle {
+                    x: -3px;
+                    y: 1px;
+                    width: check.min-width + 2px;
+                    height: parent.height - 2px;
+                    border-radius: Theme.radius;
+                    border-width: box.has-focus ? Theme.focus-width : 0px;
+                    border-color: Theme.focus-ring;
+                }
             }
             HorizontalLayout {
                 alignment: end;

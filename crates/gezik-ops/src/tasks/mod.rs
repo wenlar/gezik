@@ -6,10 +6,12 @@ mod copy;
 mod delete;
 mod elevated;
 mod group;
+mod hash;
 mod link;
 mod materialize;
 mod move_;
 mod new;
+mod pick;
 mod rename;
 mod restore;
 mod trash;
@@ -21,10 +23,12 @@ pub(crate) use delete::restore_hidden;
 pub use delete::{DeleteTask, in_a_bin_folder};
 pub use elevated::{CANCELLED, ElevatedTask, Elevator, NOT_AVAILABLE, NOT_SO, UNCHECKED};
 pub use group::GroupTask;
+pub use hash::{HashResults, HashRow, HashTask, MAX_CHECKSUM_FILE, RowState, SharedResults, Verdict};
 pub use link::LinkTask;
 pub use materialize::MaterializeTask;
 pub use move_::MoveTask;
 pub use new::NewTask;
+pub use pick::Pick;
 pub use rename::RenameTask;
 pub use restore::RestoreTask;
 pub use trash::{TrashTask, trash_path};
@@ -140,6 +144,12 @@ pub(crate) fn relative_targets(items: Vec<(PathBuf, PathBuf)>, dir: &Path) -> Re
     let mut parents: Vec<PathBuf> = parents.into_iter().collect();
     parents.sort_by_key(|p| p.components().count());
     Relative { pairs, parents, refused }
+}
+
+/// Whether two of `pairs` go to one target (as the file system compares names).
+pub(crate) fn shared_target(pairs: &[(PathBuf, PathBuf)]) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    !pairs.iter().all(|(_, target)| seen.insert(gezik_core::ops::paths::path_key(target)))
 }
 
 /// Reports each of `refused` (see `Relative::refused`) as failed.

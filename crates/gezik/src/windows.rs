@@ -65,7 +65,9 @@ thread_local! {
 const FORGETS: &[fn(WindowId)] = &[
     |id| crate::archives::CURRENT.with(|s| s.forget(id)),
     |id| crate::batch_rename::CURRENT.with(|s| s.forget(id)),
+    crate::checksums::forget,
     |id| crate::convert::CURRENT.with(|s| s.forget(id)),
+    |id| crate::diff::CURRENT.with(|s| s.forget(id)),
     |id| crate::drag::CURRENT.with(|s| s.forget(id)),
     |id| crate::dual::DUAL.with(|s| s.forget(id)),
     |id| crate::info::CURRENT.with(|s| s.forget(id)),
@@ -77,6 +79,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::saved_searches::CURRENT.with(|s| s.forget(id)),
     |id| crate::select_tools::CURRENT.with(|s| s.forget(id)),
     |id| crate::sidebar::CURRENT.with(|s| s.forget(id)),
+    |id| crate::size_map::CURRENT.with(|s| s.forget(id)),
     |id| crate::stack::CURRENT.with(|s| s.forget(id)),
     |id| crate::tab_sets::CURRENT.with(|s| s.forget(id)),
     |id| crate::tab_tools::CURRENT.with(|s| s.forget(id)),
@@ -317,6 +320,11 @@ pub fn set_process(process: Rc<Process>) {
 
 fn process() -> Option<Rc<Process>> {
     PROCESS.with(|p| p.borrow().clone())
+}
+
+/// Where the config files and state.toml are (none: nothing is saved).
+pub fn config() -> Option<ConfigStore> {
+    process().and_then(|p| p.config.clone())
 }
 
 /// What a window opens with.
@@ -937,6 +945,8 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let _archives =
         archives::Archives::new(&window, ops.clone(), dialogs.clone(), config.clone(), state.archive.clone());
     let _info = info::Info::new(&window, ops.clone(), dialogs.clone());
+    let _diff = crate::diff::Diff::new(&window, dialogs.clone(), config.clone(), state.diff);
+    crate::checksums::install(&window);
     let _convert = convert::Convert::new(&window, ops.clone(), dialogs.clone(), config.clone(), state.convert.clone());
     window.on_op_pause({
         let ops = ops.clone();
@@ -1274,6 +1284,21 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             let mut items = Vec::new();
             info::with_current(|info| items = info.group_menu());
             menus.info_menu(items, popup::Anchor::below(left, top, right, bottom));
+        }
+    });
+    // The size map's pointer, buttons and menu (size_map.rs).
+    window.on_sm_resized(|w, h| crate::size_map::with_current(|m| m.resized(w, h)));
+    window.on_sm_hover(|x, y| crate::size_map::with_current(|m| m.hover(x, y)));
+    window.on_sm_clicked(|x, y| crate::size_map::with_current(|m| m.clicked(x, y)));
+    window.on_sm_activated(|x, y| crate::size_map::with_current(|m| m.activated_at(x, y)));
+    window.on_sm_up(|| crate::size_map::with_current(crate::size_map::SizeMap::up));
+    window.on_sm_close(|| crate::size_map::with_current(crate::size_map::SizeMap::close));
+    window.on_sm_menu({
+        let menus = menus.clone();
+        move |x, y, wx, wy| {
+            let mut items = Vec::new();
+            crate::size_map::with_current(|m| items = m.menu_items(x, y));
+            menus.size_map_menu(items, popup::Anchor::point(wx, wy));
         }
     });
     // Slint passes indexes as `i32`: a negative one does nothing.

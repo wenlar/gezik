@@ -526,6 +526,12 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::Checksums
+            | Action::VerifyChecksums
+            | Action::CopyTo
+            | Action::MoveTo
+            | Action::SplitFile
+            | Action::JoinFiles
     )
 }
 
@@ -558,6 +564,12 @@ pub fn needs_list(action: Action) -> bool {
             | Action::KeepOffline
             | Action::FreeUpSpace
             | Action::GetInfo
+            | Action::Checksums
+            | Action::VerifyChecksums
+            | Action::CopyTo
+            | Action::MoveTo
+            | Action::SplitFile
+            | Action::JoinFiles
             | Action::FocusOtherPane
             | Action::CopyToOtherPane
             | Action::MoveToOtherPane
@@ -833,6 +845,7 @@ mod tests {
                 Action::ConnectToServer => "ctrl+k",
                 Action::ToggleDualPane => "f3",
                 Action::SwapPanes => "ctrl+u",
+                Action::Compare => "shift+f2",
                 Action::FocusOtherPane | Action::CopyToOtherPane | Action::MoveToOtherPane => {
                     let text = match action {
                         Action::FocusOtherPane => "tab",
@@ -875,7 +888,15 @@ mod tests {
                 | Action::MoveTabToOtherPane
                 | Action::SyncBrowsing
                 | Action::OtherPaneSameFolder
-                | Action::MoveTabToNewWindow => continue,
+                | Action::MoveTabToNewWindow
+                | Action::ExportList
+                | Action::SizeMap
+                | Action::Checksums
+                | Action::VerifyChecksums
+                | Action::CopyTo
+                | Action::MoveTo
+                | Action::SplitFile
+                | Action::JoinFiles => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }
