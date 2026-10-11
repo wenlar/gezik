@@ -67,7 +67,18 @@ pub fn detect(head: &[u8]) -> Detected {
 /// else UTF-8 when the whole file is valid UTF-8, else chardetng's guess from the whole file.
 /// `None` when it looks binary: a NUL anywhere without a BOM, or bytes the encoding cannot read
 /// (the file compare compares bytes then, spec 11 §6.2).
-pub fn decode(mut bytes: Vec<u8>) -> Option<(String, &'static str)> {
+pub fn decode(bytes: Vec<u8>) -> Option<(String, &'static str)> {
+    decode_in(bytes, gezik_platform::ansi_code_page())
+}
+
+/// The Latin single-byte code pages chardetng cannot tell apart in a short text (a Turkish
+/// `ş` is `þ` in 1252): Windows-1252, its fallback guess, gives way to the user's ANSI code
+/// page (`ansi`) when that is another of these. A file it guessed as 1254 on an English
+/// system stays 1254.
+const LATIN_PAGES: [&str; 4] = ["windows-1250", "windows-1252", "windows-1254", "windows-1257"];
+
+/// `decode` with the user's ANSI code page given.
+fn decode_in(mut bytes: Vec<u8>, ansi: Option<u32>) -> Option<(String, &'static str)> {
     let Detected::Text(mut encoding, bom) = detect(&bytes[..bytes.len().min(SNIFF)]) else { return None };
     if !bom && bytes.contains(&0) {
         return None;
@@ -86,6 +97,12 @@ pub fn decode(mut bytes: Vec<u8>) -> Option<(String, &'static str)> {
         let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
         detector.feed(&bytes, true);
         encoding = detector.guess(None, Utf8Detection::Allow);
+    }
+    if !bom && encoding == encoding_rs::WINDOWS_1252 {
+        let local = ansi.and_then(|page| Encoding::for_label(format!("windows-{page}").as_bytes()));
+        if let Some(local) = local.filter(|l| LATIN_PAGES.contains(&l.name())) {
+            encoding = local;
+        }
     }
     let (text, used, errors) = encoding.decode(&bytes);
     (!errors).then(|| (text.into_owned(), name(used)))
@@ -565,6 +582,23 @@ mod tests {
         let mut bytes = vec![b'a'; 9000];
         bytes[8500] = 0;
         assert_eq!(decode(bytes), None);
+        // A short Turkish text in Windows-1254: chardetng says 1252 (ðüþýöç); the user's code page
+        // decides between the Latin pages, never against another script.
+        let short = "Işık ağaç şöyle güzel çiçekler ÇĞİÖŞÜ
+";
+        let (bytes, _, _) = encoding_rs::WINDOWS_1254.encode(short);
+        assert_eq!(decode_in(bytes.to_vec(), Some(1254)), Some((short.to_owned(), "Windows-1254")));
+        assert_eq!(decode_in(bytes.to_vec(), Some(1252)).map(|(_, e)| e), Some("Windows-1252"));
+        let (russian, _, _) = encoding_rs::WINDOWS_1251.encode(
+            "Привет, как дела? Всё хорошо, спасибо большое.
+",
+        );
+        assert_eq!(decode_in(russian.to_vec(), Some(1254)).map(|(_, e)| e), Some("Windows-1251"));
+        let (long, _, _) = encoding_rs::WINDOWS_1254.encode(
+            "Işık ağaç şöyle güzel çiçekler
+",
+        );
+        assert_eq!(decode_in(long.to_vec(), Some(1252)).map(|(_, e)| e), Some("Windows-1254"), "a sure guess stays");
         // A UTF-8 BOM over bytes that are not UTF-8: binary, not a guess.
         assert_eq!(decode(vec![0xEF, 0xBB, 0xBF, b'a', 0xFF]), None);
     }
