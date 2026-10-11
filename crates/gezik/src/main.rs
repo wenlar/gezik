@@ -396,10 +396,10 @@ fn handle_key(
         return used;
     }
     // The Checksums layer: Esc, and Ctrl+C / Ctrl+A unless its field has the keyboard.
-    if window.get_ck_open() {
+    if window.get_tool_open() {
         let mut used = false;
         if let Some(chord) = &chord {
-            checksums::with_current(|layer| used = layer.chord(chord, window.get_ck_field_focused()));
+            checksums::with_current(|layer| used = layer.chord(chord, window.get_tool_field_focused()));
         }
         return used;
     }

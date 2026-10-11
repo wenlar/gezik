@@ -4,49 +4,52 @@ import { TextField } from "text-field.slint";
 import { Check } from "check.slint";
 import { ListView } from "scrollbar.slint";
 
-// A row of the Checksums layer (checksums.rs).
-export struct ChecksumRow {
+// A row of a tool table: a name, the values in a fixed-width font (padded by Rust so they line
+// up under `columns`), a status.
+export struct ToolRow {
     name: string,
-    size: string,
-    // The shown values side by side in a fixed-width font, so they line up under `values-title`.
     values: string,
     status: string,
-    // 0 plain, 1 good (OK, the expected value), 2 bad (FAILED, MISSING, UNREADABLE, not it).
+    // 0 plain, 1 good, 2 bad.
     tone: int,
     selected: bool,
 }
 
-// The Checksums layer: the algorithms to compute, the expected value, a row per file with its
-// values, and Copy / Save / Export CSV. In verify mode a checksum file's rows with their
-// results. Esc closes, Ctrl+C copies, Ctrl+A selects all (main.rs routes them). Kept plain
-// (one text for a row's values): each nested element costs the exe.
-export component ChecksumsLayer inherits Rectangle {
+// A box over the table (an algorithm, a filter).
+export struct ToolToggle {
+    label: string,
+    checked: bool,
+}
+
+// The one table every tool layer shows (spec 11 §3.1: Checksums now; later the copy check,
+// folder compare and duplicates): a title with boxes, an optional field, column titles, the
+// rows, a status line and a strip of buttons. One instance in app.slint serves them all, so a
+// new tool adds Rust, not Slint. Keys (Esc, Ctrl+C, Ctrl+A) are routed by main.rs.
+export component ToolTable inherits Rectangle {
     in property <bool> open;
     in property <bool> dialog-open;
     in property <int> focus-request;
     in property <string> title;
-    in property <bool> verify;
     in property <string> mono-font;
-    // Which of CRC32, MD5, SHA-1, SHA-256, SHA-512 are ticked.
-    in property <[bool]> algos;
-    in property <string> values-title;
-    in property <[ChecksumRow]> rows;
-    in-out property <string> expected;
+    in property <[ToolToggle]> toggles;
+    // Empty: no field.
+    in property <string> field-label;
+    in-out property <string> field-text;
+    // The field has the keyboard: Ctrl+C and Ctrl+A are its own then.
+    in-out property <bool> field-focused;
+    // The titles of the fixed-width part, padded like the rows' values.
+    in property <string> columns;
+    in property <[ToolRow]> rows;
     in property <string> summary;
     // 0 plain, 1 good, 2 bad.
     in property <int> summary-tone;
-    in property <bool> only-failed;
-    // The Expected field has the keyboard: Ctrl+C and Ctrl+A are its own then.
-    in-out property <bool> field-focused;
+    // The last one is the close button.
+    in property <[string]> buttons;
     in-out property <length> scroll;
-    callback toggle-algo(int);
-    callback expected-edited();
-    callback toggle-only-failed();
+    callback toggle(int);
+    callback field-edited();
     callback pressed(int, bool, bool);
-    callback copy();
-    callback save();
-    callback export();
-    callback close();
+    callback button(int);
 
     // Built when it opens (an `if` in app.slint): the list takes the keyboard then, and again
     // each time `focus-request` changes.
@@ -90,47 +93,34 @@ export component ChecksumsLayer inherits Rectangle {
                     vertical-alignment: center;
                     color: Theme.foreground;
                 }
-                for name[i] in root.verify ? [] : ["CRC32", "MD5", "SHA-1", "SHA-256", "SHA-512"]: Check {
-                    text: name;
-                    checked: root.algos[i];
-                    toggled => { root.toggle-algo(i); }
+                for toggle[i] in root.toggles: Check {
+                    text: toggle.label;
+                    checked: toggle.checked;
+                    toggled => { root.toggle(i); }
                 }
             }
-            HorizontalLayout {
+            if root.field-label != "": HorizontalLayout {
                 spacing: Theme.spacing;
-                // Verify has no expected value: the filter takes the row.
-                Check {
-                    visible: root.verify;
-                    width: root.verify ? self.min-width : 0;
-                    text: "Failed and missing only";
-                    checked: root.only-failed;
-                    toggled => { root.toggle-only-failed(); }
-                }
                 Text {
-                    visible: !root.verify;
-                    text: "Expected";
-                    width: root.verify ? 0 : 72px;
+                    text: root.field-label;
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
                 TextField {
-                    visible: !root.verify;
-                    text <=> root.expected;
-                    edited => { root.expected-edited(); }
+                    text <=> root.field-text;
+                    edited => { root.field-edited(); }
                     changed has-focus => { root.field-focused = self.has-focus; }
                 }
             }
 
             header := HorizontalLayout {
-                // The name's width; the values take what is left after size and status.
-                property <length> name-width: (self.width - 190px) * 0.3;
+                property <length> name-width: (self.width - 120px) * 0.3;
                 padding-left: Theme.spacing;
                 padding-right: 10px;
                 spacing: Theme.spacing * 2;
                 Text { text: "Name"; width: header.name-width; color: Theme.foreground-muted; }
-                Text { text: "Size"; width: 80px; horizontal-alignment: right; color: Theme.foreground-muted; }
                 Text {
-                    text: root.values-title;
+                    text: root.columns;
                     font-family: root.mono-font;
                     overflow: elide;
                     color: Theme.foreground-muted;
@@ -143,7 +133,8 @@ export component ChecksumsLayer inherits Rectangle {
                 vertical-stretch: 1;
                 ListView {
                     content-y <=> root.scroll;
-                    for row[i] in root.rows: Rectangle {
+                    for row[i] in root.rows: line := Rectangle {
+                        property <color> fg: row.selected ? Theme.selection-foreground : Theme.foreground;
                         height: Theme.row-height;
                         background: row.selected ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
                         accessible-role: list-item;
@@ -170,28 +161,21 @@ export component ChecksumsLayer inherits Rectangle {
                                 width: header.name-width;
                                 vertical-alignment: center;
                                 overflow: elide;
-                                color: row.selected ? Theme.selection-foreground : Theme.foreground;
-                            }
-                            Text {
-                                text: row.size;
-                                width: 80px;
-                                horizontal-alignment: right;
-                                vertical-alignment: center;
-                                color: row.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                                color: line.fg;
                             }
                             Text {
                                 text: row.values;
                                 font-family: root.mono-font;
                                 vertical-alignment: center;
                                 overflow: elide;
-                                color: row.selected ? Theme.selection-foreground : Theme.foreground;
+                                color: line.fg;
                             }
                             Text {
                                 text: row.status;
                                 width: 110px;
                                 vertical-alignment: center;
                                 overflow: elide;
-                                color: row.tone == 1 ? Theme.success : row.tone == 2 ? Theme.danger : row.selected ? Theme.selection-foreground : Theme.foreground-muted;
+                                color: row.tone == 1 ? Theme.success : row.tone == 2 ? Theme.danger : line.fg;
                             }
                         }
                     }
@@ -205,21 +189,10 @@ export component ChecksumsLayer inherits Rectangle {
             }
             HorizontalLayout {
                 spacing: Theme.spacing;
-                // One repeated button (each placed one is code of its own).
-                for label in root.verify ? ["Copy", "Export CSV…", "Close"] : ["Copy", "Save…", "Export CSV…", "Close"]: TextButton {
+                for label[k] in root.buttons: TextButton {
                     text: label;
-                    primary: label == "Close";
-                    clicked => {
-                        if label == "Copy" {
-                            root.copy();
-                        } else if label == "Save…" {
-                            root.save();
-                        } else if label == "Export CSV…" {
-                            root.export();
-                        } else {
-                            root.close();
-                        }
-                    }
+                    primary: k == root.buttons.length - 1;
+                    clicked => { root.button(k); }
                 }
                 Rectangle { horizontal-stretch: 1; }
             }

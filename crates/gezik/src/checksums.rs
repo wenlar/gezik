@@ -17,7 +17,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::operations::After;
 use crate::windows::Slot;
-use crate::{AppWindow, ChecksumRow};
+use crate::{AppWindow, ToolRow, ToolToggle};
 
 thread_local! {
     /// The open layer of each window (none while closed).
@@ -40,17 +40,22 @@ fn lock(results: &Mutex<HashResults>) -> std::sync::MutexGuard<'_, HashResults> 
     results.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The window's callbacks; they reach the open layer, so nothing is held while it is closed.
+/// The window's tool table callbacks; they reach the open layer, so nothing is held while it is
+/// closed. (Checksums is the table's only tool so far; the next ones route here by who has it.)
 pub fn install(window: &AppWindow) {
-    window.on_ck_toggle_algo(|i| with_current(|c| c.toggle_algo(i)));
-    window.on_ck_expected_edited(|| with_current(Checksums::expected_edited));
-    window.on_ck_toggle_only_failed(|| with_current(Checksums::toggle_only_failed));
-    window.on_ck_pressed(|i, ctrl, shift| with_current(|c| c.pressed(i, ctrl, shift)));
-    window.on_ck_copy(|| with_current(Checksums::copy));
-    window.on_ck_save(|| with_current(Checksums::save));
-    window.on_ck_export(|| with_current(Checksums::export));
-    window.on_ck_close(|| with_current(Checksums::close));
+    window.on_tool_toggle(|i| with_current(|c| c.toggle(i)));
+    window.on_tool_field_edited(|| with_current(Checksums::expected_edited));
+    window.on_tool_pressed(|i, ctrl, shift| with_current(|c| c.pressed(i, ctrl, shift)));
+    window.on_tool_button(|i| with_current(|c| c.button(i)));
 }
+
+/// The buttons under the table; the last closes.
+fn buttons(verify: bool) -> &'static [&'static str] {
+    if verify { &["Copy", "Export CSV…", "Close"] } else { &["Copy", "Save…", "Export CSV…", "Close"] }
+}
+
+/// Where a row's size ends in its fixed-width text: the sizes line up right.
+const SIZE_WIDTH: usize = 10;
 
 /// `checksums`: the selection (or the focused item) of `view`.
 pub fn open_for_view(view: &crate::view::View) {
@@ -199,7 +204,7 @@ pub struct Checksums {
     results: SharedResults,
     algos: Cell<[bool; 5]>,
     job: Cell<Option<JobId>>,
-    model: Rc<VecModel<ChecksumRow>>,
+    model: Rc<VecModel<ToolRow>>,
     /// The result row each shown row is (in order; fewer with "Failed and missing only").
     shown: RefCell<Vec<usize>>,
     /// Selected result rows, and the one a Shift+click spans from.
@@ -239,16 +244,17 @@ impl Checksums {
             pending_again: Cell::new(false),
         });
         CURRENT.with(|s| s.set(crate::windows::current(), layer.clone()));
-        window_ref.set_ck_title(title.into());
-        window_ref.set_ck_verify(verify);
-        window_ref.set_ck_expected(expected.map(|(_, hex)| hex).unwrap_or_default().into());
-        window_ref.set_ck_only_failed(false);
-        window_ref.set_ck_field_focused(false);
-        window_ref.set_ck_scroll(0.0);
-        window_ref.set_ck_rows(ModelRc::from(layer.model.clone()));
+        window_ref.set_tool_title(title.into());
+        window_ref.set_tool_field_label(if verify { "" } else { "Expected" }.into());
+        window_ref.set_tool_field_text(expected.map(|(_, hex)| hex).unwrap_or_default().into());
+        window_ref.set_tool_field_focused(false);
+        window_ref.set_tool_scroll(0.0);
+        window_ref.set_tool_rows(ModelRc::from(layer.model.clone()));
+        let labels: Vec<SharedString> = buttons(verify).iter().map(|b| SharedString::from(*b)).collect();
+        window_ref.set_tool_buttons(ModelRc::new(VecModel::from(labels)));
         layer.show_columns();
         layer.show_summary();
-        window_ref.set_ck_open(true);
+        window_ref.set_tool_open(true);
         Some(layer)
     }
 
@@ -269,19 +275,43 @@ impl Checksums {
         if self.verify { Vec::new() } else { self.ticked() }
     }
 
+    /// The column titles and the boxes (verify: the filter).
     fn show_columns(&self) {
         let Some(window) = self.window.upgrade() else { return };
-        let title = if self.verify {
-            "Checksum".to_owned()
+        let mut title = vec![format!("{:>SIZE_WIDTH$}", "Size")];
+        if self.verify {
+            title.push("Checksum".to_owned());
         } else {
-            self.columns().iter().map(|a| format!("{:<1$}", a.name(), a.hex_len())).collect::<Vec<_>>().join("  ")
+            title.extend(self.columns().iter().map(|a| format!("{:<1$}", a.name(), a.hex_len())));
+        }
+        window.set_tool_columns(title.join("  ").trim_end().into());
+        let toggles: Vec<ToolToggle> = if self.verify {
+            vec![ToolToggle { label: "Failed and missing only".into(), checked: self.only_failed.get() }]
+        } else {
+            let on = self.algos.get();
+            Algo::ALL.iter().map(|a| ToolToggle { label: a.name().into(), checked: on[a.index()] }).collect()
         };
-        window.set_ck_values_title(title.trim_end().into());
-        window.set_ck_algos(ModelRc::new(VecModel::from(self.algos.get().to_vec())));
+        window.set_tool_toggles(ModelRc::new(VecModel::from(toggles)));
+    }
+
+    /// Box `i`: an algorithm, or verify's filter.
+    fn toggle(&self, i: i32) {
+        if self.verify { self.toggle_only_failed() } else { self.toggle_algo(i) }
+    }
+
+    /// Button `i` of `buttons`.
+    fn button(&self, i: i32) {
+        match usize::try_from(i).ok().and_then(|i| buttons(self.verify).get(i)) {
+            Some(&"Copy") => self.copy(),
+            Some(&"Save…") => self.save(),
+            Some(&"Export CSV…") => self.export(),
+            Some(_) => self.close(),
+            None => {}
+        }
     }
 
     /// How row `row` shows: its values padded to their lengths, so they line up in columns.
-    fn row(&self, row: &HashRow, selected: bool) -> ChecksumRow {
+    fn row(&self, row: &HashRow, selected: bool) -> ToolRow {
         let (values, status, tone) = if self.verify {
             let verdict = row.verdict();
             let value = row.expected.as_ref().and_then(|(algo, _)| row.digest(*algo)).unwrap_or_default();
@@ -312,10 +342,10 @@ impl Checksums {
         };
         let size =
             if row.state == RowState::Missing { String::new() } else { crate::view_options::size_text(row.size) };
-        ChecksumRow {
+        let values = format!("{size:>SIZE_WIDTH$}  {values}");
+        ToolRow {
             name: row.name.as_str().into(),
-            size: size.into(),
-            values: values.into(),
+            values: values.trim_end().into(),
             status: status.into(),
             tone,
             selected,
@@ -363,7 +393,7 @@ impl Checksums {
 
     /// Every row again (columns, the expected value or the filter changed).
     fn rebuild(&self) {
-        let rows: Vec<ChecksumRow>;
+        let rows: Vec<ToolRow>;
         let shown: Vec<usize>;
         {
             let results = lock(&self.results);
@@ -384,8 +414,8 @@ impl Checksums {
             let results = lock(&self.results);
             if self.verify { self.verify_summary(&results) } else { self.compute_summary(&results) }
         };
-        window.set_ck_summary(text.into());
-        window.set_ck_summary_tone(tone);
+        window.set_tool_summary(text.into());
+        window.set_tool_summary_tone(tone);
     }
 
     fn compute_summary(&self, results: &HashResults) -> (String, i32) {
@@ -482,9 +512,7 @@ impl Checksums {
 
     fn toggle_only_failed(&self) {
         self.only_failed.set(!self.only_failed.get());
-        if let Some(window) = self.window.upgrade() {
-            window.set_ck_only_failed(self.only_failed.get());
-        }
+        self.show_columns();
         self.rebuild();
     }
 
@@ -550,8 +578,8 @@ impl Checksums {
 
     fn say(&self, text: &str) {
         if let Some(window) = self.window.upgrade() {
-            window.set_ck_summary(text.into());
-            window.set_ck_summary_tone(0);
+            window.set_tool_summary(text.into());
+            window.set_tool_summary_tone(0);
         }
     }
 
@@ -683,10 +711,11 @@ impl Checksums {
         self.cancel_job();
         CURRENT.with(|s| s.forget(crate::windows::current()));
         if let Some(window) = self.window.upgrade() {
-            window.set_ck_open(false);
-            window.set_ck_rows(ModelRc::default());
-            window.set_ck_algos(ModelRc::default());
-            window.set_ck_expected(SharedString::new());
+            window.set_tool_open(false);
+            window.set_tool_rows(ModelRc::default());
+            window.set_tool_toggles(ModelRc::default());
+            window.set_tool_buttons(ModelRc::default());
+            window.set_tool_field_text(SharedString::new());
             if !window.get_dialog_open() && !window.get_conflicts_open() {
                 window.invoke_focus_list();
             }
@@ -695,7 +724,7 @@ impl Checksums {
 }
 
 fn window_expected(window: &slint::Weak<AppWindow>) -> String {
-    window.upgrade().map(|w| w.get_ck_expected().to_string()).unwrap_or_default()
+    window.upgrade().map(|w| w.get_tool_field_text().to_string()).unwrap_or_default()
 }
 
 /// `1,234`.
