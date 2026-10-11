@@ -629,6 +629,14 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 260 as its
 269. **Retina memory.** On the Retina screen, note Activity Monitor's memory with one window, then with a second full-size window, then after closing it (spec: framebuffer ≈ width × height × 4 × 4 + 2.5 MB).
 270. **Focus order.** Three windows: click them in the order 1, 3, 2, then `open -a` / `gezik <folder>`: it opens in 2. Hide Gezik (⌘H) and show it: the same window is in front. Quick Look (Space) in one window, then Space in the other: the first one's closes, one Quick Look at a time. Scrolling with the trackpad over the window behind scrolls that window, not the one in front.
 
+### 11h, list export
+
+Numbers stay as they are when branches merge (see 10b). 11h starts at 291 as its plan decided. Results go to `macos-test-results.md`.
+
+291. **Tools menu and the question.** `cargo test -p gezik-core export::` and `cargo test -p gezik export::` first; paste. In a folder with a few files (one named `a,b "c" <d>.txt`), the menu bar's Tools ▸ Export List… and a right-click on the background and on a row (Tools ▸ Export list…): the question shows `<folder>/<folder name>.csv`, the line under it says `CSV into <folder>`; type `.doc` instead: the line turns red (`End the name with .txt, .csv or .html`). With two files selected the box `Only the 2 items selected` is ticked. Write whether a row's menu shows all its submenus (Open With, Copy path as, Tools, Quick Actions).
+292. **Files.** Save as `.csv`, `.txt` (once with `Full paths in text`) and `.html`: each file appears selected; ⌘Z removes it. Save the CSV again under the same name: the conflict list asks; Replace, then ⌘Z: the first one is back. Open the CSV in Numbers (and `cat` it in Terminal): `,` separators, no BOM (`head -c 3 file.csv | xxd`), LF line ends, the odd name in one quoted field, sizes as plain bytes, dates like `2024-05-01T10:00:12`. Open the HTML in Safari in light and dark mode: readable, the name shows as typed, no script.
+293. **Search results and the clipboard.** ⇧⌘F a search (`*.txt` under your home folder): Tools ▸ Export List… defaults to `Search results.csv` in the searched folder, the CSV has a Folder column and full paths. Copy instead of Save: the status bar says `Copied N items as CSV`; paste into TextEdit: the same text. In the Trash Export List says it is not available; in the computer root (go up from `/`) it says `Export List works on a folder or search results`.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

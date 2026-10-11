@@ -588,6 +588,13 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its
 205. **Second launch and session.** As macOS 267–268 (`gezik <folder>` from a terminal; FileManager1 "Show in folder" from a browser's downloads opens in the window used last).
 206. **Focus order.** As macOS 270 with Gezik's own menus (`gezik <folder>` from a terminal); on Wayland write whether the window used last really gets the folder (the compositor may not say which window has the focus).
 
+### 11h, list export
+
+Numbers stay as they are when branches merge (see 10b). 11h starts at 219 as its plan decided.
+
+219. **Question and files.** As macOS 291–292 with Gezik's own right-click menu (Tools ▸ Export list…; there is no menu bar, the palette has `Export List…`) and Ctrl+Z; open the CSV in LibreOffice Calc: `,` separators, no BOM, LF line ends; the HTML in Firefox in light and dark.
+220. **Results and clipboard.** As macOS 293 (Ctrl+Shift+F); paste the copied CSV into a text editor on X11 and on Wayland.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
