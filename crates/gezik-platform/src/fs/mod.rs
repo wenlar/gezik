@@ -173,6 +173,24 @@ pub(crate) fn cancelled() -> io::Error {
     io::Error::new(io::ErrorKind::Interrupted, "cancelled")
 }
 
+/// `trash` refused an item the Recycle Bin would have deleted for good (it is set to delete at
+/// once, or the item is too big for it): the item was left where it was.
+#[derive(Debug)]
+pub struct NotRecycled;
+
+impl std::fmt::Display for NotRecycled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "The Recycle Bin would delete it for good; it was left where it is")
+    }
+}
+
+impl std::error::Error for NotRecycled {}
+
+/// Whether `err` is `trash`'s [`NotRecycled`].
+pub fn is_not_recycled(err: &io::Error) -> bool {
+    err.get_ref().is_some_and(|inner| inner.is::<NotRecycled>())
+}
+
 /// `path` with a first part that is one of macOS's own links at the root (`/tmp`, `/var`,
 /// `/etc` → `/private/…`, owned by root) written as where it leads, so the way back and the
 /// folder history are not thrown by the system's links. Other links are kept. Elsewhere: `path`.

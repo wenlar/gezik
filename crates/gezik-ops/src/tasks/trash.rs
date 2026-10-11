@@ -155,9 +155,12 @@ impl Task for TrashTask {
             }
             return Err(no_trash());
         }
-        Ok(match fs::trash(path)? {
-            Some(trashed) => Outcome::Trashed { original: path.clone(), trashed },
-            None => Outcome::Deleted { path: path.clone() },
+        Ok(match fs::trash(path) {
+            Ok(Some(trashed)) => Outcome::Trashed { original: path.clone(), trashed },
+            Ok(None) => Outcome::Deleted { path: path.clone() },
+            // The bin would have deleted it for good: offered for a permanent delete instead.
+            Err(err) if fs::is_not_recycled(&err) => return Err(no_trash()),
+            Err(err) => return Err(err),
         })
     }
 }
