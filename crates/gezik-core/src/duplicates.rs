@@ -34,7 +34,11 @@ pub fn pick(members: &[Member<'_>], keep: Keep) -> (Vec<usize>, usize) {
     for m in members {
         groups.entry(m.group).or_default().push(m);
     }
-    let at = |row: usize| members.iter().find(|m| m.row == row);
+    // The focused row's member, found once (not once per group: 100,000 rows).
+    let focused = match keep {
+        Keep::ThisFolder(row) | Keep::ThisOne(row) => members.iter().find(|m| m.row == row),
+        _ => None,
+    };
     let mut picked = Vec::new();
     let mut whole = 0;
     for group in groups.values() {
@@ -43,13 +47,13 @@ pub fn pick(members: &[Member<'_>], keep: Keep) -> (Vec<usize>, usize) {
             Keep::Oldest => group.iter().min_by_key(|m| m.modified).map(|m| m.row),
             Keep::First => group.iter().min_by_key(|m| (m.folder, m.name)).map(|m| m.row),
             Keep::ThisOne(row) => {
-                if at(row).is_none_or(|m| m.group != group[0].group) {
+                if focused.is_none_or(|m| m.group != group[0].group) {
                     continue;
                 }
                 Some(row)
             }
-            Keep::ThisFolder(row) => {
-                let Some(folder) = at(row).map(|m| m.folder) else { continue };
+            Keep::ThisFolder(_) => {
+                let Some(folder) = focused.map(|m| m.folder) else { continue };
                 let here: Vec<usize> = group.iter().filter(|m| m.folder == folder).map(|m| m.row).collect();
                 if here.len() == group.len() {
                     whole += 1;
