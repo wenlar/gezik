@@ -65,13 +65,20 @@ pub fn forget(id: WindowId) {
     CURRENT.with(|s| s.forget(id));
 }
 
-/// One of Gezik's jobs ended: what the compare shows may be out of date.
-pub fn job_finished() {
-    for (_, layer) in CURRENT.with(Slot::all) {
-        if layer.0.done.borrow().is_some() {
-            layer.0.stale.set(true);
+/// One of Gezik's jobs ended, changing `dirs`: a compare whose folders hold one of them may
+/// be out of date.
+pub fn job_finished(dirs: &[PathBuf]) {
+    for (id, layer) in CURRENT.with(Slot::all) {
+        if layer.touched_by(dirs) {
+            crate::windows::enter(id, || layer.show_summary());
         }
     }
+}
+
+/// Whether one of `dirs` is in (or is) one of the compared folders.
+fn touches(dirs: &[PathBuf], roots: &(PathBuf, PathBuf)) -> bool {
+    use gezik_core::ops::paths::is_within;
+    dirs.iter().any(|dir| is_within(dir, &roots.0) || is_within(dir, &roots.1))
 }
 
 /// Compares `left` and `right` in the current window (a compare hidden there goes); `told` is
@@ -266,6 +273,16 @@ enum Message {
 }
 
 impl FolderCompare {
+    /// A job changed `dirs`: marks the result out of date if they are in its folders (and says
+    /// whether it did).
+    fn touched_by(&self, dirs: &[PathBuf]) -> bool {
+        let touched = self.0.done.borrow().is_some() && touches(dirs, &self.0.rows.roots.borrow());
+        if touched {
+            self.0.stale.set(true);
+        }
+        touched
+    }
+
     /// Puts the compare into the tool table and shows it.
     fn show(&self) {
         let Some(window) = self.0.window.upgrade() else { return };
@@ -318,6 +335,9 @@ impl FolderCompare {
     }
 
     fn show_summary(&self) {
+        if self.0.hidden.get() {
+            return self.show_chip();
+        }
         let Some(window) = self.0.window.upgrade() else { return };
         let (text, tone) = self.summary();
         let told = self.0.told.borrow();
@@ -1012,6 +1032,15 @@ mod tests {
         read_contents(&late, &left, &right, &mut rows, &mut |_| {});
         assert!(rows[0].check, "not read");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_a_job_in_the_compared_folders_makes_it_stale() {
+        let roots = (PathBuf::from("/w/left"), PathBuf::from("/x/right"));
+        assert!(touches(&[PathBuf::from("/w/left")], &roots));
+        assert!(touches(&[PathBuf::from("/x/right/sub/deep")], &roots));
+        assert!(!touches(&[PathBuf::from("/w/leftover"), PathBuf::from("/x")], &roots), "next to it, above it");
+        assert!(!touches(&[], &roots), "a job that changed no folder (Checksums)");
     }
 
     fn scan_for(job: &Job, side: &str, root: &Path) -> Tree {
