@@ -38,7 +38,7 @@ Windows · macOS · Linux
 
 **The system.** A command line, a single instance, one Trash view for every bin, and PATH integration you can undo. → [System integration](docs/features.md#system-integration)
 
-**Compare and sync.** Two files side by side, two folder trees with TC's show buttons, and a sync (two-way, left to right or mirror) that asks first, runs as one job with one undo and deletes only to the trash. It is stateless: in two-way a file deleted on one side is copied back from the other; use mirror or turn the row to `×` to spread a delete. → [Tools](docs/features.md#tools)
+**Tools.** Checksums and their verification, file and folder compare, a sync (two-way, left to right or mirror) that asks first and deletes only to the trash (it is stateless: a delete spreads only with mirror or a row turned to `×`), duplicates, a size map and list export; Copy To with a filter, split and join; copies that can be verified, speed-limited and reordered in the queue. → [Tools](docs/features.md#tools) · [Compare and sync](docs/features.md#tabs-address-bar-and-terminal) · [Copy options](docs/features.md#file-operations) · [Export list](docs/features.md#export-list)
 
 ## Configuration
 

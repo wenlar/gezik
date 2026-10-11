@@ -43,8 +43,8 @@ a FAIL against its 0.3 MB bound.
 
 The numbers are the range of two or three runs of each script, each with a fresh config
 folder in `%TEMP%` (give `measure.ps1` one with `-Config`; its `state.toml` may set
-`[window]` `width` and `height`; without it Gezik uses your own config). Sorting varies
-around its 50 ms target between runs. `tabs.ps1 -Method SendKeys` was used, since the
+`[window]` `width` and `height`; without it Gezik uses your own config). Sorting 100,000
+names sits at its 50 ms target (46-52 ms between runs): within the spread, with no headroom. `tabs.ps1 -Method SendKeys` was used, since the
 default `PostMessage` does not check that the tabs opened.
 
 ---

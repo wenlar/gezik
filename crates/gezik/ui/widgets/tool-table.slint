@@ -148,6 +148,7 @@ export component ToolTable inherits Rectangle {
                             changed has-focus => { if self.has-focus { root.at = i; } }
                             accessible-role: checkbox;
                             accessible-label: toggle.label;
+                            accessible-checkable: true;
                             accessible-checked: toggle.checked;
                             accessible-action-default => { root.toggle(i); }
                             key-pressed(event) => {

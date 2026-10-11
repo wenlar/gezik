@@ -8,6 +8,8 @@
 - [Tabs, address bar and terminal](#tabs-address-bar-and-terminal)
 - [Layouts](#layouts)
 - [Search](#search)
+- [Tools](#tools)
+- [Export list](#export-list)
 - [System integration](#system-integration)
 
 ## File operations
@@ -277,7 +279,12 @@ content-max-size = "64 MB" # larger files are not read for text
 
 ## Tools
 
-Right-click ▸ Tools, the command palette, and on macOS the Tools menu.
+Right-click ▸ Tools, the command palette, and on macOS the Tools menu. In short: checksums and
+their verification, duplicates and the size map (below); file and folder compare, sync and
+Select Differences (under [Tabs, address bar and terminal](#tabs-address-bar-and-terminal));
+Copy To… / Move To… with a filter, Split File… / Join Files, copy verification, the speed
+limit and the queue (under [File operations](#file-operations)); and the
+[list export](#export-list).
 
 - **Calculate Checksums…** shows CRC32, MD5, SHA-1, SHA-256 and SHA-512 of the selected files
   (folders: every file in them), each file read once. A value on the clipboard fills
@@ -297,6 +304,9 @@ Right-click ▸ Tools, the command palette, and on macOS the Tools menu.
   all but the newest, oldest or first copy in each group, all copies in one folder (one is
   always kept) or all but the focused one. Delete moves them to the trash (one undo); on a
   drive without a trash nothing is deleted. A saved search keeps it as `duplicates = true`.
+- **Size Map** shows the selected folder (or the one shown) as tiles sized by what they
+  take up. The scan runs in the background and stops when the map closes; F5 reads it again.
+  A tile's right-click opens it, shows it in the pane, moves it to the trash or copies its path.
 
 ## Export list
 
