@@ -112,7 +112,7 @@ pub struct Sheet {
 }
 
 /// What comes before the rows.
-pub fn begin(out: &mut impl Write, sheet: &Sheet) -> io::Result<()> {
+pub fn begin(out: &mut dyn Write, sheet: &Sheet) -> io::Result<()> {
     match sheet.format {
         Format::Text => Ok(()),
         Format::Csv => {
@@ -137,10 +137,10 @@ pub fn begin(out: &mut impl Write, sheet: &Sheet) -> io::Result<()> {
 }
 
 /// One row.
-pub fn row(out: &mut impl Write, sheet: &Sheet, cells: &[impl AsRef<str>]) -> io::Result<()> {
+pub fn row(out: &mut dyn Write, sheet: &Sheet, cells: &[String]) -> io::Result<()> {
     match sheet.format {
         Format::Text => {
-            out.write_all(cells.first().map_or("", AsRef::as_ref).as_bytes())?;
+            out.write_all(one_line(cells.first().map_or("", String::as_str)).as_bytes())?;
             out.write_all(sheet.eol.as_bytes())
         }
         Format::Csv => {
@@ -148,14 +148,14 @@ pub fn row(out: &mut impl Write, sheet: &Sheet, cells: &[impl AsRef<str>]) -> io
                 if i > 0 {
                     write!(out, "{}", sheet.separator)?;
                 }
-                out.write_all(csv_field(cell.as_ref(), sheet.separator).as_bytes())?;
+                out.write_all(csv_field(cell, sheet.separator).as_bytes())?;
             }
             out.write_all(sheet.eol.as_bytes())
         }
         Format::Html => {
             out.write_all(b"<tr>")?;
             for (i, cell) in cells.iter().enumerate() {
-                write!(out, "<td{}>{}</td>", right_class(sheet, i), html_escape(cell.as_ref()))?;
+                write!(out, "<td{}>{}</td>", right_class(sheet, i), html_escape(cell))?;
             }
             out.write_all(b"</tr>\n")
         }
@@ -163,7 +163,7 @@ pub fn row(out: &mut impl Write, sheet: &Sheet, cells: &[impl AsRef<str>]) -> io
 }
 
 /// What comes after the rows.
-pub fn end(out: &mut impl Write, sheet: &Sheet) -> io::Result<()> {
+pub fn end(out: &mut dyn Write, sheet: &Sheet) -> io::Result<()> {
     match sheet.format {
         Format::Text | Format::Csv => Ok(()),
         Format::Html => out.write_all(b"</tbody>\n</table>\n</body>\n</html>\n"),
@@ -187,10 +187,25 @@ fn right_class(sheet: &Sheet, i: usize) -> &'static str {
 }
 
 /// `text` as one CSV field (RFC 4180): quoted when it holds the separator, a quote or a line
-/// break, its quotes doubled.
+/// break, its quotes doubled. One starting with `=`, `+`, `-`, `@`, a tab or CR gets a leading
+/// `'`, so a spreadsheet never runs it as a formula (OWASP CSV injection).
 pub fn csv_field(text: &str, separator: char) -> Cow<'_, str> {
+    let text: Cow<'_, str> = if text.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        Cow::Owned(format!("'{text}"))
+    } else {
+        Cow::Borrowed(text)
+    };
     if text.contains([separator, '"', '\n', '\r']) {
         Cow::Owned(format!("\"{}\"", text.replace('"', "\"\"")))
+    } else {
+        text
+    }
+}
+
+/// `text` on one line of a text list: a line break in a name shows as `␤` (CR as `␍`).
+fn one_line(text: &str) -> Cow<'_, str> {
+    if text.contains(['\n', '\r']) {
+        Cow::Owned(text.replace('\n', "␤").replace('\r', "␍"))
     } else {
         Cow::Borrowed(text)
     }
@@ -250,7 +265,7 @@ mod tests {
         let mut out = Vec::new();
         begin(&mut out, sheet).unwrap();
         for cells in rows {
-            row(&mut out, sheet, cells).unwrap();
+            row(&mut out, sheet, &cells.map(str::to_owned)).unwrap();
         }
         end(&mut out, sheet).unwrap();
         String::from_utf8(out).unwrap()
@@ -267,6 +282,19 @@ mod tests {
         assert_eq!(csv_field("two\nlines", ','), "\"two\nlines\"");
         assert_eq!(csv_field("cr\rhere", ','), "\"cr\rhere\"");
         assert_eq!(csv_field("", ','), "");
+    }
+
+    #[test]
+    fn csv_fields_never_start_a_formula() {
+        assert_eq!(csv_field("=cmd|' /C calc'!A0", ','), "'=cmd|' /C calc'!A0");
+        assert_eq!(csv_field("+1.txt", ','), "'+1.txt");
+        assert_eq!(csv_field("-rf", ','), "'-rf");
+        assert_eq!(csv_field("@SUM(A1)", ','), "'@SUM(A1)");
+        assert_eq!(csv_field("\tx", ','), "'\tx");
+        assert_eq!(csv_field("\rx", ','), "\"'\rx\"", "guarded, then quoted for its CR");
+        assert_eq!(csv_field("=a,b", ','), "\"'=a,b\"");
+        assert_eq!(csv_field("a=b", ','), "a=b", "only at the start");
+        assert_eq!(csv_field("12", ','), "12");
     }
 
     #[test]
@@ -288,6 +316,7 @@ mod tests {
         text.eol = "\r\n";
         assert_eq!(written(&text, &[["a.txt", "1"]]), "a.txt\r\n");
         assert_eq!(written(&text, &[]), "", "an empty list: an empty file");
+        assert_eq!(written(&text, &[["two\nlines\r.txt", ""]]), "two␤lines␍.txt\r\n", "a name never splits a line");
     }
 
     #[test]
