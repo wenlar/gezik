@@ -20,6 +20,9 @@ export component Dialog inherits Rectangle {
     // A line under the field (dialog.rs `ask_text_noted`), red if `note-error`.
     in property <string> note;
     in property <bool> note-error;
+    // A check box over the buttons (F5/F6's "Verify copies"); empty: none.
+    in property <string> check-text;
+    in-out property <bool> checked;
     callback chosen(int);
     // The field's text changed (typed, not set).
     callback edited(string);
@@ -114,6 +117,11 @@ export component Dialog inherits Rectangle {
                 text: root.note;
                 wrap: word-wrap;
                 color: root.note-error ? Theme.danger : Theme.foreground-muted;
+            }
+            if root.check-text != "": Check {
+                text: root.check-text;
+                checked: root.checked;
+                toggled => { root.checked = !root.checked; }
             }
             HorizontalLayout {
                 alignment: end;

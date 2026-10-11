@@ -27,6 +27,8 @@ struct Question {
     job: Option<u64>,
     /// Writes the line under the field as its text changes; `None`: no line.
     note: Option<Note>,
+    /// A check box's label and first state; `None`: no check box.
+    check: Option<(String, bool)>,
     answer: Answer,
 }
 
@@ -104,6 +106,7 @@ impl Dialogs {
             secret: false,
             job: None,
             note: None,
+            check: None,
             answer: Box::new(answer),
         });
     }
@@ -127,6 +130,7 @@ impl Dialogs {
             secret: false,
             job: Some(job),
             note: None,
+            check: None,
             answer: Box::new(answer),
         });
     }
@@ -159,6 +163,9 @@ impl Dialogs {
                 secret: window.get_dialog_input_secret(),
                 job: job.map(|(job, _)| job),
                 note,
+                check: Some(window.get_dialog_check())
+                    .filter(|label| !label.is_empty())
+                    .map(|label| (label.into(), window.get_dialog_checked())),
                 answer,
             });
         }
@@ -229,8 +236,10 @@ impl Dialogs {
         );
     }
 
-    /// Like `ask_text_noted`, but every button except the last (Esc) answers, with its index
-    /// and the text (Connect / Map to Z: / Cancel).
+    /// Like `ask_text_noted`, but every button except the last (Esc) answers, with its index,
+    /// the text and the check box's state (Connect / Map to Z: / Cancel). `check`: a check box
+    /// (label, first state) over the buttons.
+    #[allow(clippy::too_many_arguments, reason = "a question's parts")]
     pub fn ask_text_choice(
         &self,
         title: impl Into<String>,
@@ -238,7 +247,8 @@ impl Dialogs {
         initial: impl Into<String>,
         buttons: &[&str],
         note: impl Fn(&str) -> (String, bool) + 'static,
-        answer: impl FnOnce(Option<(usize, String)>) + 'static,
+        check: Option<(&str, bool)>,
+        answer: impl FnOnce(Option<(usize, String, bool)>) + 'static,
     ) {
         let window = self.0.window.clone();
         let escape = buttons.len().saturating_sub(1);
@@ -251,9 +261,10 @@ impl Dialogs {
             secret: false,
             job: None,
             note: Some(Rc::new(note)),
+            check: check.map(|(label, on)| (label.to_owned(), on)),
             answer: Box::new(move |choice| {
-                let text = window.upgrade().map(|w| w.get_dialog_input().to_string());
-                answer(choice.filter(|&c| c != escape).zip(text));
+                let typed = window.upgrade().map(|w| (w.get_dialog_input().to_string(), w.get_dialog_checked()));
+                answer(choice.filter(|&c| c != escape).zip(typed).map(|(c, (text, on))| (c, text, on)));
             }),
         });
     }
@@ -291,6 +302,7 @@ impl Dialogs {
             secret,
             job,
             note,
+            check: None,
             answer: Box::new(move |choice| {
                 let text = window.upgrade().map(|w| {
                     let text = w.get_dialog_input().to_string();
@@ -323,6 +335,9 @@ impl Dialogs {
                 window.set_dialog_note_error(error);
                 *self.0.open_note.borrow_mut() = question.note;
                 window.set_dialog_input(input.into());
+                let (check, checked) = question.check.unwrap_or_default();
+                window.set_dialog_check(check.into());
+                window.set_dialog_checked(checked);
                 let buttons: Vec<SharedString> = question.buttons.into_iter().map(Into::into).collect();
                 window.set_dialog_buttons(ModelRc::new(VecModel::from(buttons)));
                 *self.0.open.borrow_mut() = Some(question.answer);

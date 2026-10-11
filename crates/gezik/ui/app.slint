@@ -469,6 +469,7 @@ export component AppWindow inherits Window {
     callback op-resume(int);
     callback op-cancel(int);
     callback op-start-now(int);
+    callback op-more(int, length, length, length, length);
     callback op-details(int);
     callback op-retry(int);
     callback op-dismiss(int);
@@ -696,6 +697,9 @@ export component AppWindow inherits Window {
     // gets the field's text as it is typed.
     in property <string> dialog-note;
     in property <bool> dialog-note-error;
+    // The question's check box (dialog.rs `ask_text_choice`); empty: none.
+    in property <string> dialog-check;
+    in-out property <bool> dialog-checked;
     callback dialog-chosen(int);
     callback dialog-edited(string);
     callback key-event(KeyEvent) -> bool;
@@ -1221,6 +1225,7 @@ export component AppWindow inherits Window {
                 resume(i) => { root.op-resume(i); }
                 cancel(i) => { root.op-cancel(i); }
                 start-now(i) => { root.op-start-now(i); }
+                more(i, x, y, r, t) => { root.op-more(i, x, y, r, t); }
                 details(i) => { root.op-details(i); }
                 retry(i) => { root.op-retry(i); }
                 dismiss(i) => { root.op-dismiss(i); }
@@ -1565,6 +1570,8 @@ export component AppWindow inherits Window {
             show-secret <=> root.dialog-show-secret;
             note: root.dialog-note;
             note-error: root.dialog-note-error;
+            check-text: root.dialog-check;
+            checked <=> root.dialog-checked;
             chosen(i) => { root.dialog-chosen(i); }
             edited(text) => { root.dialog-edited(text); }
         }

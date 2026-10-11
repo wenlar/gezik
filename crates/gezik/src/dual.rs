@@ -497,26 +497,29 @@ pub fn to_other(moving: bool) {
         return;
     }
     let shown = base.clone();
-    let go = move |target: PathBuf| {
+    // `verify`: the question's Verify copies (`None`: as `[files] verify` says).
+    let go = move |target: PathBuf, verify: Option<bool>| {
         crate::operations::with_current(|ops| match trash {
             Some(rows) => {
                 let rows = rows.into_iter().map(|(entry, label)| (entry, label.name.into())).collect();
                 ops.restore_from_trash(crate::trash_view::into_folder(&target, rows));
             }
             None if same_path(&target, &shown) => {
-                ops.transfer(paths, target, if moving { Effect::Move } else { Effect::Copy });
+                ops.transfer_verifying(paths, target, if moving { Effect::Move } else { Effect::Copy }, verify);
             }
             None => {
                 // shortcut: one stat per level above a typed folder outside the other pane's, on
                 // the UI thread (a dead network path blocks); move it off the thread if that bites.
                 let anchor = anchor(&target, shown, |path| path.exists());
-                ops.transfer_making(paths, &target, anchor, moving);
+                ops.transfer_making(paths, &target, anchor, moving, verify);
             }
         });
     };
     if !CONFIRM.with(Cell::get) {
-        return go(base);
+        return go(base, None);
     }
+    // Putting items back from the trash copies nothing to verify.
+    let restoring = source.shows_trash();
     // shortcut: the typed folder is not looked up on disk (no stat on the UI thread): a file by
     // that name fails in the job; check it off the thread if that confuses.
     let title = question_title(verb, &names, &base);
@@ -530,21 +533,23 @@ pub fn to_other(moving: bool) {
     let field = base.display().to_string();
     let typed_base = base;
     crate::operations::with_current(|ops| {
+        let check = (!restoring).then_some(("Verify copies", ops.verify_default()));
         ops.dialogs().ask_text_choice(
             title,
             message,
             field,
             &[verb, "Don't Ask Again", "Cancel"],
             note,
+            check,
             move |answer| {
-                let Some((choice, typed)) = answer else { return };
+                let Some((choice, typed, verify)) = answer else { return };
                 let Some(target) = typed_target(&typed_base, &typed) else {
                     return panes::active_view().note("No folder was typed".to_owned());
                 };
                 if choice == 1 {
                     dont_ask_again();
                 }
-                go(target);
+                go(target, Some(verify));
             },
         );
     });

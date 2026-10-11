@@ -75,8 +75,9 @@ pub fn open() {
             initial,
             &names,
             move |text| note_for(text, windows),
+            None,
             move |answer| {
-                if let Some((choice, text)) = answer {
+                if let Some((choice, text, _)) = answer {
                     start(&text, if choice == 1 { letter } else { None });
                 }
             },

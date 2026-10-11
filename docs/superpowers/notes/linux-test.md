@@ -597,6 +597,15 @@ Numbers stay as they are when branches merge. 11a uses 207–210. GNOME and KDE,
 209. **sha256sum both ways.** As macOS 274 with `sha256sum -c <folder>.sha256`, and `sha256sum * > SHA256SUMS` then Verify Checksums on `SHA256SUMS`; also `md5sum * > x.md5` and a `.sfv` from another tool if you have one. A file name with a backslash (`touch 'a\b.txt'`): Save writes a line starting with `\` and `sha256sum -c` passes it.
 210. **Expected value.** As macOS 275 with Ctrl+C on X11 and on Wayland (write whether the clipboard value is picked up on Wayland).
 
+### 11b, copy verification, speed limit, queue
+
+Numbers stay as they are when branches merge. 11b uses 231–234.
+
+231. **Tests first.** As macOS 311; paste.
+232. **Verify and FICLONE.** As macOS 312–313: on Btrfs or XFS a copy on the same file system is a clone (instant, no `Verifying…`); to an ext4 USB stick or a VFAT one the row says `Verifying…`. While it verifies, `iostat -x 1` (or `cat /proc/diskstats`) shows reads from the stick.
+233. **Speed limit.** As macOS 314 (Linux copies in 8 MB pieces: the speed may move in steps, the average stays near the limit; time a 2 GB copy at 20 MB/s, ≈ 100 s ±5 %).
+234. **Queue and F5.** As macOS 315–316 with Gezik's own ⋯ menu (X11 and Wayland: the menu opens under the button, inside the window).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
