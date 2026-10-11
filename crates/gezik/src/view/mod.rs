@@ -2904,7 +2904,13 @@ mod tests {
 
     fn one_result() -> Batch {
         let entry = Entry { name: "n".into(), is_dir: false, flags: 0, size: 1, modified: None, created: None };
-        Batch { folders: vec!["".into()], entries: vec![entry], parent: vec![0], matches: vec![None] }
+        Batch {
+            folders: vec!["".into()],
+            entries: vec![entry],
+            parent: vec![0],
+            matches: vec![None],
+            ..Batch::default()
+        }
     }
 
     #[test]

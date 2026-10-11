@@ -70,6 +70,12 @@ pub fn done_text(summary: &Summary) -> String {
     if summary.everything {
         text.push_str(" via Everything");
     }
+    push_unread(&mut text, summary);
+    text
+}
+
+/// What a search left out, after its count: skipped folders, folders it could not read.
+fn push_unread(text: &mut String, summary: &Summary) {
     match summary.skipped {
         0 => {}
         1 => text.push_str(" · Skipped 1 folder (search.skip)"),
@@ -80,7 +86,54 @@ pub fn done_text(summary: &Summary) -> String {
         1 => text.push_str(" · 1 folder could not be read"),
         n => text.push_str(&format!(" · {} folders could not be read", with_commas(n))),
     }
+}
+
+/// The status bar while duplicates are looked for (spec 11 §9.2): the walk, then the reads.
+pub fn scanned_text(files: usize, folders: usize) -> String {
+    format!("Scanned {} files · {} folders", with_commas(files), with_commas(folders))
+}
+
+pub fn comparing_text(scanned: usize, files: usize, bytes: u64) -> String {
+    format!(
+        "Scanned {} files · comparing {} of same size ({})",
+        with_commas(scanned),
+        with_commas(files),
+        gezik_core::format_size(bytes)
+    )
+}
+
+/// A duplicates search's status bar (spec 11 §9.3): `48 groups · 131 files · 1.8 GB could be
+/// freed`, then what was left out.
+pub fn duplicates_text((groups, files, freed): (usize, usize, u64), summary: &Summary) -> String {
+    let freed = gezik_core::format_size(freed);
+    let mut text = match groups {
+        0 => "No duplicates".to_owned(),
+        1 => format!("1 group · {} files · {freed} could be freed", with_commas(files)),
+        n => format!("{} groups · {} files · {freed} could be freed", with_commas(n), with_commas(files)),
+    };
+    if summary.cancelled {
+        text = format!("Stopped · {text}");
+    }
+    match summary.online {
+        0 => {}
+        1 => text.push_str(" · 1 online-only file not read"),
+        n => text.push_str(&format!(" · {} online-only files not read", with_commas(n))),
+    }
+    match summary.hard_links {
+        0 => {}
+        1 => text.push_str(" · 1 hard link counted once"),
+        n => text.push_str(&format!(" · {} hard links counted once", with_commas(n))),
+    }
+    push_unread(&mut text, summary);
     text
+}
+
+/// The status bar of results that ended: a duplicates search's or another's.
+fn summary_text(summary: &Summary, set: Option<&ResultSet>) -> String {
+    match set.filter(|set| set.is_duplicates()) {
+        Some(set) => duplicates_text(set.dup_counts(), summary),
+        None => done_text(summary),
+    }
 }
 
 fn name_of(path: &Path) -> String {
@@ -866,9 +919,11 @@ impl Searches {
         }
         let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
         let content = !spec.content.is_empty();
+        let duplicates = spec.duplicates;
         *self.0.pending.borrow_mut() = Some(spec.clone());
         *self.0.showing.borrow_mut() = Some(Showing { tab, spec, summary: None, complete: false, changes: None });
-        Listing::Results(Arc::new(ResultSet::new(root, content)))
+        let set = if duplicates { ResultSet::duplicates(root) } else { ResultSet::new(root, content) };
+        Listing::Results(Arc::new(set))
     }
 
     /// The results `listing_for` gave are on screen: a fresh search starts; kept ones get their
@@ -878,8 +933,9 @@ impl Searches {
         match pending {
             Some(spec) => self.start(spec),
             None => {
+                let set = self.0.view.results();
                 let (status, changes) = match self.0.showing.borrow_mut().as_mut() {
-                    Some(s) => (s.summary.as_ref().map(done_text), s.changes.take()),
+                    Some(s) => (s.summary.as_ref().map(|sum| summary_text(sum, set.as_deref())), s.changes.take()),
                     None => (None, None),
                 };
                 self.0.view.set_results_status(status);
@@ -1069,14 +1125,14 @@ impl Searches {
     /// Rows taken out or added after the search ended: the status bar's count follows them
     /// ("Stopped at N results" names the limit and stays).
     fn recount(&self) {
-        let Some(len) = self.0.view.results().map(|set| set.len()) else { return };
+        let Some(set) = self.0.view.results() else { return };
         let text = {
             let mut showing = self.0.showing.borrow_mut();
             let Some(summary) = showing.as_mut().and_then(|s| s.summary.as_mut()) else { return };
-            if !recounted(summary, len) {
+            if !recounted(summary, set.len()) {
                 return;
             }
-            done_text(summary)
+            summary_text(summary, Some(&set))
         };
         self.0.view.set_results_status(Some(text));
     }
@@ -1180,6 +1236,9 @@ impl Searches {
         crate::panes::edit(self.0.id, |d| d.search_running = true);
         let sink = self.sink(generation);
         let started = Instant::now();
+        if spec.duplicates {
+            return self.start_duplicates(spec, query, settings.skip, running, sink);
+        }
         let cache = spec.content.is_empty().then(|| self.ready_cache(&spec)).flatten();
         let flag = running.flag();
         let (shown, skip, on) = (Searches::view_shown(), settings.skip.clone(), settings.everything);
@@ -1208,6 +1267,39 @@ impl Searches {
         }
     }
 
+    /// A duplicates search (spec 11 §9.2): the walk and the reads on the search's own threads,
+    /// never the name cache or Everything (they know no content).
+    fn start_duplicates(
+        &self,
+        spec: SearchSpec,
+        query: Query,
+        skip: Vec<String>,
+        running: Running,
+        sink: impl Fn(Event) + Send + Sync + 'static,
+    ) {
+        use gezik_core::ops::threads::DiskKind;
+        let shown = Searches::view_shown();
+        let spawned = std::thread::Builder::new().name("gezik-duplicates".into()).spawn(move || {
+            let mut walk = plan_walk(&spec, &skip, shown);
+            // A cloud folder is not gone into: listing it may download it (spec 11 §9.2).
+            walk.rules.enter_offline = false;
+            let kinds: Vec<DiskKind> = walk
+                .roots
+                .iter()
+                .map(|root| gezik_platform::fs::drive_facts(root).map_or(DiskKind::Unknown, |facts| facts.kind))
+                .collect();
+            let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
+            let readers = gezik_search::duplicates::readers(&kinds);
+            gezik_search::duplicates::find(walk, query, &root, readers, &running, Arc::new(sink));
+        });
+        if spawned.is_err() {
+            self.0.running.borrow_mut().take();
+            self.0.view.set_searching(false);
+            self.0.view.set_results_status(Some("Cannot start the search".to_owned()));
+            crate::panes::edit(self.0.id, |d| d.search_running = false);
+        }
+    }
+
     /// Events of search `generation`, brought to the UI thread.
     fn sink(&self, generation: u64) -> impl Fn(Event) + Send + Sync + Clone + 'static {
         let (id, weak) = (self.0.id, self.0.window.clone());
@@ -1224,9 +1316,16 @@ impl Searches {
         }
         match event {
             Event::Batch(batch) => self.0.view.append_results(batch),
-            Event::Progress { found, folders } => self.0.view.set_results_status(Some(progress_text(found, folders))),
+            Event::Progress { found, folders } => {
+                let duplicates = self.0.showing.borrow().as_ref().is_some_and(|s| s.spec.duplicates);
+                let text = if duplicates { scanned_text(found, folders) } else { progress_text(found, folders) };
+                self.0.view.set_results_status(Some(text));
+            }
+            Event::Comparing { scanned, files, bytes } => {
+                self.0.view.set_results_status(Some(comparing_text(scanned, files, bytes)))
+            }
             Event::Done(summary) => {
-                let text = done_text(&summary);
+                let text = summary_text(&summary, self.0.view.results().as_deref());
                 *self.0.problems.borrow_mut() = summary.problems.first.clone();
                 self.0.running.borrow_mut().take();
                 self.0.view.set_searching(false);
@@ -1539,6 +1638,41 @@ mod tests {
         assert_eq!(done_text(&stopped), "Stopped · 1 result");
         let one = Summary { found: 1, skipped: 1, elapsed: Duration::from_millis(50), ..Summary::default() };
         assert_eq!(done_text(&one), "1 result in 0.1 s · Skipped 1 folder (search.skip)");
+    }
+
+    #[test]
+    fn the_duplicates_status_bar() {
+        assert_eq!(scanned_text(120_400, 48_210), "Scanned 120,400 files · 48,210 folders");
+        assert_eq!(
+            comparing_text(120_400, 3_210, 4_509_715_661),
+            "Scanned 120,400 files · comparing 3,210 of same size (4.2 GB)"
+        );
+        let done = Summary { found: 131, ..Summary::default() };
+        assert_eq!(duplicates_text((48, 131, 1_932_735_283), &done), "48 groups · 131 files · 1.8 GB could be freed");
+        let stopped = Summary { cancelled: true, online: 3, hard_links: 1, ..Summary::default() };
+        assert_eq!(
+            duplicates_text((1, 2, 10), &stopped),
+            "Stopped · 1 group · 2 files · 10 B could be freed · 3 online-only files not read · 1 hard link counted once"
+        );
+        assert_eq!(duplicates_text((0, 0, 0), &Summary::default()), "No duplicates");
+        let mut set = ResultSet::duplicates(PathBuf::from("/w"));
+        let entry = |name: &str| gezik_core::Entry {
+            name: name.into(),
+            is_dir: false,
+            flags: 0,
+            size: 5,
+            modified: None,
+            created: None,
+        };
+        set.append(gezik_search::results::Batch {
+            folders: vec!["".into()],
+            entries: vec![entry("a"), entry("b")],
+            parent: vec![0, 0],
+            matches: vec![None, None],
+            dups: vec![0, 0],
+        });
+        assert_eq!(summary_text(&done, Some(&set)), "1 group · 2 files · 5 B could be freed");
+        assert_eq!(summary_text(&done, None), "131 results in 0.0 s");
     }
 
     #[test]

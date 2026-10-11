@@ -28,6 +28,12 @@ pub enum Event {
         found: usize,
         folders: usize,
     },
+    /// Duplicates (spec 11 §9.2): the walk is done, files of the same size are being read.
+    Comparing {
+        scanned: usize,
+        files: usize,
+        bytes: u64,
+    },
     Done(Summary),
 }
 
@@ -45,6 +51,10 @@ pub struct Summary {
     pub elapsed: Duration,
     /// The names came from Everything (Task 4).
     pub everything: bool,
+    /// Duplicates: files only in the cloud, not read (spec 11 §9.2).
+    pub online: usize,
+    /// Duplicates: hard links of a file in a group, counted once.
+    pub hard_links: usize,
 }
 
 /// A search that may still run.
@@ -193,7 +203,7 @@ fn collect(
                     limit_reached,
                     cancelled: stats.cancelled && !limit_reached,
                     elapsed: started.elapsed(),
-                    everything: false,
+                    ..Summary::default()
                 }));
                 return;
             }
@@ -289,7 +299,7 @@ mod tests {
                     sizes.push(batch.entries.len());
                     set.append(batch);
                 }
-                Event::Progress { .. } => {}
+                Event::Progress { .. } | Event::Comparing { .. } => {}
                 Event::Done(summary) => return (set, summary, sizes),
             }
         }
