@@ -165,14 +165,19 @@ fn path_of(root: &Path, folders: &[Box<str>], file: &File) -> PathBuf {
     if folder.is_empty() { root.join(&*file.name) } else { root.join(folder).join(&*file.name) }
 }
 
-/// The groups of `files` (indices) whose content is the same, read on `threads` threads.
-/// Returns the groups, most bytes to free first, and the hard links left out.
+/// A file's drive and id (`fs::file_id`), to tell hard links of one file.
+type FileId = (u64, u128);
+
+/// The groups of `files` (indices) whose content is the same, read on `threads` threads;
+/// `id_of` tells hard links of one file. Returns the groups, most bytes to free first, and the
+/// hard links left out.
 fn confirm(
     root: &Path,
     folders: &[Box<str>],
     files: &[File],
     threads: usize,
     cancel: &AtomicBool,
+    id_of: &(dyn Fn(&Path) -> Option<FileId> + Sync),
 ) -> (Vec<Vec<usize>>, usize) {
     let path = |i: usize| path_of(root, folders, &files[i]);
     let go_on = |_: u64| !cancel.load(Ordering::Relaxed);
@@ -180,7 +185,11 @@ fn confirm(
     let prefixes = par_map(files.len(), threads, cancel, &|i| hash::hash_prefix(&path(i), PREFIX).ok());
     let mut by_prefix: HashMap<(u64, [u8; 32]), Vec<usize>> = HashMap::new();
     for (i, prefix) in prefixes.into_iter().enumerate() {
-        if let Some(prefix) = prefix {
+        // As many bytes as its size says (all of a small file): one that changed since the walk
+        // is left out, so a small file's first bytes are surely all of it.
+        if let Some((prefix, read)) = prefix
+            && read == files[i].size.min(PREFIX)
+        {
             by_prefix.entry((files[i].size, prefix)).or_default().push(i);
         }
     }
@@ -212,11 +221,12 @@ fn confirm(
         }
     }
     groups.extend(by_digest.into_values().filter(|g| g.len() > 1));
-    // Hard links of one file: the first stays.
+    // Hard links of one file: the first stays. A file whose id cannot be read could be another
+    // name of a file in the group (a subst drive, a share of this disk): left out, never offered.
     let mut links = 0;
     for group in &mut groups {
         let mut seen = Vec::new();
-        group.retain(|&i| match gezik_platform::fs::file_id(&path(i)) {
+        group.retain(|&i| match id_of(&path(i)) {
             Some(id) if seen.contains(&id) => {
                 links += 1;
                 false
@@ -225,7 +235,7 @@ fn confirm(
                 seen.push(id);
                 true
             }
-            None => true,
+            None => false,
         });
     }
     groups.retain(|g| g.len() > 1);
@@ -278,7 +288,7 @@ pub fn find(walk: Walk, query: Query, root: &Path, readers: usize, running: &Run
     drop(count);
     let bytes = files.iter().map(|f| f.size).sum();
     sink(Event::Comparing { scanned, files: files.len(), bytes });
-    let (groups, hard_links) = confirm(root, &folders, &files, readers, &cancel);
+    let (groups, hard_links) = confirm(root, &folders, &files, readers, &cancel, &gezik_platform::fs::file_id);
     // The batch: only the folders its rows are in.
     let mut batch = Batch::default();
     let mut renumbered: HashMap<u32, u32> = HashMap::new();
@@ -471,10 +481,48 @@ mod tests {
             File { folder: 0, name: "a".into(), flags: 0, size: 4, modified: None, created: None },
             File { folder: 0, name: "b".into(), flags: 0, size: 4, modified: None, created: None },
         ];
-        let (groups, _) = confirm(&root, &["".into()], &files, 2, &AtomicBool::new(true));
+        let id = &gezik_platform::fs::file_id;
+        let (groups, _) = confirm(&root, &["".into()], &files, 2, &AtomicBool::new(true), id);
         assert!(groups.is_empty());
-        let (groups, _) = confirm(&root, &["".into()], &files, 2, &AtomicBool::new(false));
+        let (groups, _) = confirm(&root, &["".into()], &files, 2, &AtomicBool::new(false), id);
         assert_eq!(groups, [vec![0, 1]]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn file(name: &str, size: u64) -> File {
+        File { folder: 0, name: name.into(), flags: 0, size, modified: None, created: None }
+    }
+
+    #[test]
+    fn a_file_that_changed_since_the_walk_is_left_out() {
+        let root = tree("changed");
+        write(&root, "a", b"hello");
+        write(&root, "b", b"hello");
+        // The walk saw 10 bytes; 5 are there now: their first bytes are not all of them.
+        let files = [file("a", 10), file("b", 10)];
+        let (groups, _) =
+            confirm(&root, &["".into()], &files, 2, &AtomicBool::new(false), &gezik_platform::fs::file_id);
+        assert!(groups.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_file_without_an_id_is_never_offered() {
+        let root = tree("no-id");
+        for name in ["a", "b", "c"] {
+            write(&root, name, b"same");
+        }
+        let files = [file("a", 4), file("b", 4), file("c", 4)];
+        let no_id_for_c = |path: &Path| {
+            (path.file_name() != Some(std::ffi::OsStr::new("c"))).then(|| gezik_platform::fs::file_id(path)).flatten()
+        };
+        let (groups, _) = confirm(&root, &["".into()], &files, 2, &AtomicBool::new(false), &no_id_for_c);
+        assert_eq!(groups, [vec![0, 1]], "c could be another name of a or b");
+        let only_a = |path: &Path| {
+            (path.file_name() == Some(std::ffi::OsStr::new("a"))).then(|| gezik_platform::fs::file_id(path)).flatten()
+        };
+        let (groups, _) = confirm(&root, &["".into()], &files, 2, &AtomicBool::new(false), &only_a);
+        assert!(groups.is_empty(), "one sure file is no group");
         let _ = std::fs::remove_dir_all(&root);
     }
 
