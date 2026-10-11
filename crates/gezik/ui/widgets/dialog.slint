@@ -119,10 +119,28 @@ export component Dialog inherits Rectangle {
                 wrap: word-wrap;
                 color: root.note-error ? Theme.danger : Theme.foreground-muted;
             }
-            for label[i] in root.check-labels: Check {
-                text: label;
-                checked: root.checks[i];
-                toggled => { root.check-toggled(i); }
+            // Tab goes field, boxes, buttons; on a box Space toggles it, Enter and Esc answer as
+            // in the field.
+            for label[i] in root.check-labels: FocusScope {
+                focus-on-tab-navigation: false;
+                height: check.height;
+                key-pressed(event) => {
+                    if event.text == Key.Return {
+                        root.chosen(0);
+                        return accept;
+                    }
+                    if event.text == Key.Escape {
+                        root.chosen(root.escape);
+                        return accept;
+                    }
+                    return reject;
+                }
+                check := Check {
+                    text: label;
+                    focusable: true;
+                    checked: root.checks[i];
+                    toggled => { root.check-toggled(i); }
+                }
             }
             HorizontalLayout {
                 alignment: end;

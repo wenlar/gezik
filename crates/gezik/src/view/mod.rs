@@ -978,7 +978,7 @@ impl View {
         columns: &[gezik_core::export::Column],
         raw: bool,
         selected_only: bool,
-        mut each: impl FnMut(&[String]) -> std::io::Result<()>,
+        each: &mut dyn FnMut(&[String]) -> std::io::Result<()>,
     ) -> Option<std::io::Result<usize>> {
         use gezik_core::export::Column;
         let data = self.0.data.borrow();
@@ -3019,7 +3019,7 @@ mod tests {
     /// Rows as `View::export_rows` gives them.
     fn exported(view: &View, columns: &[gezik_core::export::Column], raw: bool, selected: bool) -> Vec<Vec<String>> {
         let mut rows = Vec::new();
-        let count = view.export_rows(columns, raw, selected, |cells| {
+        let count = view.export_rows(columns, raw, selected, &mut |cells| {
             rows.push(cells.to_vec());
             Ok(())
         });
@@ -3065,7 +3065,7 @@ mod tests {
         assert_eq!(rows[0], ["x.txt".to_owned(), "a".into(), path("a")]);
         assert_eq!(rows[1], ["x.txt".to_owned(), "b".into(), path("b")]);
         view.0.data.borrow_mut().listing = Listing::Drives(Vec::new());
-        assert!(view.export_rows(&columns, true, false, |_| Ok(())).is_none(), "This PC is no list of files");
+        assert!(view.export_rows(&columns, true, false, &mut |_| Ok(())).is_none(), "This PC is no list of files");
     }
 
     #[test]

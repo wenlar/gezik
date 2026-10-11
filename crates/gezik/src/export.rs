@@ -86,6 +86,18 @@ fn sheet(format: Format, columns: &[Column], title: String, count: usize, file: 
     }
 }
 
+/// The question's boxes: with a selection (a row's menu has one: the row) "Only the N items
+/// selected", ticked, so Tools ▸ Export list… on rows exports them (spec 11 §11.1); then "Full
+/// paths in text" as last time.
+fn form_checks(selected: usize, full_paths: bool) -> Vec<(String, bool)> {
+    let mut checks = Vec::new();
+    if selected > 0 {
+        checks.push((format!("Only the {} selected", items_text(selected)), true));
+    }
+    checks.push(("Full paths in text".to_owned(), full_paths));
+    checks
+}
+
 fn items_text(count: usize) -> String {
     if count == 1 { "1 item".to_owned() } else { format!("{} items", with_commas(count)) }
 }
@@ -96,11 +108,11 @@ fn write_list(
     sheet: &Sheet,
     columns: &[Column],
     selected_only: bool,
-    out: &mut impl Write,
+    out: &mut dyn Write,
 ) -> io::Result<usize> {
     export::begin(out, sheet)?;
     let raw = sheet.format == Format::Csv;
-    let count = view.export_rows(columns, raw, selected_only, |cells| export::row(out, sheet, cells));
+    let count = view.export_rows(columns, raw, selected_only, &mut |cells| export::row(out, sheet, cells));
     let count = count.unwrap_or(Ok(0))?;
     export::end(out, sheet)?;
     out.flush()?;
@@ -119,11 +131,7 @@ pub fn ask(nav: &Navigator, view: &View) {
         let last = ops.store().map(|store| store.load_state().export).unwrap_or_default();
         let format = last.format.as_deref().and_then(Format::parse).unwrap_or(Format::Csv);
         let (shown, selected) = (view.len(), view.selection_count());
-        let mut checks = Vec::new();
-        if selected > 0 {
-            checks.push((format!("Only the {} selected", items_text(selected)), true));
-        }
-        checks.push(("Full paths in text".to_owned(), last.full_paths));
+        let checks = form_checks(selected, last.full_paths);
         let message = format!(
             "The {} shown, as sorted and filtered. The name's extension sets the format: .txt (one name or path per line), .csv or .html.",
             items_text(shown)
@@ -164,14 +172,20 @@ pub fn ask(nav: &Navigator, view: &View) {
 /// view's), then a job streams it to `target` (plan deviation 5).
 fn save(ops: &Operations, view: &View, sheet: &Sheet, columns: &[Column], only_selected: bool, target: &Path) {
     let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else { return };
-    let temp = TempFile::new();
-    let written = std::fs::File::create(&temp.0).and_then(|file| {
+    let dir_of_temps = temp_dir();
+    // Left by a Gezik that stopped mid-export: swept off the UI thread.
+    let sweep_dir = dir_of_temps.clone();
+    let _ = std::thread::Builder::new()
+        .name("gezik-export-sweep".into())
+        .spawn(move || sweep(&sweep_dir, std::time::SystemTime::now()));
+    let written = TempFile::create_in(&dir_of_temps).and_then(|(temp, file)| {
         let mut out = io::BufWriter::with_capacity(64 * 1024, file);
-        write_list(view, sheet, columns, only_selected, &mut out)
+        write_list(view, sheet, columns, only_selected, &mut out).map(|_| temp)
     });
-    if let Err(err) = written {
-        return view.note(format!("Cannot export the list: {}", gezik_platform::fs::describe(&err)));
-    }
+    let temp = match written {
+        Ok(temp) => temp,
+        Err(err) => return view.note(format!("Cannot export the list: {}", gezik_platform::fs::describe(&err))),
+    };
     let task = gezik_ops::NewTask::written(dir, &name.to_string_lossy(), move |out| {
         io::copy(&mut std::fs::File::open(&temp.0)?, out).map(|_| ())
     });
@@ -189,15 +203,65 @@ fn copy(view: &View, sheet: &Sheet, columns: &[Column], only_selected: bool) {
     });
 }
 
-/// A file in the system's temporary folder, deleted when dropped (when the job that copies it
-/// ends).
+/// The temporary files' names start so (`gezik-export-<pid>-<n>.tmp`).
+const TEMP_PREFIX: &str = "gezik-export-";
+
+/// Where the temporary files go: on Linux the user's own runtime folder when there is one, else
+/// the system's temporary folder.
+fn temp_dir() -> PathBuf {
+    if cfg!(all(unix, not(target_os = "macos")))
+        && let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|d| d.is_dir())
+    {
+        return dir;
+    }
+    std::env::temp_dir()
+}
+
+/// Deletes the temporary files in `dir` older than a day (an export cut short by a crash).
+fn sweep(dir: &Path, now: std::time::SystemTime) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let day = std::time::Duration::from_secs(24 * 60 * 60);
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with(TEMP_PREFIX) && name.ends_with(".tmp")) {
+            continue;
+        }
+        let old =
+            entry.metadata().and_then(|m| m.modified()).is_ok_and(|t| now.duration_since(t).is_ok_and(|age| age > day));
+        if old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// A new file only Gezik made, never one already there: `create_new`, owner-only on Unix.
+fn create_new_at(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)
+}
+
+/// A temporary file, deleted when dropped (when the job that copies it ends).
 struct TempFile(PathBuf);
 
 impl TempFile {
-    fn new() -> TempFile {
+    /// A new one in `dir`, opened for writing; a name someone else took is passed over.
+    fn create_in(dir: &Path) -> io::Result<(TempFile, std::fs::File)> {
         static NEXT: AtomicU32 = AtomicU32::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        TempFile(std::env::temp_dir().join(format!("gezik-export-{}-{n}.tmp", std::process::id())))
+        let mut last = io::Error::from(io::ErrorKind::AlreadyExists);
+        for _ in 0..100 {
+            let n = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = dir.join(format!("{TEMP_PREFIX}{}-{n}.tmp", std::process::id()));
+            match create_new_at(&path) {
+                Ok(file) => return Ok((TempFile(path), file)),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => last = err,
+                Err(err) => return Err(err),
+            }
+        }
+        Err(last)
     }
 }
 
@@ -256,6 +320,15 @@ mod tests {
     }
 
     #[test]
+    fn a_selection_is_what_goes_unless_unticked() {
+        assert_eq!(
+            form_checks(1, false),
+            [("Only the 1 item selected".to_owned(), true), ("Full paths in text".to_owned(), false)]
+        );
+        assert_eq!(form_checks(0, true), [("Full paths in text".to_owned(), true)], "no selection: the whole list");
+    }
+
+    #[test]
     fn sheets_follow_the_system() {
         let columns = export::columns(Format::Csv, &[ColumnKey::Size], false);
         let csv = sheet(Format::Csv, &columns, "t".into(), 2, true);
@@ -269,13 +342,51 @@ mod tests {
         assert!(sheet(Format::Text, &columns, "t".into(), 1, true).note.starts_with("1 item ·"));
     }
 
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gezik-test-export-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
-    fn a_temporary_file_goes_with_its_guard() {
-        let temp = TempFile::new();
-        std::fs::write(&temp.0, "x").unwrap();
+    fn a_temporary_file_is_new_its_own_and_goes_with_its_guard() {
+        let dir = scratch("temp");
+        let (temp, _file) = TempFile::create_in(&dir).unwrap();
         let path = temp.0.clone();
-        assert_ne!(TempFile::new().0, path, "each is its own");
+        assert!(path.file_name().unwrap().to_string_lossy().starts_with(TEMP_PREFIX));
+        let err = create_new_at(&path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "never opens one already there");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let (other, _) = TempFile::create_in(&dir).unwrap();
+        assert_ne!(other.0, path, "each is its own");
         drop(temp);
         assert!(!path.exists());
+        drop(other);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_old_export_files_are_swept() {
+        let dir = scratch("sweep");
+        let old = dir.join(format!("{TEMP_PREFIX}1-0.tmp"));
+        let fresh = dir.join(format!("{TEMP_PREFIX}1-1.tmp"));
+        let other = dir.join("keep.tmp");
+        for path in [&old, &fresh, &other] {
+            std::fs::write(path, "x").unwrap();
+        }
+        let two_days = std::time::Duration::from_secs(2 * 24 * 60 * 60);
+        let now = std::time::SystemTime::now();
+        for path in [&old, &other] {
+            std::fs::File::options().write(true).open(path).unwrap().set_modified(now - two_days).unwrap();
+        }
+        sweep(&dir, now);
+        assert!(!old.exists());
+        assert!(fresh.exists() && other.exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
