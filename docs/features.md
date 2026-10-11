@@ -37,6 +37,14 @@ Gezik copies, moves and deletes with its own engine on every OS:
   **New folder with selection** (Ctrl+Alt+N, ⌃⌘N on macOS) moves the selected items into a
   new folder.
 - **Create link**: a shortcut, junction or symbolic link on Windows, a symbolic link elsewhere.
+- **Copy To… / Move To…** (palette, row menu; F5/F6 with two panes ask the same): type the
+  target folder, end it with a name mask to rename (`D:\Yedek\*.bak`, `*_old.*`), and with
+  **Filter…** take only some files: `*.jpg *.png | thumbs\ *.tmp` (after `|`: left out; a
+  name ending in `\` or `/` is a folder), `*.jpg>*.cr2` brings each `.jpg`'s `.cr2` along.
+  No empty folders are made; a filtered move leaves the rest where it is.
+- **Split File…** cuts a file into `name.001`, `name.002`… and a `name.crc` (Total
+  Commander's); **Join Files** on any part puts it back together and checks its CRC before
+  anything is placed (a damaged or missing part is named, nothing is written).
 - **Drop stack**: a strip above the status bar that collects items (Ctrl+Shift+S, or drag
   onto it) from several folders; then **Copy here** or **Move here**. Kept for the session only.
 - Operations on the same drive wait for each other; different drives run at the same time.

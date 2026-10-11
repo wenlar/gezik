@@ -588,6 +588,16 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its
 205. **Second launch and session.** As macOS 267–268 (`gezik <folder>` from a terminal; FileManager1 "Show in folder" from a browser's downloads opens in the window used last).
 206. **Focus order.** As macOS 270 with Gezik's own menus (`gezik <folder>` from a terminal); on Wayland write whether the window used last really gets the folder (the compositor may not say which window has the focus).
 
+### 11i, filtered copy, split and join
+
+Numbers stay as they are when branches merge. 11i starts at 226 as its plan decided. GNOME and KDE, X11 and Wayland.
+
+226. **Tests first.** As macOS 303; paste.
+227. **Copy To…, mask, filter.** As macOS 304–306 with Ctrl+Shift+P for the palette and Ctrl+Z; `*.jpg>*.cr2` with `IMG_1.jpg` selected takes `IMG_1.CR2` but not `img_1.cr2` (Linux names tell case apart).
+228. **Filtered move.** As macOS 307 with F6; on a USB stick (other drive) the moved files are copied and removed, and Ctrl+Z brings them back.
+229. **Split and join.** As macOS 308–309 (`cmp`, `sha256sum`; the FAT32 default with a vfat stick as the other pane).
+230. **Other tools' parts.** `split -b 10m -d -a 3 --numeric-suffixes=1 big.iso big.iso.` makes `big.iso.001`…: Join Files joins them (no `.crc`: the job says the result was not checked); `sha256sum` matches the original.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
