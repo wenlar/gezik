@@ -2307,6 +2307,14 @@ Dal `perf/idle-memory` (10g'den, PR #71'den sonra master'a). Ölçümler `measur
 - Bilinen sınırlar: CSV ayırıcısı şimdilik `,` (11h'nin liste ayırıcısı ve yazıcısıyla birleşecek); 4 GB hız ölçümü yapılmadı (`tools.ps1` yok); boşta bellek ölçümü (`measure.ps1`) koşulmadı.
 - macOS denetim listesi 271–276, Linux 207–210 bekliyor.
 
+## Adım 11, alt parça 11f (Yinelenen dosyalar) sonrası
+
+- Yapı: arama kipi (`SearchSpec::duplicates`, `[[searches]] duplicates = true`), boru hattı `gezik-search::duplicates` (8a'nın yürüyüşü; boyut → ilk 64 KB SHA-256 → iki üyede bayt karşılaştırması, daha çokta tam SHA-256; düşük öncelikli okuyucular SSD 4, ağ 2, diğer 1; iptal edilebilir), sonuç kümesinde satır başına grup (`Batch::dups`, `ResultSet::duplicates`), 10d başlıkları (`GroupBy::Duplicates`, `Grouping::row`, `3 files × … · … could be freed`), seçim kuralları `gezik-core::duplicates::pick`. Yeni katman yok, Slint'e yalnız macOS `Tools` menüsünün bir satırı. `Action::ALL` 105, sağ tık `Find duplicates` 2205 (2204 11g'nin), seçim yardımcıları 2310–2314.
+- Veri güvenliği (gözden geçirme): her silme yolu (Delete, Shift+Delete, satır menüsünün Delete ve Delete permanently'si, Explorer fiili) `trash_with`'ten geçer; yineleme satırları yalnız çöpe gider, iş `trash_only` (çöpsüz sürücüde dokunulmaz, "kalıcı silinsin mi?" sorulmaz, not çıkar; yeniden denemede de korunur). Bir grubun öbür kopyaları seçiliyse, yürüyen başka bir yineleme silmesindeyse ya da diskte artık yoksa (`symlink_metadata`, o an) bir kez sorar. Yürüyüşten sonra boyutu değişen dosya ve kimliği okunamayan dosya (subst/paylaşım üzerinden aynı dosya olabilir) hiç önerilmez; sabit bağlantılar tek sayılır.
+- Ölçüm (sürüm, Windows, 2026-10-11): exe **26.244.608 B**; 11a dalına göre +95.232 (bütçe 262.144, hedef ≤ 100 KB), `master`'a göre +442.880.
+- Bilinen sınırlar: satırda `+1 hard link` notu yerine durum satırında sayı; `Select ▾` düğmesi yerine çubuğun ▾ menüsü ve satır menüsü; silinen satırlar iş bitince düşer; Ctrl+Z ile dönen dosya listeye gelmez (`Run again`); kimlik vermeyen dosya sisteminde yineleme bulunmaz; `tools.ps1` ve 100.000 dosyalık bellek ölçümü yok; sembolik bağlantı testi Windows'ta izin yoksa atlanır.
+- Windows ekran testleri bekliyor (exe `%TEMP%\gezik-gui-11\bin\t11f.exe`); macOS 317–323 ve Linux 235–238 bekliyor.
+
 ## Windows ekran testleri: 11a (2026-10-11, ajan)
 
 - Yöntem: birincil ekran, yeni `GEZIK_CONFIG_DIR` (`%TEMP%\gezik-11a\config`), kabuk işleyicisi olmayan `.gzt` test dosyaları; her Enter, Space ve yazmadan önce UI Automation ile odaklı öğe denetlendi (beklenmeyen odakta girdi gönderilmedi); Move to Trash hiç tetiklenmedi; bitince Gezik kapatıldı, test klasörü silindi.
