@@ -2638,4 +2638,5 @@ Gözlemler (hata değil):
 - `select-differences` (Action 108, tuşsuz, `Tools ▸` 2201 iki bölmede, macOS Tools menüsü): G/Ç yok; aynı adlı dosya ile klasör seçilmez.
 - Gözden geçirme düzeltmeleri: bayatlık yalnız karşılaştırılan klasörlere dokunan işte; başarısız koşu eski satırları göstermez; süzgecin klasör deseni her tarafa kendi adıyla (dışlanan kök boş taraf); NFC yalnız macOS'ta.
 - Açık sınırlar (plan sapmaları): satır menüsü ve yol alanları yok (Swap düğmesi), harf duyarlılığı kutusu yok, süzgeç Enter/F5 ile uygulanır, aynı fiziksel disk kuralı yok; `tools.ps1` 100.000 çift ölçümü yok. Windows ekran testleri, macOS 324–331 ve Linux 239–243 bekliyor.
-- Sürüm exe'si 26.725.888 B (master 06a313b 26.599.424, +126.464 B; bütçe 262.144). master f9248ac (11b, 11f, 11i) ile birleşince 26.974.720 B (master f9248ac 26.852.352, +122.368 B).
+- Sürüm exe'si 26.725.888 B (master 06a313b 26.599.424, +126.464 B; bütçe 262.144). master f9248ac (11b, 11f, 11i) ile birleşince 26.974.720 B (master f9248ac 26.852.352, +122.368 B); ekran testi düzeltmelerinden sonra 26.973.696 B (+121.344 B).
+- Ekran testi düzeltmeleri: ortak ToolTable'da kutuya ilk fare tıkı işaretlemiyordu (odaksız `FocusScope` basışı alıyordu; artık `focus-on-click: false`, kutu tıkta odağı kendisi verir); klasör satırları `+`/`-` (UI yazı tipinde ▾/▸ yok); çipin ✕'i çizili çarpı.
