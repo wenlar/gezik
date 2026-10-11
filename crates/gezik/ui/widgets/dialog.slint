@@ -120,11 +120,15 @@ export component Dialog inherits Rectangle {
                 color: root.note-error ? Theme.danger : Theme.foreground-muted;
             }
             // Tab goes field, boxes, buttons; on a box Space toggles it, Enter and Esc answer as
-            // in the field.
-            for label[i] in root.check-labels: FocusScope {
-                focus-on-tab-navigation: false;
+            // in the field. The keys and the ring are here, not in Check: Check is in many
+            // layers, and each instance would pay for them.
+            for label[i] in root.check-labels: box := FocusScope {
                 height: check.height;
                 key-pressed(event) => {
+                    if event.text == " " {
+                        root.check-toggled(i);
+                        return accept;
+                    }
                     if event.text == Key.Return {
                         root.chosen(0);
                         return accept;
@@ -137,9 +141,18 @@ export component Dialog inherits Rectangle {
                 }
                 check := Check {
                     text: label;
-                    focusable: true;
                     checked: root.checks[i];
                     toggled => { root.check-toggled(i); }
+                }
+                // The focus ring, as on the buttons: around the box and its label.
+                Rectangle {
+                    x: -3px;
+                    y: 1px;
+                    width: check.min-width + 2px;
+                    height: parent.height - 2px;
+                    border-radius: Theme.radius;
+                    border-width: box.has-focus ? Theme.focus-width : 0px;
+                    border-color: Theme.focus-ring;
                 }
             }
             HorizontalLayout {

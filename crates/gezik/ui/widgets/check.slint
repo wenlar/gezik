@@ -7,9 +7,6 @@ export component Check inherits Rectangle {
     // Some of the items it stands for have it, some not (Get Info over several items): a dash.
     in property <bool> mixed;
     in property <bool> enabled: true;
-    // Tab reaches it and Space toggles it, with a focus ring (the question window's boxes);
-    // elsewhere the layers keep their own keys.
-    in property <bool> focusable;
     callback toggled();
     height: Theme.row-height;
     min-width: label.preferred-width + 24px;
@@ -25,8 +22,8 @@ export component Check inherits Rectangle {
         width: 14px;
         height: 14px;
         border-radius: 3px;
-        border-width: scope.has-focus ? Theme.focus-width : 1px;
-        border-color: scope.has-focus ? Theme.focus-ring : root.checked || root.mixed ? Theme.accent : Theme.control-border;
+        border-width: 1px;
+        border-color: root.checked || root.mixed ? Theme.accent : Theme.control-border;
         background: root.checked || root.mixed ? Theme.accent : transparent;
         if root.checked: Path {
             width: 14px;
@@ -51,17 +48,6 @@ export component Check inherits Rectangle {
         text: root.text;
         vertical-alignment: center;
         color: Theme.foreground;
-    }
-    forward-focus: scope;
-    scope := FocusScope {
-        enabled: root.focusable && root.enabled;
-        key-pressed(event) => {
-            if event.text == " " {
-                root.toggled();
-                return accept;
-            }
-            return reject;
-        }
     }
     TouchArea {
         enabled: root.enabled;
