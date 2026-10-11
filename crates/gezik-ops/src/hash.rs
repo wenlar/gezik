@@ -56,7 +56,13 @@ impl Digests {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(char::from(DIGITS[usize::from(b >> 4)]));
+        out.push(char::from(DIGITS[usize::from(b & 15)]));
+    }
+    out
 }
 
 /// Every chosen digest, each fed every chunk.
@@ -104,7 +110,7 @@ impl Hashers {
 
     fn finish(self) -> Digests {
         let mut out = Digests::default();
-        out.0[Algo::Crc32.index()] = self.crc32.map(|h| format!("{:08x}", h.finalize()));
+        out.0[Algo::Crc32.index()] = self.crc32.map(|h| hex(&h.finalize().to_be_bytes()));
         out.0[Algo::Md5.index()] = self.md5.map(|h| hex(&h.finalize()));
         out.0[Algo::Sha1.index()] = self.sha1.map(|h| hex(&h.finalize()));
         out.0[Algo::Sha256.index()] = self.sha256.map(|h| hex(&h.finalize()));
