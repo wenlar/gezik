@@ -7,6 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use gezik_core::ops::paths::is_within;
+
 use gezik_core::compare::{NO_TIME, seconds};
 use gezik_core::ops::conflict::Facts;
 use gezik_platform::fs;
@@ -23,8 +25,10 @@ const TRASH: u8 = 3;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Seen {
     pub is_dir: bool,
-    /// 0 for a folder.
+    /// A folder: the bytes of every file under it.
     pub size: u64,
+    /// A folder: how many files (and links) are under it; 0 for a file.
+    pub files: u64,
     /// Unix seconds (`compare::seconds`); `NO_TIME`: not known.
     pub modified: i64,
 }
@@ -40,6 +44,24 @@ impl Seen {
         self.is_dir
             || meta.len() == self.size && (self.modified == NO_TIME || seconds(meta.modified().ok()) == self.modified)
     }
+
+    /// Whether folder `path` still holds what was seen: as many files (anything not a folder)
+    /// with as many bytes, everything read.
+    pub fn same_inside(&self, path: &Path) -> bool {
+        let (mut files, mut bytes, mut whole) = (0u64, 0u64, true);
+        crate::walk::walk(path, &mut |step| {
+            match step {
+                crate::walk::Step::Entry { facts, .. } if !facts.is_dir => {
+                    files += 1;
+                    bytes += facts.size;
+                }
+                crate::walk::Step::Entry { .. } => {}
+                crate::walk::Step::Failed { .. } => whole = false,
+            }
+            whole
+        });
+        whole && files == self.files && bytes == self.size
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,16 +71,28 @@ pub enum SyncStep {
     /// `from` copied to `to`; `replaces`: the file at `to` as seen, which goes to the trash once
     /// the copy is complete (`None`: `to` was not there; one there now meets the conflict list).
     Copy { from: PathBuf, to: PathBuf, seen: Seen, replaces: Option<Seen> },
-    /// To the trash, after every copy.
+    /// To the trash, after every copy. A folder goes whole only if it still holds what was seen
+    /// (the compare must have seen all of it: no filter, hidden and system items shown).
     Trash { path: PathBuf, seen: Seen },
+}
+
+/// Which side of the sync a path is on: 0 left, 1 right.
+fn side_of(path: &Path, right: &Path) -> usize {
+    usize::from(is_within(path, right))
 }
 
 pub struct SyncTask {
     left: PathBuf,
     right: PathBuf,
     steps: Vec<SyncStep>,
-    /// Replace files on a drive without a trash anyway (the old one is then gone for good).
-    for_good: bool,
+    /// Per side (left, right): replace files on a drive without a trash anyway (the old one is
+    /// then gone for good).
+    for_good: [bool; 2],
+    /// Per side: a move to the trash failed there (or deleted for good): nothing more goes to
+    /// the trash on that side in this sync.
+    broken: [AtomicBool; 2],
+    /// How an old file goes when replaced: to the trash (`true`) or deleted. Tests swap it.
+    remove_old: fn(&Path, bool) -> io::Result<Outcome>,
     /// A copy was left alone because it changed: the trash steps wait for another sync.
     troubled: AtomicBool,
     /// Whether the copies went through, settled when the first trash step runs (they run
@@ -74,10 +108,35 @@ fn note(text: &'static str) -> io::Error {
 const CHANGED: &str = "Changed after the compare; left alone";
 const NO_BIN: &str = "This drive has no trash; left alone";
 const HELD: &str = "Not moved to the trash: a copy of this sync did not go through";
+const BROKEN: &str = "Left alone: an earlier move to the trash on this side failed";
+const NO_NAME: &str = "This name cannot go to the trash; left alone";
+const NESTED: &str = "The two folders are the same or one is inside the other";
+
+/// The old file of a replace to the trash (`bin`), or deleted.
+fn remove_old(path: &Path, bin: bool) -> io::Result<Outcome> {
+    if bin {
+        trash_path(path).map(|trashed| Outcome::Trashed { original: path.to_path_buf(), trashed })
+    } else {
+        fs::delete(path).map(|()| Outcome::Deleted { path: path.to_path_buf() })
+    }
+}
 
 impl SyncTask {
-    pub fn new(left: PathBuf, right: PathBuf, steps: Vec<SyncStep>, for_good: bool) -> SyncTask {
-        SyncTask { left, right, steps, for_good, troubled: AtomicBool::new(false), held: std::sync::OnceLock::new() }
+    pub fn new(left: PathBuf, right: PathBuf, steps: Vec<SyncStep>, for_good: [bool; 2]) -> SyncTask {
+        SyncTask {
+            left,
+            right,
+            steps,
+            for_good,
+            broken: [AtomicBool::new(false), AtomicBool::new(false)],
+            remove_old,
+            troubled: AtomicBool::new(false),
+            held: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn broken(&self, path: &Path) -> &AtomicBool {
+        &self.broken[side_of(path, &self.right)]
     }
 
     /// Leaves `path` alone with a note; a copy left alone holds back the trash steps.
@@ -103,8 +162,15 @@ impl SyncTask {
         if !old.still(to) {
             return self.leave(cx, to, CHANGED, true);
         }
-        let bin = cx.has_trash(to) && fs::can_trash_name(to);
-        if !bin && !self.for_good {
+        if self.broken(to).load(Ordering::SeqCst) {
+            return self.leave(cx, to, BROKEN, true);
+        }
+        // A name the trash cannot take is never deleted instead, even when allowed.
+        if !fs::can_trash_name(to) {
+            return self.leave(cx, to, NO_NAME, true);
+        }
+        let bin = cx.has_trash(to);
+        if !bin && !self.for_good[side_of(to, &self.right)] {
             return self.leave(cx, to, NO_BIN, true);
         }
         let temp = cx.temp_file_for(to);
@@ -117,16 +183,26 @@ impl SyncTask {
             let _ = fs::delete(&temp);
             return self.leave(cx, to, CHANGED, true);
         }
-        let gone = if bin {
-            trash_path(to).map(|trashed| Outcome::Trashed { original: to.to_path_buf(), trashed })
-        } else {
-            fs::delete(to).map(|()| Outcome::Deleted { path: to.to_path_buf() })
-        };
-        let gone = match gone {
+        let gone = match (self.remove_old)(to, bin) {
             Ok(gone) => gone,
             Err(err) => {
-                let _ = fs::delete(&temp);
                 self.troubled.store(true, Ordering::SeqCst);
+                self.broken(to).store(true, Ordering::SeqCst);
+                // The old one is gone anyway (the trash deleted it): the new copy takes its
+                // place rather than being lost too, and the failure is said.
+                if std::fs::symlink_metadata(to).is_err() && fs::move_entry(&temp, to).is_ok() {
+                    if let Some((_, job)) = cx.job {
+                        job.result(to.to_path_buf());
+                        job.outcome(Outcome::Created {
+                            path: to.to_path_buf(),
+                            facts: facts_after(to, false),
+                            from: None,
+                        });
+                    }
+                    let why = format!("{}; the old file is gone, the new copy is in place", fs::describe(&err));
+                    return Err(io::Error::new(err.kind(), why));
+                }
+                let _ = fs::delete(&temp);
                 return Err(err);
             }
         };
@@ -164,6 +240,9 @@ impl Task for SyncTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
+        if is_within(&self.left, &self.right) || is_within(&self.right, &self.left) {
+            return sink.failed(&self.left, io::Error::new(io::ErrorKind::InvalidInput, NESTED));
+        }
         for (root, step) in self.steps.iter().enumerate() {
             let item = match step {
                 SyncStep::Folder { path } => PlanItem::new(Stage::Before, Facts { is_dir: true, ..Facts::default() })
@@ -219,13 +298,25 @@ impl Task for SyncTask {
                 if self.troubled(cx) {
                     return self.leave(cx, path, HELD, false);
                 }
-                if !seen.still(path) {
+                if self.broken(path).load(Ordering::SeqCst) {
+                    return self.leave(cx, path, BROKEN, false);
+                }
+                if !seen.still(path) || seen.is_dir && !seen.same_inside(path) {
                     return self.leave(cx, path, CHANGED, false);
                 }
-                if !cx.has_trash(path) || !fs::can_trash_name(path) {
+                if !fs::can_trash_name(path) {
+                    return self.leave(cx, path, NO_NAME, false);
+                }
+                if !cx.has_trash(path) {
                     return self.leave(cx, path, NO_BIN, false);
                 }
-                Ok(Outcome::Trashed { original: path.clone(), trashed: trash_path(path)? })
+                match trash_path(path) {
+                    Ok(trashed) => Ok(Outcome::Trashed { original: path.clone(), trashed }),
+                    Err(err) => {
+                        self.broken(path).store(true, Ordering::SeqCst);
+                        Err(err)
+                    }
+                }
             }
             _ => Ok(Outcome::Nothing),
         }
@@ -247,9 +338,22 @@ mod tests {
 
     fn seen(path: &Path) -> Seen {
         let meta = std::fs::symlink_metadata(path).unwrap();
+        let (mut files, mut bytes) = (0, 0);
+        if meta.is_dir() {
+            crate::walk::walk(path, &mut |step| {
+                if let crate::walk::Step::Entry { facts, .. } = step
+                    && !facts.is_dir
+                {
+                    files += 1;
+                    bytes += facts.size;
+                }
+                true
+            });
+        }
         Seen {
             is_dir: meta.is_dir(),
-            size: if meta.is_dir() { 0 } else { meta.len() },
+            size: if meta.is_dir() { bytes } else { meta.len() },
+            files,
             modified: seconds(meta.modified().ok()),
         }
     }
@@ -293,7 +397,7 @@ mod tests {
             trash(r.join("gone.txt")),
         ];
         let engine = engine();
-        let task = SyncTask::new(l.clone(), r.clone(), steps, false);
+        let task = SyncTask::new(l.clone(), r.clone(), steps, [false; 2]);
         let job = engine.submit_chain(vec![Box::new(task)], Some(sync_label(&l)));
         let (report, _) = finish(&engine, job, no_conflicts);
         assert!(report.failures.is_empty() && report.skipped.is_empty(), "{:?} {:?}", report.failures, report.skipped);
@@ -335,7 +439,7 @@ mod tests {
         write(&r.join("over.txt"), "old, edited");
         write(&r.join("bin.txt"), "keep, edited");
         let engine = engine();
-        let task = SyncTask::new(l.clone(), r.clone(), [steps, vec![bin]].concat(), false);
+        let task = SyncTask::new(l.clone(), r.clone(), [steps, vec![bin]].concat(), [false; 2]);
         let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         let mut skipped: Vec<(PathBuf, String)> =
@@ -359,7 +463,7 @@ mod tests {
         write(&r.join("a.txt"), "came since");
         let engine = engine();
         let asked = Cell::new(0);
-        let task = SyncTask::new(l.clone(), r.clone(), vec![step], false);
+        let task = SyncTask::new(l.clone(), r.clone(), vec![step], [false; 2]);
         finish(&engine, engine.submit(Box::new(task)), |c| {
             asked.set(c.len());
             defaults(c)
@@ -378,7 +482,7 @@ mod tests {
         // Its folder is not there and no step makes it: the copy fails.
         let step = copy(l.join("a.txt"), r.join("missing/a.txt"));
         let engine = engine();
-        let task = SyncTask::new(l.clone(), r.clone(), vec![step, trash(r.join("old.txt"))], false);
+        let task = SyncTask::new(l.clone(), r.clone(), vec![step, trash(r.join("old.txt"))], [false; 2]);
         let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
         assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
         assert_eq!(report.skipped.len(), 1);
@@ -415,19 +519,89 @@ mod tests {
             task.plan(&mut Keep(&mut planned));
             planned.swap_remove(root)
         };
-        let careful = SyncTask::new(l.clone(), r.clone(), steps.clone(), false);
+        let careful = SyncTask::new(l.clone(), r.clone(), steps.clone(), [false; 2]);
         assert_eq!(careful.run(&item(&careful, 0), &cx).unwrap(), Outcome::Nothing);
         assert_eq!(read(&r.join("a.txt")), "old");
-        let trashing = SyncTask::new(l.clone(), r.clone(), steps.clone(), true);
+        let trashing = SyncTask::new(l.clone(), r.clone(), steps.clone(), [true; 2]);
         assert_eq!(trashing.run(&item(&trashing, 1), &cx).unwrap(), Outcome::Nothing);
         assert_eq!(read(&r.join("b.txt")), "only right", "never deleted for good");
-        let allowed = SyncTask::new(l.clone(), r.clone(), steps, true);
+        let allowed = SyncTask::new(l.clone(), r.clone(), steps, [true; 2]);
         match allowed.run(&item(&allowed, 0), &cx).unwrap() {
             Outcome::Several(outcomes) => assert!(matches!(outcomes[0], Outcome::Deleted { .. })),
             other => panic!("{other:?}"),
         }
         assert_eq!(read(&r.join("a.txt")), "new");
         assert_eq!(std::fs::read_dir(&r).unwrap().count(), 2, "no temporary file is left");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_replace_keeps_the_new_copy_when_the_old_one_is_gone_and_stops_that_sides_trash() {
+        let dir = test_dir("sync-gone");
+        let (l, r) = (dir.join("L"), dir.join("R"));
+        write(&l.join("a.txt"), "new");
+        write(&r.join("a.txt"), "old");
+        write(&r.join("b.txt"), "only right");
+        write(&l.join("c.txt"), "only left");
+        let steps = vec![copy(l.join("a.txt"), r.join("a.txt")), trash(r.join("b.txt")), trash(l.join("c.txt"))];
+        let mut task = SyncTask::new(l.clone(), r.clone(), steps, [false; 2]);
+        // The trash deleted the old file for good and said so.
+        task.remove_old = |path, _| {
+            std::fs::remove_file(path)?;
+            Err(io::Error::other("deleted for good instead of moved to the trash"))
+        };
+        let engine = engine();
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert_eq!(read(&r.join("a.txt")), "new", "the new copy landed");
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert!(report.failures[0].message.contains("the new copy is in place"), "{}", report.failures[0].message);
+        assert_eq!(read(&r.join("b.txt")), "only right", "nothing more goes to the trash");
+        assert_eq!(read(&l.join("c.txt")), "only left");
+        assert_eq!(std::fs::read_dir(&r).unwrap().count(), 2, "no temporary file is left");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_goes_to_the_trash_whole_only_while_it_holds_what_was_seen() {
+        let dir = test_dir("sync-folder-trash");
+        let (l, r) = (dir.join("L"), dir.join("R"));
+        std::fs::create_dir_all(&l).unwrap();
+        write(&r.join("kept/a.txt"), "a");
+        write(&r.join("gone/b.txt"), "b");
+        write(&r.join("gone/sub/c.txt"), "c");
+        let kept = trash(r.join("kept"));
+        let gone = trash(r.join("gone"));
+        assert_eq!(
+            match gone {
+                SyncStep::Trash { seen, .. } => (seen.files, seen.size),
+                _ => (0, 0),
+            },
+            (2, 2)
+        );
+        // A file put in `kept` since the compare.
+        write(&r.join("kept/new.txt"), "n");
+        let engine = engine();
+        let task = SyncTask::new(l.clone(), r.clone(), vec![kept, gone], [false; 2]);
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(report.skipped.len(), 1);
+        assert_eq!((report.skipped[0].path.clone(), report.skipped[0].message.as_str()), (r.join("kept"), CHANGED));
+        assert!(r.join("kept/new.txt").exists());
+        assert!(!r.join("gone").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn folders_inside_each_other_are_refused() {
+        let dir = test_dir("sync-nested");
+        write(&dir.join("a/b/x.txt"), "x");
+        let engine = engine();
+        let step = trash(dir.join("a/b/x.txt"));
+        let task = SyncTask::new(dir.join("a"), dir.join("a/b"), vec![step], [false; 2]);
+        let (report, _) = finish(&engine, engine.submit(Box::new(task)), no_conflicts);
+        assert_eq!(report.failures.len(), 1);
+        assert_eq!(report.failures[0].message, NESTED);
+        assert!(dir.join("a/b/x.txt").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -16,18 +16,66 @@ use gezik_ops::{Report, Seen, SyncStep};
 pub struct Planned {
     pub steps: Vec<SyncStep>,
     pub rows: Vec<(u32, bool)>,
-    /// Folders inside a copied folder that could not be read: left out.
+    /// Folders inside a copied or trashed folder that could not be read: left out.
     pub unread: usize,
+    /// Folders to trash that go file by file (the compare did not see all of them).
+    pub listed_only: usize,
 }
 
 fn seen(node: &Node) -> Seen {
-    Seen { is_dir: node.kind == Kind::Folder, size: node.size, modified: node.modified }
+    Seen { is_dir: node.kind == Kind::Folder, size: node.size, files: 0, modified: node.modified }
+}
+
+/// The files under folder `node` and their bytes; `None` if a folder in it was not read.
+fn tally(tree: &Tree, node: &Node) -> Option<(u64, u64)> {
+    let (mut files, mut bytes) = (0, 0);
+    for child in &tree.nodes[node.first as usize..(node.first + node.count) as usize] {
+        match child.kind {
+            Kind::File | Kind::OnlineFile => {
+                files += 1;
+                bytes += child.size;
+            }
+            Kind::Folder => {
+                let (f, b) = tally(tree, child)?;
+                files += f;
+                bytes += b;
+            }
+            Kind::Unread => return None,
+        }
+    }
+    Some((files, bytes))
+}
+
+/// Node `node` at `path` to the trash: a folder whole when the compare saw all of it (`whole`:
+/// no filter, hidden and system items shown, every folder in it read), with what it held for
+/// the task to check again; else only the files the compare listed in it.
+fn trash_node(tree: &Tree, node: &Node, path: PathBuf, whole: bool, row: (u32, bool), out: &mut Planned) {
+    match node.kind {
+        Kind::File | Kind::OnlineFile => {
+            out.steps.push(SyncStep::Trash { path, seen: seen(node) });
+            out.rows.push(row);
+        }
+        Kind::Folder => match tally(tree, node).filter(|_| whole) {
+            Some((files, size)) => {
+                out.steps.push(SyncStep::Trash { path, seen: Seen { files, size, ..seen(node) } });
+                out.rows.push(row);
+            }
+            None => {
+                out.listed_only += 1;
+                for child in &tree.nodes[node.first as usize..(node.first + node.count) as usize] {
+                    trash_node(tree, child, path.join(&*child.name), false, row, out);
+                }
+            }
+        },
+        Kind::Unread => out.unread += 1,
+    }
 }
 
 /// The steps for `rows` as `dirs` say: copies to the right, then to the left, then what goes
 /// to the trash. A folder only one side has is copied as the compare read it (its files one by
-/// one, the filter's rules kept) and trashed as one item.
-pub fn plan(left: &Tree, right: &Tree, rows: &[Row], dirs: &[Dir], roots: (&Path, &Path)) -> Planned {
+/// one, the filter's rules kept) and trashed as one item when the compare saw all of it
+/// (`whole`), else file by file.
+pub fn plan(left: &Tree, right: &Tree, rows: &[Row], dirs: &[Dir], roots: (&Path, &Path), whole: bool) -> Planned {
     let mut copies = [Planned::default(), Planned::default()];
     let mut trash = Planned::default();
     // The folder holding the rows at each depth, on each side.
@@ -53,12 +101,10 @@ pub fn plan(left: &Tree, right: &Tree, rows: &[Row], dirs: &[Dir], roots: (&Path
                 copy(right, b, (rp.join(&*b.name), to), l.map(seen), (at, false), &mut copies[1]);
             }
             (Some(Act::TrashRight), _, Some(b)) => {
-                trash.steps.push(SyncStep::Trash { path: rp.join(&*b.name), seen: seen(b) });
-                trash.rows.push((at, true));
+                trash_node(right, b, rp.join(&*b.name), whole, (at, true), &mut trash)
             }
             (Some(Act::TrashLeft), Some(a), _) => {
-                trash.steps.push(SyncStep::Trash { path: lp.join(&*a.name), seen: seen(a) });
-                trash.rows.push((at, false));
+                trash_node(left, a, lp.join(&*a.name), whole, (at, false), &mut trash)
             }
             _ => {}
         }
@@ -68,6 +114,7 @@ pub fn plan(left: &Tree, right: &Tree, rows: &[Row], dirs: &[Dir], roots: (&Path
         all.steps.extend(part.steps);
         all.rows.extend(part.rows);
         all.unread += part.unread;
+        all.listed_only += part.listed_only;
     }
     all
 }
@@ -126,14 +173,15 @@ pub fn summary(planned: &Planned) -> Summary {
 }
 
 /// The steps a side without a trash cannot take: its trash steps always (deletes go only to the
-/// trash), its replacing copies unless `anyway` (the old file would be gone for good).
-pub fn keep_safe(planned: Planned, bins: [bool; 2], anyway: bool) -> Planned {
-    let mut out = Planned { unread: planned.unread, ..Planned::default() };
+/// trash), its replacing copies unless `anyway` for that side (the old file would be gone for
+/// good).
+pub fn keep_safe(planned: Planned, bins: [bool; 2], anyway: [bool; 2]) -> Planned {
+    let mut out = Planned { unread: planned.unread, listed_only: planned.listed_only, ..Planned::default() };
     for (step, row) in planned.steps.into_iter().zip(planned.rows) {
-        let bin = bins[usize::from(row.1)];
+        let side = usize::from(row.1);
         let refused = match &step {
-            SyncStep::Trash { .. } => !bin,
-            SyncStep::Copy { replaces: Some(_), .. } => !bin && !anyway,
+            SyncStep::Trash { .. } => !bins[side],
+            SyncStep::Copy { replaces: Some(_), .. } => !bins[side] && !anyway[side],
             _ => false,
         };
         if !refused {
@@ -360,14 +408,14 @@ mod tests {
         let rows = build(&left, &right, &Options::default());
         let dirs: Vec<Dir> = rows.iter().map(|r| default_dir(r, mode)).collect();
         let (l, r) = roots();
-        (plan(&left, &right, &rows, &dirs, (&l, &r)), rows)
+        (plan(&left, &right, &rows, &dirs, (&l, &r), true), rows)
     }
 
     #[test]
     fn mirror_copies_right_then_trashes_and_counts() {
         let (p, _) = planned(Mode::Mirror);
         let (l, r) = roots();
-        let s = |a: u64| Seen { is_dir: false, size: a, modified: T };
+        let s = |a: u64| Seen { is_dir: false, size: a, files: 0, modified: T };
         assert_eq!(
             p.steps,
             [
@@ -418,7 +466,7 @@ mod tests {
     fn a_side_without_a_trash_loses_its_deletions_and_replaces_only_when_allowed() {
         let (p, _) = planned(Mode::Mirror);
         let all = summary(&p);
-        let kept = keep_safe(planned(Mode::Mirror).0, [true, false], false);
+        let kept = keep_safe(planned(Mode::Mirror).0, [true, false], [false; 2]);
         let s = summary(&kept);
         assert_eq!((s.trashed, s.replacing, s.files), ([0, 0], [0, 0], [0, 3]));
         let refused = Summary {
@@ -432,7 +480,7 @@ mod tests {
         assert!(said[0].starts_with("Copy 3 files (") && said[0].ends_with("to E:/R"), "{said:?}");
         assert!(said.contains(&format!("E:/R {}: 2 deletions there are left out", no_bin())), "{said:?}");
         assert!(said.contains(&"1 file on E:/R would be replaced without a way back".to_owned()), "{said:?}");
-        let anyway = summary(&keep_safe(planned(Mode::Mirror).0, [true, false], true));
+        let anyway = summary(&keep_safe(planned(Mode::Mirror).0, [true, false], [false, true]));
         assert_eq!((anyway.replacing, anyway.trashed), ([0, 1], [0, 0]));
     }
 
@@ -448,7 +496,7 @@ mod tests {
             dirs[at as usize] = Dir::ToLeft;
         }
         let (l, r) = roots();
-        let p = plan(&left, &right, &rows, &dirs, (&l, &r));
+        let p = plan(&left, &right, &rows, &dirs, (&l, &r), true);
         let s = summary(&p);
         assert_eq!((s.files, s.replacing, s.trashed), ([2, 0], [1, 0], [1, 0]));
     }
@@ -547,8 +595,8 @@ mod tests {
         let (left, right) = (scan(&l), scan(&r));
         let rows = build(&left, &right, &Options::default());
         let dirs: Vec<Dir> = rows.iter().map(|row| default_dir(row, Mode::Mirror)).collect();
-        let planned = plan(&left, &right, &rows, &dirs, (&l, &r));
-        let task = gezik_ops::SyncTask::new(l.clone(), r.clone(), planned.steps.clone(), false);
+        let planned = plan(&left, &right, &rows, &dirs, (&l, &r), false);
+        let task = gezik_ops::SyncTask::new(l.clone(), r.clone(), planned.steps.clone(), [false; 2]);
         let engine = gezik_ops::Engine::new(gezik_ops::Settings::default(), || {});
         let job = engine.submit_chain(vec![Box::new(task)], Some(gezik_ops::sync_label(&l)));
         let wait = |job: gezik_ops::JobId| loop {
@@ -568,7 +616,9 @@ mod tests {
         assert_eq!(read(&r.join("newer.txt")), "new");
         assert_eq!(read(&r.join("pics/a.jpg")), "a");
         assert!(!r.join("pics/skip.tmp").exists(), "the filter's file is not copied");
-        assert!(!r.join("stale").exists());
+        // The filter was on: the right-only folder goes file by file, the folder stays.
+        assert!(!r.join("stale/z.txt").exists() && r.join("stale").is_dir());
+        assert_eq!(planned.listed_only, 1);
         let marked = outcomes(&planned, &report);
         assert!(!marked.is_empty() && marked.values().all(Option::is_none), "{marked:?}");
         let undo = wait(engine.undo().unwrap());
@@ -577,5 +627,34 @@ mod tests {
         assert_eq!(read(&r.join("stale/z.txt")), "z");
         assert!(!r.join("pics").exists());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_folder_is_trashed_whole_only_when_the_compare_saw_all_of_it() {
+        let left = tree(&[]);
+        let right =
+            tree(&[("f/", 0, T), ("f/a.txt", 3, T), ("f/s/", 0, T), ("f/s/b.txt", 4, T), ("g/", 0, T), ("g/x!", 0, T)]);
+        let rows = build(&left, &right, &Options::default());
+        let dirs: Vec<Dir> = rows.iter().map(|r| default_dir(r, Mode::Mirror)).collect();
+        let (l, r) = roots();
+        let whole = plan(&left, &right, &rows, &dirs, (&l, &r), true);
+        assert_eq!(
+            whole.steps,
+            [
+                SyncStep::Trash { path: r.join("f"), seen: Seen { is_dir: true, size: 7, files: 2, modified: T } },
+                // `g` holds a folder that was not read: only what was listed goes (nothing here).
+            ]
+        );
+        assert_eq!((whole.unread, whole.listed_only), (1, 1));
+        let listed = plan(&left, &right, &rows, &dirs, (&l, &r), false);
+        let paths: Vec<PathBuf> = listed
+            .steps
+            .iter()
+            .map(|s| match s {
+                SyncStep::Trash { path, .. } => path.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(paths, [r.join("f").join("a.txt"), r.join("f").join("s").join("b.txt")]);
     }
 }
