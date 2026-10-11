@@ -174,7 +174,8 @@ content-max-size = "64 MB" # larger files are not read for text
 
 ## Tools
 
-Right-click ▸ Tools, the command palette, and on macOS the Tools menu.
+A row's right-click menu (next to Compress and Convert), the command palette, and on macOS the
+Tools menu.
 
 - **Calculate Checksums…** shows CRC32, MD5, SHA-1, SHA-256 and SHA-512 of the selected files
   (folders: every file in them), each file read once. A value on the clipboard fills

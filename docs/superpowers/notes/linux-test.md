@@ -593,7 +593,7 @@ Numbers stay as they are when branches merge (see 10b). 10g starts at 200 as its
 Numbers stay as they are when branches merge. 11a uses 207–210. GNOME and KDE, X11 and Wayland.
 
 207. **Tests first.** As macOS 271; paste.
-208. **Tools menu and compute.** As macOS 272–273 with Gezik's own menu (the row menu's `Tools ▸`; there is no menu bar). Memory: `ps -o rss= -p $(pgrep -x gezik)` before opening and after closing the layer.
+208. **Tools menu and compute.** As macOS 272–273 with Gezik's own menu (the row menu's `Calculate checksums…`; there is no menu bar). Memory: `ps -o rss= -p $(pgrep -x gezik)` before opening and after closing the layer.
 209. **sha256sum both ways.** As macOS 274 with `sha256sum -c <folder>.sha256`, and `sha256sum * > SHA256SUMS` then Verify Checksums on `SHA256SUMS`; also `md5sum * > x.md5` and a `.sfv` from another tool if you have one. A file name with a backslash (`touch 'a\b.txt'`): Save writes a line starting with `\` and `sha256sum -c` passes it.
 210. **Expected value.** As macOS 275 with Ctrl+C on X11 and on Wayland (write whether the clipboard value is picked up on Wayland).
 

@@ -151,13 +151,41 @@ pub fn engine_progress() {
     }
 }
 
-/// A job ended: the layer whose it was shows where it ended.
+/// A job ended: the layer whose it was shows where it ended, and reads what a box ticked
+/// meanwhile wants.
 pub fn job_finished(id: JobId, _report: &Report) {
     for (window, layer) in CURRENT.with(Slot::all) {
         if layer.job.get() == Some(id) {
             layer.job.set(None);
-            crate::windows::enter(window, || layer.refresh());
+            crate::windows::enter(window, || {
+                if layer.pending_again.take() {
+                    layer.read_missing();
+                }
+                layer.refresh();
+            });
         }
+    }
+}
+
+/// What a newly ticked box does: read the rows' missing values now, or once the running job
+/// ends. A running job is never cancelled for it: one still listing the files would leave the
+/// rest of them out.
+fn when_ticked(running: bool) -> Tick {
+    if running { Tick::AfterTheJob } else { Tick::Now }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Tick {
+    Now,
+    AfterTheJob,
+}
+
+/// A verdict's colour: 1 good, 2 bad, 0 neither.
+fn tone(verdict: Verdict) -> i32 {
+    match verdict {
+        Verdict::Ok => 1,
+        Verdict::Failed | Verdict::Missing | Verdict::Unreadable => 2,
+        Verdict::Waiting | Verdict::OnlineOnly => 0,
     }
 }
 
@@ -179,6 +207,8 @@ pub struct Checksums {
     anchor: Cell<Option<usize>>,
     only_failed: Cell<bool>,
     expected: RefCell<Option<(Algo, String)>>,
+    /// A box was ticked while the job ran: its values are read when the job ends.
+    pending_again: Cell<bool>,
 }
 
 impl Checksums {
@@ -206,6 +236,7 @@ impl Checksums {
             anchor: Cell::new(None),
             only_failed: Cell::new(false),
             expected: RefCell::new(expected.clone()),
+            pending_again: Cell::new(false),
         });
         CURRENT.with(|s| s.set(crate::windows::current(), layer.clone()));
         window_ref.set_ck_title(title.into());
@@ -254,12 +285,7 @@ impl Checksums {
         let (values, status, tone) = if self.verify {
             let verdict = row.verdict();
             let value = row.expected.as_ref().and_then(|(algo, _)| row.digest(*algo)).unwrap_or_default();
-            let tone = match verdict {
-                Verdict::Ok => 1,
-                Verdict::Failed | Verdict::Missing | Verdict::Unreadable => 2,
-                _ => 0,
-            };
-            (value.to_owned(), verdict.label().to_owned(), tone)
+            (value.to_owned(), verdict.label().to_owned(), tone(verdict))
         } else {
             let expected = self.expected.borrow();
             let mut compared = None;
@@ -414,16 +440,8 @@ impl Checksums {
             return (format!("Verifying… {text}"), 0);
         }
         let bad = failed + missing + unreadable > 0 || results.bad_lines > 0;
-        (
-            text,
-            if bad {
-                2
-            } else if results.rows.is_empty() {
-                0
-            } else {
-                1
-            },
-        )
+        let good = !results.rows.is_empty();
+        (text, if bad { 2 } else { i32::from(good) })
     }
 
     fn toggle_algo(&self, i: i32) {
@@ -438,10 +456,16 @@ impl Checksums {
         self.show_columns();
         self.rebuild();
         if on[algo.index()] {
-            // Only what the rows lack is read: a running job stops and one for the rest starts.
-            self.cancel_job();
-            self.submit(Box::new(HashTask::again(self.ticked(), self.results.clone())));
+            match when_ticked(self.job.get().is_some()) {
+                Tick::Now => self.read_missing(),
+                Tick::AfterTheJob => self.pending_again.set(true),
+            }
         }
+    }
+
+    /// Reads the values the rows lack for the ticked boxes.
+    fn read_missing(&self) {
+        self.submit(Box::new(HashTask::again(self.ticked(), self.results.clone())));
     }
 
     fn cancel_job(&self) {
@@ -452,7 +476,7 @@ impl Checksums {
 
     fn expected_edited(&self) {
         let typed = window_expected(&self.window);
-        *self.expected.borrow_mut() = checksum_file::clipboard_hex(&typed);
+        *self.expected.borrow_mut() = checksum_file::typed_hex(&typed);
         self.rebuild();
     }
 
@@ -562,7 +586,6 @@ impl Checksums {
         }
         let files: Vec<String> = algos.iter().map(|a| format!("{}.{}", self.save_name, a.extension())).collect();
         let message = format!("Writes {} in {}", files.join(", "), self.base.display());
-        let dir = self.base.clone();
         let texts: Vec<(String, Vec<u8>)> = algos
             .iter()
             .map(|algo| {
@@ -572,31 +595,34 @@ impl Checksums {
                 } else {
                     checksum_file::write_gnu(lines)
                 };
-                (algo.extension().to_owned(), text.into_bytes())
+                (format!(".{}", algo.extension()), text.into_bytes())
             })
             .collect();
+        self.ask_and_write("Save Checksums", message, self.save_name.clone(), texts);
+    }
+
+    /// Asks for a name (`initial` to start), then writes each of `files` (an ending after the
+    /// name, its bytes) into the base folder as one undoable job; a taken name goes to the
+    /// conflict list.
+    fn ask_and_write(&self, title: &str, message: String, initial: String, files: Vec<(String, Vec<u8>)>) {
+        let dir = self.base.clone();
+        let label = title.to_owned();
         crate::operations::with_current(|ops| {
             let ops2 = ops.clone();
-            ops.dialogs().ask_text(
-                "Save Checksums",
-                message,
-                self.save_name.clone(),
-                &["Save", "Cancel"],
-                move |name| {
-                    let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
-                    let mut tasks: Vec<Box<dyn Task>> = Vec::new();
-                    for (ext, bytes) in texts {
-                        let file = format!("{name}.{ext}");
-                        if let Err(err) =
-                            gezik_core::ops::names::validate_name(&file, gezik_core::ops::names::NameRules::current())
-                        {
-                            return with_current(|c| c.say(&err.to_string()));
-                        }
-                        tasks.push(Box::new(NewTask::asking(&dir, &file, move || Ok(bytes.clone()))));
+            ops.dialogs().ask_text(title, message, initial, &["Save", "Cancel"], move |name| {
+                let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
+                let mut tasks: Vec<Box<dyn Task>> = Vec::new();
+                for (ending, bytes) in files {
+                    let file = format!("{name}{ending}");
+                    if let Err(err) =
+                        gezik_core::ops::names::validate_name(&file, gezik_core::ops::names::NameRules::current())
+                    {
+                        return with_current(|c| c.say(&err.to_string()));
                     }
-                    ops2.submit_chain(tasks, Some("Save checksums".to_owned()), None, After::Select);
-                },
-            );
+                    tasks.push(Box::new(NewTask::asking(&dir, &file, move || Ok(bytes.clone()))));
+                }
+                ops2.submit_chain(tasks, Some(label), None, After::Select);
+            });
         });
     }
 
@@ -611,53 +637,32 @@ impl Checksums {
             // Excel opens UTF-8 names right only with the BOM (spec 11 §11.2).
             text.push('\u{feff}');
         }
+        // Verify: each row's own algorithm, value and result; else the ticked columns.
+        let algos = self.ticked();
+        let mut header = vec!["Path".to_owned(), "Size".to_owned()];
         if self.verify {
-            gezik_core::csv::push_row(&mut text, &["Path", "Size", "Algorithm", "Expected", "Value", "Status"], ',');
-            for r in &rows {
-                let (algo, hex) = r.expected.clone().unwrap_or((Algo::Sha256, String::new()));
-                let value = r.digest(algo).unwrap_or_default().to_owned();
-                let fields = [
-                    r.name.clone(),
-                    r.size.to_string(),
-                    algo.name().to_owned(),
-                    hex,
-                    value,
-                    r.verdict().label().to_owned(),
-                ];
-                gezik_core::csv::push_row(&mut text, &fields, ',');
-            }
+            header.extend(["Algorithm", "Expected", "Value", "Status"].map(str::to_owned));
         } else {
-            let algos = self.ticked();
-            let mut header = vec!["Path".to_owned(), "Size".to_owned()];
             header.extend(algos.iter().map(|a| a.name().to_owned()));
-            gezik_core::csv::push_row(&mut text, &header, ',');
-            for r in &rows {
-                let mut fields = vec![r.name.clone(), r.size.to_string()];
-                fields.extend(algos.iter().map(|a| r.digest(*a).unwrap_or_default().to_owned()));
-                gezik_core::csv::push_row(&mut text, &fields, ',');
-            }
         }
-        let initial = if self.verify {
-            format!("{} results.csv", self.save_name)
-        } else {
-            format!("{} checksums.csv", self.save_name)
-        };
+        gezik_core::csv::push_row(&mut text, &header, ',');
+        for r in &rows {
+            let mut fields = vec![r.name.clone(), r.size.to_string()];
+            match &r.expected {
+                Some((algo, hex)) if self.verify => fields.extend([
+                    algo.name().to_owned(),
+                    hex.clone(),
+                    r.digest(*algo).unwrap_or_default().to_owned(),
+                    r.verdict().label().to_owned(),
+                ]),
+                _ => fields.extend(algos.iter().map(|a| r.digest(*a).unwrap_or_default().to_owned())),
+            }
+            gezik_core::csv::push_row(&mut text, &fields, ',');
+        }
+        let what = if self.verify { "results" } else { "checksums" };
         let message = format!("Writes the list in {}", self.base.display());
-        let dir = self.base.clone();
-        let bytes = text.into_bytes();
-        crate::operations::with_current(|ops| {
-            let ops2 = ops.clone();
-            ops.dialogs().ask_text("Export CSV", message, initial, &["Save", "Cancel"], move |name| {
-                let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
-                if let Err(err) =
-                    gezik_core::ops::names::validate_name(&name, gezik_core::ops::names::NameRules::current())
-                {
-                    return with_current(|c| c.say(&err.to_string()));
-                }
-                let task = NewTask::asking(&dir, &name, move || Ok(bytes.clone()));
-                ops2.submit(Box::new(task), None, After::Select);
-            });
-        });
+        let initial = format!("{} {what}.csv", self.save_name);
+        self.ask_and_write("Export CSV", message, initial, vec![(String::new(), text.into_bytes())]);
     }
 
     /// Esc closes and Ctrl+C / Ctrl+A (⌘ on macOS) copy and select, unless the Expected field
@@ -732,6 +737,13 @@ mod tests {
             state: RowState::Done,
             online: false,
         }
+    }
+
+    #[test]
+    fn a_box_ticked_mid_job_waits_for_the_job() {
+        assert_eq!(when_ticked(true), Tick::AfterTheJob, "never cancels a job still listing files");
+        assert_eq!(when_ticked(false), Tick::Now);
+        assert_eq!([Verdict::Ok, Verdict::Failed, Verdict::OnlineOnly].map(tone), [1, 2, 0]);
     }
 
     #[test]

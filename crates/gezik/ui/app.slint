@@ -348,10 +348,10 @@ export component AppWindow inherits Window {
     // Dragged with the splitter (120–480px); saved in state.toml on close.
     in-out property <length> sidebar-width: 200px;
     // What the Slint context menu shows; set from Rust before `show-menu`: the items, then
-    // up to five submenus, each with the items after it.
+    // up to four submenus, each with the items after it.
     in property <[MenuEntry]> menu-entries;
     in property <[MenuSub]> menu-subs;
-    // The same for Gezik's own menu, in one list: the submenus' items have ids -1…-5.
+    // The same for Gezik's own menu, in one list: the submenus' items have ids -1…-4.
     in property <[MenuEntry]> menu-lines;
     // Whether Slint shows menus as the system's (Windows, macOS); else Gezik draws its own.
     in property <bool> native-menus;
@@ -855,19 +855,6 @@ export component AppWindow inherits Window {
                 }
             }
             for entry in root.menu-subs[3].after: MenuItem {
-                title: entry.title;
-                enabled: entry.enabled;
-                activated => { root.menu-activated(entry.id); }
-            }
-            if root.menu-subs[4].entries.length > 0: Menu {
-                title: root.menu-subs[4].title;
-                for entry in root.menu-subs[4].entries: MenuItem {
-                    title: entry.title;
-                    enabled: entry.enabled;
-                    activated => { root.menu-activated(entry.id); }
-                }
-            }
-            for entry in root.menu-subs[4].after: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
