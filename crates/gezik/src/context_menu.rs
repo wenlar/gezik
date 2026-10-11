@@ -510,6 +510,17 @@ pub const SWAP_PANES: u32 = 2032;
 pub const SAME_FOLDER: u32 = 2033;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
+// Step 11 (spec 11 §13.3): 2200–2399; `Tools ▸` 2200–2219 in §3.3's order.
+pub const TOOLS_COMPARE: u32 = 2200;
+
+/// `Tools ▸` for the selection: only what applies (spec 11 §3.3).
+pub fn tools_items(compare: bool) -> Vec<(u32, String, bool)> {
+    let mut items = Vec::new();
+    if compare {
+        items.push((TOOLS_COMPARE, "Compare".to_owned(), true));
+    }
+    items
+}
 
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
@@ -1192,6 +1203,10 @@ impl Menus {
             for sub in subs.iter_mut() {
                 sub.at += extra.len();
             }
+        }
+        let tools = tools_items(crate::diff::offered());
+        if !tools.is_empty() {
+            subs.push(Submenu { title: "Tools".to_owned(), at: start + extra.len(), items: tools });
         }
         subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
         if native {
@@ -1891,6 +1906,7 @@ impl Menus {
             (FREE_UP, Subject::Row(path)) => crate::cloud::run(vec![path], false, &crate::panes::active_view()),
             (FREE_UP, Subject::Rows(paths)) => crate::cloud::run(paths, false, &crate::panes::active_view()),
             (id, Subject::Info) => crate::info::with_current(|info| info.menu_chosen(id)),
+            (TOOLS_COMPARE, Subject::Row(_) | Subject::Rows(_)) => crate::diff::compare(),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 crate::convert::with_current(|convert| convert.open(rows));
@@ -2297,6 +2313,7 @@ fn from_submenu(id: u32) -> bool {
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
         || id == GROUP_NONE
+        || id == TOOLS_COMPARE
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
@@ -2747,6 +2764,7 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            TOOLS_COMPARE,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([

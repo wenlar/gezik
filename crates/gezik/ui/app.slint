@@ -15,6 +15,7 @@ import { FileIcon } from "widgets/file-icon.slint";
 import { CompressLayer } from "widgets/compress.slint";
 import { ConvertLayer, ConvertView } from "widgets/convert.slint";
 import { InfoLayer, InfoView } from "widgets/info.slint";
+import { DiffLayer, DiffRow, DiffView } from "widgets/diff.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
 import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
@@ -23,7 +24,7 @@ import { ColumnItem } from "widgets/column-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
+export { Theme, PreviewInfo, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -191,6 +192,10 @@ export component AppWindow inherits Window {
             MenuItem { title: "Pinned 9"; shortcut: root.menu-keys ? @keys(Control + Alt + "9") : @keys(); activated => { root.menu-command("pin-9"); } }
             MenuSeparator { }
             MenuItem { title: "Clear Folder History"; activated => { root.menu-command("clear-history"); } }
+        }
+        Menu {
+            title: "Tools";
+            MenuItem { title: "Compare"; shortcut: root.menu-keys ? @keys(Control + Meta + C) : @keys(); activated => { root.menu-command("compare"); } }
         }
         if root.bar-commands.length > 0: Menu {
             title: "Commands";
@@ -644,6 +649,20 @@ export component AppWindow inherits Window {
     callback info-as-admin();
     callback info-close();
 
+    // The file compare (diff.rs, spec 11 §6).
+    in property <bool> df-open;
+    property <int> df-focus-seq;
+    property <int> df-reveal-seq;
+    in property <DiffView> df-view;
+    in property <[DiffRow]> df-rows;
+    in-out property <int> df-current;
+    callback df-toggle(int);
+    callback df-step(bool);
+    callback df-close();
+    public function df-reveal() {
+        root.df-reveal-seq += 1;
+    }
+
     // The tab picker (tab_tools.rs): the tabs the query lets through, the row Enter picks.
     in property <bool> tp-open;
     property <int> tp-focus-seq;
@@ -746,6 +765,8 @@ export component AppWindow inherits Window {
             root.cv-focus-seq += 1;
         } else if root.info-open {
             root.info-focus-seq += 1;
+        } else if root.df-open {
+            root.df-focus-seq += 1;
         } else if root.tp-open {
             root.tp-focus-seq += 1;
         } else {
@@ -1462,6 +1483,24 @@ export component AppWindow inherits Window {
             change-all => { root.info-change-all(); }
             as-admin => { root.info-as-admin(); }
             close => { root.info-close(); }
+        }
+        if root.df-open: DiffLayer {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            open: root.df-open;
+            focus-request: root.df-focus-seq;
+            reveal-request: root.df-reveal-seq;
+            dialog-open: root.dialog-open || root.conflicts-open;
+            view: root.df-view;
+            rows: root.df-rows;
+            current: root.df-current;
+            mono-font: root.mono-font;
+            toggle(which) => { root.df-toggle(which); }
+            step(forward) => { root.df-step(forward); }
+            pick(i) => { root.df-current = i; }
+            close => { root.df-close(); }
         }
         if root.conflicts-open: ConflictList {
             x: 0;

@@ -1,0 +1,263 @@
+import { ListView } from "scrollbar.slint";
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+
+// One row of the compare (diff.rs builds it when it is on screen): each side's line number and
+// text, a changed line's text in three parts (before, the changed part, after).
+export struct DiffRow {
+    ln: string,
+    l0: string,
+    l1: string,
+    l2: string,
+    rn: string,
+    r0: string,
+    r1: string,
+    r2: string,
+    // 0 same, 1 changed, 2 added (right only), 3 removed (left only).
+    kind: int,
+}
+
+export struct DiffView {
+    title: string,
+    // `UTF-8 · CRLF`, a side each; marked when they differ.
+    left-info: string,
+    right-info: string,
+    info-differs: bool,
+    changes: string,
+    // "The files are too different to line up…" ("" for none).
+    note: string,
+    ignore-whitespace: bool,
+    ignore-case: bool,
+}
+
+// One side of a row: its number and its text, the changed part on a stronger tint.
+component Side inherits Rectangle {
+    in property <string> number;
+    in property <string> before;
+    in property <string> changed;
+    in property <string> after;
+    in property <color> tint;
+    in property <color> mark;
+    in property <string> mono-font;
+    background: root.tint;
+    clip: true;
+
+    Text {
+        x: 0;
+        width: 48px;
+        height: parent.height;
+        text: root.number;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        font-family: root.mono-font;
+        color: Theme.foreground-muted;
+    }
+    first := Text {
+        x: 56px;
+        width: self.preferred-width;
+        height: parent.height;
+        text: root.before;
+        vertical-alignment: center;
+        font-family: root.mono-font;
+        color: Theme.foreground;
+    }
+    if root.changed != "": Rectangle {
+        x: first.x + first.width;
+        width: middle.width;
+        height: parent.height;
+        background: root.mark;
+    }
+    middle := Text {
+        x: first.x + first.width;
+        width: self.preferred-width;
+        height: parent.height;
+        text: root.changed;
+        vertical-alignment: center;
+        font-family: root.mono-font;
+        color: Theme.foreground;
+    }
+    Text {
+        x: middle.x + middle.width;
+        width: self.preferred-width;
+        height: parent.height;
+        text: root.after;
+        vertical-alignment: center;
+        font-family: root.mono-font;
+        color: Theme.foreground;
+    }
+}
+
+// The compare (diff.rs, spec 11 §6.3): two files side by side over the window, read only.
+// Esc, F5, Alt+↑/↓, Ctrl+C and the list keys reach diff.rs through main.rs.
+export component DiffLayer inherits Rectangle {
+    in property <bool> open;
+    in property <bool> dialog-open;
+    in property <int> focus-request;
+    in property <int> reveal-request;
+    in property <DiffView> view;
+    in property <[DiffRow]> rows;
+    in property <int> current;
+    in property <string> mono-font;
+    // 0 Ignore whitespace, 1 Ignore case.
+    callback toggle(int);
+    callback step(bool);
+    callback pick(int);
+    callback close();
+
+    init => {
+        if root.open && !root.dialog-open {
+            scope.focus();
+        }
+    }
+    changed focus-request => {
+        if !root.dialog-open {
+            scope.focus();
+        }
+    }
+    changed reveal-request => {
+        if root.current * Theme.row-height < -list.content-y {
+            list.content-y = -root.current * Theme.row-height;
+        } else if (root.current + 1) * Theme.row-height > -list.content-y + list.visible-height {
+            list.content-y = -((root.current + 1) * Theme.row-height - list.visible-height);
+        }
+    }
+
+    background: Theme.overlay;
+    TouchArea { }
+    scope := FocusScope { }
+
+    Rectangle {
+        x: 24px;
+        y: 24px;
+        width: root.width - 48px;
+        height: root.height - 48px;
+        background: Theme.surface-raised;
+        border-radius: Theme.radius * 1.5;
+        border-width: 1px;
+        border-color: Theme.border;
+        accessible-role: groupbox;
+        accessible-label: root.view.title;
+
+        VerticalLayout {
+            padding: Theme.spacing * 2;
+            spacing: Theme.spacing;
+
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.view.title;
+                    font-weight: 600;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    color: Theme.foreground;
+                }
+                TextButton {
+                    text: "Ignore whitespace";
+                    checked: root.view.ignore-whitespace;
+                    clicked => { root.toggle(0); }
+                }
+                TextButton {
+                    text: "Ignore case";
+                    checked: root.view.ignore-case;
+                    clicked => { root.toggle(1); }
+                }
+                Text {
+                    text: root.view.changes;
+                    vertical-alignment: center;
+                    color: Theme.foreground-muted;
+                }
+                TextButton {
+                    compact: true;
+                    text: "↑";
+                    label: "Previous change";
+                    clicked => { root.step(false); }
+                }
+                TextButton {
+                    compact: true;
+                    text: "↓";
+                    label: "Next change";
+                    clicked => { root.step(true); }
+                }
+                TextButton {
+                    compact: true;
+                    text: "✕";
+                    label: "Close";
+                    clicked => { root.close(); }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                for info in [root.view.left-info, root.view.right-info]: Text {
+                    horizontal-stretch: 1;
+                    text: info;
+                    overflow: elide;
+                    font-weight: root.view.info-differs ? 600 : 400;
+                    color: root.view.info-differs ? Theme.accent : Theme.foreground-muted;
+                }
+            }
+
+            if root.view.note != "": Text {
+                text: root.view.note;
+                wrap: word-wrap;
+                color: Theme.danger;
+            }
+
+            Rectangle { height: 1px; background: Theme.border; }
+
+            list := ListView {
+                vertical-stretch: 1;
+                for row[i] in root.rows: Rectangle {
+                    height: Theme.row-height;
+                    accessible-role: list-item;
+                    accessible-label: row.kind == 0 ? row.l0 : row.kind == 2 ? "Added: " + row.r0 + row.r1 + row.r2
+                        : row.kind == 3 ? "Removed: " + row.l0 + row.l1 + row.l2
+                        : "Changed: " + row.l0 + row.l1 + row.l2 + " to " + row.r0 + row.r1 + row.r2;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: i == root.current;
+                    accessible-item-index: i;
+                    TouchArea {
+                        clicked => {
+                            scope.focus();
+                            root.pick(i);
+                        }
+                    }
+                    Side {
+                        x: 0;
+                        width: parent.width / 2 - 1px;
+                        height: parent.height;
+                        mono-font: root.mono-font;
+                        number: row.ln;
+                        before: row.l0;
+                        changed: row.l1;
+                        after: row.l2;
+                        tint: row.kind == 1 ? Theme.accent.transparentize(0.8) : row.kind == 3 ? Theme.danger.transparentize(0.8) : transparent;
+                        mark: Theme.accent.transparentize(0.55);
+                    }
+                    Rectangle {
+                        x: parent.width / 2 - 1px;
+                        width: 1px;
+                        background: Theme.border;
+                    }
+                    Side {
+                        x: parent.width / 2;
+                        width: parent.width / 2;
+                        height: parent.height;
+                        mono-font: root.mono-font;
+                        number: row.rn;
+                        before: row.r0;
+                        changed: row.r1;
+                        after: row.r2;
+                        tint: row.kind == 1 ? Theme.accent.transparentize(0.8) : row.kind == 2 ? Theme.success.transparentize(0.8) : transparent;
+                        mark: Theme.accent.transparentize(0.55);
+                    }
+                    if i == root.current: Rectangle {
+                        border-width: 1px;
+                        border-color: Theme.focus-ring;
+                    }
+                }
+            }
+        }
+    }
+}
