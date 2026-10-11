@@ -20,6 +20,9 @@ public class H {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool GetCursorPos(out P p);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  public struct P { public int X, Y; }
   [StructLayout(LayoutKind.Sequential)] public struct L { public uint cb; public uint t; }
   [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref L l);
   public struct R { public int L, T, Rt, B; }
@@ -64,7 +67,12 @@ try {
   [void][H]::SetWindowPos($h, [IntPtr]::Zero, 200, 200, 1296, 839, 0x14)  # NOZORDER|NOACTIVATE
   Start-Sleep -Seconds 4
   $c = New-Object H+R; [void][H]::GetClientRect($h, [ref]$c)
-  Idle; [void][H]::SetForegroundWindow($h); Start-Sleep -Seconds 2
+  Idle; [void][H]::SetForegroundWindow($h)
+  # A row under the cursor is highlighted, and after showing again only once the mouse moves:
+  # the cursor goes just right of the window (still on the primary monitor).
+  $r = New-Object H+R; [void][H]::GetWindowRect($h, [ref]$r); $m = New-Object H+P; [void][H]::GetCursorPos([ref]$m)
+  if ($m.X -ge $r.L -and $m.X -lt $r.Rt -and $m.Y -ge $r.T -and $m.Y -lt $r.B) { [void][H]::SetCursorPos($r.Rt + 20, $r.T + 20) }
+  Start-Sleep -Seconds 2
   if ([H]::GetForegroundWindow() -ne $h) { throw "not in front" }
   $ref = Shot $h
   $shown = Mem $p.Id
