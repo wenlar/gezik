@@ -3,6 +3,7 @@
 
 mod control;
 mod engine;
+pub mod hash;
 mod inverse;
 mod journal;
 pub mod pending;
