@@ -63,13 +63,32 @@ pub fn detect(head: &[u8]) -> Detected {
     Detected::Text(detector.guess(None, Utf8Detection::Allow), false)
 }
 
-/// A whole file's text and its encoding's name ([`name`]): the encoding [`detect`] finds, a BOM
-/// taken off; `None` when it looks binary (the file compare, spec 11 §6.2). Bytes that are not
-/// valid in it become U+FFFD.
-pub fn decode(bytes: &[u8]) -> Option<(String, &'static str)> {
-    let Detected::Text(encoding, _) = detect(&bytes[..bytes.len().min(SNIFF)]) else { return None };
-    let (text, used, _) = encoding.decode(bytes);
-    Some((text.into_owned(), name(used)))
+/// A whole file's text and its encoding's name ([`name`]): a BOM's encoding (the BOM taken off),
+/// else UTF-8 when the whole file is valid UTF-8, else chardetng's guess from the whole file.
+/// `None` when it looks binary: a NUL anywhere without a BOM, or bytes the encoding cannot read
+/// (the file compare compares bytes then, spec 11 §6.2).
+pub fn decode(mut bytes: Vec<u8>) -> Option<(String, &'static str)> {
+    let Detected::Text(mut encoding, bom) = detect(&bytes[..bytes.len().min(SNIFF)]) else { return None };
+    if !bom && bytes.contains(&0) {
+        return None;
+    }
+    if encoding == UTF_8 {
+        if bom {
+            bytes.drain(..3);
+        }
+        // Valid UTF-8 is taken as it is: no second copy of the file.
+        match String::from_utf8(bytes) {
+            Ok(text) => return Some((text, name(UTF_8))),
+            Err(_) if bom => return None,
+            Err(err) => bytes = err.into_bytes(),
+        }
+        // The start looked like UTF-8 (ASCII, say), the rest is not: guess from all of it.
+        let mut detector = EncodingDetector::new(Iso2022JpDetection::Deny);
+        detector.feed(&bytes, true);
+        encoding = detector.guess(None, Utf8Detection::Allow);
+    }
+    let (text, used, errors) = encoding.decode(&bytes);
+    (!errors).then(|| (text.into_owned(), name(used)))
 }
 
 /// The encodings offered, as (label, name shown): encoding_rs name, display name, list name.
@@ -530,13 +549,24 @@ mod tests {
     fn decodes_whole_files_by_their_encoding() {
         let utf16: Vec<u8> =
             [0xFF, 0xFE].into_iter().chain("Işık\r\n".encode_utf16().flat_map(u16::to_le_bytes)).collect();
-        assert_eq!(decode(&utf16), Some(("Işık\r\n".to_owned(), "UTF-16 LE")));
-        assert_eq!(decode("\u{FEFF}abc".as_bytes()), Some(("abc".to_owned(), "UTF-8")), "the BOM is not text");
-        assert_eq!(decode("ağaç".as_bytes()), Some(("ağaç".to_owned(), "UTF-8")));
+        assert_eq!(decode(utf16), Some(("Işık\r\n".to_owned(), "UTF-16 LE")));
+        assert_eq!(decode("\u{FEFF}abc".into()), Some(("abc".to_owned(), "UTF-8")), "the BOM is not text");
+        assert_eq!(decode("ağaç".into()), Some(("ağaç".to_owned(), "UTF-8")));
         let (cp1254, _, _) = encoding_rs::WINDOWS_1254.encode("Işık ağaç şöyle güzel çiçekler\n");
-        assert_eq!(decode(&cp1254), Some(("Işık ağaç şöyle güzel çiçekler\n".to_owned(), "Windows-1254")));
-        assert_eq!(decode(b"MZ\0\x90"), None);
-        assert_eq!(decode(b""), Some((String::new(), "UTF-8")));
+        assert_eq!(decode(cp1254.into_owned()), Some(("Işık ağaç şöyle güzel çiçekler\n".to_owned(), "Windows-1254")));
+        assert_eq!(decode(b"MZ\0\x90".to_vec()), None);
+        assert_eq!(decode(Vec::new()), Some((String::new(), "UTF-8")));
+        // An ASCII start past what `detect` looks at, then Windows-1254: guessed from all of it.
+        let tail = "Işık ağaç şöyle güzel çiçekler, ılık süt ve çay\n".repeat(4);
+        let text = "a".repeat(SNIFF + 10) + "\n" + &tail;
+        let (bytes, _, _) = encoding_rs::WINDOWS_1254.encode(&text);
+        assert_eq!(decode(bytes.into_owned()), Some((text, "Windows-1254")));
+        // A NUL after the first 8 KB: binary.
+        let mut bytes = vec![b'a'; 9000];
+        bytes[8500] = 0;
+        assert_eq!(decode(bytes), None);
+        // A UTF-8 BOM over bytes that are not UTF-8: binary, not a guess.
+        assert_eq!(decode(vec![0xEF, 0xBB, 0xBF, b'a', 0xFF]), None);
     }
 
     #[test]

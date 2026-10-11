@@ -656,9 +656,8 @@ export component AppWindow inherits Window {
     in property <DiffView> df-view;
     in property <[DiffRow]> df-rows;
     in-out property <int> df-current;
-    callback df-toggle(int);
-    callback df-step(bool);
-    callback df-close();
+    // 0 Ignore whitespace, 1 Ignore case, 2 Close.
+    callback df-button(int);
     public function df-reveal() {
         root.df-reveal-seq += 1;
     }
@@ -1497,10 +1496,8 @@ export component AppWindow inherits Window {
             rows: root.df-rows;
             current: root.df-current;
             mono-font: root.mono-font;
-            toggle(which) => { root.df-toggle(which); }
-            step(forward) => { root.df-step(forward); }
             pick(i) => { root.df-current = i; }
-            close => { root.df-close(); }
+            button(k) => { root.df-button(k); }
         }
         if root.conflicts-open: ConflictList {
             x: 0;

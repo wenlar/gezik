@@ -161,16 +161,28 @@ fn external_error(program: &str, err: &gezik_platform::terminal::TerminalError) 
     }
 }
 
-/// The text when the compare program is not there.
-pub fn not_found_text(program: &str) -> String {
-    format!("The compare program \"{program}\" was not found; using Gezik's own")
+/// The text when the compare program is not there: for files Gezik's own compare opens; for
+/// folders there is none yet (11d).
+pub fn not_found_text(program: &str, folders: bool) -> String {
+    if folders {
+        format!("The compare program \"{program}\" was not found; Gezik does not compare folders yet")
+    } else {
+        format!("The compare program \"{program}\" was not found; using Gezik's own")
+    }
+}
+
+/// A macOS app (`….app`) that is not there: `open -a` would only say so in a dialog of its own.
+pub fn app_missing(program: &str, mac: bool) -> bool {
+    let app = program.trim_end_matches('/');
+    mac && app.to_ascii_lowercase().ends_with(".app") && !Path::new(app).is_dir()
 }
 
 /// Starts the compare program on a thread (it looks through PATH); `false` when there is none
 /// set. Not found: the status bar says so (files: the own compare opens then).
 fn run_external(external: &External, left: &Path, right: &Path, view: &crate::view::View) -> bool {
     let Some(program) = external.program.clone() else { return false };
-    let command = external_command(&program, &external.args, left, right, cfg!(target_os = "macos"));
+    let mac = cfg!(target_os = "macos");
+    let command = external_command(&program, &external.args, left, right, mac);
     let (name, args) = match command {
         Ok(command) => command,
         Err(err) => {
@@ -183,12 +195,18 @@ fn run_external(external: &External, left: &Path, right: &Path, view: &crate::vi
     let window_id = crate::windows::current();
     let shown = program.clone();
     let started = std::thread::Builder::new().name("gezik-compare-program".into()).spawn(move || {
-        let Err(err) = gezik_platform::terminal::start_program(&name, args, &dir) else { return };
+        let started = if app_missing(&program, mac) {
+            Err(gezik_platform::terminal::TerminalError::NotFound)
+        } else {
+            gezik_platform::terminal::start_program(&name, args, &dir)
+        };
+        let Err(err) = started else { return };
         crate::windows::post(window_id, move || match external_error(&program, &err) {
             Some(text) => crate::panes::active_view().note(text),
             None => {
-                crate::panes::active_view().note(not_found_text(&program));
-                if !left.is_dir() {
+                let folders = left.is_dir();
+                crate::panes::active_view().note(not_found_text(&program, folders));
+                if !folders {
                     with_current(|d| d.read(left, right, false));
                 }
             }
@@ -210,8 +228,13 @@ pub struct Text {
 }
 
 impl Text {
+    #[cfg(test)]
     pub fn new(name: String, text: String, encoding: &str) -> Text {
         let lines = line_ranges(&text);
+        Text::with_lines(name, text, lines, encoding)
+    }
+
+    fn with_lines(name: String, text: String, lines: Vec<(u32, u32)>, encoding: &str) -> Text {
         let eol = eol_name(&text);
         let info = if eol.is_empty() { encoding.to_owned() } else { format!("{encoding} · {eol}") };
         Text { name, text, lines, info }
@@ -273,30 +296,51 @@ pub fn eol_name(text: &str) -> &'static str {
 
 /// What reading a file found.
 enum Loaded {
-    Text(String, &'static str),
+    Text(String, Vec<(u32, u32)>, &'static str),
     /// Binary, too large, or too many lines: compared byte by byte.
     Bytes,
 }
 
+/// `path` opened, if it is a plain file (not a device or a pipe, which may never end), with
+/// its size.
+fn open_file(path: &Path) -> io::Result<(std::fs::File, u64)> {
+    let file = std::fs::File::open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(io::Error::other("It is not a file"));
+    }
+    Ok((file, meta.len()))
+}
+
 fn load(path: &Path) -> io::Result<Loaded> {
-    let mut file = std::fs::File::open(path)?;
-    if file.metadata()?.len() > MAX_BYTES {
+    let (file, len) = open_file(path)?;
+    if len > MAX_BYTES {
         return Ok(Loaded::Bytes);
     }
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    Ok(match gezik_batch::convert::text::decode(&bytes) {
-        Some((text, encoding)) if text.matches('\n').count() <= MAX_LINES => Loaded::Text(text, encoding),
-        _ => Loaded::Bytes,
-    })
+    // At most one byte past the cap: a file that grew since is compared by bytes.
+    let mut bytes = Vec::with_capacity(len as usize);
+    file.take(MAX_BYTES + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Ok(Loaded::Bytes);
+    }
+    let Some((text, encoding)) = gezik_batch::convert::text::decode(bytes) else { return Ok(Loaded::Bytes) };
+    let lines = line_ranges(&text);
+    Ok(if lines.len() > MAX_LINES { Loaded::Bytes } else { Loaded::Text(text, lines, encoding) })
 }
 
 /// Where `a` and `b` first differ (a byte offset; the shorter one's end if one is the start of
-/// the other), `None` when they are the same.
+/// the other), `None` when they are the same. Read up to the larger of their sizes when opened:
+/// a file growing meanwhile does not keep it reading.
 // shortcut: no progress while two large files are read; 11a's `hash::same_content` (with
 // progress) replaces this once merged.
 pub fn first_difference(a: &Path, b: &Path) -> io::Result<Option<u64>> {
-    let (mut fa, mut fb) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
+    let ((fa, la), (fb, lb)) = (open_file(a)?, open_file(b)?);
+    let limit = la.max(lb);
+    first_difference_in(fa.take(limit), fb.take(limit))
+}
+
+/// `first_difference` on two readers.
+fn first_difference_in(mut fa: impl Read, mut fb: impl Read) -> io::Result<Option<u64>> {
     let (mut ba, mut bb) = (vec![0u8; CHUNK], vec![0u8; CHUNK]);
     let mut offset = 0u64;
     loop {
@@ -317,7 +361,7 @@ pub fn first_difference(a: &Path, b: &Path) -> io::Result<Option<u64>> {
 }
 
 /// Reads until `buf` is full or the file ends; how much was read.
-fn read_full(file: &mut std::fs::File, buf: &mut [u8]) -> io::Result<usize> {
+fn read_full(file: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
     let mut filled = 0;
     while filled < buf.len() {
         match file.read(&mut buf[filled..]) {
@@ -377,13 +421,24 @@ pub fn shown(line: &str) -> String {
     out
 }
 
-/// A changed pair's sides as (before, changed part, after) each.
-pub fn split_changed(left: &str, right: &str) -> ([String; 3], [String; 3]) {
+/// A changed pair's changed parts, as character offsets (start, end) into each side: the layer
+/// marks them at offset × the monospace character width.
+// shortcut: a double-width character (CJK) before the span shifts the mark; measure the text
+// before it if that matters.
+pub fn char_spans(left: &str, right: &str) -> ((i32, i32), (i32, i32)) {
     let (a, b) = diff::inline_span(left, right);
-    let parts = |text: &str, span: std::ops::Range<usize>| {
-        [text[..span.start].to_owned(), text[span.clone()].to_owned(), text[span.end..].to_owned()]
-    };
-    (parts(left, a), parts(right, b))
+    let chars = |text: &str, at: usize| i32::try_from(text[..at].chars().count()).unwrap_or(i32::MAX);
+    ((chars(left, a.start), chars(left, a.end)), (chars(right, b.start), chars(right, b.end)))
+}
+
+/// What a screen reader says for a row.
+pub fn row_label(kind: Kind, left: &str, right: &str) -> String {
+    match kind {
+        Kind::Same => left.to_owned(),
+        Kind::Added => format!("Added: {right}"),
+        Kind::Removed => format!("Removed: {left}"),
+        Kind::Changed => format!("Changed: {left} to {right}"),
+    }
 }
 
 /// The rows the layer's list shows, each built when asked for (only those on screen).
@@ -399,23 +454,23 @@ impl Model for RowsModel {
     fn row_data(&self, i: usize) -> Option<DiffRow> {
         let row = self.0.rows.get(i)?;
         let (left, right) = (&self.0.texts.0, &self.0.texts.1);
-        let number = |n: Option<u32>| n.map(|n| SharedString::from((n + 1).to_string())).unwrap_or_default();
         let l = row.left.map(|n| shown(left.line(n))).unwrap_or_default();
         let r = row.right.map(|n| shown(right.line(n))).unwrap_or_default();
-        let ([l0, l1, l2], [r0, r1, r2]) = if row.kind == Kind::Changed {
-            split_changed(&l, &r)
-        } else {
-            ([l, String::new(), String::new()], [r, String::new(), String::new()])
+        let ((ls, le), (rs, re)) = if row.kind == Kind::Changed { char_spans(&l, &r) } else { ((0, 0), (0, 0)) };
+        // The line number in front, right-aligned in monospace columns: the marks move with it.
+        let digits = left.lines.len().max(right.lines.len()).to_string().len();
+        let front = i32::try_from(digits + 2).unwrap_or(0);
+        let side = |n: Option<u32>, text: &str| -> SharedString {
+            n.map(|n| format!("{:>digits$}  {text}", n + 1).into()).unwrap_or_default()
         };
         Some(DiffRow {
-            ln: number(row.left),
-            l0: l0.into(),
-            l1: l1.into(),
-            l2: l2.into(),
-            rn: number(row.right),
-            r0: r0.into(),
-            r1: r1.into(),
-            r2: r2.into(),
+            label: row_label(row.kind, &l, &r).into(),
+            l: side(row.left, &l),
+            ls: ls + front,
+            le: le + front,
+            r: side(row.right, &r),
+            rs: rs + front,
+            re: re + front,
             kind: kind_index(row.kind),
         })
     }
@@ -528,6 +583,9 @@ struct Inner {
     state: RefCell<Option<State>>,
     /// Bumped by each read and each close: a late answer is dropped.
     generation: Cell<u64>,
+    /// The files are being read (the layer's reload): an option change reads them again too,
+    /// so the reload's new text is not dropped.
+    reading: Cell<bool>,
 }
 
 #[derive(Clone)]
@@ -544,13 +602,10 @@ impl Diff {
             store,
             state: RefCell::default(),
             generation: Cell::new(0),
+            reading: Cell::new(false),
         }));
         let d = diff.clone();
-        window.on_df_toggle(move |which| d.toggle(which));
-        let d = diff.clone();
-        window.on_df_step(move |forward| d.step(forward));
-        let d = diff.clone();
-        window.on_df_close(move || d.close());
+        window.on_df_button(move |k| if k == 2 { d.close() } else { d.toggle(k) });
         CURRENT.with(|c| c.set(crate::windows::current(), diff.clone()));
         diff
     }
@@ -572,6 +627,7 @@ impl Diff {
     fn read(&self, left: PathBuf, right: PathBuf, reload: bool) {
         let generation = self.0.generation.get() + 1;
         self.0.generation.set(generation);
+        self.0.reading.set(true);
         if !reload {
             crate::panes::active_view().note("Comparing…".to_owned());
         }
@@ -592,6 +648,7 @@ impl Diff {
         if generation != self.0.generation.get() {
             return;
         }
+        self.0.reading.set(false);
         let view = crate::panes::active_view();
         match answer {
             Answer::Failed(text) => view.note(text),
@@ -631,13 +688,15 @@ impl Diff {
         let Some(state) = state.as_ref() else { return };
         let texts = &state.compared.0.texts;
         let options = Diff::options();
+        let mut info = format!("{}  ↔  {}", texts.0.info, texts.1.info);
+        if !state.note.is_empty() {
+            info = format!("{info}  ·  {}", state.note);
+        }
         window.set_df_view(DiffView {
-            title: format!("Compare  {}  ↔  {}", texts.0.name, texts.1.name).into(),
-            left_info: texts.0.info.as_str().into(),
-            right_info: texts.1.info.as_str().into(),
-            info_differs: texts.0.info != texts.1.info,
-            changes: changes_text(state.changes.len()).into(),
-            note: state.note.as_str().into(),
+            title: format!("Compare  {}  ↔  {}  ·  {}", texts.0.name, texts.1.name, changes_text(state.changes.len()))
+                .into(),
+            info: info.into(),
+            marked: texts.0.info != texts.1.info || !state.note.is_empty(),
             ignore_whitespace: options.ignore_whitespace,
             ignore_case: options.ignore_case,
         });
@@ -660,11 +719,15 @@ impl Diff {
         else {
             return;
         };
-        let generation = self.0.generation.get() + 1;
-        self.0.generation.set(generation);
         if let Some(window) = self.0.window.upgrade() {
             self.show_view(&window);
         }
+        if self.0.reading.get() {
+            // A reload is on its way: read again with the new options.
+            return self.read(paths.0, paths.1, true);
+        }
+        let generation = self.0.generation.get() + 1;
+        self.0.generation.set(generation);
         let window_id = crate::windows::current();
         let _ = std::thread::Builder::new().name("gezik-compare".into()).spawn(move || {
             let compared = line_up(texts, options);
@@ -726,6 +789,7 @@ impl Diff {
     /// Closes the layer: its texts and rows go.
     pub fn close(&self) {
         self.0.generation.set(self.0.generation.get() + 1);
+        self.0.reading.set(false);
         let state = self.0.state.borrow_mut().take();
         if let Some(window) = self.0.window.upgrade() {
             window.set_df_open(false);
@@ -767,8 +831,9 @@ fn read_both(left: &Path, right: &Path, options: Options) -> Answer {
         },
     };
     match (a, b) {
-        (Loaded::Text(a, ea), Loaded::Text(b, eb)) => {
-            let texts = Arc::new((Text::new(file_name(left), a, ea), Text::new(file_name(right), b, eb)));
+        (Loaded::Text(a, la, ea), Loaded::Text(b, lb, eb)) => {
+            let texts =
+                Arc::new((Text::with_lines(file_name(left), a, la, ea), Text::with_lines(file_name(right), b, lb, eb)));
             Answer::Lines(line_up(texts, options))
         }
         _ => {
@@ -836,7 +901,8 @@ mod tests {
         assert!(compared.aligned && compared.rows.iter().all(|r| r.kind == Kind::Same) && compared.rows.len() == 2);
         let model = RowsModel(compared);
         let row = model.row_data(1).unwrap();
-        assert_eq!((row.ln.as_str(), row.l0.as_str(), row.rn.as_str(), row.kind), ("2", "two", "2", 0));
+        assert_eq!((row.l.as_str(), row.r.as_str(), row.kind), ("2  two", "2  two", 0));
+        assert_eq!(row.label.as_str(), "two");
     }
 
     #[test]
@@ -845,10 +911,13 @@ mod tests {
         let right = Text::new("b".into(), "the lazy cat\nsame\nnew\n".into(), "UTF-8");
         let model = RowsModel(line_up(Arc::new((left, right)), Options::default()));
         let row = model.row_data(0).unwrap();
-        assert_eq!((row.l0.as_str(), row.l1.as_str(), row.l2.as_str()), ("the lazy ", "dog", ""));
-        assert_eq!((row.r1.as_str(), row.kind), ("cat", 1));
+        assert_eq!((row.l.as_str(), row.ls, row.le), ("1  the lazy dog", 12, 15), "after the number");
+        assert_eq!((row.rs, row.re, row.kind), (12, 15, 1));
+        assert_eq!(row.label.as_str(), "Changed: the lazy dog to the lazy cat");
         let added = model.row_data(2).unwrap();
-        assert_eq!((added.ln.as_str(), added.rn.as_str(), added.r0.as_str(), added.kind), ("", "3", "new", 2));
+        assert_eq!((added.l.as_str(), added.r.as_str(), added.kind), ("", "3  new", 2));
+        assert_eq!(added.label.as_str(), "Added: new");
+        assert_eq!(char_spans("çay ılık", "çay sıcak"), ((4, 7), (4, 8)), "characters, not bytes");
         assert_eq!(gezik_core::diff::changes(&model.0.rows), [0, 2]);
     }
 
@@ -893,7 +962,18 @@ mod tests {
         assert!(matches!(load(&big).unwrap(), Loaded::Bytes));
         // Text in other encodings is text.
         std::fs::write(&a, [0xFF, 0xFE, b'a', 0, b'\n', 0]).unwrap();
-        assert!(matches!(load(&a).unwrap(), Loaded::Text(ref t, "UTF-16 LE") if t == "a\n"));
+        assert!(matches!(load(&a).unwrap(), Loaded::Text(ref t, _, "UTF-16 LE") if t == "a\n"));
+        // Over the line cap with lone CRs only: bytes.
+        std::fs::write(&a, "a\r".repeat(MAX_LINES + 1)).unwrap();
+        assert!(matches!(load(&a).unwrap(), Loaded::Bytes));
+        std::fs::write(&a, "a\r".repeat(10)).unwrap();
+        assert!(matches!(load(&a).unwrap(), Loaded::Text(_, ref lines, _) if lines.len() == 10));
+        // A folder (a device or a pipe likewise) is no file: never read on and on.
+        assert!(load(&dir).is_err() && first_difference(&dir, &a).is_err());
+        // Endless input stops at the bound it is given.
+        let endless = || std::io::repeat(7).take(3 * CHUNK as u64 + 5);
+        assert_eq!(first_difference_in(endless(), endless()).unwrap(), None);
+        assert_eq!(first_difference_in(endless(), std::io::repeat(7).take(10)).unwrap(), Some(10));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -911,7 +991,11 @@ mod tests {
         assert!(external_command("x", &["{in}".to_owned()], left, right, false).is_err());
         use gezik_platform::terminal::TerminalError;
         assert_eq!(external_error("meld", &TerminalError::NotFound), None);
-        assert_eq!(not_found_text("meld"), "The compare program \"meld\" was not found; using Gezik's own");
+        assert_eq!(not_found_text("meld", false), "The compare program \"meld\" was not found; using Gezik's own");
+        assert!(not_found_text("meld", true).ends_with("Gezik does not compare folders yet"));
+        assert!(app_missing("/Applications/Gezik No Such Compare.app/", true));
+        assert!(!app_missing("/Applications/Gezik No Such Compare.app", false), "not macOS");
+        assert!(!app_missing("opendiff", true), "a name on PATH is looked up as usual");
         assert_eq!(
             external_error("x", &TerminalError::UnsafeFolder("diff.cmd".into())).as_deref(),
             Some("These names can't be passed safely to diff.cmd")
