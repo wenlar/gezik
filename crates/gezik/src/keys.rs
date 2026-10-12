@@ -779,6 +779,9 @@ mod tests {
         };
         let reach = |text: &str| reach_in(text, false);
         for action in Action::ALL {
+            if action.default_texts(Platform::Other).is_empty() {
+                continue;
+            }
             let text = match action {
                 Action::NewTab => "ctrl+t",
                 Action::NewWindow => "ctrl+n",
@@ -866,56 +869,7 @@ mod tests {
                     assert_eq!(reach_in(text, true), Some(action), "{text} with two panes");
                     continue;
                 }
-                Action::PasteMove
-                | Action::MakeAlias
-                | Action::ShowPackageContents
-                | Action::Share
-                | Action::Duplicate
-                | Action::BatchRename
-                | Action::ToggleTabLock
-                | Action::ClearHistory
-                | Action::OpenTerminalAdmin
-                | Action::SaveTabSet
-                | Action::ToggleStack
-                | Action::ShowHistory
-                | Action::CopyWithFolders
-                | Action::CutWithFolders
-                | Action::CalculateFolderSizes
-                | Action::SaveSearch
-                | Action::ShowTrash
-                | Action::PutBack
-                | Action::EmptyTrash
-                | Action::SystemIntegration
-                | Action::KeepOffline
-                | Action::FreeUpSpace
-                | Action::Eject
-                | Action::GroupNone
-                | Action::GroupType
-                | Action::GroupDate
-                | Action::GroupSize
-                | Action::CollapseGroups
-                | Action::ExpandGroups
-                | Action::RevealInTree
-                | Action::MoveTabToOtherPane
-                | Action::SyncBrowsing
-                | Action::OtherPaneSameFolder
-                | Action::MoveTabToNewWindow
-                | Action::SelectDifferences
-                | Action::ExportList
-                | Action::SizeMap
-                | Action::Checksums
-                | Action::VerifyChecksums
-                | Action::FindDuplicates
-                | Action::CopyTo
-                | Action::MoveTo
-                | Action::SplitFile
-                | Action::JoinFiles
-                | Action::EditComment
-                | Action::CleanTagStore
-                | Action::PreviewHex
-                | Action::PreviewPlay
-                | Action::MoreColumns
-                | Action::EditShortcuts => continue,
+                _ => panic!("{} has a default key but no case here", action.name()),
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

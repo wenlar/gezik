@@ -295,8 +295,22 @@ pub fn hotkey_text(chord: &Chord, logo: &str) -> String {
     parts.join("+")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Action {
+/// Declares `Action` and `Action::ALL` from one list: a new action is written once, and `ALL`
+/// cannot miss a variant or carry a hand-written count.
+macro_rules! actions {
+    ($($(#[$meta:meta])* $name:ident,)*) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Action {
+            $($(#[$meta])* $name,)*
+        }
+
+        impl Action {
+            pub const ALL: [Action; [$(Action::$name),*].len()] = [$(Action::$name),*];
+        }
+    };
+}
+
+actions! {
     NewTab,
     NewWindow,
     CloseTab,
@@ -505,138 +519,6 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 129] = [
-        Action::NewTab,
-        Action::NewWindow,
-        Action::CloseTab,
-        Action::NextTab,
-        Action::PrevTab,
-        Action::Back,
-        Action::Forward,
-        Action::Up,
-        Action::FocusPath,
-        Action::Refresh,
-        Action::SelectAll,
-        Action::ViewList,
-        Action::ViewGrid,
-        Action::ViewColumns,
-        Action::TogglePreview,
-        Action::QuickLook,
-        Action::Copy,
-        Action::Cut,
-        Action::Paste,
-        Action::PasteMove,
-        Action::Trash,
-        Action::DeletePermanently,
-        Action::Rename,
-        Action::NewFolder,
-        Action::Duplicate,
-        Action::Undo,
-        Action::Redo,
-        Action::BatchRename,
-        Action::ToggleHidden,
-        Action::Filter,
-        Action::InvertSelection,
-        Action::SelectPattern,
-        Action::DeselectPattern,
-        Action::SelectSameType,
-        Action::RestoreSelection,
-        Action::Tab1,
-        Action::Tab2,
-        Action::Tab3,
-        Action::Tab4,
-        Action::Tab5,
-        Action::Tab6,
-        Action::Tab7,
-        Action::Tab8,
-        Action::TabLast,
-        Action::ReopenTab,
-        Action::TabPicker,
-        Action::ToggleTabLock,
-        Action::ClearHistory,
-        Action::OpenTerminal,
-        Action::OpenTerminalAdmin,
-        Action::CopyPath,
-        Action::SaveTabSet,
-        Action::Pin1,
-        Action::Pin2,
-        Action::Pin3,
-        Action::Pin4,
-        Action::Pin5,
-        Action::Pin6,
-        Action::Pin7,
-        Action::Pin8,
-        Action::Pin9,
-        Action::NewFolderWithSelection,
-        Action::AddToStack,
-        Action::ToggleStack,
-        Action::ShowHistory,
-        Action::Search,
-        Action::FlatView,
-        Action::ShowInFolder,
-        Action::CopyWithFolders,
-        Action::CutWithFolders,
-        Action::CommandPalette,
-        Action::QuickOpen,
-        Action::CalculateFolderSizes,
-        Action::SaveSearch,
-        Action::MakeAlias,
-        Action::ShowPackageContents,
-        Action::Share,
-        Action::ShowTrash,
-        Action::PutBack,
-        Action::EmptyTrash,
-        Action::SystemIntegration,
-        Action::KeepOffline,
-        Action::FreeUpSpace,
-        Action::GetInfo,
-        Action::ConnectToServer,
-        Action::Eject,
-        Action::GroupNone,
-        Action::GroupType,
-        Action::GroupDate,
-        Action::GroupSize,
-        Action::CollapseGroups,
-        Action::ExpandGroups,
-        Action::RevealInTree,
-        Action::ToggleDualPane,
-        Action::FocusOtherPane,
-        Action::CopyToOtherPane,
-        Action::MoveToOtherPane,
-        Action::MoveTabToOtherPane,
-        Action::SyncBrowsing,
-        Action::SwapPanes,
-        Action::OtherPaneSameFolder,
-        Action::MoveTabToNewWindow,
-        Action::Compare,
-        Action::SelectDifferences,
-        Action::ExportList,
-        Action::SizeMap,
-        Action::Checksums,
-        Action::VerifyChecksums,
-        Action::FindDuplicates,
-        Action::CopyTo,
-        Action::MoveTo,
-        Action::SplitFile,
-        Action::JoinFiles,
-        Action::Tags,
-        Action::Tag1,
-        Action::Tag2,
-        Action::Tag3,
-        Action::Tag4,
-        Action::Tag5,
-        Action::Tag6,
-        Action::Tag7,
-        Action::ClearTags,
-        Action::EditComment,
-        Action::CleanTagStore,
-        Action::PreviewHex,
-        Action::PreviewPlay,
-        Action::MoreColumns,
-        Action::Settings,
-        Action::EditShortcuts,
-    ];
-
     pub fn name(self) -> &'static str {
         match self {
             Action::NewTab => "new-tab",
@@ -1014,7 +896,6 @@ impl Action {
             (Action::Cut, _) => &["mod+x"],
             (Action::Paste, _) => &["mod+v"],
             (Action::PasteMove, Platform::Mac) => &["mod+alt+v"],
-            (Action::PasteMove, Platform::Other) => &[],
             (Action::Trash, Platform::Mac) => &["mod+backspace"],
             (Action::Trash, Platform::Other) => &["delete"],
             (Action::DeletePermanently, Platform::Mac) => &["mod+alt+backspace"],
@@ -1024,11 +905,9 @@ impl Action {
             (Action::NewFolder, _) => &["mod+shift+n"],
             // Ctrl+D deletes in Explorer: Windows and Linux users get no surprise copies.
             (Action::Duplicate, Platform::Mac) => &["mod+d"],
-            (Action::Duplicate, Platform::Other) => &[],
             (Action::Undo, _) => &["mod+z"],
             (Action::Redo, Platform::Mac) => &["mod+shift+z"],
             (Action::Redo, Platform::Other) => &["mod+y"],
-            (Action::BatchRename, _) => &[],
             // Ctrl+H elsewhere, as in Linux file managers: Ctrl+Shift+. would never match
             // there (Shift+. types `>` or `:`, and only macOS maps keys by their place).
             (Action::ToggleHidden, Platform::Mac) => &["mod+shift+."],
@@ -1051,16 +930,12 @@ impl Action {
             (Action::TabLast, _) => &["mod+9"],
             (Action::ReopenTab, _) => &["mod+shift+t"],
             (Action::TabPicker, _) => &["mod+shift+a"],
-            (Action::ToggleTabLock, _) => &[],
-            (Action::ClearHistory, _) => &[],
             // Shift+F4 is Dolphin's; Ctrl+Alt+T second: AltGr types with it on some layouts
             // (₺ on Turkish Q) and GNOME takes it system-wide (spec 10.3).
             (Action::OpenTerminal, Platform::Mac) => &["mod+alt+t"],
             (Action::OpenTerminal, Platform::Other) => &["shift+f4", "ctrl+alt+t"],
-            (Action::OpenTerminalAdmin, _) => &[],
             (Action::CopyPath, Platform::Mac) => &["mod+alt+c"],
             (Action::CopyPath, Platform::Other) => &["ctrl+shift+c"],
-            (Action::SaveTabSet, _) => &[],
             // Alt+digit, not Ctrl+Alt+digit: Windows takes the left Ctrl+Alt for AltGr, which
             // types with the digit keys on many layouts (Turkish Q: > £ # $ ½ { [ ]; spec 10.3).
             (Action::Pin1, Platform::Mac) => &["mod+alt+1"],
@@ -1086,65 +961,20 @@ impl Action {
             (Action::NewFolderWithSelection, Platform::Mac) => &["mod+ctrl+n"],
             (Action::NewFolderWithSelection, Platform::Other) => &["ctrl+alt+n"],
             (Action::AddToStack, _) => &["mod+shift+s"],
-            (Action::ToggleStack, _) => &[],
-            (Action::ShowHistory, _) => &[],
             // F3 is Mission Control's on macOS (spec 9.3); elsewhere the second pane's since 10b,
             // Ctrl+E is Explorer's search key.
             (Action::Search, Platform::Mac) => &["mod+shift+f"],
             (Action::Search, Platform::Other) => &["mod+shift+f", "ctrl+e"],
             (Action::FlatView, _) => &["mod+b"],
             (Action::ShowInFolder, _) => &["mod+shift+e"],
-            (Action::CopyWithFolders | Action::CutWithFolders, _) => &[],
             (Action::CommandPalette, _) => &["mod+shift+p"],
             (Action::QuickOpen, _) => &["mod+p"],
-            (Action::CalculateFolderSizes | Action::SaveSearch, _) => &[],
             (Action::MakeAlias, Platform::Mac) => &["mod+ctrl+a"],
-            (Action::MakeAlias, Platform::Other) | (Action::ShowPackageContents, _) | (Action::Share, _) => &[],
             (Action::EmptyTrash, Platform::Mac) => &["mod+shift+backspace"],
-            (
-                Action::ShowTrash
-                | Action::PutBack
-                | Action::SystemIntegration
-                | Action::KeepOffline
-                | Action::FreeUpSpace,
-                _,
-            )
-            | (Action::EmptyTrash, Platform::Other) => &[],
             (Action::GetInfo, Platform::Mac) => &["mod+i"],
             (Action::GetInfo, Platform::Other) => &["alt+enter"],
             (Action::ConnectToServer, _) => &["mod+k"],
             (Action::Eject, Platform::Mac) => &["mod+e"],
-            (Action::Eject, Platform::Other) => &[],
-            (
-                Action::GroupNone
-                | Action::GroupType
-                | Action::GroupDate
-                | Action::GroupSize
-                | Action::CollapseGroups
-                | Action::ExpandGroups
-                | Action::RevealInTree
-                | Action::MoveTabToOtherPane
-                | Action::SyncBrowsing
-                | Action::OtherPaneSameFolder
-                | Action::MoveTabToNewWindow
-                | Action::SelectDifferences
-                | Action::ExportList
-                | Action::SizeMap
-                | Action::Checksums
-                | Action::VerifyChecksums
-                | Action::FindDuplicates
-                | Action::CopyTo
-                | Action::MoveTo
-                | Action::SplitFile
-                | Action::JoinFiles
-                | Action::EditComment
-                | Action::CleanTagStore
-                | Action::PreviewHex
-                | Action::PreviewPlay
-                | Action::MoreColumns
-                | Action::EditShortcuts,
-                _,
-            ) => &[],
             // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
             // Ctrl+Alt+digit types with AltGr: Alt+Shift+digit is free (spec 12 §5.2, decision 13).
             (Action::Tags, Platform::Mac) => &["mod+ctrl+l"],
@@ -1178,6 +1008,8 @@ impl Action {
             (Action::MoveToOtherPane, _) => &["f6"],
             // Every app's settings key (⌘, on macOS, VS Code's Ctrl+, elsewhere; spec 14 §10.2).
             (Action::Settings, _) => &["mod+,"],
+            // Every other action has no default key.
+            _ => &[],
         }
     }
 }
@@ -1776,7 +1608,7 @@ back = [\"ctrl+g\", \"ctrl+j\"]
         assert_eq!(warnings[0].message, "shortcuts.back: already used by up; that key is left out");
     }
 
-    /// The length in `ALL`'s type is the one place the action count is written.
+    /// `ALL` comes from the `actions!` list; this guards its order and uniqueness.
     #[test]
     fn all_lists_every_action_once() {
         let mut order: Vec<usize> = Action::ALL.iter().map(|a| *a as usize).collect();

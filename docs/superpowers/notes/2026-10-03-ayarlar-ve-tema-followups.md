@@ -1,5 +1,7 @@
 # Ayarlar ve Tema — Takip Edilecekler
 
+> **Yeni parçalar buraya eklemez.** Her parça kendi notlarını `docs/superpowers/notes/parts/<parça>.md` dosyasına yazar (dallar arası birleştirme çakışmasını önlemek için). Aşağıdaki mevcut içerik yerinde kalır.
+
 Alt proje 1 tamamlandıktan sonra bilerek ertelenen maddeler. Kaynak: görev incelemeleri ve son tüm-dal incelemesi.
 
 ## İlk macOS / Linux derlemesinde (doğrulanmadan kapatılmamalı)
