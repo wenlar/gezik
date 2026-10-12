@@ -3,7 +3,7 @@
 use gezik_config::theme::ResolvedTheme;
 use slint::ComponentHandle;
 
-use crate::{AppWindow, PreviewInfo, QuickLookWindow, Theme};
+use crate::{AppWindow, PreviewActions, PreviewInfo, QuickLookWindow, Theme};
 
 /// The share of the main window's size it takes.
 const SHARE: f32 = 0.7;
@@ -49,6 +49,11 @@ impl QuickLook {
         ));
         window.show()?;
         Ok(QuickLook { window })
+    }
+
+    /// Its viewer's events (spec 13 §3.2).
+    pub fn viewer_actions(&self) -> PreviewActions<'_> {
+        self.window.global::<PreviewActions>()
     }
 
     pub fn set_info(&self, info: PreviewInfo) {

@@ -172,6 +172,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::ViewGrid
         | Action::ViewColumns
         | Action::TogglePreview
+        | Action::PreviewHex
         | Action::QuickLook
         | Action::Share
         | Action::Copy

@@ -1,7 +1,24 @@
 import { Theme } from "../theme.slint";
 import { FileIcon } from "file-icon.slint";
+import { TextButton } from "text-button.slint";
 
-// What the preview shows; built by Rust (preview.rs).
+// A colored piece of a viewer row at its column; `class` is gezik_core::syntax::Class (0 plain,
+// 1 keyword, 2 type, 3 string, 4 number, 5 comment, 6 tag).
+export struct PreviewPart {
+    col: int,
+    text: string,
+    class: int,
+    // Wide (East Asian) characters: drawn in the UI font, whose fallbacks cover them.
+    wide: bool,
+}
+
+// A viewer row: its line number or offset ("" on a wrapped line's later rows) and its parts.
+export struct PreviewRow {
+    number: string,
+    parts: [PreviewPart],
+}
+
+// What the preview shows; built by Rust (preview/mod.rs, preview/viewer.rs).
 export struct PreviewInfo {
     // 0 nothing selected, 1 a picture, 2 text, 3 another file (its thumbnail or icon),
     // 4 a folder, 5 several items.
@@ -9,19 +26,51 @@ export struct PreviewInfo {
     title: string,
     picture: image,
     has-picture: bool,
-    text: string,
     // Lines of facts: type, size, dates, picture size, folder count.
     details: string,
     // `Kind` index, for the icon when there is no picture.
     item-kind: int,
     // The picture or text is still loading.
     loading: bool,
+    // The viewer (spec 13 §3.2): 0 none, 1 text, 2 hex, 3 only a Hex button (another file).
+    bar: int,
+    // The bar's right side (lines, size and place, offset) and a note before it.
+    bar-text: string,
+    bar-note: string,
+    wrap: bool,
+    // The rows from the top; `gutter` characters of line numbers or offsets before them.
+    rows: [PreviewRow],
+    gutter: int,
+    // The widest row in columns (sideways scrolling stops at its end).
+    max-cols: int,
+    // The scroll bar: where the top is and how much shows, 0–1.
+    scroll-pos: float,
+    scroll-size: float,
+}
+
+// The viewer's events, for Rust (one connection per window, not one per pane).
+export global PreviewActions {
+    // The viewer's room: whole characters across and rows down.
+    callback resized(int, int);
+    // Rows down (negative: up).
+    callback scrolled(int);
+    // To a place 0–1 (the scroll bar).
+    callback jumped(float);
+    callback toggle-hex();
+    callback toggle-wrap();
+    // A key while the viewer has the keyboard; returns whether it was used.
+    callback key(KeyEvent) -> bool;
+    // A right-click, at this window position.
+    callback context-menu(length, length);
+    // Bumped by Rust: the viewer says its room again (a window whose events were connected late).
+    in property <int> ask;
 }
 
 export component PreviewPane inherits Rectangle {
     in property <PreviewInfo> info;
     // A fixed-width font for text files.
     in property <string> mono-font;
+    property <bool> viewer: root.info.bar == 1 || root.info.bar == 2;
 
     background: Theme.surface;
     accessible-role: none;
@@ -34,19 +83,131 @@ export component PreviewPane inherits Rectangle {
             vertical-stretch: 1;
             min-height: 80px;
 
-            if root.info.kind == 2: Flickable {
-                content-height: text.preferred-height;
-                content-width: self.width;
-                text := Text {
-                    width: parent.width;
-                    text: root.info.text;
-                    font-family: root.mono-font;
-                    wrap: word-wrap;
-                    color: Theme.foreground;
+            // The viewer's keyboard (spec 13 §3.2): a click gives it, on a file's icon too (H).
+            scope := FocusScope {
+                key-pressed(event) => {
+                    if PreviewActions.key(event) {
+                        return accept;
+                    }
+                    return reject;
                 }
             }
 
-            if root.info.kind != 2 && root.info.has-picture: Image {
+            if root.viewer: viewer := Rectangle {
+                // One character's width and a row's height in the fixed-width font.
+                property <length> cw: max(1px, probe.preferred-width / 10);
+                property <length> lh: max(1px, probe.preferred-height);
+                property <length> gutter-width: root.info.gutter > 0 ? root.info.gutter * self.cw + 12px : 0px;
+                property <length> text-width: self.width - self.gutter-width - 10px;
+                // Sideways scroll of unwrapped lines.
+                property <length> hx: 0px;
+                property <int> cols: max(1, floor(self.text-width / self.cw));
+                property <int> lines: max(1, floor(self.height / self.lh));
+                property <int> ask: PreviewActions.ask;
+
+                clip: true;
+                init => {
+                    PreviewActions.resized(self.cols, self.lines);
+                }
+                changed cols => {
+                    PreviewActions.resized(self.cols, self.lines);
+                }
+                changed lines => {
+                    PreviewActions.resized(self.cols, self.lines);
+                }
+                changed ask => {
+                    PreviewActions.resized(self.cols, self.lines);
+                }
+
+                probe := Text {
+                    text: "MMMMMMMMMM";
+                    font-family: root.mono-font;
+                    visible: false;
+                }
+
+                TouchArea {
+                    clicked => {
+                        scope.focus();
+                    }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                            scope.focus();
+                            PreviewActions.context-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                    scroll-event(event) => {
+                        if event.delta-x != 0 || event.modifiers.shift {
+                            viewer.hx = root.info.wrap ? 0px : clamp(viewer.hx - (event.delta-x != 0 ? event.delta-x : event.delta-y), 0px, max(0px, root.info.max-cols * viewer.cw - viewer.text-width));
+                        } else if event.delta-y > 0 {
+                            PreviewActions.scrolled(-max(1, round(event.delta-y / viewer.lh)));
+                        } else if event.delta-y < 0 {
+                            PreviewActions.scrolled(max(1, round(-event.delta-y / viewer.lh)));
+                        }
+                        accept
+                    }
+                }
+
+                for row[i] in root.info.rows: Rectangle {
+                    y: i * viewer.lh;
+                    height: viewer.lh;
+                    if root.info.gutter > 0: Text {
+                        x: 0;
+                        width: viewer.gutter-width - 8px;
+                        text: row.number;
+                        horizontal-alignment: right;
+                        font-family: root.mono-font;
+                        color: Theme.foreground-muted;
+                        accessible-role: none;
+                    }
+                    Rectangle {
+                        x: viewer.gutter-width;
+                        width: viewer.text-width;
+                        clip: true;
+                        for part in row.parts: Text {
+                            x: part.col * viewer.cw - viewer.hx;
+                            text: part.text;
+                            font-family: part.wide ? Theme.font-family : root.mono-font;
+                            color: part.class == 1 ? Theme.syntax-keyword
+                                : part.class == 2 ? Theme.syntax-type
+                                : part.class == 3 ? Theme.syntax-string
+                                : part.class == 4 ? Theme.syntax-number
+                                : part.class == 5 ? (root.info.bar == 2 ? Theme.foreground-muted : Theme.syntax-comment)
+                                : part.class == 6 ? Theme.syntax-tag
+                                : Theme.foreground;
+                            accessible-role: text;
+                        }
+                    }
+                }
+
+                // The scroll bar: a press or a drag goes to that place.
+                TouchArea {
+                    property <length> thumb: min(self.height, max(24px, self.height * root.info.scroll-size));
+                    x: parent.width - self.width;
+                    width: 10px;
+                    visible: root.info.scroll-size < 1;
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                            PreviewActions.jumped(clamp((self.mouse-y - self.thumb / 2) / max(1px, self.height - self.thumb), 0, 1));
+                        }
+                    }
+                    moved => {
+                        if self.pressed {
+                            PreviewActions.jumped(clamp((self.mouse-y - self.thumb / 2) / max(1px, self.height - self.thumb), 0, 1));
+                        }
+                    }
+                    Rectangle {
+                        x: 2px;
+                        y: (parent.height - parent.thumb) * root.info.scroll-pos;
+                        width: 6px;
+                        height: parent.thumb;
+                        border-radius: 3px;
+                        background: parent.has-hover || parent.pressed ? Theme.scrollbar-hover : Theme.scrollbar;
+                    }
+                }
+
+            }
+
+            if !root.viewer && root.info.has-picture: Image {
                 width: parent.width;
                 height: parent.height;
                 source: root.info.picture;
@@ -55,7 +216,7 @@ export component PreviewPane inherits Rectangle {
                 accessible-label: root.info.title;
             }
 
-            if root.info.kind != 0 && root.info.kind != 2 && !root.info.has-picture: FileIcon {
+            if !root.viewer && root.info.kind != 0 && !root.info.has-picture: FileIcon {
                 width: min(parent.width, parent.height, 96px);
                 height: self.width;
                 x: (parent.width - self.width) / 2;
@@ -68,6 +229,59 @@ export component PreviewPane inherits Rectangle {
                 height: parent.height;
                 text: "Select a file to preview";
                 horizontal-alignment: center;
+                vertical-alignment: center;
+                color: Theme.foreground-muted;
+            }
+
+            if scope.has-focus && root.info.bar != 0: Rectangle {
+                border-width: Theme.focus-width;
+                border-color: Theme.focus-ring;
+                border-radius: Theme.radius-small;
+            }
+        }
+
+        // The viewer's bar: Text │ Hex, Wrap, a note and where it is.
+        if root.info.bar != 0: HorizontalLayout {
+            spacing: Theme.spacing;
+            if root.info.bar != 3: TextButton {
+                compact: true;
+                text: "Text";
+                checked: root.info.bar == 1;
+                clicked => {
+                    if root.info.bar == 2 {
+                        PreviewActions.toggle-hex();
+                    }
+                }
+            }
+            TextButton {
+                compact: true;
+                text: "Hex";
+                checked: root.info.bar == 2;
+                clicked => {
+                    if root.info.bar != 2 {
+                        PreviewActions.toggle-hex();
+                    }
+                }
+            }
+            if root.info.bar == 1: TextButton {
+                compact: true;
+                text: "Wrap";
+                label: root.info.wrap ? "Wrap lines, on" : "Wrap lines, off";
+                checked: root.info.wrap;
+                clicked => {
+                    PreviewActions.toggle-wrap();
+                }
+            }
+            Text {
+                text: root.info.bar-note;
+                horizontal-stretch: 1;
+                overflow: elide;
+                vertical-alignment: center;
+                color: Theme.foreground-muted;
+            }
+            Text {
+                text: root.info.bar-text;
+                overflow: elide;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;
             }
