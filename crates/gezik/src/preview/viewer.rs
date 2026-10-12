@@ -88,8 +88,9 @@ pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
         tools.push(tool("Hex".into(), "Hex".into(), -1, 0));
     }
     if info.bar == 6 {
-        let (text, label) = if info.playing { ("❚❚", "Pause") } else { ("▶", "Play") };
-        tools.push(tool(text.into(), label.into(), 10, 0));
+        // Pause is drawn (step 1): the UI font has no ❚❚.
+        let (text, label, step) = if info.playing { ("", "Pause", 1) } else { ("▶", "Play", 0) };
+        tools.push(tool(text.into(), label.into(), 10, step));
         return ModelRc::new(VecModel::from(tools));
     }
     // Locked (a password, no pdfium): pages cannot turn and the zoom shows nothing new, so

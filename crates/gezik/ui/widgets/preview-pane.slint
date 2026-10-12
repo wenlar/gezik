@@ -468,6 +468,8 @@ export component PreviewPane inherits Rectangle {
             for tool in root.info.tools: TextButton {
                 compact: true;
                 text: tool.text;
+                // The player's Pause: two bars (the UI font has no ❚❚).
+                icon: tool.what == 10 && tool.step == 1 ? "M2.5 1 L2.5 7 M5.5 1 L5.5 7" : "";
                 label: tool.label;
                 clicked => {
                     if tool.what < 0 {
@@ -496,6 +498,8 @@ export component PreviewPane inherits Rectangle {
             }
             Text {
                 text: root.info.bar-note;
+                accessible-role: text;
+                accessible-label: root.info.bar-note;
                 horizontal-stretch: root.info.bar == 6 && root.info.seek >= 0 ? 0 : 1;
                 overflow: elide;
                 vertical-alignment: center;

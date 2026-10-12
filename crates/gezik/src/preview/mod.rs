@@ -1776,7 +1776,15 @@ impl Preview {
         {
             let mut v = self.0.viewer.borrow_mut();
             let Some(player) = v.media.as_mut() else { return };
-            let Some(session) = player.session.as_ref() else { return };
+            let Some(session) = player.session.as_ref() else {
+                // A seek waits to start it again: pausing just stays there.
+                if paused && player.state == Play::Playing {
+                    player.state = Play::Paused;
+                    self.0.pause_timer.stop();
+                    self.0.tick_timer.stop();
+                }
+                return;
+            };
             session.set_paused(paused);
             player.position = player.clamp(session.position());
             player.state = if paused { Play::Paused } else { Play::Playing };
@@ -1993,23 +2001,46 @@ impl Preview {
         }
     }
 
-    /// Goes to `to` seconds: a playing session starts again there; paused, its processes go and
-    /// Play starts them there.
+    /// Goes to `to` seconds: playing, it starts again there once seeks rest for 150 ms (a held
+    /// `L` ends and starts no processes per press); paused, its processes go and Play starts them
+    /// there; at the end it stops.
     fn seek(&self, to: f64) {
         let restart = {
             let mut v = self.0.viewer.borrow_mut();
             let Some(player) = v.media.as_mut() else { return };
-            player.seeking = None;
-            player.position = player.clamp(to);
-            player.at_end = false;
-            if player.state == Play::Paused {
-                player.session = None;
+            let playing = player.state == Play::Playing;
+            if player.go_to(to) {
+                self.0.tick_timer.stop();
                 self.0.pause_timer.stop();
+                false
+            } else {
+                if player.state == Play::Paused {
+                    self.0.pause_timer.stop();
+                }
+                // Its processes go now; the new ones once the seeks rest.
+                player.session = None;
+                playing
             }
-            player.session.is_some() && player.state == Play::Playing
         };
         if restart {
-            self.media_session();
+            // The pause timer is idle while playing.
+            self.0.pause_timer.start(
+                slint::TimerMode::SingleShot,
+                SETTLE,
+                crate::windows::bind_mut(|| {
+                    with_current(|p| {
+                        let waiting =
+                            p.0.viewer
+                                .borrow()
+                                .media
+                                .as_ref()
+                                .is_some_and(|player| player.state == Play::Playing && player.session.is_none());
+                        if waiting {
+                            p.media_session();
+                        }
+                    });
+                }),
+            );
         }
         self.redraw();
     }

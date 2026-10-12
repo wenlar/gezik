@@ -2782,9 +2782,73 @@ Betik: scratchpad `m13g\13b-fix2\f2.ps1`. Görüntüler: `%TEMP%\gezik-gui-13\sh
 - Saat: ses aygıtının çaldığı kare sayısı; ses yoksa duvar saati ilk kareyle başlar, ses bitince/bozulunca oradan sürer. Kare erkense beklenir, bir kare süresinden geçse atılır (ilk kare hep). UI'a yolda en çok bir kare; kareler `PreviewActions.frame` genel özelliğiyle (her karede `PreviewInfo` kurulmaz). Çubuk yalnız oynarken 250 ms'de bir.
 - Ses `gezik-platform/src/audio/`: WASAPI paylaşımlı (`AUTOCONVERTPCM`, 100 ms, 5 ms yoklama, aygıt geçersizleşince yeniden açar), macOS AudioQueue (3 × 50 ms, `AudioQueueGetCurrentTime`), Linux `libpulse-simple.so.0` `dlopen` (100 ms; duraklatmada `flush`). Aygıt açılmazsa `Silent` alıcı sesi duyulacağı hızda okur: görüntü sessiz ve doğru hızda oynar, çubukta `No sound: …`.
 - Duraklat: okuma durur (ffmpeg boru dolunca bekler), aygıt durur; 60 sn sonra süreçler kapanır, son kare ve konum kalır, devam `-ss` ile. Sarma: iki süreç öldürülüp aynı `-ss` ile yeniden; sürüklerken yalnız süre değişir. `J`/`L` 10 sn, `K`, `M`. Dosya sonu: son kare kalır, `▶` baştan. Hiçbir şey çıkmadıysa `Cannot play this file`, ffmpeg'in son hata satırı standart hataya.
-- Ses düzeyi yazılımda (kazanç düzey², Q16), `state.toml [preview] volume = 80`, `muted = false`. Çubuk: (bağlantı), Hex, ▶/❚❚, sarma çubuğu, süre, `Mute`, düzey çubuğu (300 px'ten dar bölmede düzey çubuğu düşer). Sağ tık 2610–2614 (`Download ffmpeg…`, Play/Pause, Back/Forward 10 Seconds, Mute/Unmute); `preview-play` eylemi (`Action::ALL` 115, tuşsuz), View menüsünde 2611 (Windows ve macOS menü çubuğu).
+- Ses düzeyi yazılımda (kazanç düzey², Q16), `state.toml [preview] volume = 80`, `muted = false`. Çubuk: (bağlantı), Hex, ▶/❚❚, sarma çubuğu, süre, `Mute`, düzey çubuğu (300 px'ten dar bölmede Hex ve düzey çubuğu düşer, 13b'nin dar çubuk kuralı; sağ tıkta hepsi). Sağ tık 2610–2614 (`Download ffmpeg…`, Play/Pause, Back/Forward 10 Seconds, Mute/Unmute); `preview-play` eylemi (`Action::ALL` 115, tuşsuz), View menüsünde 2611 (Windows ve macOS menü çubuğu).
 - ffmpeg yoksa: `Playing needs ffmpeg · Download` → bugünkü teklif kutusu (`Need::Playback`), indirince kendiliğinden oynar.
 - Testler: komut satırları, PAM başlığı (+ 5.000 rastgele giriş), saat (ses, duvar, duraklama, ses bitişi), kare temposu, ölçekleme, sahte aygıtla ses döngüsü ve duraklamada durma, `Silent` hızı, `state.toml` gidiş-dönüşü, menüler. `#[ignore]`: WASAPI gerçek aygıt (Windows'ta geçti), PATH'teki ffmpeg ile 1 sn'lik test videosu uçtan uca (25 kare, 48.000 ses karesi; geçti).
 - Sapmalar (plan 1–7): PAM; ses posteri kapak değil küçük resim (13d); süre oynatmadan önce `--:--`; WASAPI yoklamayla; kazanç kare; küçültülmüş pencerede kare yine gönderilir; hata ipucu yerine standart hata. Linux `cargo clippy -p gezik` bu makinede fontconfig çapraz derlemesinde duruyor (13c'den bağımsız); `gezik-platform` Linux hedefinde temiz.
 - Sürüm exe'si **27.594.752 B** (taban 13b 27.475.968 B, **+118.784 B**; bütçe 262.144, spec tahmini ≈ 130 KB). Boşta yeni zamanlayıcı/iş parçacığı/süreç yok: hepsi oynat'la kurulur, önizleme değişince gider.
 - Windows ekran testleri, macOS 373–378 ve Linux 271–275 bekliyor.
+
+## Windows ekran testleri: 13c
+
+### 13c screen tests (Windows, t13c.exe), 2026-10-12
+
+Primary monitor, window 1600x900 at 40,40, preview pane 420 px (item 8: 260 px). Config `%TEMP%\gezik-gui-13\cfg\13c`
+(confirm-trash = true, `[preview] volume = 1, muted = true`), media generated with ffmpeg in `data\13c`
+(mp4 h264+aac 20 s, mkv 12 s, webm vp9+opus 12 s, mp3 8 s with attached cover, text-as-.mp4, plus
+`broken.mp4` = first 4 KB of the mp4, `junk.mp4` = 8 KB random). Audio in the files is about -47 dBFS.
+Nothing was audible: muted except where noted, unmuted only at Gezik volume 1-11 (output peak 1-2 LSB).
+Audio checked via Core Audio session (state, IAudioMeterInformation peak, ISimpleAudioVolume), read-only.
+Windows volume before/after: scalar 0.0600, not muted (unchanged). Screenshots: `%TEMP%\gezik-gui-13\shots\13c\`.
+
+| # | Item | Result |
+|---|------|--------|
+| 1 | Poster + centre ▶, no ffmpeg before Play | PASS (01-poster) |
+| 1 | First frame after ▶ | PASS: MKV first frame by 300 ms (frame 0.120 shown at 300 ms), MP4 strip first changed at 360 ms (poll step ~120 ms) (06t-combo) |
+| 1 | Audio flows, volume 1 unmuted | PASS: session state=1, peak 3.4e-5 |
+| 2 | Click preview pauses, K pause/resume | PASS |
+| 2 | Pause > 60 s ends ffmpeg, K resumes at same place | PASS: both ffmpeg gone at ~60.6 s, resumed 0:06 → 0:07 with new pids (03-*) |
+| 3 | Seek drag: only label changes while held, plays from there on release | PASS: label 0:14 held for 1.5 s, same ffmpeg pids; new pids and 0:15 after release |
+| 3 | J / L | PASS: 0:16 → J 0:07 → L 0:18 |
+| 4 | Mute button and M toggle | PASS (state.toml `muted` follows) |
+| 4 | Volume slider changes Gezik's output | PASS (software gain, so ISimpleAudioVolume stays 1.00 by design): peak 1 LSB at vol 1/2/5, 2 LSB at vol 11, 0 muted; slider click unmutes |
+| 4 | Restart keeps volume/muted; Windows volume unchanged | PASS: `volume = 2, muted = true` kept; system scalar 0.06 before/after |
+| 5 | MKV, WebM play | PASS (05-combo) |
+| 5 | Broken/junk .mp4: "Cannot play this file", poster stays | PASS (05e-combo). A text file renamed .mp4 is shown as text (sniffed), no player: OK by me, noted |
+| 6 | MP3: time + seek bar advance, stop at end, ▶ restarts | PASS: 2%→100%, button back to Play, ffmpeg gone at end, restart works; cover art poster shown (07-combo) |
+| 7 | Select another file while playing | PASS: ffmpeg and session (state 0) gone ≤ 0.4 s |
+| 7 | Same in Quick Look (Space, ▶, Down) | PASS: gone ≤ 0.31 s |
+| 7 | Right-click Play/Pause, Back/Forward 10 Seconds, Mute/Unmute; View ▸ Play/Pause Preview | PASS (09a-ctx, 09b-view) |
+| 8 | Pane 260 px: volume slider drops, Hex and Mute stay | FAIL vs checklist: volume slider and **Hex** drop; Play, seek bar, time, Mute stay. Code (`viewer.rs bar_tools`, narrow drops Hex) does this on purpose, so the checklist or the code needs to agree. Right-click has all 5 items incl. Show as Hex (10a, 10b) |
+| 8 | Alt+F4 while playing: no orphan ffmpeg | PASS: Gezik exited, both ffmpeg pids gone |
+
+#### CPU (percent of one core, 5 s windows)
+
+- Playing MP4 640x360 (unmuted vol 1): Gezik 7.8 %, ffmpeg video 3.1 %, ffmpeg audio 0.9 %.
+- Playing muted: Gezik 4.7-5.9 %, ffmpeg 1-2 % each. MKV: Gezik 4.7 %, ffmpeg 1 % + 1 %.
+- Paused, ffmpeg still alive: 0 % for all. Paused after 60 s (no ffmpeg): Gezik 0.3 %.
+- Idle after stopping (another file selected): Gezik 0.3 %.
+
+#### Findings
+
+1. **Pause glyph invisible.** While playing, the Play/Pause button is an empty box (the `❚❚` text, U+275A, does not render
+   with the UI font); UIA name "Pause" is right. Repro: play any video, look at the button left of the seek bar
+   (02-bar-zoom.png, 03b-resumed-crop.png, 10a-narrow-crop.png). ▶ renders fine.
+2. **Hex drops in a narrow pane** (item 8 above): checklist says it stays.
+3. Minor: clicking the ▶/❚❚ button leaves keyboard focus on the window, so K/J/L/M do nothing until the picture is
+   clicked (checklist does say "click preview then K"). After clicking ▶ on the MP3 and pressing K, playback went on.
+4. Minor (a11y): "Cannot play this file" is drawn but its UIA Text has an empty name.
+5. Minor: while a right-click menu is open the time label and picture do not update (Win32 menu loop); playback keeps
+   going underneath (audio clock), so after a long open menu the clip may have ended.
+6. Note: the volume gain is `(s * g) >> 16`, which rounds toward −∞; at very low volume a −1 LSB signal remains
+   (peak 3.4e-5 at volume 1 and 2). Inaudible, just explains why the meter does not scale at 1-5.
+
+Skipped: headphones / device change (no device changes allowed). Test config and media removed; cfg\q1 kept.
+
+#### Düzeltmeler (aynı dal, `ac1a9bb`)
+- Sona (bilinen sürenin son 0,5 sn'si) sarma ffmpeg başlatmaz: konum sonda, durur, `▶` baştan (gözden geçirme; önceden `-ss = süre` hiçbir şey vermiyor, `Cannot play this file` çıkıyordu).
+- Basılı tutulan `J`/`L` ve sarma çubuğu: konum hemen değişir, süreçler hemen gider, yenileri 150 ms dinginlikten sonra bir kez başlar (duraklatma zamanlayıcısı oynarken boş, o kullanılıyor).
+- `Session::error` UI iş parçacığında süreç başına en çok 200 ms bekler, sonra süreci bitirir (dolu boruda takılan ffmpeg UI'ı kilitlemesin).
+- Duraklat düğmesi iki çizgi olarak çizilir (`TextButton.icon`; UI yazı tipinde ❚❚ yok). Çubuk notunun (`Cannot play this file`) UIA adı var.
+- Dar bölmede Hex'in düşmesi bilerek (13b'nin dar çubuk kuralı); checklist ve notlar buna göre düzeltildi.
+- Sürüm exe'si düzeltmelerle **27.596.288 B** (13b tabanı 27.475.968 B, **+120.320 B**).
