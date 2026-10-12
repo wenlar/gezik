@@ -69,6 +69,18 @@ impl TextView {
         }
     }
 
+    /// Where it is: the top and whether it is paged (offsets mean other things then).
+    pub fn place(&self) -> ((u64, usize), bool) {
+        (self.top, matches!(self.source, Source::Paged { .. }))
+    }
+
+    /// Back to a place `place` gave, if it still means the same.
+    pub fn set_place(&mut self, (top, paged): ((u64, usize), bool)) {
+        if paged == matches!(self.source, Source::Paged { .. }) {
+            self.top = top;
+        }
+    }
+
     /// Wrap on or off; the top row's line stays.
     pub fn set_wrap(&mut self, wrap: bool) {
         self.wrap = wrap;

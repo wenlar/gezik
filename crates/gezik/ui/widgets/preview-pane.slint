@@ -41,6 +41,8 @@ export struct PreviewInfo {
     // The rows from the top; `gutter` characters of line numbers or offsets before them.
     rows: [PreviewRow],
     gutter: int,
+    // The widest row in columns (sideways scrolling stops at its end).
+    max-cols: int,
     // The scroll bar: where the top is and how much shows, 0–1.
     scroll-pos: float,
     scroll-size: float,
@@ -135,7 +137,7 @@ export component PreviewPane inherits Rectangle {
                     }
                     scroll-event(event) => {
                         if event.delta-x != 0 || event.modifiers.shift {
-                            viewer.hx = root.info.wrap ? 0px : max(0px, viewer.hx - (event.delta-x != 0 ? event.delta-x : event.delta-y));
+                            viewer.hx = root.info.wrap ? 0px : clamp(viewer.hx - (event.delta-x != 0 ? event.delta-x : event.delta-y), 0px, max(0px, root.info.max-cols * viewer.cw - viewer.text-width));
                         } else if event.delta-y > 0 {
                             PreviewActions.scrolled(-max(1, round(event.delta-y / viewer.lh)));
                         } else if event.delta-y < 0 {

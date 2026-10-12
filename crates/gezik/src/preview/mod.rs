@@ -21,7 +21,7 @@ mod scroller;
 mod text;
 mod viewer;
 
-use viewer::{Room, Viewer};
+use viewer::{Place, Room, Viewer};
 
 /// How much of a text file is shown.
 pub const TEXT_BYTES: usize = 64 * 1024;
@@ -349,6 +349,9 @@ struct Inner {
     room_quick: Cell<Room>,
     /// Text and code wrap (`state.toml [preview] wrap-text`, `wrap-code`).
     wrap: Cell<(bool, bool)>,
+    /// Where the pane's viewer was when quick look opened: it goes back there (quick look
+    /// scrolls on its own).
+    pane_place: RefCell<Option<(Target, Place)>>,
 }
 
 #[derive(Clone)]
@@ -369,6 +372,7 @@ impl Preview {
             room: Cell::new((80, 40)),
             room_quick: Cell::new((80, 40)),
             wrap: Cell::new(wrap),
+            pane_place: RefCell::new(None),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
         // Its own preview, not the current window's: a viewer made while a frame is drawn says
@@ -512,9 +516,14 @@ impl Preview {
         (logical * window.window().scale_factor()).round().clamp(64.0, 1024.0) as u32
     }
 
-    fn publish(&self, mut info: PreviewInfo) {
+    fn publish(&self, info: PreviewInfo) {
+        self.publish_to(info, true);
+    }
+
+    /// Shows `info`, in this window too unless `main` is false (quick look scrolled).
+    fn publish_to(&self, mut info: PreviewInfo, main: bool) {
         self.0.viewer.borrow().fill(&mut info, self.room());
-        if let Some(window) = self.0.window.upgrade() {
+        if main && let Some(window) = self.0.window.upgrade() {
             window.set_preview(info.clone());
         }
         if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
@@ -614,6 +623,8 @@ impl Preview {
         );
         match opened {
             Ok(quick_look) => {
+                let place = self.0.viewer.borrow().place();
+                *self.0.pane_place.borrow_mut() = Some((self.0.viewer_target.borrow().clone(), place));
                 // Its viewer's events act in this window's preview.
                 let actions = quick_look.viewer_actions();
                 let here = move |f: &dyn Fn(&Preview)| {
@@ -646,6 +657,11 @@ impl Preview {
         let quick_look = self.0.quick_look.borrow_mut().take();
         if let Some(quick_look) = quick_look {
             quick_look.close();
+        }
+        if let Some((target, place)) = self.0.pane_place.take()
+            && same_item(&target, &self.0.viewer_target.borrow())
+        {
+            self.0.viewer.borrow_mut().set_place(place);
         }
         if !self.active() {
             self.release();
@@ -730,7 +746,7 @@ impl Preview {
     /// Shows the viewer's rows again (it scrolled, its room changed).
     fn redraw(&self) {
         let info = self.0.info.borrow().clone();
-        self.publish(info);
+        self.publish_to(info, !self.quick_look_open());
     }
 
     /// The viewer has `cols` × `rows` in this window or in quick look.
@@ -1085,5 +1101,19 @@ Some folders could not be read"
         assert_eq!(info.rows.row_count(), 2);
         let first = info.rows.row_data(0).unwrap();
         assert_eq!((first.number.as_str(), first.parts.row_data(0).unwrap().class), ("1", 1), "a keyword");
+    }
+
+    #[test]
+    fn the_viewer_goes_back_to_a_place_and_knows_its_widest_row() {
+        use slint::Model;
+        let text = text::TextView::from_head(Path::new("/x/a.txt"), 12, "a\nbbbb\nc\nd\n".into(), (false, false));
+        let mut viewer = Viewer { text: Some(text), hex: None };
+        let place = viewer.place();
+        viewer.scroll(2, (80, 2));
+        viewer.set_place(place);
+        let mut info = PreviewInfo::default();
+        viewer.fill(&mut info, (80, 2));
+        assert_eq!(info.rows.row_data(0).unwrap().number.as_str(), "1", "back at the top");
+        assert_eq!(info.max_cols, 4, "bbbb");
     }
 }

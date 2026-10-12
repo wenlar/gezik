@@ -84,6 +84,14 @@ impl HexView {
         self.top = 0;
     }
 
+    pub fn place(&self) -> u64 {
+        self.top
+    }
+
+    pub fn set_place(&mut self, top: u64) {
+        self.top = top.min(self.size);
+    }
+
     /// The file's length again (it may have grown or shrunk); false, and the top at the
     /// start, if it is gone.
     fn refresh_length(&mut self) -> bool {

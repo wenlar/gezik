@@ -3,6 +3,7 @@
 //! preview: what it holds goes with it.
 
 use gezik_config::shortcuts::Key;
+use gezik_core::text::display_width;
 use slint::{ModelRc, VecModel};
 
 use super::hex::HexView;
@@ -18,6 +19,9 @@ pub struct Viewer {
 
 /// Where the viewer shows: whole characters across, whole rows down.
 pub type Room = (usize, usize);
+
+/// The text view's and the hex view's places.
+pub type Place = (Option<((u64, usize), bool)>, Option<u64>);
 
 impl Viewer {
     /// Puts the rows and the bar into `info`.
@@ -39,6 +43,13 @@ impl Viewer {
             (if file { 3 } else { 0 }, Vec::new(), String::new(), "", 0, (0.0, 0.0))
         };
         info.bar = bar;
+        info.max_cols = rows
+            .iter()
+            .filter_map(|row| {
+                row.parts.last().map(|(col, text, _)| col + text.chars().map(display_width).sum::<usize>())
+            })
+            .max()
+            .map_or(0, |cols| i32::try_from(cols).unwrap_or(i32::MAX));
         info.rows = model(rows);
         info.bar_text = text.into();
         info.bar_note = note.into();
@@ -46,6 +57,20 @@ impl Viewer {
         info.wrap = self.hex.is_none() && self.text.as_ref().is_some_and(|t| t.wrap);
         info.scroll_pos = pos;
         info.scroll_size = size;
+    }
+
+    /// Where the views are (the pane keeps its place while quick look scrolls).
+    pub fn place(&self) -> Place {
+        (self.text.as_ref().map(TextView::place), self.hex.as_ref().map(HexView::place))
+    }
+
+    pub fn set_place(&mut self, (text, hex): Place) {
+        if let (Some(view), Some(place)) = (&mut self.text, text) {
+            view.set_place(place);
+        }
+        if let (Some(view), Some(place)) = (&mut self.hex, hex) {
+            view.set_place(place);
+        }
     }
 
     pub fn shown(&self) -> bool {
