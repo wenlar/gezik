@@ -391,10 +391,16 @@ fn guarded(path: &Path, sys: &System<'_>) -> bool {
     let me = sys.fold(text);
     let root = if sys.windows { me.len() <= 3 } else { me == "/" };
     let listed = sys.protected.iter().any(|p| p.to_str().is_some_and(|p| sys.fold(p) == me));
-    let home = match path.parent().and_then(Path::to_str).map(|parent| sys.fold(parent)).as_deref() {
-        Some(parent) if sys.windows => parent.len() == 8 && parent.ends_with(r":\users"),
-        Some(parent) => parent == "/home" || parent == "/users",
-        None => false,
+    // Windows paths are split by hand: off Windows (the tests) `Path` does not know `\`.
+    let home = if sys.windows {
+        me.trim_end_matches('\\')
+            .rsplit_once('\\')
+            .is_some_and(|(parent, _)| parent.len() == 8 && parent.ends_with(r":\users"))
+    } else {
+        path.parent()
+            .and_then(Path::to_str)
+            .map(|parent| sys.fold(parent))
+            .is_some_and(|p| p == "/home" || p == "/users")
     };
     root || listed || home
 }
