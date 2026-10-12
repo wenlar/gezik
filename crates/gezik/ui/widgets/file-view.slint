@@ -46,7 +46,9 @@ export struct FileRow {
 export component TagDots inherits Rectangle {
     in property <FileRow> file;
     property <color> edge: root.file.selected ? Theme.selection-foreground : Theme.foreground-muted;
-    width: root.file.dots == 0 ? 0px : 8px + (root.file.dots - 1) * 5px + (root.file.more > 0 ? more.preferred-width + 2px : 0px);
+    // Drawn from its left edge: in a row it takes the room after the name (spec 12 §5.4).
+    preferred-width: root.file.dots == 0 ? 0px : 8px + (root.file.dots - 1) * 5px + (root.file.more > 0 ? more.preferred-width + 2px : 0px);
+    min-width: self.preferred-width;
     min-height: 8px;
     Rectangle {
         x: 0;
@@ -691,11 +693,13 @@ export component FileView inherits Rectangle {
                             text: entry.file.name;
                             opacity: entry.file.cut ? 0.5 : 1;
                             vertical-alignment: center;
-                            horizontal-stretch: 1;
+                            // With dots, the name is as wide as it is and the dots follow it.
+                            horizontal-stretch: entry.file.dots > 0 ? 0 : 1;
                             overflow: elide;
                             color: entry.text-color;
                         }
                         if entry.index != root.renaming-index && entry.file.dots > 0: TagDots {
+                            horizontal-stretch: 1;
                             file: entry.file;
                         }
                         if entry.index == root.renaming-index: RenameField {
@@ -847,6 +851,7 @@ export component FileView inherits Rectangle {
                             color: tile.cell.selected ? Theme.selection-foreground : Theme.foreground;
                         }
                         if tile.index != root.renaming-index && tile.cell.dots > 0: TagDots {
+                            width: self.preferred-width;
                             x: (parent.width - self.width) / 2;
                             y: parent.height - 18px;
                             height: 10px;
