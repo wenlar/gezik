@@ -1659,6 +1659,9 @@ pub struct State {
     pub preview_open: bool,
     /// Preview pane width in logical pixels (200–600).
     pub preview_width: Option<u32>,
+    /// The preview wraps text and code (`[preview] wrap-text`, `wrap-code`; spec 13 §4.2);
+    /// `None` until first changed (text wraps, code does not).
+    pub preview_wrap: Option<(bool, bool)>,
     /// The operations panel is folded into the status bar.
     pub operations_collapsed: bool,
     /// The first close with the tray icon on said once that Gezik keeps running (9b9).
@@ -1833,6 +1836,11 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (200..=600).contains(w));
+        let wrap = |key: &str| preview.and_then(|p| p.get(key)).and_then(|v| v.as_bool());
+        let preview_wrap = match (wrap("wrap-text"), wrap("wrap-code")) {
+            (None, None) => None,
+            (text, code) => Some((text.unwrap_or(true), code.unwrap_or(false))),
+        };
         let operations_collapsed = table
             .get("operations")
             .and_then(|v| v.as_table())
@@ -1940,6 +1948,7 @@ impl State {
             result_columns,
             preview_open,
             preview_width,
+            preview_wrap,
             operations_collapsed,
             tray_told,
             batch_rename,
@@ -2000,11 +2009,15 @@ impl State {
         if let Some(columns) = &self.result_columns {
             root.insert("result-columns".into(), columns_toml(columns));
         }
-        if self.preview_open || self.preview_width.is_some() {
+        if self.preview_open || self.preview_width.is_some() || self.preview_wrap.is_some() {
             let mut preview = toml::Table::new();
             preview.insert("open".into(), toml::Value::Boolean(self.preview_open));
             if let Some(width) = self.preview_width {
                 preview.insert("width".into(), toml::Value::Integer(width.into()));
+            }
+            if let Some((text, code)) = self.preview_wrap {
+                preview.insert("wrap-text".into(), toml::Value::Boolean(text));
+                preview.insert("wrap-code".into(), toml::Value::Boolean(code));
             }
             root.insert("preview".into(), toml::Value::Table(preview));
         }
@@ -2589,6 +2602,15 @@ width = 900
         let back = State::parse(&state.to_toml());
         assert_eq!(back, state);
         assert_eq!(back.columns.unwrap()[3].key, ColumnKey::Size);
+    }
+
+    #[test]
+    fn preview_wrap_round_trips() {
+        let state = State { preview_wrap: Some((false, true)), ..State::default() };
+        assert!(state.to_toml().contains("wrap-text = false\nwrap-code = true"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(State::parse("[preview]\nwrap-code = true\n").preview_wrap, Some((true, true)));
+        assert_eq!(State::parse("[preview]\nopen = true\n").preview_wrap, None);
     }
 
     #[test]
