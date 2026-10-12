@@ -10,9 +10,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::Entry;
 use crate::batch::date::DateParts;
 use crate::layout::Span;
+use crate::meta_filter::TagKey;
 use crate::sort::{SortDir, SortKey, SortSpec, natural_cmp};
 
-/// What the list is grouped by (`views.toml` and `[view] group`). Step 12 adds `Tag`.
+/// What the list is grouped by (`views.toml` and `[view] group`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum GroupBy {
     #[default]
@@ -20,6 +21,10 @@ pub enum GroupBy {
     Type,
     Date,
     Size,
+    /// Each row's front tag (spec 12 §6.2): one group a row.
+    Tag,
+    /// Each row's stars (spec 12 §8.2): five first, then not rated.
+    Rating,
     /// A metadata field's value (spec 13 §8.2): only `groupable` fields, `taken` by year.
     Field(crate::fields::FieldId),
     /// Duplicate files' groups (spec 11 §9.3): only a duplicates search's results, never a
@@ -28,7 +33,8 @@ pub enum GroupBy {
 }
 
 impl GroupBy {
-    pub const ALL: [GroupBy; 4] = [GroupBy::None, GroupBy::Type, GroupBy::Date, GroupBy::Size];
+    pub const ALL: [GroupBy; 6] =
+        [GroupBy::None, GroupBy::Type, GroupBy::Date, GroupBy::Size, GroupBy::Tag, GroupBy::Rating];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -36,6 +42,8 @@ impl GroupBy {
             GroupBy::Type => "type",
             GroupBy::Date => "date",
             GroupBy::Size => "size",
+            GroupBy::Tag => "tag",
+            GroupBy::Rating => "rating",
             GroupBy::Field(id) => id.def().key,
             GroupBy::Duplicates => "duplicates",
         }
@@ -56,6 +64,8 @@ impl GroupBy {
             GroupBy::Type => "Type",
             GroupBy::Date => "Date",
             GroupBy::Size => "Size",
+            GroupBy::Tag => "Tag",
+            GroupBy::Rating => "Rating",
             GroupBy::Field(id) => id.def().label,
             GroupBy::Duplicates => "Duplicates",
         }
@@ -98,6 +108,9 @@ pub enum GroupKey {
     Type(String),
     Date(DateGroup),
     Size(SizeGroup),
+    Tag(TagKey),
+    /// Stars (0: not rated); `None` while on their way.
+    Rating(Option<u8>),
     Field(FieldGroup),
     /// A group of duplicate files: its place (most bytes to free first) and each file's size.
     Duplicates {
@@ -146,6 +159,10 @@ impl GroupKey {
                 SizeGroup::Folders => "Folders",
             }
             .to_owned(),
+            GroupKey::Tag(key) => key.label(),
+            GroupKey::Rating(Some(0)) => "Not Rated".to_owned(),
+            GroupKey::Rating(Some(stars)) => "★".repeat(usize::from(*stars)),
+            GroupKey::Rating(None) => TagKey::Pending.label(),
             GroupKey::Duplicates { size, .. } => crate::format_size(*size),
         }
     }
@@ -286,15 +303,30 @@ pub struct Grouping<'a> {
     pub type_name: &'a dyn Fn(&Entry) -> String,
     /// Row `i`'s group when the row, not its entry, knows it (duplicates); `None` for others.
     pub row: Option<&'a dyn Fn(usize) -> Option<GroupKey>>,
+    /// A row's front tag (spec 12 §6), for `GroupBy::Tag` and `SortKey::Tags`; `None`: none
+    /// known (every row untagged). A sort by tags that is not grouped passes `by: None` with it.
+    pub tags: Option<&'a dyn Fn(&Entry) -> TagKey>,
+    /// A row's stars (0: not rated; `None`: not read yet), for `GroupBy::Rating` and
+    /// `SortKey::Rating` (spec 12 §8.2); `None`: none known (every row not rated).
+    pub rating: Option<&'a RatingKey>,
     /// A row's field (spec 13 §8.2): `None` while on its way, `Some(None)` without a value.
     pub field: Option<&'a FieldLook<'a>>,
 }
+
+/// A row's stars (`None`: not read yet).
+pub type RatingKey = dyn Fn(&Entry) -> Option<u8>;
 
 /// What a row's field is, as far as known (`Grouping::field`).
 pub type FieldLook<'a> = dyn Fn(&Entry, crate::fields::FieldId) -> Option<Option<crate::fields::Value>> + 'a;
 
 /// Ranks below this go first in either direction (the folders' group with folders-first).
 const HALF: u32 = 1 << 31;
+/// Tag groups' places: the list's tags by their place in it, then unlisted tags by name, then
+/// no tags, then those not read yet.
+const TAG_UNLISTED: u32 = 1 << 16;
+const TAG_UNTAGGED: u32 = 1 << 30;
+/// Places from here on (a field's `No …` and `Reading properties…`) go last in either direction.
+const TAIL: u32 = HALF - 4;
 
 impl Grouping<'_> {
     /// Row `e`'s group; `None` when not grouped.
@@ -306,6 +338,8 @@ impl Grouping<'_> {
                 GroupKey::Date(self.dates.group(if self.spec.key == SortKey::Created { e.created } else { e.modified }))
             }
             GroupBy::Size => GroupKey::Size(size_group(e)),
+            GroupBy::Tag => GroupKey::Tag(self.tags.map_or(TagKey::Untagged, |key| key(e))),
+            GroupBy::Rating => GroupKey::Rating(self.rating.map_or(Some(0), |key| key(e))),
             GroupBy::Field(id) => GroupKey::Field(match self.field.and_then(|look| look(e, id)) {
                 Some(Some(value)) => FieldGroup::Value(crate::fields::group_text(id, &value)),
                 Some(None) => FieldGroup::Missing(id),
@@ -334,7 +368,9 @@ impl Grouping<'_> {
         }
         let own = matches!(
             (self.by, self.spec.key),
-            (GroupBy::Date, SortKey::Modified | SortKey::Created) | (GroupBy::Size, SortKey::Size)
+            (GroupBy::Date, SortKey::Modified | SortKey::Created)
+                | (GroupBy::Size, SortKey::Size)
+                | (GroupBy::Rating, SortKey::Rating)
         );
         if own { self.spec.dir == SortDir::Asc } else { self.spec.dir == SortDir::Desc }
     }
@@ -345,32 +381,44 @@ impl Grouping<'_> {
             && match key {
                 GroupKey::Type(_) => e.is_dir,
                 GroupKey::Size(g) => *g == SizeGroup::Folders,
-                GroupKey::Date(_) | GroupKey::Field(_) | GroupKey::Duplicates { .. } => false,
+                GroupKey::Date(_)
+                | GroupKey::Tag(_)
+                | GroupKey::Rating(_)
+                | GroupKey::Field(_)
+                | GroupKey::Duplicates { .. } => false,
             }
     }
 
     /// Each row's place among the groups, smaller first: the sort's first key. Empty when not
     /// grouped. Type names are put in natural order once all are known.
     pub fn ranks<'e>(&self, len: usize, entry: &dyn Fn(usize) -> Cow<'e, Entry>) -> Vec<u32> {
+        // Type names and unlisted tags are put in natural order once all are known: their rows
+        // hold a name's number until then (`named`).
         let mut names: HashMap<String, u32> = HashMap::new();
-        // Per row: pinned, place, and whether the place is a name's (put in order below).
         let mut rows: Vec<(bool, u32, bool)> = Vec::with_capacity(len);
+        let mut name_id = |name: String| {
+            let next = u32::try_from(names.len()).unwrap_or(u32::MAX);
+            *names.entry(name).or_insert(next)
+        };
         for i in 0..len {
             let e = entry(i);
             let Some(key) = self.key_at(i, &e) else { return Vec::new() };
             let pinned = self.pinned(&e, &key);
-            let named = matches!(key, GroupKey::Type(_) | GroupKey::Field(FieldGroup::Value(_)));
-            let place = match key {
-                GroupKey::Type(name) | GroupKey::Field(FieldGroup::Value(name)) => {
-                    let next = u32::try_from(names.len()).unwrap_or(u32::MAX);
-                    *names.entry(name).or_insert(next)
-                }
-                GroupKey::Date(g) => self.dates.place(g),
-                GroupKey::Size(g) => g as u32,
-                // After every value: `No Artist`, then the rows on their way.
-                GroupKey::Field(FieldGroup::Missing(_)) => HALF - 3,
-                GroupKey::Field(FieldGroup::Pending) => HALF - 2,
-                GroupKey::Duplicates { id, .. } => id,
+            let (place, named) = match key {
+                GroupKey::Type(name) | GroupKey::Field(FieldGroup::Value(name)) => (name_id(name), true),
+                GroupKey::Date(g) => (self.dates.place(g), false),
+                GroupKey::Size(g) => (g as u32, false),
+                GroupKey::Tag(TagKey::Listed { rank, .. }) => (rank, false),
+                GroupKey::Tag(TagKey::Unlisted(name)) => (name_id(name.into()), true),
+                GroupKey::Tag(TagKey::Untagged) => (TAG_UNTAGGED, false),
+                GroupKey::Tag(TagKey::Pending) => (TAG_UNTAGGED + 1, false),
+                // Five stars first, then fewer, then not rated, then not read yet.
+                GroupKey::Rating(stars) => (stars.map_or(6, |n| 5 - u32::from(n.min(5))), false),
+                // After every value in either direction: `No Artist`, then the rows on their
+                // way (`TAIL` below, never turned round).
+                GroupKey::Field(FieldGroup::Missing(_)) => (TAIL, false),
+                GroupKey::Field(FieldGroup::Pending) => (TAIL + 1, false),
+                GroupKey::Duplicates { id, .. } => (id, false),
             };
             rows.push((pinned, place, named));
         }
@@ -381,16 +429,19 @@ impl Grouping<'_> {
             for (rank, (_, id)) in sorted.iter().enumerate() {
                 by_id[**id as usize] = u32::try_from(rank).unwrap_or(u32::MAX);
             }
+            // Unlisted tags after the list's (at most 60).
+            let offset = if self.by == GroupBy::Tag { TAG_UNLISTED } else { 0 };
             for row in rows.iter_mut().filter(|row| row.2) {
-                row.1 = by_id[row.1 as usize];
+                row.1 = offset + by_id[row.1 as usize].min(TAG_UNTAGGED - TAG_UNLISTED - 1);
             }
         }
         let reversed = self.reversed();
         rows.into_iter()
             .map(|(pinned, place, _)| match (pinned, reversed) {
+                _ if place >= TAIL => u32::MAX - (TAIL + 1 - place),
                 (true, _) => place.min(HALF - 1),
-                (false, false) => HALF + place.min(HALF - 1),
-                (false, true) => u32::MAX - place.min(HALF - 1),
+                (false, false) => HALF + place.min(TAIL - 1),
+                (false, true) => u32::MAX - 2 - place.min(TAIL - 1),
             })
             .collect()
     }
@@ -552,8 +603,17 @@ mod tests {
             if e.is_dir { "File folder".to_owned() } else { format!("{} File", e.extension().to_uppercase()) }
         };
         let spec = SortSpec { key, dir };
-        let grouping =
-            Grouping { by: group, spec, folders_first, dates: &dates, type_name: &type_name, row: None, field: None };
+        let grouping = Grouping {
+            by: group,
+            spec,
+            folders_first,
+            dates: &dates,
+            type_name: &type_name,
+            row: None,
+            tags: None,
+            rating: None,
+            field: None,
+        };
         let mut v = entries.to_vec();
         crate::sort::sort_entries_grouped(&mut v, spec, folders_first, type_name, Some(&grouping));
         v.into_iter().map(|e| e.name).collect()
@@ -636,6 +696,8 @@ mod tests {
             dates: &dates,
             type_name: &type_name,
             row: None,
+            tags: None,
+            rating: None,
             field: None,
         };
         let rows = [file("a.png", 1, None), file("b.png", 1, None), file("c.txt", 1, None)];
@@ -673,6 +735,8 @@ mod tests {
                 dates: &dates,
                 type_name: &type_name,
                 row: Some(&row),
+                tags: None,
+                rating: None,
                 field: None,
             };
             let order = crate::sort::sort_rows_grouped(
@@ -699,6 +763,8 @@ mod tests {
             dates: &dates,
             type_name: &type_name,
             row: Some(&in_order),
+            tags: None,
+            rating: None,
             field: None,
         };
         let (spans, keys) = spans(4, &|i| rows.get(i).map(Cow::Borrowed), &grouping, &|_| false);
@@ -715,7 +781,7 @@ mod tests {
         for g in GroupBy::ALL {
             assert_eq!(GroupBy::parse(g.as_str()), Some(g));
         }
-        assert_eq!(GroupBy::parse("tag"), None, "step 12");
+        assert_eq!(GroupBy::parse("tag"), Some(GroupBy::Tag));
         assert_eq!(GroupBy::default(), GroupBy::None);
     }
 
@@ -752,6 +818,8 @@ mod tests {
                         dates: &dates,
                         type_name: &type_name,
                         row: None,
+                        tags: None,
+                        rating: None,
                         field: None,
                     };
                     let start = std::time::Instant::now();
@@ -815,6 +883,8 @@ mod tests {
                 dates: &dates,
                 type_name: &type_name,
                 row: None,
+                tags: None,
+                rating: None,
                 field: Some(&look),
             };
             let order = crate::sort::sort_rows_grouped(
@@ -843,8 +913,15 @@ mod tests {
         let (names, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Asc);
         assert_eq!(groups, ["Sezen Aksu", "Tarkan", "tarkan", "No Artist", "Reading properties…"]);
         assert_eq!(names, ["b.mp3", "c.mp3", "a.mp3", "d.txt", "e.mp3"]);
-        let (_, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Desc);
-        assert_eq!(groups, ["Reading properties…", "No Artist", "tarkan", "Tarkan", "Sezen Aksu"], "as any sort");
+        let (names, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Desc);
+        assert_eq!(
+            groups,
+            ["tarkan", "Tarkan", "Sezen Aksu", "No Artist", "Reading properties…"],
+            "none and on their way last"
+        );
+        assert_eq!(&names[3..], ["d.txt", "e.mp3"]);
+        let (_, groups) = order(GroupBy::Field(ARTIST), SortKey::Name, SortDir::Desc);
+        assert_eq!(&groups[3..], ["No Artist", "Reading properties…"], "also under another sort's descending");
         assert_eq!(GroupBy::parse("artist"), Some(GroupBy::Field(ARTIST)));
         assert_eq!(GroupBy::parse("taken"), Some(GroupBy::Field(TAKEN)));
         assert_eq!(GroupBy::parse("duration"), None, "numbers do not group (decision 25)");
@@ -881,6 +958,8 @@ mod tests {
             dates: &dates,
             type_name: &type_name,
             row: None,
+            tags: None,
+            rating: None,
             field: Some(&look),
         };
         let order = crate::sort::sort_rows_grouped(
@@ -897,5 +976,163 @@ mod tests {
         assert_eq!(sorted, ["c.mp3", "i.mp3", "s.mp3", "u.mp3", "z.mp3"], "Ç, İ, Ş, Ü before Z");
         let (a, b) = (Value::Text("Şebnem".into()), Value::Text("zeki".into()));
         assert_eq!(crate::fields::compare(Some(&a), Some(&b)), std::cmp::Ordering::Less);
+    }
+
+    /// Rows tagged by name (`""`: untagged, absent: not read), sorted by `key` and grouped by `by`.
+    fn by_tags(
+        by: GroupBy,
+        key: SortKey,
+        dir: SortDir,
+        folders_first: bool,
+        rows: &[Entry],
+    ) -> (Vec<String>, Vec<String>) {
+        use crate::meta::{Tag, TagColor};
+        use crate::meta_filter::tag_key;
+        let list = [Tag::new("Red", TagColor::Red), Tag::new("Green", TagColor::Green)];
+        let tags_of = |e: &Entry| -> Option<Vec<Tag>> {
+            let stem = e.name.split('.').next().unwrap_or_default();
+            (!stem.starts_with('?'))
+                .then(|| stem.split('+').filter(|t| !t.is_empty()).map(|t| Tag::new(t, TagColor::None)).collect())
+        };
+        let tag_fn = |e: &Entry| tag_key(tags_of(e).as_deref(), &list);
+        let dates = DateBounds::default();
+        let type_name = |_: &Entry| String::new();
+        let spec = SortSpec { key, dir };
+        let grouping = Grouping {
+            by,
+            spec,
+            folders_first,
+            dates: &dates,
+            type_name: &type_name,
+            row: None,
+            tags: Some(&tag_fn),
+            rating: None,
+            field: None,
+        };
+        let mut v = rows.to_vec();
+        crate::sort::sort_entries_grouped(&mut v, spec, folders_first, type_name, Some(&grouping));
+        let (spans, keys) = spans(v.len(), &|i| v.get(i).map(Cow::Borrowed), &grouping, &|_| false);
+        let headers = keys.iter().zip(&spans).map(|(k, s)| k.header(s.len)).collect();
+        (v.into_iter().map(|e| e.name).collect(), headers)
+    }
+
+    #[test]
+    fn rows_sort_by_their_front_tag() {
+        // Names are the tags: "Green+Red.txt" has both, ".txt" none, "?x" is not read yet.
+        let rows = [
+            file("zeta+alpha.txt", 0, None),
+            file(".b", 0, None),
+            file("Green.txt", 0, None),
+            file("?x", 0, None),
+            file("Green+Red.txt", 0, None),
+            file(".a", 0, None),
+            file("Alpha.txt", 0, None),
+            folder("Red"),
+        ];
+        let (asc, _) = by_tags(GroupBy::None, SortKey::Tags, SortDir::Asc, true, &rows);
+        assert_eq!(
+            asc,
+            ["Red", "Green+Red.txt", "Green.txt", "Alpha.txt", "zeta+alpha.txt", ".a", ".b", "?x"],
+            "folders first; the list's order, unlisted by name, untagged by name, unread last"
+        );
+        let (desc, _) = by_tags(GroupBy::None, SortKey::Tags, SortDir::Desc, false, &rows);
+        assert_eq!(
+            desc,
+            [".b", ".a", "zeta+alpha.txt", "Alpha.txt", "Green.txt", "Red", "Green+Red.txt", "?x"],
+            "turned round, unread still last"
+        );
+        let (name, _) = by_tags(GroupBy::None, SortKey::Name, SortDir::Asc, false, &rows);
+        assert_eq!(name[0], ".a", "another sort ignores the tags");
+    }
+
+    #[test]
+    fn rows_group_by_their_front_tag_once() {
+        let rows = [
+            file("Green+Red.txt", 0, None),
+            file(".x", 0, None),
+            file("Green.txt", 0, None),
+            file("beta+Zed.txt", 0, None),
+            folder("Red"),
+            file("alpha.txt", 0, None),
+        ];
+        let (names, headers) = by_tags(GroupBy::Tag, SortKey::Name, SortDir::Asc, true, &rows);
+        assert_eq!(names, ["Red", "Green+Red.txt", "Green.txt", "alpha.txt", "beta+Zed.txt", ".x"]);
+        assert_eq!(
+            headers,
+            ["● Red (2)", "● Green (1)", "● alpha (1)", "● beta (1)", "No Tags (1)"],
+            "one group a row"
+        );
+        let (_, headers) = by_tags(GroupBy::Tag, SortKey::Tags, SortDir::Desc, true, &rows);
+        assert_eq!(headers.first().map(String::as_str), Some("No Tags (1)"), "its own sort's direction");
+        let pending = [file("?a", 0, None), file("?b", 0, None)];
+        let (_, headers) = by_tags(GroupBy::Tag, SortKey::Name, SortDir::Asc, true, &pending);
+        assert_eq!(headers, ["Reading tags… (2)"], "not a false No Tags");
+    }
+
+    /// Rows rated by name (`r3…`: three stars, `u…`: not rated, `p…`: not read yet), sorted by
+    /// `key` and grouped by `by`.
+    fn by_rating(by: GroupBy, key: SortKey, dir: SortDir, rows: &[Entry]) -> (Vec<String>, Vec<String>) {
+        let rate = |e: &Entry| match e.name.as_bytes()[0] {
+            b'r' => Some(e.name.as_bytes()[1] - b'0'),
+            b'u' => Some(0),
+            _ => None,
+        };
+        let dates = DateBounds::default();
+        let type_name = |_: &Entry| String::new();
+        let spec = SortSpec { key, dir };
+        let grouping = Grouping {
+            by,
+            spec,
+            folders_first: false,
+            dates: &dates,
+            type_name: &type_name,
+            row: None,
+            tags: None,
+            rating: Some(&rate),
+            field: None,
+        };
+        let mut v = rows.to_vec();
+        crate::sort::sort_entries_grouped(&mut v, spec, false, type_name, Some(&grouping));
+        let (spans, keys) = spans(v.len(), &|i| v.get(i).map(Cow::Borrowed), &grouping, &|_| false);
+        let headers = keys.iter().zip(&spans).map(|(k, s)| k.header(s.len)).collect();
+        (v.into_iter().map(|e| e.name).collect(), headers)
+    }
+
+    #[test]
+    fn rows_sort_and_group_by_their_stars() {
+        let rows = [
+            file("r3a", 0, None),
+            file("ub", 0, None),
+            file("r5", 0, None),
+            file("pz", 0, None),
+            file("r3b", 0, None),
+            file("ua", 0, None),
+            file("r1", 0, None),
+        ];
+        let (desc, _) = by_rating(GroupBy::None, SortKey::Rating, SortDir::Desc, &rows);
+        assert_eq!(
+            desc,
+            ["r5", "r3b", "r3a", "r1", "ua", "ub", "pz"],
+            "most stars first; not rated, then unread, by name"
+        );
+        let (asc, _) = by_rating(GroupBy::None, SortKey::Rating, SortDir::Asc, &rows);
+        assert_eq!(asc, ["r1", "r3a", "r3b", "r5", "ua", "ub", "pz"], "not rated and unread last either way");
+        let (names, headers) = by_rating(GroupBy::Rating, SortKey::Name, SortDir::Asc, &rows);
+        assert_eq!(names, ["r5", "r3a", "r3b", "r1", "ua", "ub", "pz"]);
+        assert_eq!(headers, ["★★★★★ (1)", "★★★ (2)", "★ (1)", "Not Rated (2)", "Reading tags… (1)"]);
+        let (_, own) = by_rating(GroupBy::Rating, SortKey::Rating, SortDir::Desc, &rows);
+        assert_eq!(own[0], "★★★★★ (1)", "its own sort descending keeps five stars first");
+        let none = Grouping {
+            by: GroupBy::Rating,
+            spec: SortSpec::default(),
+            folders_first: false,
+            dates: &DateBounds::default(),
+            type_name: &|_: &Entry| String::new(),
+            row: None,
+            tags: None,
+            rating: None,
+            field: None,
+        };
+        assert_eq!(none.key(&rows[0]), Some(GroupKey::Rating(Some(0))), "nothing known: not rated");
     }
 }

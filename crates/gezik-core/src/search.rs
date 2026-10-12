@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::batch::date::DateParts;
 use crate::kind::Kind;
+use crate::meta_filter::TagTerm;
 
 /// Where a search looks.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -332,6 +333,14 @@ pub struct SearchSpec {
     pub flat: bool,
     /// Find duplicates (spec 11 §9): files with the same content, in groups.
     pub duplicates: bool,
+    /// Tags every item has (spec 12 §7.2); empty: no tag criterion.
+    pub tags: Vec<String>,
+    /// Items without tags only.
+    pub untagged: bool,
+    /// At least this many stars; 0: no rating criterion.
+    pub min_rating: u8,
+    /// Text the comment holds (ignoring case); empty: no comment criterion.
+    pub comment: String,
     /// A saved search's name (spec 8): the tab's title. Never written to state.toml (spec 9.2).
     pub name: Option<String>,
 }
@@ -353,6 +362,10 @@ impl SearchSpec {
             skipped: false,
             flat: false,
             duplicates: false,
+            tags: Vec::new(),
+            untagged: false,
+            min_rating: 0,
+            comment: String::new(),
             name: None,
         }
     }
@@ -373,6 +386,35 @@ impl SearchSpec {
             || self.modified != DateRange::Any
             || self.kind != KindFilter::Any
             || !self.fields.trim().is_empty()
+            || self.has_meta()
+    }
+
+    /// Whether it asks for tags, a rating or a comment: the Filters' fields, or a `tag:`,
+    /// `rating:` or `comment:` word in the name (spec 12 §7.2).
+    pub fn has_meta(&self) -> bool {
+        !self.meta_terms().is_empty()
+    }
+
+    /// The tag, rating and comment criteria: the name's words (not in a regular expression),
+    /// then the Filters' fields. Every one must hold.
+    pub fn meta_terms(&self) -> Vec<TagTerm> {
+        let mut terms = if self.name_regex { Vec::new() } else { crate::meta_filter::split(&self.pattern).1 };
+        terms.extend(self.tags.iter().map(|tag| TagTerm::Named(tag.as_str().into())));
+        if self.untagged {
+            terms.push(TagTerm::None);
+        }
+        if self.min_rating > 0 {
+            terms.push(TagTerm::MinRating(self.min_rating.min(5)));
+        }
+        if !self.comment.is_empty() {
+            terms.push(TagTerm::Comment(self.comment.as_str().into()));
+        }
+        terms
+    }
+
+    /// The name to look for, without the `tag:`, `rating:` and `comment:` words.
+    pub fn name_pattern(&self) -> String {
+        if self.name_regex { self.pattern.clone() } else { crate::meta_filter::split(&self.pattern).0 }
     }
 
     /// The number on the Filters button: the criteria and options that are not as they start.
@@ -387,6 +429,9 @@ impl SearchSpec {
             self.match_case,
             self.hidden == HiddenRule::Include,
             self.skipped,
+            !self.tags.is_empty() || self.untagged,
+            self.min_rating > 0,
+            !self.comment.is_empty(),
         ]
         .into_iter()
         .filter(|on| *on)
@@ -403,6 +448,8 @@ impl SearchSpec {
         }
         if !self.content.is_empty() {
             format!("Search: \"{}\"", self.content)
+        } else if self.pattern.trim().is_empty() && !self.tags.is_empty() {
+            format!("Tag: {}", self.tags.join(", "))
         } else if self.pattern.trim().is_empty() {
             "Search".to_owned()
         } else {
@@ -634,6 +681,37 @@ mod tests {
         assert_eq!((spec.title(), spec.crumb()), ("Duplicates".to_owned(), "Duplicates".to_owned()));
         spec.pattern = "*.jpg".into();
         assert_eq!(spec.title(), "Duplicates: *.jpg");
+    }
+
+    #[test]
+    fn tags_ratings_and_comments_are_criteria() {
+        let mut spec = SearchSpec::new(Scope::Folder("/w".into()));
+        spec.pattern = "*.jpg tag:Red rating:4".into();
+        assert_eq!(spec.name_pattern(), "*.jpg  ");
+        spec.tags = vec!["Blue".into()];
+        spec.comment = "review".into();
+        assert_eq!(
+            spec.meta_terms(),
+            [
+                TagTerm::Named("Red".into()),
+                TagTerm::MinRating(4),
+                TagTerm::Named("Blue".into()),
+                TagTerm::Comment("review".into())
+            ]
+        );
+        assert_eq!(spec.filter_count(), 2, "the tags and the comment; the typed words are the name's");
+        spec.name_regex = true;
+        assert_eq!(spec.meta_terms().len(), 2, "a regular expression has no words");
+        assert_eq!(spec.name_pattern(), "*.jpg tag:Red rating:4");
+        let mut tag = SearchSpec::new(Scope::AllDrives);
+        assert!(!tag.has_meta() && !tag.is_query());
+        tag.tags = vec!["Red".into()];
+        assert!(tag.is_query(), "a tag alone searches");
+        assert_eq!(tag.title(), "Tag: Red");
+        let mut untagged = SearchSpec::new(Scope::AllDrives);
+        untagged.untagged = true;
+        untagged.min_rating = 9;
+        assert_eq!(untagged.meta_terms(), [TagTerm::None, TagTerm::MinRating(5)]);
     }
 
     #[test]

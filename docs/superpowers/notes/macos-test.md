@@ -729,6 +729,15 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 324–331 as it
 330. **Rows and panes.** ↓↓, → / ← open and close `sub`, a second click on a folder row does too, Return on `new` opens the file compare over it (⌘R there, Esc back to the folder compare with the keyboard), ⌘C copies the selected rows' paths. Show Right: two panes open, the right goes to `/tmp/R` with `new` selected, the compare hides and the status bar says `Compare: L (2 ≠)`; click it: the compare is back as it was; Hide then ✕ on the chip: gone. Copy a file in a pane while it is hidden, then click the chip: `Files may have changed: Compare Again (F5)`.
 331. **Select Differences and memory.** Two panes on `/tmp/L` and `/tmp/R`, Tools ▸ Select Differences: the left pane selects `only`, the right `new` (what the other side lacks or has older), the status bar `Selected N on the left, M on the right`. Activity Monitor's memory before comparing a big folder (≈ 100,000 files) with its copy, with it open, and after Close: the last within 0.3 MB of the first (write the three numbers).
 
+### 12a, tag storage (no interface yet)
+
+Numbers stay as they are when branches merge (see 10b). 12a uses 340–343 as the step 12 spec decided. Gezik shows no tags yet: these checks run the tests and look in Finder. Results go to `macos-test-results.md`.
+
+340. **Tests first.** `cargo test -p gezik-core meta`, `cargo test -p gezik-platform meta`, `cargo test -p gezik-ops meta`, `cargo test -p gezik-ops tags`; paste the output. Then `cargo test -p gezik-platform meta::tests::finder_probe -- --ignored`.
+341. **Finder sees Gezik's tags.** After the probe of 340, `~/gezik-tag-probe.txt` in Finder: a red dot, and Get Info ▸ Tags lists `Gezik Probe` and `Red`; the sidebar's Red tag (or Finder's search `tag:Red`) finds it. `xattr -px com.apple.FinderInfo ~/gezik-tag-probe.txt`: its tenth byte (offset 9) is `0C`, red; `mdls -name kMDItemStarRating -name kMDItemFinderComment ~/gezik-tag-probe.txt` shows `3` and `Written by Gezik` (the comment may not show in Get Info; spec §17). Its Modified date did not change after the probe wrote the tags (`ls -l` before and after a second run).
+342. **Gezik reads Finder's tags.** In Finder, add the Green tag to `~/gezik-tag-probe.txt` (right-click ▸ Tags). Then `cargo test -p gezik-platform meta::tests::finder_wrote_green -- --ignored` passes. Write down what `xattr -px com.apple.metadata:_kMDItemUserTags ~/gezik-tag-probe.txt` prints.
+343. **exFAT stick.** With an exFAT (or FAT) USB stick mounted: `GEZIK_TEST_TAG_DIR=/Volumes/<STICK> cargo test -p gezik-platform meta::tests::a_copy_to_an_exfat_disk_keeps_its_tags -- --ignored` passes (macOS keeps the attributes in `._` files there; the test removes its copy).
+
 ### 13a, text, code and hex viewer
 
 Numbers stay as they are when branches merge. 13a uses 366–368 (step 12 has 340–364). Results go to `macos-test-results.md`. First `cargo test -p gezik-core syntax`, `cargo test -p gezik preview::`; paste the output.
@@ -736,6 +745,44 @@ Numbers stay as they are when branches merge. 13a uses 366–368 (step 12 has 34
 366. **Code in Gezik's own Quick Look.** `[system] quick-look = "gezik"` (the system panel shows its own preview). Select a `.rs` file of a few thousand lines and press Space: it is colored (keywords, strings, comments in their theme colors), line numbers on the left, and the characters line up on the Retina screen (a column of `|` stays straight). Page Down, End (the last line shows whole, at the bottom), Home, the wheel and the scroll bar move it. `W` wraps (the numbers stay on the first row of a line), `W` again unwraps; quit and start: the choice is kept (`state.toml [preview] wrap-code`). Switch to the light and dark theme: the colors are readable on both.
 367. **A 3 GB log.** Make one (`yes "$(date) a line of a log file" | head -c 3000000000 > /tmp/big.log`), select it with the preview pane open (⌥P): the first lines show at once. Click into the text and press End: the last line shows within a moment, the bar says `2.8 GB · 100%`; drag the scroll bar to the middle: lines from there (`… · 50%`). Activity Monitor's memory for Gezik: within +5 MB of before the file was selected; select another file: it goes back.
 368. **Hex.** Select a `.dylib` (e.g. `/usr/lib/libz.dylib` or any in an app's `Contents/Frameworks`): the preview shows its icon and a `Hex` button. Press Space, then `H`: hex rows `00000000  CF FA ED FE …  ....` with the offset in the bar; End goes to the last row; `H` goes back to the icon. Right-click in a text preview of the pane: `Show as Hex` and `Wrap Lines`; View ▸ Show Preview as Hex in the menu bar does the same for the selection.
+
+### 12b, tagging and tag dots
+
+Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dots on macOS from the start.
+
+344. **The picker.** Select three files in `/tmp/tags`, ⌃⌘L (and File ▸ Tags ▸ Tags…): `Tags for 3 items` over the window, the seven colours with ⌃1…⌃7 at the right. Return on Red: `✓`; Return again: none; give one file Orange in Finder first: Orange shows `–`, Return makes it `✓`. Type `Proj`, Return on `Create "Proj"`: it is added (settings.toml's `[tags] list` gains it, comments kept). Esc: one job; ⌘Z takes all of it back. VoiceOver reads a row as `Red, on all items`.
+345. **⌃1…⌃7, ⌃0.** With Mission Control's "Switch to Desktop" keys off: ⌃1 on the selection puts Red on all (`Red added to 3 items`), ⌃1 again takes it off; ⌃0 clears every tag (a rating written by 340's probe stays: `mdls -name kMDItemStarRating`). Each is one ⌘Z.
+346. **File ▸ Tags and the row menu.** File ▸ Tags lists the list's names with ⌃1…⌃7, Tags… (⌃⌘L) and Clear Tags (⌃0); a row's right-click has the same items at the end of `Tools ▸` under a greyed `Tags`, `• Red` on a row that has it. Drives and the trash have no Tags.
+347. **Finder sees them.** Tags given in Gezik show in Finder's list and Get Info with the same colours; a tag given in Finder shows as a dot in Gezik after F5. Modified dates do not change.
+348. **Dots.** List, grid and columns: up to three overlapping dots after the name (under it in the grid), `+2` past three, a ring for a tag without colour; on a selected row each dot has a white edge. View ▸ Tag Dots off: no dots and settings.toml says `dots = false`.
+
+### 12c, Tags column, sort, group and filter
+
+349. **Tags column.** Right-click the list's header ▸ Show Tags: a Tags column after Size with each row's tag names (`Red, Proj`); it is off in a fresh config. A click on its header sorts by tags (▲/▼). Hide it again: settings.toml's `[[columns]]` and views.toml keep the choice.
+350. **Sort and group.** In a folder with tagged and untagged files (some tagged in Finder): the View button ▸ Sort by tags puts Red's files first, then the list's other colours in its order, then tags not in the list by name, untagged last; Descending turns it round. View ▸ Group By ▸ Tag: `● Red (3)`, `● Green (1)`, …, `No Tags (12)` last; a file with Red and Green is only under Red.
+351. **Filter.** ⌘F, type `tag:Red`: only Red files; `*.jpg tag:Red` the Red pictures; `tag:"Project X"` a tag with a space; `tag:none` the untagged; `tag:any` the tagged; `tag:red` matches Red (case does not matter).
+352. **A big folder.** `mkdir /tmp/t100k && cd /tmp/t100k && seq 1 100000 | xargs touch` (one minute), open it in Gezik, Sort by tags: the list stays usable while the status line says `Reading tags… 40,000 of 100,000`, then sorts once. Leaving the folder in the middle stops the read (Activity Monitor: Gezik's CPU drops). Write down how long 100,000 took. With name sort and no Tags column, `sudo fs_usage -w -f filesys gezik | grep getxattr` shows no reads while scrolling (dots off: View ▸ Tag Dots).
+
+### 12d, ratings and comments
+
+353. **Stars in the picker.** Select three files, ⌃⌘L: under the tags a Rating line with five stars and a Comment… line. Click the third star, Esc: the three files get ★★★ (one job: Edit ▸ Undo takes it back). Open the picker again: ★★★ shows; on files with different ratings the stars are faint. File ▸ Tags ▸ Rating ▸ ★★★★★ and right-click ▸ Tags ▸ ★★ also rate. In Terminal, `mdls -name kMDItemStarRating file` shows the stars Gezik gave.
+354. **Comment.** File ▸ Tags ▸ Comment… (or the picker's Comment… line): a question with one field; type `Ready for review`, Save. `mdls -name kMDItemFinderComment file` shows it; Finder's Get Info may not (known gap: Finder reads comments from `.DS_Store`). On two files with different comments the field starts empty with `Comments differ across 2 items`; Save without typing changes nothing, `Remove Comments` clears them; pasting 1,001 characters turns the line red and Save waits; Save with an empty field removes the comment.
+355. **Columns.** Header ▸ Show Rating and Show Comment: `★★★☆☆` and the comment's text; a click on Rating's header sorts most stars first (a second click turns it round); the Comment header does not sort. View ▸ Group By ▸ Rating: `★★★★★ (1)` … `Not Rated (12)`.
+356. **Filter.** ⌘F, `rating:3` (or `rating:>=3`): files with three stars or more; `rating:none` the unrated; `rating:any` the rated; `*.jpg rating:4 tag:Red` combines them. In search results Sort by rating says `Tags and ratings sort, group and filter folders, not search results`.
+
+### 12e, the tags sidebar and search
+
+357. **TAGS in the sidebar.** Between SEARCHES and LOCATIONS a TAGS section lists `[tags] list` with coloured dots (a tag without a colour: a ring). `[sidebar] tags = false` in settings.toml hides it; true brings it back.
+358. **A click is Spotlight.** Tag a few files Red in Finder (one in `~/Documents`, one on the Desktop). Click Red in Gezik's sidebar: a search tab titled `Tag: Red` lists them all within a second, as Finder's own sidebar tag does; the status bar ends `via Spotlight (drives it does not index are not in it)`. A middle click opens it in a new tab. The tag's menu ▸ Search this folder searches only the folder shown (no Spotlight); Filter this folder puts `tag:Red` in the filter bar.
+359. **Drop to tag.** Drag two files from the list onto Purple in the sidebar: the label says `Tag 2 items Purple`, the drop adds Purple (Finder shows it), nothing is moved; Edit ▸ Undo takes it off. Drag a file from Finder onto Green: it gets Green.
+360. **Manage the list.** On a tag's menu: Color ▸ Blue, Move up/down, Rename… (to `Urgent`), Remove from list, New tag…. settings.toml's `[tags] list` changes in place and its comments stay. Rename… says files keep the old name; Search and Retag… opens the old tag's search; select the results, ⌃⌘L: the picker has the old tag off and `Urgent` on, Esc makes one job (one ⌘Z).
+361. **Search words and Clean Up.** In the search bar (This Mac / every drive): `tag:Red rating:3` and `comment:review` use Spotlight; on a folder they walk it. Filters ▸ Tags…, Rating ▸ and Comment… do the same; saving the search writes `tags`, `min-rating`, `comment` into `[[searches]]`. File ▸ Tags ▸ Clean Up Tag Store…: with no store entries it says none are gone; with entries for deleted files (exFAT stick, `write-to-files = false`) it asks, Remove keeps `tags-store.tsv.bak`, entries of an unplugged stick stay.
+
+### 12f, highlight rules
+
+362. **Rules color rows.** Uncomment the four `[[highlight-rules]]` examples in settings.toml and save: `.tmp`/`.bak` files turn gray, folders changed today green, files tagged Red have a bold name, big unrated files orange, at once and in the list, grid and column views and in search results. A wrong rule (`min-size = "lots"`) shows a notice naming `highlight-rules[n]` and the others keep working.
+363. **Dark theme and selection.** Switch System Settings ▸ Appearance to Dark: the named colors become lighter shades, the folder rule uses its `dark-color`. Select a colored row: its text keeps the color where it reads on the selection, else it is the selection's white; bold stays. Bold names are crisp on Retina.
+364. **Only when asked.** With only the `name`/`kind` rules (no `tag`/`rating`/`comment`) and tag dots and columns off, a 10,000-file folder scrolls as before (Activity Monitor: no extra CPU). With the `tag` rule, tag a file Red in Finder: its name turns bold after the row is read, with no other rule's color flashing first.
 
 ### 13b, PDF pages and zoom
 
@@ -774,7 +821,7 @@ Numbers stay as they are when branches merge. 13a uses 366–368 (step 12 has 34
 
 385. **Search by properties.** ⌘⇧F in a music folder, type `*.mp3`, then Filters ▸ `Properties…`: type `art` and the note under the field offers `artist, album-artist`; type `artist:x duration>3m` (an artist of yours) and OK. Only that artist's songs longer than 3 minutes show; Filters shows `Properties… (artist:x duration>3m)` and its count. `duration>3x` in the box shows the error and OK does nothing. Save search…: `settings.toml` gets `where = "artist:x duration>3m"`; the sidebar's entry runs it again. Filters ▸ Clear filters drops it.
 386. **Name from tags.** Select a few tagged MP3s ▸ Batch Rename ▸ + Add rule ▸ Template; `Fields ▾` ▸ Music ▸ Track puts `{track}` at the end of the field: make it `{track:02} {artist} - {title}`. Within a moment (`reading properties…` in the footer) the new names are `03 Çiğdem Öztürk - Ağıt Şarkısı.mp3`-like; Rename does it. A song without an artist gets ⚠ and the footer says `1 name with an empty field`; `{artist|Unknown}` names it `Unknown`. An artist tag with `/` or `:` (edit one in Music.app to `AC/DC`) becomes `AC_DC`.
-387. **Highlight rule `where`.** Waits for step 12 (highlight rules are not in this build): skip.
+387. **Highlight rule `where`.** Not bound yet (follow-up after the 12 merge): skip.
 
 ## Known gaps (not bugs)
 

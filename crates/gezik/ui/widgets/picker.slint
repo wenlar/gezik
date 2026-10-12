@@ -8,6 +8,13 @@ export struct PickRow {
     tag: string,
     keys: string,
     bold: bool,
+    // The tag picker (tags.rs): the tag's colour (transparent: none, a ring) and whether the
+    // items have it: 2 all, 1 some, 0 none; -1 on any other line (no dot, no mark).
+    dot: color,
+    check: int,
+    // The tag picker's Rating line (12d): the stars shown, 0–5, 6 when the items differ (five
+    // faint hollow stars); -1 on any other line.
+    stars: int,
 }
 
 // The tab picker (tab_tools.rs) and the command palette / quick open (palette.rs): the lines
@@ -25,6 +32,8 @@ export component Picker inherits Rectangle {
     // The field's text changed (typed, not set).
     callback edited(string);
     callback chosen(int);
+    // Star n (1–5) of the Rating line clicked.
+    callback starred(int);
 
     property <length> row-height: Theme.row-height * 1.7;
     // At most this many rows show; more scroll.
@@ -106,7 +115,7 @@ export component Picker inherits Rectangle {
                     border-radius: Theme.radius;
                     background: i == root.current ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
                     accessible-role: list-item;
-                    accessible-label: row.title;
+                    accessible-label: row.title + (row.check == 2 ? ", on all items" : row.check == 1 ? ", on some items" : "");
                     accessible-item-selectable: true;
                     accessible-item-selected: i == root.current;
                     accessible-action-default => { root.chosen(i); }
@@ -114,6 +123,35 @@ export component Picker inherits Rectangle {
                         padding-left: Theme.spacing * 1.5;
                         padding-right: Theme.spacing * 1.5;
                         spacing: Theme.spacing;
+                        // A tag line: whether the items have it (✓ all, – some), then its colour (○ none).
+                        if row.check >= 0: HorizontalLayout {
+                            width: Theme.font-size * 2.5;
+                            Text {
+                                width: Theme.font-size * 1.2;
+                                vertical-alignment: center;
+                                text: row.check == 2 ? "✓" : row.check == 1 ? "–" : "";
+                                color: i == root.current ? Theme.selection-foreground : Theme.foreground;
+                            }
+                            Text {
+                                vertical-alignment: center;
+                                text: row.dot == transparent ? "○" : "●";
+                                color: row.dot == transparent ? (i == root.current ? Theme.selection-foreground : Theme.foreground-muted) : row.dot;
+                            }
+                        }
+                        if row.stars >= 0: HorizontalLayout {
+                            for n in 5: Text {
+                                vertical-alignment: center;
+                                text: n < row.stars && row.stars <= 5 ? "★" : "☆";
+                                opacity: row.stars > 5 ? 0.45 : 1;
+                                color: i == root.current ? Theme.selection-foreground : Theme.foreground;
+                                accessible-role: button;
+                                accessible-label: (n + 1) + " stars";
+                                accessible-action-default => { root.starred(n + 1); }
+                                TouchArea {
+                                    clicked => { root.starred(n + 1); }
+                                }
+                            }
+                        }
                         VerticalLayout {
                             alignment: center;
                             Text {
@@ -149,6 +187,8 @@ export component Picker inherits Rectangle {
                         }
                     }
                     touch := TouchArea {
+                        // The Rating line's stars take their own clicks (they are under it).
+                        enabled: row.stars < 0;
                         clicked => { root.chosen(i); }
                         // The wheel scrolls the list.
                         scroll-event(event) => {

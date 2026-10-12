@@ -180,7 +180,7 @@ fn normalize_absolute(wide: &[u16]) -> Option<Vec<u16>> {
 /// The entry's volume serial and file id (the last part not followed, the folders on the way
 /// are), for `same_entry`: the 128-bit id (FileIdInfo, unique on ReFS too), else the 64-bit
 /// index where the file system knows no FileIdInfo (FAT). A serial or id of 0 is no id.
-pub(super) fn entry_id(path: &Path) -> io::Result<(u64, u128)> {
+pub(crate) fn entry_id(path: &Path) -> io::Result<(u64, u128)> {
     use windows::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FileIdInfo, GetFileInformationByHandle,
         GetFileInformationByHandleEx,

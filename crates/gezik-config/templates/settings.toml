@@ -34,10 +34,10 @@ reduce-motion = false
 # How folders look. A folder you change keeps its own view; "Apply to all folders"
 # in the View menu writes mode, sort, sort-dir, grid-size and group here.
 mode = "list"          # list | grid | columns
-sort = "name"          # name | modified | created | type | size
+sort = "name"          # name | modified | created | type | size | tags | rating
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
-group = "none"         # none | type | date | size: the list's groups when a folder has no view of its own
+group = "none"         # none | type | date | size | tag | rating: the list's groups when a folder has no view of its own
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
 folder-sizes = "off"      # sizes of the folders shown: off (only when asked) | local (not on network folders) | all
 thumbnails = true      # pictures and videos show a preview in the grid
@@ -132,6 +132,8 @@ hotkey = ""
 # OneDrive, iCloud Drive, Dropbox, Google Drive … under CLOUD, found by Gezik. Rows in these
 # folders show whether a file is only in the cloud either way.
 cloud = true
+# TAGS: your [tags] list, a click shows the files with that tag (macOS: Spotlight).
+tags = true
 # The sidebar's folder tree opens down to the folder shown, as Explorer's "Expand to open
 # folder" (each closed folder above it is read once). Off: Show in Sidebar Tree does it once.
 tree-follow = false
@@ -139,6 +141,23 @@ tree-follow = false
 [panes]
 # F5/F6 ask before copying or moving to the other pane (its folder can be changed there).
 confirm = true
+
+[tags]
+# Your tags, in order: the first seven get the keys Alt+Shift+1…7 (macOS ⌃1…⌃7).
+# color: red, orange, yellow, green, blue, purple, gray or none.
+list = [
+  { name = "Red", color = "red" },
+  { name = "Orange", color = "orange" },
+  { name = "Yellow", color = "yellow" },
+  { name = "Green", color = "green" },
+  { name = "Blue", color = "blue" },
+  { name = "Purple", color = "purple" },
+  { name = "Gray", color = "gray" },
+]
+# false: keep every tag in Gezik's own store, never in the files (read when Gezik starts).
+write-to-files = true
+# Tag dots beside names: "auto" (macOS: on; else on once you tag a file), true or false.
+dots = "auto"
 
 [preview]
 # The preview pane and Quick Look show a file's properties under its facts (camera, artist,
@@ -246,6 +265,11 @@ properties = true
 # move-to = ""   # Move To…: the same, moving
 # split-file = ""   # Split File…: the selected file into .001, .002… parts and a .crc
 # join-files = ""   # Join Files: the parts of the selected .001 (or .crc) into one file, checked by CRC
+# tags = "ctrl+shift+l"   # Tags…: the tag picker for the selection; macOS: "mod+ctrl+l"
+# tag-1 = "alt+shift+1"    # the first tag of [tags] list on (or, when all have it, off) the selection; tag-2 … tag-7 likewise; macOS: "ctrl+1"
+# clear-tags = "alt+shift+0"   # takes every tag off the selection; macOS: "ctrl+0"
+# edit-comment = ""        # Comment…: asks for the selection's comment (no key by default)
+# clean-tag-store = ""     # Clean Up Tag Store…: removes, when you say so, entries of files that are gone
 # preview-hex = ""  # Show Preview as Hex: the selected file's bytes in the preview, or back to its text or picture
 # preview-play = ""  # Play/Pause Preview: the selected video or sound file plays in the preview, or pauses
 
@@ -280,9 +304,12 @@ properties = true
 # keys are the search bar's: pattern (the filter's language), content (text in files),
 # name-regex, content-regex, match-case, hidden, skipped (true or false), size-min, size-max
 # ("500 MB"), modified (today | 7d | 30d | year | 2026-01-01..2026-06-30) and type (files |
-# folders | pictures | videos | audio | documents | archives | code). where takes property
-# words, as the filter bar does ("artist:tarkan duration>3m"; only files with a reader for a
-# field are read). duplicates = true finds duplicate files instead (Find Duplicates). At most 30.
+# folders | pictures | videos | audio | documents | archives | code). duplicates = true finds
+# duplicate files instead (Find Duplicates). tags = ["Red"] (every one), untagged = true,
+# min-rating = 4 (stars) and comment = "review" (text in the comment) look at the tags; pattern
+# may say them too (tag:Red rating:4 comment:review). where takes property words, as the filter
+# bar does ("artist:tarkan duration>3m"; only files with a reader for a field are read). At
+# most 30.
 # [[searches]]
 # name = "Large videos"
 # folder = "{home}"
@@ -314,7 +341,7 @@ properties = true
 # cloud) and by content ("pictures >= 50%" of the items shown; pictures, videos, audio,
 # documents, archives, code or folders); with more than one, all must match. Search results
 # match by kind only. A rule sets mode (list | grid | columns), sort, sort-dir, group, grid-size and
-# columns (modified, created, type, size; name always shows); what it leaves out stays
+# columns (modified, created, type, size, tags, rating, comment; name always shows); what it leaves out stays
 # [view]'s. A rule with a mistake is reported and left out.
 # [[view-rules]]
 # path = "{pictures}/**"
@@ -335,6 +362,34 @@ properties = true
 # sort = "modified"
 # sort-dir = "desc"
 # group = "date"
+
+# Highlight rules: the first rule that matches a row colors its text and/or makes its name
+# bold (Total Commander's color rules); at most 64. Conditions, all of which must hold:
+# name (patterns as in a filtered copy: "*.tmp *.bak | keep*", "node_modules/" for folders),
+# kind (folder, file, pictures, videos, audio, documents, archives, code), newer-than and
+# older-than ("12h", "7d", "2w", "3m", "1y"; the modified time), min-size and max-size
+# ("100 MB"), hidden (true or false), tag (a name, "any" or "none"), rating (0: not rated;
+# n: at least n stars), comment ("any" or a text it holds). Looks: color (red, orange,
+# yellow, green, blue, purple, gray or "#rrggbb"), dark-color (the dark theme's), bold.
+# Tags, ratings and comments are read only while a rule asks for them.
+# [[highlight-rules]]
+# name = "*.tmp *.bak ~*"
+# color = "gray"
+#
+# [[highlight-rules]]
+# tag = "Red"
+# bold = true
+#
+# [[highlight-rules]]
+# kind = "folder"
+# newer-than = "1d"
+# color = "#2e7d32"
+# dark-color = "#81c784"
+#
+# [[highlight-rules]]
+# min-size = "1 GB"
+# rating = 0
+# color = "orange"
 
 # Your own commands, shown in the Convert layer under "Commands" and in the right-click
 # menu under "Commands >" (only for files that match "types"). No shell is used: "run" is a

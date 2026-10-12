@@ -79,6 +79,7 @@ impl Visit for Collect {
                 || item.is_link
                 || item.size == 0
                 || !self.query.passes(&item.name, false, item.size, item.modified)
+                || !self.query.passes_meta(|| dir.join(&item.name))
                 || !self.query.passes_fields(&item.name, false, |want| {
                     crate::query::field_reader(&dir.join(&item.name), &self.cancel)(want)
                 })

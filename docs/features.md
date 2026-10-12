@@ -10,6 +10,7 @@
 - [Search](#search)
 - [Tools](#tools)
 - [Export list](#export-list)
+- [Tags](#tags)
 - [System integration](#system-integration)
 
 ## File operations
@@ -345,6 +346,13 @@ limit and the queue (under [File operations](#file-operations)); and the
 ## Export list
 
 Tools ▸ Export list… (right-click a row or the background; the palette's `Export List…`; Tools on the macOS menu bar) writes the list the pane shows, sorted and filtered as it is, to a file or the clipboard. The name's extension picks the format: `.txt` (one name, or with "Full paths in text" one path, per line), `.csv` (the columns shown plus Path, sizes in bytes and ISO dates; on Windows the system's list separator, `;` in Turkish, and a BOM so Excel reads it as UTF-8) or `.html` (one page, light and dark). With a selection, only the selected items go unless you untick the box. Search results and the flat view export their folders too; for the files in subfolders use the flat view first. Saving is a normal operation: a taken name asks, Ctrl+Z (⌘Z) removes the file.
+
+## Tags
+
+- **Tags, ratings and comments** live in the files themselves (NTFS streams on Windows, Finder's and Dolphin's extended attributes on macOS and Linux), so Finder and Dolphin see them; drives that keep none (FAT, exFAT) use Gezik's own store. Copies, moves and undo carry them.
+- **Tagging:** Ctrl+Shift+L (⌃⌘L) opens the picker for the selection (tags, stars, `Comment…`); Alt+Shift+1…7 (⌃1…⌃7) toggle the first seven tags of `[tags] list`. Tag dots beside names, Tags, Rating and Comment columns, sorting and grouping by tag or rating.
+- **Finding:** `tag:Red`, `rating:4`, `comment:review` in the filter bar and the search bar; the sidebar's TAGS section searches a tag (Spotlight on macOS), takes dropped files and manages the list.
+- **Highlight rules:** `[[highlight-rules]]` in settings.toml color rows and make names bold by name pattern, kind, age, size, hidden, tag, rating or comment; the first matching rule wins. Tags are read for them only while a rule asks. Commented examples are in settings.toml.
 
 ## System integration
 

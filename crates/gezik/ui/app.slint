@@ -73,6 +73,11 @@ export component AppWindow inherits Window {
     in property <[MenuEntry]> bar-tab-sets;
     // The Window menu's list of the open windows (10g): choosing one brings it forward.
     in property <[MenuEntry]> bar-windows;
+    // File ▸ Tags (spec 12 §5.3): the tags of `[tags] list` (id: the place in the list; the
+    // first seven's keys ⌃1…⌃7 in the title: the window takes them).
+    in property <[MenuEntry]> bar-tags;
+    // View ▸ Tag Dots' mark.
+    in-out property <bool> view-tag-dots;
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
@@ -94,6 +99,29 @@ export component AppWindow inherits Window {
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
             MenuItem { title: "Eject"; shortcut: root.menu-keys ? @keys(Control + E) : @keys(); activated => { root.menu-command("eject"); } }
+            Menu {
+                title: "Tags";
+                for entry in root.bar-tags: MenuItem {
+                    title: entry.title;
+                    activated => { root.menu-command("tag:" + entry.id); }
+                }
+                MenuSeparator { }
+                MenuItem { title: "Tags…"; shortcut: root.menu-keys ? @keys(Control + Meta + L) : @keys(); activated => { root.menu-command("tags"); } }
+                MenuItem { title: "Clear Tags"; shortcut: root.menu-keys ? @keys(Meta + "0") : @keys(); activated => { root.menu-command("clear-tags"); } }
+                MenuSeparator { }
+                Menu {
+                    title: "Rating";
+                    MenuItem { title: "None"; activated => { root.menu-command("rating:0"); } }
+                    MenuItem { title: "★"; activated => { root.menu-command("rating:1"); } }
+                    MenuItem { title: "★★"; activated => { root.menu-command("rating:2"); } }
+                    MenuItem { title: "★★★"; activated => { root.menu-command("rating:3"); } }
+                    MenuItem { title: "★★★★"; activated => { root.menu-command("rating:4"); } }
+                    MenuItem { title: "★★★★★"; activated => { root.menu-command("rating:5"); } }
+                }
+                MenuItem { title: "Comment…"; activated => { root.menu-command("edit-comment"); } }
+                MenuSeparator { }
+                MenuItem { title: "Clean Up Tag Store…"; activated => { root.menu-command("clean-tag-store"); } }
+            }
             MenuSeparator { }
             MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
             MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? @keys(Control + Shift + Backspace) : @keys(); activated => { root.menu-command("empty-trash"); } }
@@ -136,6 +164,8 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Type"; activated => { root.menu-command("group-type"); } }
                 MenuItem { title: "Date"; activated => { root.menu-command("group-date"); } }
                 MenuItem { title: "Size"; activated => { root.menu-command("group-size"); } }
+                MenuItem { title: "Tag"; activated => { root.menu-command("group-tag"); } }
+                MenuItem { title: "Rating"; activated => { root.menu-command("group-rating"); } }
                 MenuItem { title: "Property…"; activated => { root.menu-command("group-property"); } }
             }
             MenuItem { title: "Sort by Property…"; activated => { root.menu-command("sort-property"); } }
@@ -155,6 +185,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Calculate Folder Sizes"; activated => { root.menu-command("calculate-folder-sizes"); } }
             MenuItem { title: "Show in Sidebar Tree"; activated => { root.menu-command("reveal-in-tree"); } }
+            MenuItem { title: "Tag Dots"; checkable: true; checked <=> root.view-tag-dots; activated => { root.menu-command("tag-dots"); } }
             MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
             MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
             MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
@@ -448,6 +479,9 @@ export component AppWindow inherits Window {
     in-out property <length> col-size;
     in-out property <length> col-folder;
     in-out property <length> col-match;
+    in-out property <length> col-tags;
+    in-out property <length> col-rating;
+    in-out property <length> col-comment;
     callback header-clicked(int, int);
     // Right-click on the column header, at a window position.
     callback header-menu(int, length, length);
@@ -732,6 +766,8 @@ export component AppWindow inherits Window {
     in property <int> tp-current;
     callback tp-edited(string);
     callback tp-chosen(int);
+    // A star of the tag picker's Rating line (12d).
+    callback tp-starred(int);
 
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
@@ -1027,6 +1063,9 @@ export component AppWindow inherits Window {
                             col-size <=> root.col-size;
                             col-folder <=> root.col-folder;
                             col-match <=> root.col-match;
+                            col-tags <=> root.col-tags;
+                            col-rating <=> root.col-rating;
+                            col-comment <=> root.col-comment;
                             sheet-x: sheet-place.x;
                             sheet-y: sheet-place.y;
                             sheet-width: sheet-place.width;
@@ -1628,6 +1667,7 @@ export component AppWindow inherits Window {
             current: root.tp-current;
             edited(text) => { root.tp-edited(text); }
             chosen(i) => { root.tp-chosen(i); }
+            starred(n) => { root.tp-starred(n); }
         }
         if root.info-open: InfoLayer {
             x: 0;

@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::time::SystemTime;
 
 use crate::Entry;
+use crate::meta_filter::TagKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SortKey {
@@ -19,11 +20,23 @@ pub enum SortKey {
     Folder,
     /// A metadata field (spec 13 §8.2): from `Grouping::field`, rows without a value last.
     Field(crate::fields::FieldId),
+    /// Each row's front tag (spec 12 §6.2): from `Grouping::tags`, none without it.
+    Tags,
+    /// Each row's stars (spec 12 §8.2): from `Grouping::rating`, none without it.
+    Rating,
 }
 
 impl SortKey {
     /// A folder's sort keys; `Folder` is the search results' own.
-    pub const ALL: [SortKey; 5] = [SortKey::Name, SortKey::Modified, SortKey::Created, SortKey::Type, SortKey::Size];
+    pub const ALL: [SortKey; 7] = [
+        SortKey::Name,
+        SortKey::Modified,
+        SortKey::Created,
+        SortKey::Type,
+        SortKey::Size,
+        SortKey::Tags,
+        SortKey::Rating,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -34,6 +47,8 @@ impl SortKey {
             SortKey::Size => "size",
             SortKey::Folder => "folder",
             SortKey::Field(id) => id.def().key,
+            SortKey::Tags => "tags",
+            SortKey::Rating => "rating",
         }
     }
 
@@ -311,6 +326,11 @@ enum Primary {
     Size(u64),
     // Type name key, then the lowercase extension (spans of the key buffer: no string a row).
     Type((u32, u32), (u32, u32)),
+    // The front tag: its place (listed tags first, then unlisted by name, then untagged), and
+    // an unlisted one's name key.
+    Tag(u32, (u32, u32)),
+    // Stars; 0: not rated.
+    Rating(u8),
 }
 
 /// Sorts `entries` by `spec` (see [`sort_order`]). Returns where each entry came from: entry
@@ -416,8 +436,18 @@ pub fn sort_rows_grouped<'e, 'a>(
         (start, buf.len() as u32)
     };
     // Folders whose size is on their way go last in either direction (spec 6.3); so do rows
+    // whose tags or rating are (spec 12 §3.4). In a rating sort the rows not rated go last too,
+    // before those not read, both by name whatever the direction (12d screen test). So do rows
     // whose field is on its way or has no value (spec 13 §8.2).
-    let last = |e: &Entry| spec.key == SortKey::Size && e.size_pending();
+    let tags = group.and_then(|g| g.tags).filter(|_| spec.key == SortKey::Tags);
+    let ratings = group.and_then(|g| g.rating).filter(|_| spec.key == SortKey::Rating);
+    let last = |e: &Entry, key: Option<&TagKey>, stars: Option<Option<u8>>| -> u8 {
+        match stars {
+            Some(None) => 2,
+            Some(Some(0)) => 1,
+            _ => u8::from((spec.key == SortKey::Size && e.size_pending()) || key == Some(&TagKey::Pending)),
+        }
+    };
     let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder | SortKey::Field(_));
     let field = match spec.key {
         SortKey::Field(id) => Some((id, group.and_then(|g| g.field))),
@@ -429,12 +459,15 @@ pub fn sort_rows_grouped<'e, 'a>(
     let mut texts: Vec<(u32, u32)> = Vec::with_capacity(if field.is_some() { len } else { 0 });
     // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
     // column's value when it is not the row's text.
-    let mut kinds: Vec<(bool, bool)> = Vec::with_capacity(len);
+    let mut kinds: Vec<(bool, u8)> = Vec::with_capacity(len);
     let mut keys: Vec<Primary> = Vec::with_capacity(if keyed { len } else { 0 });
     for i in 0..len {
         let e = entry(i);
+        let tag = tags.map(|key| key(&e));
+        let stars = ratings.map(|key| key(&e));
         let value = field.map(|(id, look)| look.and_then(|look| look(&e, id)).flatten());
-        kinds.push((e.is_dir, last(&e) || value.as_ref().is_some_and(Option::is_none)));
+        let after = u8::from(value.as_ref().is_some_and(Option::is_none));
+        kinds.push((e.is_dir, last(&e, tag.as_ref(), stars).max(after)));
         if let Some(value) = value {
             match value {
                 Some(crate::fields::Value::Text(text)) => {
@@ -456,6 +489,12 @@ pub fn sort_rows_grouped<'e, 'a>(
             SortKey::Type => {
                 Some(Primary::Type(push(&type_name(&e), false), push(&e.extension().to_lowercase(), true)))
             }
+            SortKey::Tags => Some(match tag.unwrap_or(TagKey::Untagged) {
+                TagKey::Listed { rank, .. } => Primary::Tag(rank, (0, 0)),
+                TagKey::Unlisted(name) => Primary::Tag(u32::MAX - 1, push(&name, false)),
+                TagKey::Untagged | TagKey::Pending => Primary::Tag(u32::MAX, (0, 0)),
+            }),
+            SortKey::Rating => Some(Primary::Rating(stars.flatten().unwrap_or(0))),
         });
     }
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
@@ -475,6 +514,7 @@ pub fn sort_rows_grouped<'e, 'a>(
                     (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
                         span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))
                     }
+                    (Primary::Tag(ra, na), Primary::Tag(rb, nb)) => ra.cmp(rb).then_with(|| span(*na).cmp(span(*nb))),
                     (pa, pb) => pa.cmp(pb),
                 },
             };
@@ -483,7 +523,8 @@ pub fn sort_rows_grouped<'e, 'a>(
                 .then_with(|| name(i).cmp(name(j)))
                 .then_with(|| folder(i).cmp(folder(j)))
                 .then_with(|| i.cmp(&j));
-            if spec.dir == SortDir::Desc { order.reverse() } else { order }
+            let by_name = spec.key == SortKey::Rating && a_last > 0;
+            if spec.dir == SortDir::Desc && !by_name { order.reverse() } else { order }
         })
     };
     // Two sorts so the plain one keeps its comparison as it was.

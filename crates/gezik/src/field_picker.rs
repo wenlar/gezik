@@ -191,6 +191,9 @@ impl FieldPicker {
                     tag: if on && purpose == Purpose::Columns { "Shown" } else { "" }.into(),
                     keys: "".into(),
                     bold: on,
+                    dot: slint::Color::default(),
+                    check: -1,
+                    stars: -1,
                 }
             })
             .collect();

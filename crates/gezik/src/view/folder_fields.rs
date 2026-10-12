@@ -16,11 +16,10 @@ use gezik_core::Entry;
 use gezik_core::field_filter::{FieldTerm, matches};
 use gezik_core::fields::{self, FieldId, FieldSet, Fields, Value};
 use gezik_core::group::GroupBy;
-use gezik_core::pattern::Pattern;
 use gezik_core::sort::SortKey;
 
 use super::View;
-use super::listing::{Listing, filtered_with};
+use super::listing::Listing;
 
 /// Progress is said at most this often.
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
@@ -256,21 +255,12 @@ impl View {
         }
     }
 
-    /// What `pattern` and the property words `terms` let through of `full` (the entries of
-    /// `dir`); rows whose fields are on their way pass.
-    pub(super) fn filter_files(
-        &self,
-        dir: &Path,
-        full: &Rc<Vec<Entry>>,
-        pattern: &Pattern,
-        terms: &[FieldTerm],
-    ) -> (Listing, Option<Vec<usize>>) {
-        if terms.is_empty() {
-            return filtered_with(dir, full, pattern, None);
-        }
-        let known = self.0.data.borrow().folder_fields.clone().filter(|f| f.dir == dir);
-        let keep = |e: &Entry| known.as_ref().and_then(|f| f.of(&e.name)).is_none_or(|v| matches(terms, &v));
-        filtered_with(dir, full, pattern, Some(&keep))
+    /// Whether a row of `dir` passes the property words `terms` (`filter_files`); rows whose
+    /// fields are on their way pass.
+    pub(super) fn field_filter(&self, dir: &Path, terms: &[FieldTerm]) -> impl Fn(&Entry) -> bool + use<> {
+        let known = self.0.data.borrow().folder_fields.clone().filter(|f| f.dir == dir && !terms.is_empty());
+        let terms = terms.to_vec();
+        move |e: &Entry| known.as_ref().and_then(|f| f.of(&e.name)).is_none_or(|v| matches(&terms, &v))
     }
 }
 
@@ -377,7 +367,8 @@ mod tests {
         view.sync_folder_fields(false);
         let terms = view.filter_terms();
         let full = view.0.data.borrow().full.clone();
-        let (listing, _) = view.filter_files(Path::new("/x"), &full, &Pattern::default(), &terms);
+        let (listing, _) =
+            view.filter_files(Path::new("/x"), &full, &gezik_core::pattern::Pattern::default(), &[], &terms);
         assert_eq!(listing.len(), 2, "not read yet: shown");
         assert!(view.0.data.borrow().folder_fields.as_ref().unwrap().faint.get());
         let id = view.0.field_runs.get();

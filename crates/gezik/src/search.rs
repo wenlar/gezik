@@ -18,7 +18,7 @@ use gezik_search::content::ContentMatcher;
 use gezik_search::name::NameMatcher;
 use gezik_search::query::{Query, QueryError, QueryOptions};
 use gezik_search::results::ResultSet;
-use gezik_search::run::{Event, Running, Summary, plan_walk, send_whole, start_with};
+use gezik_search::run::{Event, Running, Summary, plan_walk, send_whole, start_adding};
 use gezik_search::walk::Walk;
 
 use crate::AppWindow;
@@ -69,6 +69,9 @@ pub fn done_text(summary: &Summary) -> String {
     };
     if summary.everything {
         text.push_str(" via Everything");
+    }
+    if summary.spotlight {
+        text.push_str(" via Spotlight (drives it does not index are not in it)");
     }
     push_unread(&mut text, summary);
     text
@@ -392,11 +395,54 @@ pub fn split_own(added: Vec<FoundPath>, own: &[PathBuf]) -> (Vec<FoundPath>, Vec
     added.into_iter().partition(|(path, _)| own.contains(path))
 }
 
+/// `spec` compiled, its tags, rating and comment read through the tag store (spec 12 §7.2).
+fn compiled(spec: &SearchSpec, options: &QueryOptions) -> Result<Query, QueryError> {
+    let mut query = Query::compile(spec, options)?;
+    if let Some(reader) = crate::tags::meta_reader().filter(|_| query.has_meta()) {
+        query.read_meta_with(reader);
+    }
+    Ok(query)
+}
+
+/// The tag store's files `query` finds on drives `walk` does not go to (USB sticks, shares:
+/// where the store is used, spec 12 §7.1), as results. Only for an every-drive search.
+fn store_extras(query: &Query, walk: &Walk) -> Vec<FoundPath> {
+    if !walk.absolute || !query.has_meta() {
+        return Vec::new();
+    }
+    let terms = query.meta_terms();
+    crate::tags::store_files(terms)
+        .into_iter()
+        .filter(|path| !walk.roots.iter().any(|root| gezik_core::ops::paths::is_within(path, root)))
+        .filter_map(|path| {
+            let meta = std::fs::symlink_metadata(&path).ok()?;
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            let size = if meta.is_file() { meta.len() } else { 0 };
+            let passes = query.passes(&name, meta.is_dir(), size, meta.modified().ok())
+                && query.passes_fields(&name, meta.is_dir(), |want| {
+                    gezik_search::query::field_reader(&path, &AtomicBool::new(false))(want)
+                });
+            passes.then(|| {
+                let entry = gezik_core::Entry {
+                    name,
+                    is_dir: meta.is_dir(),
+                    flags: 0,
+                    size,
+                    modified: meta.modified().ok(),
+                    created: meta.created().ok(),
+                };
+                (path, entry)
+            })
+        })
+        .collect()
+}
+
 /// Whether this search would find `found` (made by a job started elsewhere): its criteria,
 /// its text in files, and the walk's hidden and skip rules.
 fn search_finds(query: &Query, walk: &Walk, (path, e): &FoundPath) -> bool {
     gezik_search::everything::kept(path, &walk.roots, e.flags, &walk.rules, &std::collections::HashSet::new())
         && query.passes(&e.name, e.is_dir, e.size, e.modified)
+        && query.passes_meta(|| path.clone())
         && query.passes_fields(&e.name, e.is_dir, gezik_search::query::field_reader(path, &AtomicBool::new(false)))
         && query.content().is_none_or(|content| {
             content.reads(&e.name, e.size)
@@ -404,6 +450,20 @@ fn search_finds(query: &Query, walk: &Walk, (path, e): &FoundPath) -> bool {
                     .find_in_file(path, &AtomicBool::new(false), &gezik_platform::decode_ansi)
                     .is_ok_and(|found| found.is_some())
         })
+}
+
+/// Filters ▸ Tags…'s text: the names (commas between) and whether `none` (no tags) is one.
+pub fn parse_tag_names(text: &str) -> Result<(Vec<String>, bool), String> {
+    let (mut names, mut untagged) = (Vec::new(), false);
+    for name in text.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        if name.eq_ignore_ascii_case("none") {
+            untagged = true;
+        } else {
+            gezik_core::meta::check_tag_name(name).map_err(|err| format!("\"{name}\": {err}"))?;
+            names.push(name.to_owned());
+        }
+    }
+    Ok((names, untagged))
 }
 
 /// Where a check's verdict goes.
@@ -675,7 +735,8 @@ impl Searches {
             (draft.pattern.clone(), draft.name_regex, draft.content.clone(), draft.content_regex, draft.match_case);
         let mut last = self.0.checked.borrow_mut();
         if last.as_ref().is_none_or(|(c, _, _)| *c != checked) {
-            let name_error = NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).err();
+            // `tag:`, `rating:` and `comment:` are criteria, not names (spec 12 §7.2).
+            let name_error = NameMatcher::compile(&draft.name_pattern(), draft.name_regex, draft.match_case).err();
             let content_error = (!draft.content.is_empty())
                 .then(|| ContentMatcher::compile(&draft.content, draft.content_regex, draft.match_case, 0).err())
                 .flatten();
@@ -764,8 +825,13 @@ impl Searches {
     /// can answer at once; text in files and a scope too large for the cache wait for Enter.
     fn follow_typing(&self) {
         let draft = self.0.draft.borrow().clone();
-        // Duplicates read files: only Enter starts them.
-        if !draft.content.is_empty() || !draft.fields.trim().is_empty() || !draft.is_query() || draft.duplicates {
+        // Duplicates read files, tags and properties read each file: only Enter starts them.
+        if !draft.content.is_empty()
+            || !draft.is_query()
+            || draft.duplicates
+            || draft.has_meta()
+            || !draft.fields.trim().is_empty()
+        {
             return;
         }
         if !self.name_ok() {
@@ -1109,7 +1175,7 @@ impl Searches {
             let (mut added, mut others) = split_own(verified.added, &change.own_paths);
             if !others.is_empty() {
                 // Not made from these results: only what this search would find.
-                match Query::compile(&key.1, &QueryOptions::local(max_size, max_results)) {
+                match compiled(&key.1, &QueryOptions::local(max_size, max_results)) {
                     Ok(query) => {
                         let walk = plan_walk(&key.1, &skip, shown);
                         others.retain(|found| search_finds(&query, &walk, found));
@@ -1251,7 +1317,7 @@ impl Searches {
         }
         let settings = self.0.settings.borrow().clone();
         let options = QueryOptions::local(settings.content_max_size, settings.max_results);
-        let query = match Query::compile(&spec, &options) {
+        let query = match compiled(&spec, &options) {
             Ok(query) => query,
             Err(QueryError::Name(why) | QueryError::Content(why) | QueryError::Fields(why)) => {
                 return self.0.view.set_results_status(Some(why));
@@ -1267,9 +1333,9 @@ impl Searches {
         if spec.duplicates {
             return self.start_duplicates(spec, query, settings.skip, running, sink);
         }
-        // The name cache and its typing know no content and no properties.
-        let cache =
-            (spec.content.is_empty() && spec.fields.trim().is_empty()).then(|| self.ready_cache(&spec)).flatten();
+        // Every drive with tags: Spotlight (macOS) or the walk with the tag store's files.
+        let everywhere_tags = spec.has_meta() && spec.scope == Scope::AllDrives;
+        let cache = (spec.content.is_empty() && !everywhere_tags).then(|| self.ready_cache(&spec)).flatten();
         let flag = running.flag();
         let (shown, skip, on) = (Searches::view_shown(), settings.skip.clone(), settings.everything);
         let spawned = std::thread::Builder::new().name("gezik-search-start".into()).spawn(move || {
@@ -1280,13 +1346,21 @@ impl Searches {
                 }
                 return;
             }
+            #[cfg(target_os = "macos")]
+            if let Some(text) = gezik_search::spotlight::query_text(&spec)
+                && gezik_search::spotlight::search(&text, &query, &flag, &sink)
+            {
+                return;
+            }
             let walk = plan_walk(&spec, &skip, shown);
-            match gezik_search::everything::search(&spec, &walk, &query, on, &flag, &sink) {
+            let extra = store_extras(&query, &walk);
+            // Everything has no tag store: with its files to add, the walk adds them.
+            match gezik_search::everything::search(&spec, &walk, &query, on && extra.is_empty(), &flag, &sink) {
                 Ok(()) => {}
                 Err(gezik_search::everything::Fallback::Cancelled) => {
                     sink(Event::Done(Summary { cancelled: true, ..Summary::default() }))
                 }
-                Err(_) => start_with(walk, query, running, sink),
+                Err(_) => start_adding(walk, query, running, extra, sink),
             }
         });
         if spawned.is_err() {
@@ -1355,7 +1429,11 @@ impl Searches {
                 self.0.view.set_results_status(Some(comparing_text(scanned, files, bytes)))
             }
             Event::Done(summary) => {
-                let text = summary_text(&summary, self.0.view.results().as_deref());
+                let mut text = summary_text(&summary, self.0.view.results().as_deref());
+                if let Some(hint) = crate::tags::retag_hint() {
+                    text.push_str(" · ");
+                    text.push_str(&hint);
+                }
                 *self.0.problems.borrow_mut() = summary.problems.first.clone();
                 self.0.running.borrow_mut().take();
                 self.0.view.set_searching(false);
@@ -1517,6 +1595,7 @@ impl Searches {
             ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN | ids::SEARCH_PROPERTIES => {
                 return self.ask_criterion(id);
             }
+            ids::SEARCH_TAGS | ids::SEARCH_COMMENT => return self.ask_meta(id == ids::SEARCH_TAGS),
             ids::SAVE_SEARCH => return self.save_current(),
             id if (ids::SAVED_SEARCH_FIRST..ids::SAVED_SEARCH_DELETE_FIRST + ids::SAVED_SEARCH_MAX).contains(&id) => {
                 // By name: settings.toml may have been read again since the menu opened.
@@ -1558,6 +1637,9 @@ impl Searches {
                 id if (ids::KIND_FIRST..ids::KIND_FIRST + KindFilter::ALL.len() as u32).contains(&id) => {
                     draft.kind = KindFilter::ALL[(id - ids::KIND_FIRST) as usize];
                 }
+                id if (ids::SEARCH_RATING_FIRST..ids::SEARCH_RATING_FIRST + 6).contains(&id) => {
+                    draft.min_rating = (id - ids::SEARCH_RATING_FIRST) as u8;
+                }
                 id if (ids::OPTION_FIRST..ids::OPTION_FIRST + 5).contains(&id) => match id - ids::OPTION_FIRST {
                     0 => draft.name_regex = !draft.name_regex,
                     1 => draft.content_regex = !draft.content_regex,
@@ -1585,8 +1667,15 @@ impl Searches {
             Location::Search(shown) => *shown != *self.0.draft.borrow(),
             _ => false,
         };
-        if rerun && changed && self.0.draft.borrow().is_query() {
-            self.go(false);
+        if rerun && changed {
+            if self.0.draft.borrow().is_query() {
+                self.go(false);
+            } else {
+                // Nothing left to look for (Clear filters on a tag search): the old results
+                // and their title go, the status bar says to type something.
+                let draft = self.0.draft.borrow().clone();
+                self.0.nav.replace_location(Location::Search(Box::new(draft)));
+            }
         }
     }
 
@@ -1654,6 +1743,46 @@ impl Searches {
                         ids::SIZE_MAX => draft.size.max = parse_size(&text).ok(),
                         ids::SEARCH_PROPERTIES => draft.fields = text,
                         _ => draft.modified = DateRange::parse(&text).unwrap_or(DateRange::Any),
+                    }
+                    draft.name = None;
+                }
+                searches.criteria_changed(true);
+            },
+        );
+    }
+
+    /// Filters ▸ Tags… (`tags`) or Comment…, asked in the question box (spec 12 §7.2, sapma 1):
+    /// tags by name with commas (`none`: untagged), a comment's text.
+    fn ask_meta(&self, tags: bool) {
+        let draft = self.0.draft.borrow().clone();
+        let (title, message, initial) = if tags {
+            let mut names = draft.tags.clone();
+            if draft.untagged {
+                names.push("none".to_owned());
+            }
+            ("Tags", "Tags every item has, with commas (none: items without tags; empty: any):", names.join(", "))
+        } else {
+            ("Comment", "Text the comment holds (empty: any):", draft.comment.clone())
+        };
+        let searches = self.clone();
+        self.0.dialogs.ask_text_noted(
+            title,
+            message,
+            initial,
+            &["OK", "Cancel"],
+            move |text| match (tags, parse_tag_names(text)) {
+                (true, Err(why)) => (why, true),
+                _ => (String::new(), false),
+            },
+            move |text| {
+                let Some(text) = text else { return };
+                {
+                    let mut draft = searches.0.draft.borrow_mut();
+                    if tags {
+                        let Ok((names, untagged)) = parse_tag_names(&text) else { return };
+                        (draft.tags, draft.untagged) = (names, untagged);
+                    } else {
+                        draft.comment = text.trim().to_owned();
                     }
                     draft.name = None;
                 }
@@ -1746,6 +1875,19 @@ mod tests {
         assert_eq!(done_text(&done), "1 result in 0.1 s");
         let mut limit = Summary { found: 250_000, limit_reached: true, ..Summary::default() };
         assert!(!recounted(&mut limit, 249_999), "the limit is not a count");
+    }
+
+    #[test]
+    fn tags_are_typed_with_commas_and_none_is_untagged() {
+        assert_eq!(parse_tag_names(" Red, Project X ,, none"), Ok((vec!["Red".into(), "Project X".into()], true)));
+        assert_eq!(parse_tag_names(""), Ok((vec![], false)), "empty: any");
+        assert!(parse_tag_names(&"x".repeat(65)).is_err(), "a name the tags take");
+    }
+
+    #[test]
+    fn a_tag_search_says_spotlight_left_drives_out() {
+        let summary = Summary { found: 2, spotlight: true, ..Summary::default() };
+        assert!(done_text(&summary).ends_with("via Spotlight (drives it does not index are not in it)"));
     }
 
     #[test]

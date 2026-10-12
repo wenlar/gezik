@@ -89,7 +89,7 @@ impl TabTools {
             current: Cell::new(0),
             model,
         }));
-        // The palette shares the box (palette.rs).
+        // The palette and the tag picker share the box (palette.rs, tags.rs).
         window.on_tp_edited(|query| {
             if crate::integration::is_open() {
                 return;
@@ -99,10 +99,14 @@ impl TabTools {
             }
             if crate::palette::is_open() {
                 crate::palette::with_current(|p| p.edited(&query));
+            } else if crate::tags::is_open() {
+                crate::tags::with_current(|p| p.edited(&query));
             } else {
                 with_current(|t| t.edited(&query));
             }
         });
+        // The tag picker's stars (12d).
+        window.on_tp_starred(|n| crate::tags::with_current(|p| p.starred(u8::try_from(n).unwrap_or(0))));
         window.on_tp_chosen(|row| {
             let Ok(row) = usize::try_from(row) else { return };
             if crate::integration::is_open() {
@@ -113,6 +117,9 @@ impl TabTools {
             }
             if crate::palette::is_open() {
                 return crate::palette::with_current(|p| p.chosen(row));
+            }
+            if crate::tags::is_open() {
+                return crate::tags::with_current(|p| p.chosen(row));
             }
             with_current(|t| {
                 t.0.current.set(row);
@@ -207,7 +214,16 @@ impl TabTools {
             .iter()
             .map(|&i| {
                 let (title, path) = &tabs[i];
-                PickRow { title: title.into(), detail: path.into(), tag: "".into(), keys: "".into(), bold: i == active }
+                PickRow {
+                    title: title.into(),
+                    detail: path.into(),
+                    tag: "".into(),
+                    keys: "".into(),
+                    bold: i == active,
+                    dot: slint::Color::default(),
+                    check: -1,
+                    stars: -1,
+                }
             })
             .collect();
         self.0.model.set_vec(rows);

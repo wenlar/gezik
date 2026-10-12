@@ -117,7 +117,13 @@ impl NameCache {
                 return None;
             }
             let (name, is_dir) = (self.name(item), item.is_dir);
-            if !query.passes(name, is_dir, item.size, time(item.modified)) {
+            if !query.passes(name, is_dir, item.size, time(item.modified))
+                || !query.passes_meta(|| self.root.join(self.folder_text(item.parent)).join(name))
+                || !query.passes_fields(name, is_dir, |want| {
+                    let path = self.root.join(self.folder_text(item.parent)).join(name);
+                    crate::query::field_reader(&path, cancel)(want)
+                })
+            {
                 continue;
             }
             if entries.len() >= query.max_results() {
