@@ -107,8 +107,13 @@ component SettingLine inherits Rectangle {
     callback hovered(string);
     // The list's or System Integration's button.
     callback button();
-    // The right-click menu's item (2810 Reset to Default, 2811 Copy Key, 2812 Edit in settings.toml).
-    callback action(int);
+    // The right-click menu's item (2810 Reset to Default, 2811 Copy Key, 2812 Edit in settings.toml):
+    // 2 asks Replace? (Reset to Default's key is another's), as `key` does.
+    callback action(int) -> int;
+    // The window asks for this row: scrolled into view, its control gets the keyboard.
+    in property <bool> wanted;
+    // Scrolls the rows so that `y` to `y + height` (this row) shows.
+    callback show-me(length, length);
     // For the status line.
     callback say(string);
     // A key pressed while a shortcut waits (its text, Ctrl, Alt, Shift, Meta): 0 wait on, 1 done,
@@ -141,7 +146,10 @@ component SettingLine inherits Rectangle {
     function choose(i: int) {
         if root.menu-shown {
             root.close-lines();
-            root.action(2810 + i);
+            if root.action(2810 + i) == 2 {
+                root.ask-replace();
+                return;
+            }
         } else {
             root.write(root.lines[i]);
         }
@@ -156,6 +164,27 @@ component SettingLine inherits Rectangle {
             field.focus();
         } else {
             button.focus();
+        }
+    }
+
+    // Replace or Cancel: the key is another's.
+    function ask-replace() {
+        root.lines = ["Replace", "Cancel"];
+        root.menu-shown = false;
+        root.cursor = 0;
+        root.lines-open = true;
+    }
+
+    changed wanted => {
+        if root.wanted {
+            root.show-me(self.y, self.height);
+            root.refocus();
+        }
+    }
+    // An open list near the bottom scrolls into view.
+    changed height => {
+        if root.lines-open {
+            root.show-me(self.y, self.height);
         }
     }
 
@@ -276,10 +305,7 @@ component SettingLine inherits Rectangle {
                             button.focus();
                         } else if done == 2 {
                             root.capturing = false;
-                            root.lines = ["Replace", "Cancel"];
-                            root.menu-shown = false;
-                            root.cursor = 0;
-                            root.lines-open = true;
+                            root.ask-replace();
                         }
                         return accept;
                     }
@@ -319,6 +345,7 @@ component SettingLine inherits Rectangle {
             border-color: Theme.border;
             border-radius: Theme.radius;
             accessible-role: list;
+            accessible-label: (root.menu-shown ? "Menu of " : "Choices for ") + root.item.title;
             FocusScope {
                 init => { self.focus(); }
                 key-pressed(event) => {
@@ -334,7 +361,12 @@ component SettingLine inherits Rectangle {
                         return accept;
                     }
                     if event.text == Key.Escape {
-                        root.close-lines();
+                        // Esc on Replace? is Cancel (Rust clears the question).
+                        if root.item.kind == 5 && !root.menu-shown {
+                            root.write("Cancel");
+                        } else {
+                            root.close-lines();
+                        }
                         root.refocus();
                         return accept;
                     }
@@ -389,6 +421,8 @@ export component SettingsWindow inherits Window {
     // first `locked-rows` of them (those after, themes and backups, still work).
     in property <bool> read-only;
     in property <int> locked-rows;
+    // The row to scroll into view and give the keyboard (-1: none).
+    in property <int> focus-row: -1;
     // A refused value, a write that failed, settings.toml's error, the unknown keys.
     in-out property <string> status;
     // The status is a problem: red.
@@ -398,7 +432,7 @@ export component SettingsWindow inherits Window {
     callback commit(int, string);
     callback hovered(int, string);
     callback button(int);
-    callback row-action(int, int);
+    callback row-action(int, int) -> int;
     // A key pressed while shortcut row (the int) waits; see SettingLine.key.
     callback key(int, string, bool, bool, bool, bool) -> int;
     // Esc with no list open.
@@ -437,9 +471,10 @@ export component SettingsWindow inherits Window {
         Rectangle {
             width: 180px;
             background: Theme.chrome;
-            accessible-role: tab-list;
             // The page list is one stop of Tab; Up and Down choose a page, Enter the links.
             pages-scope := FocusScope {
+                accessible-role: tab-list;
+                accessible-label: "Settings pages: " + root.pages[root.page-cursor];
                 key-pressed(event) => {
                     if event.text == Key.DownArrow || event.text == Key.UpArrow {
                         root.page-cursor = event.text == Key.DownArrow ? min(root.page-cursor + 1, root.pages.length - 1) : max(root.page-cursor - 1, 0);
@@ -494,7 +529,7 @@ export component SettingsWindow inherits Window {
                 // Not `edited`: a screen reader's or a test's set value searches too.
                 changed text => { root.search(self.text); }
             }
-            ScrollView {
+            scroll := ScrollView {
                 content-width: self.visible-width;
                 content-height: column.preferred-height;
                 column := VerticalLayout {
@@ -506,7 +541,15 @@ export component SettingsWindow inherits Window {
                         commit(text) => { root.commit(i, text); }
                         hovered(option) => { root.hovered(i, option); }
                         button => { root.button(i); }
-                        action(id) => { root.row-action(i, id); }
+                        action(id) => { return root.row-action(i, id); }
+                        wanted: i == root.focus-row;
+                        show-me(y, height) => {
+                            if y < -scroll.content-y {
+                                scroll.content-y = -y;
+                            } else if y + height > -scroll.content-y + scroll.visible-height {
+                                scroll.content-y = -min(y, y + height - scroll.visible-height);
+                            }
+                        }
                         key(text, control, alt, shift, meta) => { return root.key(i, text, control, alt, shift, meta); }
                         say(text) => {
                             root.status = text;

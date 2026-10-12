@@ -172,7 +172,29 @@ pub(super) fn pressed(
     if row.keys == [chord] {
         return Pressed::Done(format!("{} is already {}'s key", chord_label(&chord, platform), row.title));
     }
-    let lost = settings.shortcuts.taken_by(text, to, chord, platform);
+    claim(to, &[chord], settings, text, platform, change(&row.owner, &[chord], platform))
+}
+
+/// The owner `to` takes `chords` (its change is `write`): written at once, or a Replace?
+/// question when another action or command has one of them.
+fn claim(
+    to: KeyOwner,
+    chords: &[Chord],
+    settings: &Settings,
+    text: &str,
+    platform: Platform,
+    write: Option<SettingsChange>,
+) -> Pressed {
+    // Each owner once, keeping only what it keeps of every chord.
+    let mut lost: Vec<(KeyOwner, Vec<Chord>)> = Vec::new();
+    for chord in chords {
+        for (owner, keeps) in settings.shortcuts.taken_by(text, to, *chord, platform) {
+            match lost.iter_mut().find(|(o, _)| *o == owner) {
+                Some((_, kept)) => kept.retain(|c| keeps.contains(c)),
+                None => lost.push((owner, keeps)),
+            }
+        }
+    }
     let mut changes: Vec<SettingsChange> = Vec::new();
     let mut owners: Vec<String> = Vec::new();
     for (owner, keeps) in &lost {
@@ -190,25 +212,38 @@ pub(super) fn pressed(
         });
         changes.extend(change(&owner, keeps, platform));
     }
-    changes.extend(change(&row.owner, &[chord], platform));
+    changes.extend(write);
     if owners.is_empty() {
         return Pressed::Write(changes);
     }
-    let question = format!("{} is used by {} — Replace?", chord_label(&chord, platform), owners.join(" and "));
+    let keys: Vec<String> = chords.iter().map(|c| chord_label(c, platform)).collect();
+    let used = if keys.len() == 1 { "is" } else { "are" };
+    let question = format!("{} {used} used by {} — Replace?", keys.join(", "), owners.join(" and "));
     Pressed::Ask(question, changes)
 }
 
-/// What Reset to Default writes for `row`, or why it writes nothing.
-pub(super) fn reset(row: &KeyRow, platform: Platform) -> Result<SettingsChange, &'static str> {
+/// What Reset to Default does for `row` (another's default key is asked about, as Set Key
+/// does), or why it does nothing.
+pub(super) fn reset(
+    row: &KeyRow,
+    settings: &Settings,
+    text: &str,
+    platform: Platform,
+) -> Result<Pressed, &'static str> {
     match &row.owner {
         Owner::Fixed => Err("macOS keeps this key"),
         _ if row.is_default => Err("It has its default key"),
-        Owner::Action(action) => Ok(SettingsChange::Value {
-            table: Some("shortcuts".to_owned()),
-            key: action.name().to_owned(),
-            value: Some(literal(action.default_texts(platform).iter().map(|t| (*t).to_owned()).collect())),
-        }),
-        Owner::Command(..) => change(&row.owner, &[], platform).ok_or("macOS keeps this key"),
+        Owner::Action(action) => {
+            let defaults: Vec<Chord> =
+                action.default_texts(platform).iter().filter_map(|t| parse_chord(t, platform).ok().flatten()).collect();
+            let write = SettingsChange::Value {
+                table: Some("shortcuts".to_owned()),
+                key: action.name().to_owned(),
+                value: Some(literal(action.default_texts(platform).iter().map(|t| (*t).to_owned()).collect())),
+            };
+            Ok(claim(KeyOwner::Action(*action), &defaults, settings, text, platform, Some(write)))
+        }
+        Owner::Command(..) => Ok(Pressed::Write(change(&row.owner, &[], platform).into_iter().collect())),
     }
 }
 
@@ -292,7 +327,7 @@ mod tests {
         let shown = item(quit, Platform::Mac);
         assert_eq!((shown.kind, shown.value.as_str()), (6, "⌘Q"));
         assert_eq!(pressed(quit, Some(chord("f2")), false, &mac, "", Platform::Mac), Pressed::Done(String::new()));
-        assert!(reset(quit, Platform::Mac).is_err());
+        assert!(reset(quit, &mac, "", Platform::Mac).is_err());
         let copy = rows.iter().find(|r| r.title == "Copy Path").unwrap();
         assert_eq!(item(copy, Platform::Mac).value.as_str(), "⌥⌘C");
         assert!(matches(copy, "cmd+alt"));
@@ -352,14 +387,32 @@ mod tests {
                 vec![shortcut(""), set("new-tab", "\"mod+alt+s\"")]
             )
         );
-        assert_eq!(reset(&command, OTHER), Ok(shortcut("")));
+        assert_eq!(reset(&command, &s, text, OTHER), Ok(Pressed::Write(vec![shortcut("")])));
     }
 
     #[test]
     fn reset_writes_the_defaults_in_place() {
         let s = settings("[shortcuts]\nrefresh = \"f9\"\n");
         let rows = rows(&s, OTHER);
-        assert_eq!(reset(&row(&rows, "Refresh"), OTHER), Ok(set("refresh", "[\"f5\", \"ctrl+r\"]")));
-        assert!(reset(&row(&rows, "New Tab"), OTHER).is_err(), "not written: nothing to do");
+        let text = "[shortcuts]\nrefresh = \"f9\"\n";
+        assert_eq!(
+            reset(&row(&rows, "Refresh"), &s, text, OTHER),
+            Ok(Pressed::Write(vec![set("refresh", "[\"f5\", \"ctrl+r\"]")]))
+        );
+        assert!(reset(&row(&rows, "New Tab"), &s, text, OTHER).is_err(), "not written: nothing to do");
+    }
+
+    #[test]
+    fn reset_asks_when_another_has_the_default_key() {
+        let text = "[shortcuts]\nnew-tab = \"mod+w\"\nclose-tab = \"\"\n";
+        let s = settings(text);
+        let rows = rows(&s, OTHER);
+        assert_eq!(
+            reset(&row(&rows, "Close Tab"), &s, text, OTHER),
+            Ok(Pressed::Ask(
+                "Ctrl+W is used by New Tab — Replace?".to_owned(),
+                vec![set("new-tab", "\"\""), set("close-tab", "\"mod+w\"")]
+            ))
+        );
     }
 }

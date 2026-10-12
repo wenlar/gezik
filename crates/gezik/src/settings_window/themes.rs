@@ -164,9 +164,14 @@ impl Themes {
             }
             Row::Installed(i) => {
                 let theme = &self.installed[i];
+                // Two installs of one theme (`nord`, `nord-2`) read apart, to a screen reader too.
+                let title = match theme.name.eq_ignore_ascii_case(&theme.id) {
+                    true => theme.name.clone(),
+                    false => format!("{} ({}.toml)", theme.name, theme.id),
+                };
                 (
                     1,
-                    theme.name.clone(),
+                    title,
                     format!("themes/{}.toml", theme.id),
                     "Installed".into(),
                     format!("From {} ({})", theme.address, theme.entry),
@@ -392,6 +397,8 @@ mod tests {
         assert_eq!(same.item(Row::Found(0)).value, "Installed");
         assert_eq!(same.item(Row::Installed(0)).key, "themes/nord.toml");
         assert_eq!(same.item(Row::Installed(0)).title, "Nord");
+        let two = fetched(address, &[("r/nord.toml", NORD)], &[("nord", &installed), ("nord-2", &installed)]);
+        assert_eq!(two.item(Row::Installed(1)).title, "Nord (nord-2.toml)", "told apart by the file");
 
         let newer = "name = \"Nord\"\n[colors]\naccent = \"#5e81ac\"\n";
         let update = fetched(address, &[("r/nord.toml", newer)], &[("nord", &installed), ("nord-2", "")]);

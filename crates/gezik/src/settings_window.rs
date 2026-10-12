@@ -302,7 +302,12 @@ pub fn open_shortcuts() {
 /// Opens the window at its Appearance page, where Get Theme is (`install-theme`).
 pub fn open_themes() {
     if let Some(open) = open_at(Page::Appearance) {
-        say(&open, "Paste the address in Get Theme, after the settings of this page");
+        say(&open, "Paste the address in Get Theme and press Enter");
+        let get = open.shown.borrow().theme_rows.iter().position(|r| *r == themes::Row::Get);
+        let before = open.shown.borrow().locked_rows();
+        if let Some(get) = get {
+            focus_row(&open, before + get);
+        }
     }
 }
 
@@ -312,6 +317,17 @@ pub fn open_backup(import: bool) {
         let row = if import { "Import Settings" } else { "Export Settings" };
         say(&open, &format!("Type the zip's path in {row} and press Enter"));
     }
+}
+
+/// Scrolls row `row` into view and gives its control the keyboard (once the rows are laid out).
+fn focus_row(open: &Open, row: usize) {
+    open.window.set_focus_row(-1);
+    let row = i32::try_from(row).unwrap_or(-1);
+    slint::Timer::single_shot(Duration::ZERO, move || {
+        if let Some(open) = current() {
+            open.window.set_focus_row(row);
+        }
+    });
 }
 
 fn open_at(page: Page) -> Option<Rc<Open>> {
@@ -343,6 +359,7 @@ pub fn close() {
 pub fn refresh(files: &ConfigFiles) {
     let Some(open) = current() else { return };
     with_settings(|settings| open.shown.borrow_mut().read(files, settings));
+    open.shown.borrow_mut().pick_rows();
     show_rows(&open, false);
 }
 
@@ -354,7 +371,7 @@ pub fn retheme(theme: &ResolvedTheme) {
 }
 
 /// Puts the rows in the window: all new (a page or a search) or row by row, so a field being
-/// typed in keeps its text.
+/// typed in keeps its text and the keyboard (rows that come or go are added or taken at the end).
 fn show_rows(open: &Open, new: bool) {
     let shown = open.shown.borrow();
     let keys = shown.key_rows.iter().map(|&k| shortcuts::item(&shown.keys[k], Platform::current()));
@@ -362,13 +379,19 @@ fn show_rows(open: &Open, new: bool) {
     let backups = shown.backup_rows.iter().map(|&row| shown.backup.item(row));
     let items: Vec<SettingItem> =
         shown.rows.iter().map(|&i| shown.item(i)).chain(keys).chain(found).chain(backups).collect();
-    if new || items.len() != open.rows.row_count() {
+    if new {
         open.rows.set_vec(items);
     } else {
+        let count = items.len();
         for (row, item) in items.into_iter().enumerate() {
-            if open.rows.row_data(row).is_none_or(|old| !same(&old, &item)) {
-                open.rows.set_row_data(row, item);
+            match open.rows.row_data(row) {
+                None => open.rows.push(item),
+                Some(old) if !same(&old, &item) => open.rows.set_row_data(row, item),
+                Some(_) => {}
             }
+        }
+        while open.rows.row_count() > count {
+            open.rows.remove(open.rows.row_count() - 1);
         }
     }
     open.window.set_page(i32::try_from(shown.page).unwrap_or(0));
@@ -389,7 +412,8 @@ fn show_rows(open: &Open, new: bool) {
 
 /// Whether two rows show the same (their choices are new models each time).
 fn same(a: &SettingItem, b: &SettingItem) -> bool {
-    (&a.key, &a.value, a.is_default, &a.description) == (&b.key, &b.value, b.is_default, &b.description)
+    (a.kind, &a.title, &a.key, &a.value, a.is_default, &a.description)
+        == (b.kind, &b.title, &b.key, &b.value, b.is_default, &b.description)
         && a.options.iter().eq(b.options.iter())
 }
 
@@ -537,7 +561,7 @@ fn bind(open: &Rc<Open>) {
     window.on_row_action({
         let weak = weak.clone();
         move |row, id| {
-            let Some(open) = weak.upgrade() else { return };
+            let Some(open) = weak.upgrade() else { return 1 };
             // A theme or backup row: its key is what Copy Key copies.
             if usize::try_from(row).is_ok_and(|row| row >= open.shown.borrow().locked_rows()) {
                 let key = usize::try_from(row).ok().and_then(|row| open.rows.row_data(row)).map(|i| i.key);
@@ -549,27 +573,37 @@ fn bind(open: &Rc<Open>) {
                     EDIT_FILE => edit_file(),
                     _ => {}
                 }
-                return;
+                return 1;
             }
             let key = open.shown.borrow().key_of(usize::try_from(row).unwrap_or(usize::MAX));
-            if let Some(key) = key {
+            if let Some(index) = key {
                 let shown = open.shown.borrow();
-                let key = &shown.keys[key];
+                let key = &shown.keys[index];
                 match id {
                     RESET if shown.broken.is_some() => say(&open, "Fix settings.toml first"),
-                    RESET => match shortcuts::reset(key, Platform::current()) {
-                        Ok(change) => write(change),
-                        Err(why) => say(&open, why),
-                    },
+                    RESET => {
+                        let reset = with_settings(|s| shortcuts::reset(key, s, &shown.text, Platform::current()));
+                        drop(shown);
+                        match reset {
+                            Ok(Pressed::Ask(question, changes)) => {
+                                open.shown.borrow_mut().pending = Some((index, changes));
+                                say(&open, &question);
+                                return 2;
+                            }
+                            Ok(Pressed::Write(changes)) => changes.into_iter().for_each(write),
+                            Ok(Pressed::Wait(why) | Pressed::Done(why)) => say(&open, &why),
+                            Err(why) => say(&open, why),
+                        }
+                    }
                     COPY_KEY if gezik_platform::clipboard::write_text(&key.path).is_err() => {
                         say(&open, "Cannot use the clipboard");
                     }
                     EDIT_FILE => edit_file(),
                     _ => {}
                 }
-                return;
+                return 1;
             }
-            let Some(i) = field_of(&open, row) else { return };
+            let Some(i) = field_of(&open, row) else { return 1 };
             let field = &FIELDS[i];
             match id {
                 RESET if matches!(field.kind, Kind::List | Kind::Integration) => {
@@ -585,6 +619,7 @@ fn bind(open: &Rc<Open>) {
                 EDIT_FILE => edit_file(),
                 _ => {}
             }
+            1
         }
     });
     window.on_escape(|| slint::Timer::single_shot(Duration::ZERO, close));
@@ -666,7 +701,14 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(open) = current() else { return };
                     match written {
-                        Ok(()) => say(&open, &format!("Installed {name} as themes/{id}.toml: Use Now is in its row")),
+                        Ok(()) => {
+                            let mut themes = open.shown.borrow().got.files.clone();
+                            themes.insert(id.clone(), contents);
+                            open.shown.borrow_mut().got.read(&themes);
+                            open.shown.borrow_mut().pick_rows();
+                            show_rows(&open, false);
+                            say(&open, &format!("Installed {name} as themes/{id}.toml: Use Now is in its row"));
+                        }
                         Err(err) => say_bad(
                             &open,
                             &format!("Cannot write themes/{id}.toml: {}", gezik_platform::fs::describe(&err)),
@@ -725,7 +767,7 @@ fn fetch(open: &Open, address: &str) {
         shown.got.found.clear();
         shown.pick_rows();
     }
-    show_rows(open, true);
+    show_rows(open, false);
     let Some(fetch) = fetch else { return };
     say(open, &format!("Downloading {}…", fetch.url));
     themes::start(
@@ -742,7 +784,7 @@ fn fetch(open: &Open, address: &str) {
                     let count = found.len();
                     open.shown.borrow_mut().got.found = found;
                     open.shown.borrow_mut().pick_rows();
-                    show_rows(&open, true);
+                    show_rows(&open, false);
                     say(&open, &format!("{count} found: point at a choice in a row to preview the theme"));
                 }
                 Err(why) => say_bad(&open, &why),
@@ -805,7 +847,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             state.skipped.clear();
             shown.pick_rows();
             drop(shown);
-            show_rows(open, true);
+            show_rows(open, false);
             if text.trim().is_empty() {
                 return;
             }
@@ -822,7 +864,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                     Err(why) => return say_bad(open, &why),
                 };
                 open.shown.borrow_mut().pick_rows();
-                show_rows(open, true);
+                show_rows(open, false);
                 match programs {
                     0 => say(open, "Untick what not to import, then choose Import in the last of these rows"),
                     n => say_bad(
@@ -837,7 +879,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 state.preview = None;
                 shown.pick_rows();
                 drop(shown);
-                show_rows(open, true);
+                show_rows(open, false);
                 return say(open, "Nothing imported");
             }
             if state.busy {
@@ -850,7 +892,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             if chosen.iter().any(|f| f.group == Group::Views) {
                 flush_views();
             }
-            show_rows(open, true);
+            show_rows(open, false);
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
@@ -905,7 +947,7 @@ fn imported(open: Option<&Open>, result: Result<crate::settings_backup::Done, St
     let Some(open) = open else { return };
     open.shown.borrow_mut().backup.backups = None;
     open.shown.borrow_mut().pick_rows();
-    show_rows(open, true);
+    show_rows(open, false);
     if ok {
         say(open, done);
     }

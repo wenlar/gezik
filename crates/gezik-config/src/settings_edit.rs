@@ -197,8 +197,13 @@ fn keep_before_next_table(doc: &mut toml_edit::DocumentMut, after: Option<&str>,
 /// trailing part, which toml_edit writes after every table: they go before the new table, so
 /// they stay where they were.
 fn add_table(doc: &mut toml_edit::DocumentMut, name: &str) {
-    let trailing = doc.trailing().as_str().unwrap_or_default().to_owned();
+    let mut trailing = doc.trailing().as_str().unwrap_or_default().to_owned();
     doc.set_trailing("");
+    // A blank line between it and the last value ([[commands]]'s too); a comment there keeps
+    // its place right above.
+    if trailing.is_empty() && !doc.as_table().is_empty() {
+        trailing.push('\n');
+    }
     let mut table = toml_edit::Table::new();
     table.decor_mut().set_prefix(trailing);
     doc[name] = toml_edit::Item::Table(table);
@@ -612,6 +617,20 @@ fn place(table: &mut toml_edit::Table, next: &mut isize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_table_follows_a_blank_line() {
+        let dots = || toml_edit::Value::from("auto");
+        let text = "[[commands]]\nname = \"a\"\nrun = [\"x\"]\n";
+        assert_eq!(with_tags(text, "dots", dots()).unwrap(), format!("{text}\n[tags]\ndots = \"auto\"\n"));
+        let commented = "x = 1\n# a note\n";
+        assert_eq!(
+            with_tags(commented, "dots", dots()).unwrap(),
+            format!("{commented}[tags]\ndots = \"auto\"\n"),
+            "a comment stays right above"
+        );
+        assert_eq!(with_tags("", "dots", dots()).unwrap(), "[tags]\ndots = \"auto\"\n", "no blank line at the top");
+    }
 
     fn pins(list: &[&str]) -> Vec<PinEntry> {
         list.iter().map(|s| PinEntry::plain(*s)).collect()
