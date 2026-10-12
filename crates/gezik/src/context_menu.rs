@@ -157,11 +157,14 @@ fn marked(on: bool, title: &str) -> String {
 
 /// The search bar's Filters menu (sapma 2): the sizes, the options, Clear; Modified ▸ and Type ▸.
 pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
-    let size =
-        |bound: Option<u64>| bound.map(|b| format!(" ({})", gezik_core::search::size_text(b))).unwrap_or_default();
+    let size = |bound: Option<u64>| bound.map(|b| bracketed(&gezik_core::search::size_text(b))).unwrap_or_default();
+    fn bracketed(text: &str) -> String {
+        if text.is_empty() { String::new() } else { format!(" ({text})") }
+    }
     let mut items = vec![
         (SIZE_MIN, format!("Size at least…{}", size(spec.size.min)), true),
         (SIZE_MAX, format!("Size at most…{}", size(spec.size.max)), true),
+        (SEARCH_PROPERTIES, format!("Properties…{}", bracketed(spec.fields.trim())), true),
     ];
     let options = [
         spec.name_regex,
@@ -282,6 +285,34 @@ pub const PREVIEW_MUTE: u32 = 2614;
 pub const PREVIEW_COPY: u32 = 2615;
 /// A property row's Show Column (13e).
 pub const PREVIEW_SHOW_COLUMN: u32 = 2616;
+/// The search bar's Filters ▸ Properties… (13f).
+pub const SEARCH_PROPERTIES: u32 = 2621;
+/// The rename template's Fields ▾ menu: 2740 + a field's place in the registry (13f).
+pub const TEMPLATE_FIELD_FIRST: u32 = 2740;
+const TEMPLATE_FIELD_LAST: u32 = 2799;
+
+/// The rename template's Fields ▾ menu (spec 13 §9.2): the registry's fields by group.
+pub fn template_field_menu() -> Vec<Submenu> {
+    use gezik_core::fields::Group;
+    let groups = [Group::Picture, Group::Photo, Group::Media, Group::Music, Group::Document];
+    groups
+        .into_iter()
+        .map(|group| Submenu {
+            title: group.label().to_owned(),
+            at: 0,
+            items: gezik_core::fields::all()
+                .filter(|id| id.def().group == group)
+                .map(|id| {
+                    (
+                        TEMPLATE_FIELD_FIRST + id.number() as u32,
+                        format!("{}  {{{}}}", id.def().label, id.def().key),
+                        true,
+                    )
+                })
+                .collect(),
+        })
+        .collect()
+}
 // The field columns (spec 13 §10.3): More Columns… 2620, a field column off 2630 + its place in
 // the registry, Sort by property… 2700, Group by ▸ a field 2710 + its place among those that
 // group.
@@ -2185,6 +2216,12 @@ impl Menus {
         self.open_slint(&list, at);
     }
 
+    /// The rename template's "Fields ▾".
+    pub fn template_fields(&self, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::BatchRename(Vec::new()));
+        self.open_slint_entries(&[], template_field_menu(), at);
+    }
+
     /// "Presets ▾": the saved sets, save, delete.
     pub fn presets(&self, at: Anchor) {
         let names = crate::batch_rename::preset_names();
@@ -2298,6 +2335,11 @@ impl Menus {
             (id, Subject::BatchRename(_)) if (ADD_RULE_FIRST..ADD_RULE_FIRST + 10).contains(&id) => {
                 if let Some((kind, _)) = gezik_core::batch::rules::KINDS.get((id - ADD_RULE_FIRST) as usize) {
                     crate::batch_rename::with_current(|layer| layer.add_rule(kind));
+                }
+            }
+            (id, Subject::BatchRename(_)) if (TEMPLATE_FIELD_FIRST..=TEMPLATE_FIELD_LAST).contains(&id) => {
+                if let Some(field) = gezik_core::fields::FieldId::from_number(i64::from(id - TEMPLATE_FIELD_FIRST)) {
+                    crate::batch_rename::with_current(|layer| layer.add_field(field.def().key));
                 }
             }
             // By name: settings.toml may have been reloaded since the menu opened.
@@ -2795,6 +2837,7 @@ fn from_submenu(id: u32) -> bool {
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
         || (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id)
         || (GROUP_BY_FIELD_FIRST..=GROUP_BY_FIELD_LAST).contains(&id)
+        || (TEMPLATE_FIELD_FIRST..=TEMPLATE_FIELD_LAST).contains(&id)
         || id == GROUP_BY_TAG
         || id == GROUP_BY_RATING
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
@@ -3980,6 +4023,17 @@ mod tests {
     }
 
     #[test]
+    fn the_template_fields_menu_lists_every_field_by_group_in_its_range() {
+        let subs = template_field_menu();
+        assert!(subs.len() <= MAX_SUBMENUS);
+        let ids: Vec<u32> = subs.iter().flat_map(|s| s.items.iter().map(|(id, _, _)| *id)).collect();
+        assert_eq!(ids.len(), gezik_core::fields::all().count());
+        assert!(ids.iter().all(|id| (TEMPLATE_FIELD_FIRST..=TEMPLATE_FIELD_LAST).contains(id) && from_submenu(*id)));
+        let music = subs.iter().find(|s| s.title == "Music").unwrap();
+        assert!(music.items.iter().any(|(_, title, _)| title == "Artist  {artist}"));
+    }
+
+    #[test]
     fn the_search_menus_mark_what_is_chosen_and_stay_in_their_range() {
         use gezik_core::search::{DateRange, KindFilter, Scope, SearchSpec};
         let mut spec = SearchSpec::new(Scope::Folder("/w".into()));
@@ -3989,6 +4043,10 @@ mod tests {
         spec.size.min = Some(500 * 1024 * 1024);
         let (items, subs) = search_filter_items(&spec);
         assert!(items.iter().any(|(id, title, _)| *id == SIZE_MIN && title == "Size at least… (500 MB)"));
+        assert!(items.iter().any(|(id, title, _)| *id == SEARCH_PROPERTIES && title == "Properties…"));
+        spec.fields = "artist:x".into();
+        let (with_words, _) = search_filter_items(&spec);
+        assert!(with_words.iter().any(|(id, title, _)| *id == SEARCH_PROPERTIES && title == "Properties… (artist:x)"));
         assert!(items.iter().any(|(id, title, _)| *id == OPTION_FIRST + 2 && title.starts_with("• Match case")));
         assert!(items.iter().any(|(id, _, on)| *id == FILTERS_CLEAR && *on));
         let modified = subs.iter().find(|s| s.title == "Modified").unwrap();
@@ -4004,8 +4062,11 @@ mod tests {
             .chain(subs.iter().flat_map(|s| s.items.iter().map(|i| i.0)))
             .chain(search_more_items(3, &[], true).iter().map(|i| i.0).filter(|id| *id != SAVE_SEARCH))
             .collect();
-        // 8a's range, and 12e's tag, comment and rating filters.
-        assert!(ids.iter().all(|id| (1500..1600).contains(id) || (2400..2600).contains(id)), "{ids:?}");
+        // 8a's range, 12e's tag, comment and rating filters, and 13f's Properties….
+        assert!(
+            ids.iter().all(|id| (1500..1600).contains(id) || (2400..2600).contains(id) || *id == SEARCH_PROPERTIES),
+            "{ids:?}"
+        );
         assert!(search_more_items(0, &[], true).iter().all(|(id, _, _)| *id != SEARCH_PROBLEMS));
         assert_eq!(modified_for(MODIFIED_FIRST + 3), Some(DateRange::LastDays(30)));
         assert_eq!(modified_for(MODIFIED_BETWEEN), None, "asked for in a box");

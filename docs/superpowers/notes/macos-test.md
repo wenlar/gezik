@@ -815,6 +815,14 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 383. **Photo filter.** In a folder of iPhone photos press ⌘F and type `taken>=2024 camera:iphone`: while the status line says `Reading properties… n of m` the rows are faint, then only the 2024+ iPhone photos stay. `duration>3x` shows `duration>3x: "3x" is not a duration (3m, 1:30)` and the list stays. A name part too: `IMG_1* taken>=2024`.
 384. **View rule.** Add to `settings.toml`: `[[view-rules]]` `path = "~/Music/**"` `columns = ["artist", "album", "track", "duration"]` `sort = "track"`. Open a folder under ~/Music: the four columns show, sorted by Track; another folder keeps its own columns. In the preview pane right-click a property row (Camera) ▸ `Show Column`: that column appears.
 
+### 13f, search and name templates
+
+13f uses 385–387. First `cargo test -p gezik-core template` and `cargo test -p gezik-search properties`; paste the output.
+
+385. **Search by properties.** ⌘⇧F in a music folder, type `*.mp3`, then Filters ▸ `Properties…`: type `art` and the note under the field offers `artist, album-artist`; type `artist:x duration>3m` (an artist of yours) and OK. Only that artist's songs longer than 3 minutes show; Filters shows `Properties… (artist:x duration>3m)` and its count. `duration>3x` in the box shows the error and OK does nothing. Save search…: `settings.toml` gets `where = "artist:x duration>3m"`; the sidebar's entry runs it again. Filters ▸ Clear filters drops it.
+386. **Name from tags.** Select a few tagged MP3s ▸ Batch Rename ▸ + Add rule ▸ Template; `Fields ▾` ▸ Music ▸ Track puts `{track}` at the end of the field: make it `{track:02} {artist} - {title}`. Within a moment (`reading properties…` in the footer) the new names are `03 Çiğdem Öztürk - Ağıt Şarkısı.mp3`-like; Rename does it. A song without an artist gets ⚠ and the footer says `1 name with an empty field`; `{artist|Unknown}` names it `Unknown`. An artist tag with `/` or `:` (edit one in Music.app to `AC/DC`) becomes `AC_DC`.
+387. **Highlight rule `where`.** Not bound yet (follow-up after the 12 merge): skip.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

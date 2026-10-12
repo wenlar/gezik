@@ -307,7 +307,9 @@ properties = true
 # folders | pictures | videos | audio | documents | archives | code). duplicates = true finds
 # duplicate files instead (Find Duplicates). tags = ["Red"] (every one), untagged = true,
 # min-rating = 4 (stars) and comment = "review" (text in the comment) look at the tags; pattern
-# may say them too (tag:Red rating:4 comment:review). At most 30.
+# may say them too (tag:Red rating:4 comment:review). where takes property words, as the filter
+# bar does ("artist:tarkan duration>3m"; only files with a reader for a field are read). At
+# most 30.
 # [[searches]]
 # name = "Large videos"
 # folder = "{home}"

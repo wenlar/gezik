@@ -733,6 +733,13 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 278. **Columns and sort.** As macOS 382 on ext4 (header menu ▸ More Columns…, Artist, Album, Duration; sort by Duration, group by Album, widths kept after a restart).
 279. **Filter.** As macOS 383 with Ctrl+F: `taken>=2024 camera:` and a phone name, `artist:` with a Turkish name in another case (`artist:ŞEBNEM` finds `Şebnem`), faint rows until the read ends.
 
+### 13f, search and name templates
+
+13f uses 280–281.
+
+280. **Search and template.** As macOS 385 with Ctrl+Shift+F (Filters ▸ Properties…, `artist:` with a Turkish name in another case finds it) and 386 (Fields ▾, `{track:02} {artist} - {title}`; a tag `a:b` gives `a_b` here too although ext4 allows `:`).
+281. **Highlight rule `where`.** Not bound yet (follow-up after the 12 merge): skip.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

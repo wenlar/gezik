@@ -1833,6 +1833,7 @@ dependencies = [
 name = "gezik-search"
 version = "0.1.0"
 dependencies = [
+ "gezik-batch",
  "gezik-core",
  "gezik-ops",
  "gezik-platform",

@@ -1,6 +1,8 @@
-//! Name templates: text with fields in braces, `{name} {n:03}` or `{taken:%Y-%m-%d}`.
+//! Name templates: text with fields in braces, `{name} {n:03}` or `{taken:%Y-%m-%d}`, and the
+//! metadata fields (spec 13 §9.2): `{artist|Unknown}`, `{track:02}`, `{duration}`.
 
 use super::date::check_format;
+use crate::fields::{self, FieldSet, ValueKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Piece {
@@ -21,6 +23,13 @@ pub enum Piece {
     Taken(String),
     /// The size, readable (`2.1 MB`).
     Size,
+    /// A metadata field (`{track:02}`), its format and the text when it has no value
+    /// (`{artist|Unknown}`).
+    Field {
+        id: fields::FieldId,
+        arg: Option<String>,
+        fallback: Option<String>,
+    },
 }
 
 const DEFAULT_DATE: &str = "%Y-%m-%d";
@@ -65,6 +74,11 @@ pub fn parse(text: &str) -> Result<Vec<Piece>, String> {
 }
 
 fn field_piece(field: &str) -> Result<Piece, String> {
+    // `|` is not allowed in Windows names, so it never clashes with the text after it.
+    let (field, fallback) = match field.split_once('|') {
+        Some((field, fallback)) => (field, Some(fallback.to_owned())),
+        None => (field, None),
+    };
     let (key, arg) = match field.split_once(':') {
         Some((key, arg)) => (key.trim(), Some(arg)),
         None => (field.trim(), None),
@@ -78,6 +92,10 @@ fn field_piece(field: &str) -> Result<Piece, String> {
         Some(_) => Err(format!("{{{key}}} takes no format")),
         None => Ok(piece),
     };
+    let builtin = matches!(key, "name" | "ext" | "parent" | "size" | "n" | "date" | "taken");
+    if builtin && fallback.is_some() {
+        return Err(format!("{{{key}}} takes no | text"));
+    }
     match key {
         "name" => no_arg(Piece::Name),
         "ext" => no_arg(Piece::Ext),
@@ -95,13 +113,53 @@ fn field_piece(field: &str) -> Result<Piece, String> {
         }
         "date" => Ok(Piece::Modified(date(arg)?)),
         "taken" => Ok(Piece::Taken(date(arg)?)),
-        other => Err(format!("unknown field {{{other}}}")),
+        other => {
+            let id = fields::by_key(other).ok_or_else(|| format!("unknown field {{{other}}}"))?;
+            let arg = arg.map(str::trim);
+            let ok = match (id.def().kind, arg) {
+                (_, None) => true,
+                (ValueKind::Int | ValueKind::Real, Some(digits)) => digits.parse::<u8>().is_ok_and(|n| n <= 9),
+                (ValueKind::Date, Some(format)) => check_format(format).map(|()| true)?,
+                (ValueKind::Text | ValueKind::Duration | ValueKind::Geo, Some(_)) => false,
+            };
+            if !ok {
+                let arg = arg.unwrap_or_default();
+                return Err(match id.def().kind {
+                    ValueKind::Int => format!("{{{other}:{arg}}}: give 0 to 9 digits, like {{{other}:02}}"),
+                    ValueKind::Real => format!("{{{other}:{arg}}}: give 0 to 9 decimals, like {{{other}:1}}"),
+                    _ => format!("{{{other}}} takes no format"),
+                });
+            }
+            Ok(Piece::Field { id, arg: arg.map(str::to_owned), fallback })
+        }
     }
 }
 
-/// Whether the pieces use the EXIF date (so it must be read).
-pub fn uses_taken(pieces: &[Piece]) -> bool {
-    pieces.iter().any(|piece| matches!(piece, Piece::Taken(_)))
+/// The fields the pieces need read from the files (`{taken}` is the photo's date).
+pub fn needed(pieces: &[Piece]) -> FieldSet {
+    pieces.iter().fold(FieldSet::NONE, |set, piece| match piece {
+        Piece::Taken(_) => set.with(FieldSet::of(&[fields::TAKEN])),
+        Piece::Field { id, .. } => set.with(FieldSet::of(&[*id])),
+        _ => set,
+    })
+}
+
+/// The fields used with no `|` text: an item without one of them gets a warning.
+pub fn bare(pieces: &[Piece]) -> FieldSet {
+    pieces.iter().fold(FieldSet::NONE, |set, piece| match piece {
+        Piece::Field { id, fallback: None, .. } => set.with(FieldSet::of(&[*id])),
+        _ => set,
+    })
+}
+
+/// A value from a file made safe in a name, the same on every system (spec 13 §9.2):
+/// `/ \ : * ? " < > |` and control characters become `_`, at most 100 characters, no spaces or
+/// dots at the ends, a value of only those (`..`) is `_`. A tag like `../../x` stays a name.
+pub fn safe_part(value: &str) -> String {
+    let unsafe_char = |c: char| c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|');
+    let cleaned: String = value.chars().take(100).map(|c| if unsafe_char(c) { '_' } else { c }).collect();
+    let trimmed = cleaned.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    if trimmed.is_empty() && !cleaned.is_empty() { "_".to_owned() } else { trimmed.to_owned() }
 }
 
 #[cfg(test)]
@@ -135,8 +193,45 @@ mod tests {
     }
 
     #[test]
-    fn knows_when_exif_is_needed() {
-        assert!(uses_taken(&parse("{taken}").unwrap()));
-        assert!(!uses_taken(&parse("{date} {name}").unwrap()));
+    fn knows_which_fields_to_read() {
+        use crate::fields::{ARTIST, TAKEN, TITLE, TRACK};
+        assert_eq!(needed(&parse("{taken}").unwrap()), FieldSet::of(&[TAKEN]));
+        assert!(needed(&parse("{date} {name}").unwrap()).is_empty());
+        let pieces = parse("{track:02} {artist|Unknown} - {title}").unwrap();
+        assert_eq!(needed(&pieces), FieldSet::of(&[TRACK, ARTIST, TITLE]));
+        assert_eq!(bare(&pieces), FieldSet::of(&[TRACK, TITLE]));
+    }
+
+    #[test]
+    fn metadata_fields_take_a_format_by_kind_and_a_fallback() {
+        use crate::fields::{APERTURE, ARTIST, TRACK};
+        assert_eq!(
+            parse("{track:02}{artist|Unknown}").unwrap(),
+            [
+                Piece::Field { id: TRACK, arg: Some("02".into()), fallback: None },
+                Piece::Field { id: ARTIST, arg: None, fallback: Some("Unknown".into()) },
+            ]
+        );
+        assert_eq!(
+            parse("{aperture:1}").unwrap(),
+            [Piece::Field { id: APERTURE, arg: Some("1".into()), fallback: None }]
+        );
+        assert_eq!(parse("{taken:%Y}").unwrap(), [Piece::Taken("%Y".into())], "the photo date keeps its meaning");
+        assert_eq!(parse("{artist:2}").unwrap_err(), "{artist} takes no format");
+        assert_eq!(parse("{duration:2}").unwrap_err(), "{duration} takes no format");
+        assert_eq!(parse("{track:x}").unwrap_err(), "{track:x}: give 0 to 9 digits, like {track:02}");
+        assert_eq!(parse("{name|x}").unwrap_err(), "{name} takes no | text");
+        assert_eq!(parse("{artst}").unwrap_err(), "unknown field {artst}");
+    }
+
+    #[test]
+    fn values_are_made_safe_in_names() {
+        assert_eq!(safe_part("../../x"), "_.._x");
+        assert_eq!(safe_part("a/b\\c:d*e?f\"g<h>i|j"), "a_b_c_d_e_f_g_h_i_j");
+        assert_eq!(safe_part("..."), "_");
+        assert_eq!(safe_part(" .Tarkan. "), "Tarkan");
+        assert_eq!(safe_part("a\nb\u{7}"), "a_b_");
+        assert_eq!(safe_part(""), "");
+        assert_eq!(safe_part(&"ş".repeat(150)).chars().count(), 100);
     }
 }
