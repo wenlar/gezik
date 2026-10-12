@@ -140,6 +140,23 @@ tree-follow = false
 # F5/F6 ask before copying or moving to the other pane (its folder can be changed there).
 confirm = true
 
+[tags]
+# Your tags, in order: the first seven get the keys Alt+Shift+1…7 (macOS ⌃1…⌃7).
+# color: red, orange, yellow, green, blue, purple, gray or none.
+list = [
+  { name = "Red", color = "red" },
+  { name = "Orange", color = "orange" },
+  { name = "Yellow", color = "yellow" },
+  { name = "Green", color = "green" },
+  { name = "Blue", color = "blue" },
+  { name = "Purple", color = "purple" },
+  { name = "Gray", color = "gray" },
+]
+# false: keep every tag in Gezik's own store, never in the files (read when Gezik starts).
+write-to-files = true
+# Tag dots beside names: "auto" (macOS: on; else on once you tag a file), true or false.
+dots = "auto"
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E.
@@ -241,6 +258,9 @@ confirm = true
 # move-to = ""   # Move To…: the same, moving
 # split-file = ""   # Split File…: the selected file into .001, .002… parts and a .crc
 # join-files = ""   # Join Files: the parts of the selected .001 (or .crc) into one file, checked by CRC
+# tags = "ctrl+shift+l"   # Tags…: the tag picker for the selection; macOS: "mod+ctrl+l"
+# tag-1 = "alt+shift+1"    # the first tag of [tags] list on (or, when all have it, off) the selection; tag-2 … tag-7 likewise; macOS: "ctrl+1"
+# clear-tags = "alt+shift+0"   # takes every tag off the selection; macOS: "ctrl+0"
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

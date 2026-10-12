@@ -2,7 +2,7 @@ import { Theme } from "../theme.slint";
 import { Glyph } from "../glyphs.slint";
 import { ListView } from "scrollbar.slint";
 import { FileIcon } from "file-icon.slint";
-import { FileRow, ItemRow } from "file-view.slint";
+import { FileRow, ItemRow, TagDots } from "file-view.slint";
 import { PreviewPane, PreviewInfo } from "preview-pane.slint";
 
 // One Miller column (spec 10 §7, view/columns.rs): its rows (none while it is read, once it is
@@ -149,7 +149,7 @@ export component ColumnView inherits Rectangle {
                         border-width: row.drop ? 1px : 0px;
                         border-color: Theme.accent;
                         accessible-role: list-item;
-                        accessible-label: row.file.name;
+                        accessible-label: row.file.name + (row.file.tag-names != "" ? ", tags " + row.file.tag-names : "");
                         accessible-item-selectable: true;
                         accessible-item-selected: row.file.selected;
                         HorizontalLayout {
@@ -175,6 +175,11 @@ export component ColumnView inherits Rectangle {
                                 horizontal-stretch: 1;
                                 overflow: elide;
                                 color: row.file.selected ? Theme.selection-foreground : Theme.foreground;
+                            }
+                            if row.file.tags.length > 0 || row.file.more > 0: TagDots {
+                                colors: row.file.tags;
+                                more: row.file.more;
+                                selected: row.file.selected;
                             }
                             if row.file.is-dir: VerticalLayout {
                                 alignment: center;

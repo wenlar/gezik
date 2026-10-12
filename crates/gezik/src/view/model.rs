@@ -217,6 +217,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let finder = (cfg!(target_os = "macos") && is_dir && entries)
         .then(|| listing.path_at(i).and_then(|(path, _)| gezik_platform::finder::finder_name(&path)))
         .flatten();
+    let (tags, more, tag_names) = row_tags(data, i);
     let (folder, found) = match listing {
         Listing::Results(set) => (
             set.shown_folder(i).unwrap_or_default().into(),
@@ -244,6 +245,25 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
+        tags,
+        more,
+        tag_names: tag_names.into(),
+    }
+}
+
+/// Entry `i`'s tag dots while dots show (spec 12 §5.4): asked for only here, so only for rows
+/// on screen; until they are read, none.
+fn row_tags(data: &ViewData, i: usize) -> (ModelRc<slint::Color>, i32, String) {
+    if matches!(data.listing, Listing::Drives(_)) || !crate::tags::dots_on() {
+        return Default::default();
+    }
+    let Some((path, _)) = data.listing.path_at(i) else { return Default::default() };
+    match data.media.tags(path, i) {
+        Some(tags) if !tags.is_empty() => {
+            let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&tags, list));
+            (ModelRc::new(VecModel::from(colors)), more, names)
+        }
+        _ => Default::default(),
     }
 }
 
@@ -635,5 +655,50 @@ mod tests {
         #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
         let all = [0..100_000];
         assert_eq!(notify_plan(&all, 1, &s), Plan::Reset);
+    }
+
+    #[test]
+    fn tags_are_asked_only_for_the_rows_drawn_and_only_with_dots() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::{Tag, TagColor};
+        let file = |i: usize| Entry {
+            name: format!("f{i}.txt"),
+            is_dir: false,
+            flags: 0,
+            size: 1,
+            modified: None,
+            created: None,
+        };
+        let entries: Vec<Entry> = (0..1000).map(file).collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\t" } else { "/t" });
+        let data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        let draw = |rows: std::ops::Range<usize>| rows.for_each(|i| drop(file_row(&data, i)));
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        draw(0..40);
+        let others = data.media.pending();
+        assert!(others <= 2, "a type name and an icon, no tags: {others}");
+        crate::tags::set_settings(TagsSettings { dots: Dots::On, ..TagsSettings::default() });
+        draw(0..40);
+        assert_eq!(data.media.pending(), others + 40, "the 40 rows on screen");
+        draw(0..40);
+        assert_eq!(data.media.pending(), others + 40, "asked once");
+        // Scrolled far: the oldest requests go (the queue keeps the newest).
+        draw(40..400);
+        assert!(data.media.pending() <= crate::media::MAX_QUEUED + others, "{}", data.media.pending());
+        // Once read, a row draws its dots; no colour is a ring.
+        let red = Tag::new("Red", TagColor::None);
+        let key = crate::media::MediaKey::Tags { path: dir.join("f0.txt") };
+        let tags = vec![red, Tag::new("Mine", TagColor::None)].into_boxed_slice();
+        data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Tags(tags));
+        let row = file_row(&data, 0);
+        assert_eq!(row.tags.row_count(), 2);
+        assert_eq!(row.tags.row_data(0), Some(crate::tags::color_of(TagColor::Red)), "the list's colour");
+        assert_eq!((row.more, row.tag_names.as_str()), (0, "Red, Mine"));
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        assert_eq!(file_row(&data, 0).tags.row_count(), 0, "dots off: none drawn");
     }
 }

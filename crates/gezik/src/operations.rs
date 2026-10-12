@@ -220,6 +220,12 @@ pub fn is_root(path: &Path) -> bool {
 }
 
 /// `notlar.txt`, or `3 items` (for questions like "Delete 3 items permanently?").
+/// Whether a finished job has something for its Details besides failures: skipped items, items
+/// done by the administrator Gezik could not check, notes (tags kept in Gezik's store).
+fn has_notes(report: &Report) -> bool {
+    !report.skipped.is_empty() || !report.unchecked.is_empty() || !report.notes.is_empty()
+}
+
 pub fn items_text(paths: &[PathBuf]) -> String {
     match paths {
         [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| one.display().to_string()),
@@ -379,7 +385,12 @@ impl JobView {
     /// note) is shown even if the job ended before its row came up: else it would stay, hidden,
     /// until restart, or the note would go unread.
     fn finish(&mut self, report: Report) {
-        if !report.cancelled && (!report.failures.is_empty() || !report.skipped.is_empty() || self.note.is_some()) {
+        if !report.cancelled
+            && (!report.failures.is_empty()
+                || !report.skipped.is_empty()
+                || !report.notes.is_empty()
+                || self.note.is_some())
+        {
             self.shown = true;
         }
         self.report = Some(report);
@@ -405,11 +416,7 @@ impl JobView {
             can_start_now: waiting,
             can_more: !finished && (waiting || self.copies()),
             can_retry: failed && (self.retry.is_some() || self.again.is_some()),
-            can_details: failed
-                || self
-                    .report
-                    .as_ref()
-                    .is_some_and(|r| !r.cancelled && (!r.skipped.is_empty() || !r.unchecked.is_empty())),
+            can_details: failed || self.report.as_ref().is_some_and(|r| !r.cancelled && has_notes(r)),
             finished,
             ..OpRow::default()
         }
@@ -536,6 +543,11 @@ impl Operations {
 
     /// The current window's questions (none before it is attached: nothing is asked).
     /// state.toml and the other files (none in tests).
+    /// Where tags are read and written (the engine's, spec 12 §3.3).
+    pub fn tag_store(&self) -> std::sync::Arc<gezik_ops::meta::MetaStore> {
+        self.0.engine.meta()
+    }
+
     pub fn store(&self) -> Option<&ConfigStore> {
         self.0.store.as_ref()
     }
@@ -1738,12 +1750,15 @@ impl Operations {
             }
         }
         // A row with skipped items stays until closed, for its Details.
-        let notes = !report.cancelled && (!report.skipped.is_empty() || !report.unchecked.is_empty());
+        let notes = !report.cancelled && has_notes(&report);
         if !problems && !notes {
             let ops = self.clone();
             slint::Timer::single_shot(DONE_FOR, move || ops.remove(id));
         }
         // An archive that needs 7-Zip, a download that is done, a conversion that needs ffmpeg.
+        if report.kind == TaskKind::Tags {
+            crate::tags::job_done();
+        }
         crate::archives::with_current(|archives| archives.job_finished(id, &report));
         crate::convert::with_current(|convert| convert.job_finished(id, &report));
         crate::stack::with_current(|stack| stack.job_finished(id, &report));

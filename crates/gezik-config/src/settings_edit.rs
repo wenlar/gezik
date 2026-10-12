@@ -91,6 +91,11 @@ pub fn with_panes_confirm(text: &str, on: bool) -> Result<String, String> {
     edit_table(text, "panes", vec![("confirm", on.into())])
 }
 
+/// Returns `text` with `[tags] key` set (the list, the dots).
+pub fn with_tags(text: &str, key: &str, value: toml_edit::Value) -> Result<String, String> {
+    edit_table(text, "tags", vec![(key, value)])
+}
+
 /// Sets `entries` in `[name]` (adding the table and the missing keys), keeping each old value's
 /// decor so inline comments (`# list | grid`) survive.
 fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
@@ -810,6 +815,20 @@ pattern = \"y\"
         let fresh = with_system("pinned = []\n", "tray", true.into()).unwrap();
         assert!(fresh.contains("[system]\ntray = true"), "{fresh}");
         assert!(with_system("system = 3\n", "tray", true.into()).is_err());
+    }
+
+    #[test]
+    fn the_tag_list_and_dots_are_written_into_tags() {
+        let text = "[tags]\n# yours\ndots = \"auto\"   # auto, true or false\n";
+        let list = vec![gezik_core::meta::Tag::new("Work", gezik_core::meta::TagColor::Blue)];
+        let written = with_tags(text, "list", crate::tags::list_value(&list)).unwrap();
+        let off = with_tags(&written, "dots", crate::tags::dots_value(crate::tags::Dots::Off)).unwrap();
+        assert!(off.contains("# yours\ndots = false   # auto, true or false\n"), "{off}");
+        let mut warnings = Vec::new();
+        let settings = crate::settings::Settings::parse("settings.toml", &off, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}\n{off}");
+        assert_eq!(settings.tags.list, list);
+        assert_eq!(settings.tags.dots, crate::tags::Dots::Off);
     }
 
     #[test]

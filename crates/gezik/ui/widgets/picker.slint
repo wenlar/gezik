@@ -8,6 +8,10 @@ export struct PickRow {
     tag: string,
     keys: string,
     bold: bool,
+    // The tag picker (tags.rs): the tag's colour (transparent: none, a ring) and whether the
+    // items have it: 2 all, 1 some, 0 none; -1 on any other line (no dot, no mark).
+    dot: color,
+    check: int,
 }
 
 // The tab picker (tab_tools.rs) and the command palette / quick open (palette.rs): the lines
@@ -106,7 +110,7 @@ export component Picker inherits Rectangle {
                     border-radius: Theme.radius;
                     background: i == root.current ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
                     accessible-role: list-item;
-                    accessible-label: row.title;
+                    accessible-label: row.title + (row.check == 2 ? ", on all items" : row.check == 1 ? ", on some items" : "");
                     accessible-item-selectable: true;
                     accessible-item-selected: i == root.current;
                     accessible-action-default => { root.chosen(i); }
@@ -114,6 +118,17 @@ export component Picker inherits Rectangle {
                         padding-left: Theme.spacing * 1.5;
                         padding-right: Theme.spacing * 1.5;
                         spacing: Theme.spacing;
+                        if row.check >= 0: VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 10px;
+                                height: 10px;
+                                border-radius: 5px;
+                                background: row.dot;
+                                border-width: row.dot == transparent ? 1px : 0px;
+                                border-color: i == root.current ? Theme.selection-foreground : Theme.foreground-muted;
+                            }
+                        }
                         VerticalLayout {
                             alignment: center;
                             Text {
@@ -128,6 +143,13 @@ export component Picker inherits Rectangle {
                                 font-size: Theme.font-size * 0.85;
                                 color: i == root.current ? Theme.selection-foreground : Theme.foreground-muted;
                             }
+                        }
+                        if row.check >= 0: Text {
+                            width: Theme.font-size * 1.5;
+                            vertical-alignment: center;
+                            horizontal-alignment: center;
+                            text: row.check == 2 ? "✓" : row.check == 1 ? "–" : "";
+                            color: i == root.current ? Theme.selection-foreground : Theme.foreground;
                         }
                         // Two columns of fixed width, so that every row has its kind and key at the same x.
                         if row.tag != "" || row.keys != "": Text {

@@ -12,6 +12,7 @@ mod state_store;
 pub mod store;
 pub mod sync_profiles;
 pub mod system_journal;
+pub mod tags;
 pub mod theme;
 pub mod theme_rules;
 mod view_rules;

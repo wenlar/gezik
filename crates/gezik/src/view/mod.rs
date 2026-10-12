@@ -1072,6 +1072,14 @@ impl View {
         self.0.plain_press.take() == Some(index)
     }
 
+    /// Draws every row again, keeping the scroll (tag dots came, went or changed).
+    pub fn redraw(&self) {
+        let scroll = self.list_scroll();
+        self.0.model.notify.reset();
+        self.keep_scroll_after_reset(scroll);
+        self.columns_relist();
+    }
+
     /// `[view]`'s options (view_options.rs). Returns whether the folder must be read again
     /// (hidden or system items come or go); the rest applies here at once.
     pub fn set_options(&self, options: ViewOptions) -> bool {

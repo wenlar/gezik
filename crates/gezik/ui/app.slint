@@ -73,6 +73,12 @@ export component AppWindow inherits Window {
     in property <[MenuEntry]> bar-tab-sets;
     // The Window menu's list of the open windows (10g): choosing one brings it forward.
     in property <[MenuEntry]> bar-windows;
+    // File ▸ Tags (spec 12 §5.3): the names of `[tags] list`, the first seven with their keys;
+    // the rest (id: the place in the list) without.
+    in property <[string]> bar-tags;
+    in property <[MenuEntry]> bar-tags-more;
+    // View ▸ Tag Dots' mark.
+    in-out property <bool> view-tag-dots;
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
@@ -94,6 +100,23 @@ export component AppWindow inherits Window {
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
             MenuItem { title: "Eject"; shortcut: root.menu-keys ? @keys(Control + E) : @keys(); activated => { root.menu-command("eject"); } }
+            Menu {
+                title: "Tags";
+                if root.bar-tags.length > 0: MenuItem { title: root.bar-tags[0]; shortcut: root.menu-keys ? @keys(Meta + "1") : @keys(); activated => { root.menu-command("tag-1"); } }
+                if root.bar-tags.length > 1: MenuItem { title: root.bar-tags[1]; shortcut: root.menu-keys ? @keys(Meta + "2") : @keys(); activated => { root.menu-command("tag-2"); } }
+                if root.bar-tags.length > 2: MenuItem { title: root.bar-tags[2]; shortcut: root.menu-keys ? @keys(Meta + "3") : @keys(); activated => { root.menu-command("tag-3"); } }
+                if root.bar-tags.length > 3: MenuItem { title: root.bar-tags[3]; shortcut: root.menu-keys ? @keys(Meta + "4") : @keys(); activated => { root.menu-command("tag-4"); } }
+                if root.bar-tags.length > 4: MenuItem { title: root.bar-tags[4]; shortcut: root.menu-keys ? @keys(Meta + "5") : @keys(); activated => { root.menu-command("tag-5"); } }
+                if root.bar-tags.length > 5: MenuItem { title: root.bar-tags[5]; shortcut: root.menu-keys ? @keys(Meta + "6") : @keys(); activated => { root.menu-command("tag-6"); } }
+                if root.bar-tags.length > 6: MenuItem { title: root.bar-tags[6]; shortcut: root.menu-keys ? @keys(Meta + "7") : @keys(); activated => { root.menu-command("tag-7"); } }
+                for entry in root.bar-tags-more: MenuItem {
+                    title: entry.title;
+                    activated => { root.menu-command("tag:" + entry.id); }
+                }
+                MenuSeparator { }
+                MenuItem { title: "Tags…"; shortcut: root.menu-keys ? @keys(Control + Meta + L) : @keys(); activated => { root.menu-command("tags"); } }
+                MenuItem { title: "Clear Tags"; shortcut: root.menu-keys ? @keys(Meta + "0") : @keys(); activated => { root.menu-command("clear-tags"); } }
+            }
             MenuSeparator { }
             MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
             MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? @keys(Control + Shift + Backspace) : @keys(); activated => { root.menu-command("empty-trash"); } }
@@ -150,6 +173,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Calculate Folder Sizes"; activated => { root.menu-command("calculate-folder-sizes"); } }
             MenuItem { title: "Show in Sidebar Tree"; activated => { root.menu-command("reveal-in-tree"); } }
+            MenuItem { title: "Tag Dots"; checkable: true; checked <=> root.view-tag-dots; activated => { root.menu-command("tag-dots"); } }
             MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
             MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
             MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
@@ -918,6 +942,19 @@ export component AppWindow inherits Window {
                 }
             }
             for entry in root.menu-subs[4].after: MenuItem {
+                title: entry.title;
+                enabled: entry.enabled;
+                activated => { root.menu-activated(entry.id); }
+            }
+            if root.menu-subs[5].entries.length > 0: Menu {
+                title: root.menu-subs[5].title;
+                for entry in root.menu-subs[5].entries: MenuItem {
+                    title: entry.title;
+                    enabled: entry.enabled;
+                    activated => { root.menu-activated(entry.id); }
+                }
+            }
+            for entry in root.menu-subs[5].after: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
                 activated => { root.menu-activated(entry.id); }
