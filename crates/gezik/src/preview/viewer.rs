@@ -110,8 +110,9 @@ fn model(rows: Vec<Row>) -> ModelRc<PreviewRow> {
                 .into_iter()
                 .map(|(col, text, class)| PreviewPart {
                     col: i32::try_from(col).unwrap_or(i32::MAX),
-                    text: text.into(),
+                    wide: super::text::is_wide(&text),
                     class: class as i32,
+                    text: text.into(),
                 })
                 .collect();
             PreviewRow { number: row.number.into(), parts: ModelRc::new(VecModel::from(parts)) }

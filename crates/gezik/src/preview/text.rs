@@ -385,19 +385,7 @@ impl TextView {
                 return;
             }
         }
-        let probe = read_at(&self.path, 0, WINDOW);
-        let detected =
-            gezik_core::text::detect(&probe).unwrap_or(gezik_core::text::Detected { encoding: Encoding::Utf8, bom: 0 });
-        let body = probe.get(detected.bom..).unwrap_or_default();
-        let ansi = detected.encoding == Encoding::Utf8
-            && std::str::from_utf8(body).is_err_and(|e| e.error_len().is_some())
-            && gezik_platform::decode_ansi(b"a").is_some();
-        let before = head.get(..usize::try_from(self.top.0).unwrap_or(0)).unwrap_or_default();
-        let bytes = match detected.encoding {
-            Encoding::Utf8 if ansi => before.chars().count(),
-            Encoding::Utf8 => before.len(),
-            _ => before.encode_utf16().count() * 2,
-        };
+        let (detected, ansi, at) = self.in_file(head);
         let part = self.top.1;
         self.source = Source::Paged {
             size: self.size.max(std::fs::metadata(&self.path).map_or(0, |m| m.len())),
@@ -405,7 +393,34 @@ impl TextView {
             bom: detected.bom as u64,
             ansi,
         };
-        self.top = (detected.bom as u64 + bytes as u64, part);
+        self.top = (at, part);
+    }
+
+    /// The file's encoding, whether it is in the ANSI code page, and where the top line of
+    /// `decoded` (the text in memory) starts in the file.
+    fn in_file(&self, decoded: &str) -> (gezik_core::text::Detected, bool, u64) {
+        let probe = read_at(&self.path, 0, WINDOW);
+        let detected =
+            gezik_core::text::detect(&probe).unwrap_or(gezik_core::text::Detected { encoding: Encoding::Utf8, bom: 0 });
+        let body = probe.get(detected.bom..).unwrap_or_default();
+        let ansi = detected.encoding == Encoding::Utf8
+            && std::str::from_utf8(body).is_err_and(|e| e.error_len().is_some())
+            && gezik_platform::decode_ansi(b"a").is_some();
+        let before = decoded.get(..usize::try_from(self.top.0).unwrap_or(0)).unwrap_or_default();
+        let bytes = match detected.encoding {
+            Encoding::Utf8 if ansi => before.chars().count(),
+            Encoding::Utf8 => before.len(),
+            _ => before.encode_utf16().count() * 2,
+        };
+        (detected, ansi, detected.bom as u64 + bytes as u64)
+    }
+
+    /// Where the top line starts in the file (hex opens there).
+    pub fn file_offset(&self) -> u64 {
+        match &self.source {
+            Source::Memory { text, .. } => self.in_file(text).2,
+            Source::Paged { .. } => self.top.0,
+        }
     }
 
     /// The scroll bar: where the top is (0–1) and how much is shown.
@@ -441,7 +456,8 @@ impl TextView {
                 1 => "1 line".to_owned(),
                 n => format!("{} lines", gezik_core::group_digits(n as u64)),
             },
-            Source::Memory { .. } => crate::view_options::size_text(self.size),
+            // Only the start is read: its lines and more.
+            Source::Memory { starts, .. } => format!("{}+ lines", gezik_core::group_digits(starts.len() as u64)),
             Source::Paged { .. } => {
                 let (at, _) = self.scroll_bar(cols, page);
                 format!("{} · {}%", crate::view_options::size_text(self.size), (at * 100.0).round())
@@ -586,10 +602,16 @@ fn layout(line: &str, spans: &[(usize, Class)], wrap: Option<usize>) -> Vec<Vec<
     rows
 }
 
+/// Whether a part is of wide characters (by its first).
+pub fn is_wide(text: &str) -> bool {
+    text.chars().next().is_some_and(|c| display_width(c) == 2)
+}
+
 fn push(rows: &mut [Vec<(usize, String, Class)>], col: usize, text: &str, class: Class) {
     let Some(row) = rows.last_mut() else { return };
     match row.last_mut() {
-        Some((_, part, last)) if *last == class => part.push_str(text),
+        // Wide characters go in parts of their own (another font draws them).
+        Some((_, part, last)) if *last == class && is_wide(part) == is_wide(text) => part.push_str(text),
         _ => row.push((col, text.to_owned(), class)),
     }
 }
@@ -831,6 +853,21 @@ mod tests {
                 Some(if path.ends_with("big.txt") { "400000" } else { "100" })
             );
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wide_characters_get_parts_of_their_own_and_hex_opens_at_the_top_line() {
+        let rows = layout("a日本b", &[], None);
+        let parts: Vec<(usize, &str)> = rows[0].iter().map(|p| (p.0, p.1.as_str())).collect();
+        assert_eq!(parts, [(0, "a"), (1, "日本"), (5, "b")]);
+        assert!(is_wide("日本") && !is_wide("a"));
+        let dir = temp("offset");
+        let path = dir.join("a.txt");
+        std::fs::write(&path, "\u{FEFF}ç1\nç2\nç3\n").unwrap();
+        let mut v = view(&path);
+        v.scroll(2, 80, 1);
+        assert_eq!((v.top, v.file_offset()), ((8, 0), 3 + 8), "after the mark and two lines of 4 bytes");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

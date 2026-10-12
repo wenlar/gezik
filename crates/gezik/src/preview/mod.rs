@@ -371,25 +371,54 @@ impl Preview {
             wrap: Cell::new(wrap),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
+        // Its own preview, not the current window's: a viewer made while a frame is drawn says
+        // its room then, when no window may be current.
+        let weak = Rc::downgrade(&preview.0);
+        let here = move |f: &dyn Fn(&Preview) -> bool| weak.upgrade().is_some_and(|inner| f(&Preview(inner)));
         let actions = window.global::<PreviewActions>();
-        actions.on_resized(|cols, rows| {
-            with_current(|p| p.resized(false, cols, rows));
+        actions.on_resized({
+            let here = here.clone();
+            move |cols, rows| {
+                _ = here(&|p| {
+                    p.resized(false, cols, rows);
+                    true
+                })
+            }
         });
-        actions.on_scrolled(|rows| {
-            with_current(|p| p.scroll_viewer(rows));
+        actions.on_scrolled({
+            let here = here.clone();
+            move |rows| {
+                _ = here(&|p| {
+                    p.scroll_viewer(rows);
+                    true
+                })
+            }
         });
-        actions.on_jumped(|fraction| {
-            with_current(|p| p.jump_viewer(fraction));
+        actions.on_jumped({
+            let here = here.clone();
+            move |fraction| {
+                _ = here(&|p| {
+                    p.jump_viewer(fraction);
+                    true
+                })
+            }
         });
-        actions.on_toggle_hex(|| {
-            with_current(Preview::toggle_hex);
+        actions.on_toggle_hex({
+            let here = here.clone();
+            move || _ = here(&Preview::toggle_hex)
         });
-        actions.on_toggle_wrap(|| {
-            with_current(Preview::toggle_wrap);
+        actions.on_toggle_wrap({
+            let here = here.clone();
+            move || {
+                _ = here(&|p| {
+                    p.toggle_wrap();
+                    true
+                })
+            }
         });
-        actions.on_key(|event| {
+        actions.on_key(move |event| {
             let m = event.modifiers;
-            with_current(|p| p.viewer_key(&event.text, (m.control, m.alt, m.shift, m.meta), true)).unwrap_or(false)
+            here(&|p| p.viewer_key(&event.text, (m.control, m.alt, m.shift, m.meta), true))
         });
         preview
     }
@@ -603,6 +632,8 @@ impl Preview {
                     .flatten()
                     .unwrap_or(false)
                 });
+                // Its viewer may have said its room before anyone listened.
+                actions.set_ask(actions.get_ask() + 1);
                 *self.0.quick_look.borrow_mut() = Some(quick_look);
                 self.refresh();
             }
@@ -739,7 +770,8 @@ impl Preview {
             return true;
         } else {
             let size = size.or_else(|| std::fs::metadata(&path).ok().map(|m| m.len())).unwrap_or(0);
-            self.0.viewer.borrow_mut().hex = Some(hex::HexView::new(&path, size));
+            let at = self.0.viewer.borrow().text.as_ref().map_or(0, text::TextView::file_offset);
+            self.0.viewer.borrow_mut().hex = Some(hex::HexView::new(&path, size).starting_at(at));
         }
         self.redraw();
         true

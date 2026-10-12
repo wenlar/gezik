@@ -897,6 +897,7 @@ pub fn view_items(
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
+    out.push((PREVIEW_HEX, "    Show Preview as Hex".to_owned()));
     out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));
     out.push((SHOW_HISTORY, "    Operation history".to_owned()));
     out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
@@ -2238,6 +2239,7 @@ impl Menus {
             (SORT_DESC, Subject::View) => crate::panes::active_view()
                 .set_sort(SortSpec { dir: SortDir::Desc, ..crate::panes::active_view().sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
+            (PREVIEW_HEX, Subject::View) => self.preview.show_hex(),
             (TWO_PANES, Subject::View) => crate::dual::toggle(),
             (SYNC_BROWSING, Subject::View) => crate::dual::toggle_sync(),
             (SWAP_PANES, Subject::View) => crate::dual::swap(),
@@ -2649,6 +2651,7 @@ mod tests {
             SORT_ASC,
             SORT_DESC,
             PREVIEW_PANE,
+            PREVIEW_HEX,
             TOGGLE_STACK,
             SHOW_HISTORY,
             APPLY_TO_ALL,
@@ -2912,6 +2915,7 @@ mod tests {
             SORT_ASC,
             SORT_DESC,
             PREVIEW_PANE,
+            PREVIEW_HEX,
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
@@ -3456,6 +3460,7 @@ mod tests {
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,
+                PREVIEW_HEX,
                 TOGGLE_STACK,
                 SHOW_HISTORY,
                 HIDE_EXTENSIONS,
@@ -3525,7 +3530,7 @@ mod tests {
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[13..],
+            &ids[14..],
             [
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
@@ -3538,9 +3543,9 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(items[13].1.starts_with("• ") && items[14].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[15].1.starts_with("• "));
-        assert_eq!(items[16].1.starts_with("• "), options.show_hidden);
+        assert!(items[14].1.starts_with("• ") && items[15].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[16].1.starts_with("• "));
+        assert_eq!(items[17].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");

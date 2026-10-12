@@ -8,6 +8,8 @@ export struct PreviewPart {
     col: int,
     text: string,
     class: int,
+    // Wide (East Asian) characters: drawn in the UI font, whose fallbacks cover them.
+    wide: bool,
 }
 
 // A viewer row: its line number or offset ("" on a wrapped line's later rows) and its parts.
@@ -58,6 +60,8 @@ export global PreviewActions {
     callback key(KeyEvent) -> bool;
     // A right-click, at this window position.
     callback context-menu(length, length);
+    // Bumped by Rust: the viewer says its room again (a window whose events were connected late).
+    in property <int> ask;
 }
 
 export component PreviewPane inherits Rectangle {
@@ -77,6 +81,16 @@ export component PreviewPane inherits Rectangle {
             vertical-stretch: 1;
             min-height: 80px;
 
+            // The viewer's keyboard (spec 13 §3.2): a click gives it, on a file's icon too (H).
+            scope := FocusScope {
+                key-pressed(event) => {
+                    if PreviewActions.key(event) {
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+
             if root.viewer: viewer := Rectangle {
                 // One character's width and a row's height in the fixed-width font.
                 property <length> cw: max(1px, probe.preferred-width / 10);
@@ -87,6 +101,7 @@ export component PreviewPane inherits Rectangle {
                 property <length> hx: 0px;
                 property <int> cols: max(1, floor(self.text-width / self.cw));
                 property <int> lines: max(1, floor(self.height / self.lh));
+                property <int> ask: PreviewActions.ask;
 
                 clip: true;
                 init => {
@@ -96,6 +111,9 @@ export component PreviewPane inherits Rectangle {
                     PreviewActions.resized(self.cols, self.lines);
                 }
                 changed lines => {
+                    PreviewActions.resized(self.cols, self.lines);
+                }
+                changed ask => {
                     PreviewActions.resized(self.cols, self.lines);
                 }
 
@@ -127,19 +145,11 @@ export component PreviewPane inherits Rectangle {
                     }
                 }
 
-                scope := FocusScope {
-                    key-pressed(event) => {
-                        if PreviewActions.key(event) {
-                            return accept;
-                        }
-                        return reject;
-                    }
-                }
-
                 for row[i] in root.info.rows: Rectangle {
                     y: i * viewer.lh;
                     height: viewer.lh;
                     if root.info.gutter > 0: Text {
+                        x: 0;
                         width: viewer.gutter-width - 8px;
                         text: row.number;
                         horizontal-alignment: right;
@@ -154,7 +164,7 @@ export component PreviewPane inherits Rectangle {
                         for part in row.parts: Text {
                             x: part.col * viewer.cw - viewer.hx;
                             text: part.text;
-                            font-family: root.mono-font;
+                            font-family: part.wide ? Theme.font-family : root.mono-font;
                             color: part.class == 1 ? Theme.syntax-keyword
                                 : part.class == 2 ? Theme.syntax-type
                                 : part.class == 3 ? Theme.syntax-string
@@ -193,11 +203,6 @@ export component PreviewPane inherits Rectangle {
                     }
                 }
 
-                if scope.has-focus: Rectangle {
-                    border-width: Theme.focus-width;
-                    border-color: Theme.focus-ring;
-                    border-radius: Theme.radius-small;
-                }
             }
 
             if !root.viewer && root.info.has-picture: Image {
@@ -224,6 +229,12 @@ export component PreviewPane inherits Rectangle {
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;
+            }
+
+            if scope.has-focus && root.info.bar != 0: Rectangle {
+                border-width: Theme.focus-width;
+                border-color: Theme.focus-ring;
+                border-radius: Theme.radius-small;
             }
         }
 

@@ -11,8 +11,6 @@ use gezik_core::syntax::Class;
 use super::scroller;
 use super::text::Row;
 
-/// Columns a row of 16 bytes takes after its offset: narrower places show 8.
-const WIDE_ROW: usize = 16 * 3 + 2 + 16;
 /// The most read for one page.
 const MAX_PAGE: u64 = 4096;
 
@@ -29,9 +27,16 @@ impl HexView {
         HexView { path: path.to_path_buf(), size, top: 0, cache: scroller::Cache::default() }
     }
 
-    /// Bytes per row in `cols` columns (the offsets' column is not in them).
+    /// Bytes per row in `cols` columns (the offsets' column is not in them): 16, 8 or 4, the
+    /// most whose row fits (a narrower place scrolls sideways).
     pub fn per_row(cols: usize) -> u64 {
-        if cols >= WIDE_ROW { 16 } else { 8 }
+        [16, 8].into_iter().find(|&per| cols >= row_width(per) + per).unwrap_or(4) as u64
+    }
+
+    /// Opens at `offset` (where the text was).
+    pub fn starting_at(mut self, offset: u64) -> HexView {
+        self.top = offset.min(self.size);
+        self
     }
 
     /// Hex digits of the offsets: enough for the size, at least 8. Never by the row's width:
@@ -252,7 +257,10 @@ mod tests {
             assert_eq!(first, again, "{width}");
             assert_eq!(v.gutter(), 8);
         }
-        assert!(row_width(16) + 16 <= WIDE_ROW, "a 16-byte row fits where it is chosen");
+        assert_eq!(
+            (HexView::per_row(66), HexView::per_row(65), HexView::per_row(33), HexView::per_row(32)),
+            (16, 8, 8, 4)
+        );
     }
 
     fn v_rows_dont_overread(path: &Path) -> usize {
