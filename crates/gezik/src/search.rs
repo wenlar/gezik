@@ -1718,7 +1718,8 @@ impl Searches {
             }
         };
         let searches = self.clone();
-        self.0.dialogs.ask_text_noted(
+        // OK waits for a good value (macOS checklist R39): a bad one is said, not dropped.
+        self.0.dialogs.ask_text_checked(
             title,
             message,
             initial.unwrap_or_default(),
@@ -1731,6 +1732,7 @@ impl Searches {
                 }
                 Err(why) => (why, true),
             },
+            check,
             move |text| {
                 let Some(text) = text.map(|t| t.trim().to_owned()) else { return };
                 if check(&text).is_err() {

@@ -645,7 +645,9 @@ mod tests {
         write(&r.join("a.txt"), "old");
         write(&r.join("b.txt"), "only right");
         let steps = vec![copy(l.join("a.txt"), r.join("a.txt")), trash(r.join("b.txt"))];
-        // Every copy is spoiled after it is written: the first and the one try again differ.
+        // Every copy is spoiled after it is written: the first and the one try again differ. A
+        // clone (APFS) is not read back, so this needs a byte copy.
+        gezik_platform::fs::CLONES.store(false, std::sync::atomic::Ordering::SeqCst);
         let engine = crate::Engine::new(crate::Settings { spoil: 2, ..crate::Settings::default() }, || {});
         let task = SyncTask::new(l.clone(), r.clone(), steps, [false; 2]);
         let job = engine.submit_chain_verifying(vec![Box::new(task)], None, Some(true));

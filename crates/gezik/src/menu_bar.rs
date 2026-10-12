@@ -21,6 +21,46 @@ pub fn install(window: &AppWindow, ops: Operations) {
     window.on_menu_command(move |name| {
         crate::windows::with_window(id, |window| chosen(window, &name, &ops));
     });
+    window.on_bar_key(|name, _version| {
+        Action::from_name(&name).and_then(keys::chord_for).and_then(|chord| bar_keys(&chord)).unwrap_or_default()
+    });
+}
+
+/// The shortcuts in effect changed (settings.toml): the items show and take the new keys.
+pub fn set_keys_changed(window: &AppWindow) {
+    window.set_keys_version(window.get_keys_version().wrapping_add(1));
+}
+
+/// `chord` as a menu item's key (Slint names ⌘ `Control` and ⌃ `Meta` on macOS); none for a
+/// keypad key, which the menu cannot tell from the main one.
+fn bar_keys(chord: &Chord) -> Option<slint::Keys> {
+    let mut parts: Vec<String> = Vec::new();
+    for (held, name) in [(chord.meta, "Control"), (chord.ctrl, "Meta"), (chord.alt, "Alt"), (chord.shift, "Shift")] {
+        if held {
+            parts.push(name.to_owned());
+        }
+    }
+    parts.push(match chord.key {
+        Key::Char(c) if c.is_ascii_alphabetic() => c.to_ascii_uppercase().to_string(),
+        Key::Char(c) => c.to_string(),
+        Key::Num(_) => return None,
+        Key::F(n) => format!("F{n}"),
+        Key::Left => "LeftArrow".into(),
+        Key::Right => "RightArrow".into(),
+        Key::Up => "UpArrow".into(),
+        Key::Down => "DownArrow".into(),
+        Key::Enter => "Return".into(),
+        Key::Tab => "Tab".into(),
+        Key::Backspace => "Backspace".into(),
+        Key::Delete => "Delete".into(),
+        Key::Home => "Home".into(),
+        Key::End => "End".into(),
+        Key::PageUp => "PageUp".into(),
+        Key::PageDown => "PageDown".into(),
+        Key::Escape => "Escape".into(),
+        Key::Space => "Space".into(),
+    });
+    slint::Keys::from_parts(parts.iter().map(String::as_str)).ok()
 }
 
 fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
@@ -84,11 +124,11 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
                     });
                 }
                 // No shortcut (none by default, or turned off in settings.toml), or only
-                // the keypad's.
+                // the keypad's: run as the palette runs it (Show Preview as Hex has no key).
                 None if crate::actions::run(action, &nav, &view) => {}
                 None => {
-                    if action == Action::BatchRename {
-                        ops.batch_rename();
+                    if let Some(preview) = crate::preview::with_current(crate::preview::Preview::clone) {
+                        crate::perform(action, window, &nav, &view, &preview, ops);
                     }
                 }
             }
@@ -170,5 +210,31 @@ fn play(window: &AppWindow, chord: &Chord) {
         if down {
             send(WindowEvent::KeyPressed { text: key.into() });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gezik_config::shortcuts::parse_chord;
+
+    use super::*;
+
+    fn keys(text: &str) -> Option<slint::Keys> {
+        bar_keys(&parse_chord(text, Platform::Mac).unwrap().unwrap())
+    }
+
+    fn parts(parts: &[&str]) -> Option<slint::Keys> {
+        Some(slint::Keys::from_parts(parts.iter().copied()).unwrap())
+    }
+
+    #[test]
+    fn a_shortcut_becomes_the_items_key() {
+        // A key set in Settings (macOS checklist R44): the item shows ⌥⌘K, not the default ⌥⌘C.
+        assert_eq!(keys("mod+alt+k"), parts(&["Control", "Alt", "K"]));
+        assert_eq!(keys("mod+shift+backspace"), parts(&["Control", "Shift", "Backspace"]));
+        assert_eq!(keys("ctrl+0"), parts(&["Meta", "0"]));
+        assert_eq!(keys("mod+["), parts(&["Control", "["]));
+        assert_eq!(keys("mod+up"), parts(&["Control", "UpArrow"]));
+        assert_eq!(keys("num+"), None, "the keypad's");
     }
 }

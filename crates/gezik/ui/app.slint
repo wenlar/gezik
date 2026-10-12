@@ -53,6 +53,10 @@ export component AppWindow inherits Window {
     in property <bool> native-menu-bar;
     // Off while Rust plays an item's shortcut: Slint would take it for the item again.
     in property <bool> menu-keys: true;
+    // The menu bar's keys come from the shortcuts in effect (`bar-key`, by the item's action);
+    // bumped when they change, so the items ask again.
+    in property <int> keys-version;
+    pure callback bar-key(string, int) -> keys;
     // The View menu's marks on macOS (view_options.rs keeps them as the options are). Two-way:
     // Slint flips a checkable item's mark itself when it is chosen.
     in-out property <bool> view-hide-extensions;
@@ -83,23 +87,23 @@ export component AppWindow inherits Window {
     if root.native-menu-bar: MenuBar {
         Menu {
             title: "File";
-            MenuItem { title: "New Window"; shortcut: root.menu-keys ? @keys(Control + N) : @keys(); activated => { root.menu-command("new-window"); } }
-            MenuItem { title: "New Tab"; shortcut: root.menu-keys ? @keys(Control + T) : @keys(); activated => { root.menu-command("new-tab"); } }
-            MenuItem { title: "New Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + N) : @keys(); activated => { root.menu-command("new-folder"); } }
-            MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? @keys(Control + Meta + N) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
-            MenuItem { title: "Open Terminal"; shortcut: root.menu-keys ? @keys(Control + Alt + T) : @keys(); activated => { root.menu-command("open-terminal"); } }
+            MenuItem { title: "New Window"; shortcut: root.menu-keys ? root.bar-key("new-window", root.keys-version) : @keys(); activated => { root.menu-command("new-window"); } }
+            MenuItem { title: "New Tab"; shortcut: root.menu-keys ? root.bar-key("new-tab", root.keys-version) : @keys(); activated => { root.menu-command("new-tab"); } }
+            MenuItem { title: "New Folder"; shortcut: root.menu-keys ? root.bar-key("new-folder", root.keys-version) : @keys(); activated => { root.menu-command("new-folder"); } }
+            MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? root.bar-key("new-folder-with-selection", root.keys-version) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
+            MenuItem { title: "Open Terminal"; shortcut: root.menu-keys ? root.bar-key("open-terminal", root.keys-version) : @keys(); activated => { root.menu-command("open-terminal"); } }
             MenuSeparator { }
-            MenuItem { title: "Get Info"; shortcut: root.menu-keys ? @keys(Control + I) : @keys(); activated => { root.menu-command("get-info"); } }
+            MenuItem { title: "Get Info"; shortcut: root.menu-keys ? root.bar-key("get-info", root.keys-version) : @keys(); activated => { root.menu-command("get-info"); } }
             MenuItem { title: "Quick Look"; activated => { root.menu-command("quick-look"); } }
             MenuItem { title: "Rename"; activated => { root.menu-command("rename"); } }
             MenuItem { title: "Rename Items…"; activated => { root.menu-command("batch-rename"); } }
-            MenuItem { title: "Duplicate"; shortcut: root.menu-keys ? @keys(Control + D) : @keys(); activated => { root.menu-command("duplicate"); } }
+            MenuItem { title: "Duplicate"; shortcut: root.menu-keys ? root.bar-key("duplicate", root.keys-version) : @keys(); activated => { root.menu-command("duplicate"); } }
             MenuItem { title: "Copy to the Other Pane"; activated => { root.menu-command("copy-to-other-pane"); } }
             MenuItem { title: "Move to the Other Pane"; activated => { root.menu-command("move-to-other-pane"); } }
-            MenuItem { title: "Make Alias"; shortcut: root.menu-keys ? @keys(Control + Meta + A) : @keys(); activated => { root.menu-command("make-alias"); } }
+            MenuItem { title: "Make Alias"; shortcut: root.menu-keys ? root.bar-key("make-alias", root.keys-version) : @keys(); activated => { root.menu-command("make-alias"); } }
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
-            MenuItem { title: "Eject"; shortcut: root.menu-keys ? @keys(Control + E) : @keys(); activated => { root.menu-command("eject"); } }
+            MenuItem { title: "Eject"; shortcut: root.menu-keys ? root.bar-key("eject", root.keys-version) : @keys(); activated => { root.menu-command("eject"); } }
             Menu {
                 title: "Tags";
                 for entry in root.bar-tags: MenuItem {
@@ -107,8 +111,8 @@ export component AppWindow inherits Window {
                     activated => { root.menu-command("tag:" + entry.id); }
                 }
                 MenuSeparator { }
-                MenuItem { title: "Tags…"; shortcut: root.menu-keys ? @keys(Control + Meta + L) : @keys(); activated => { root.menu-command("tags"); } }
-                MenuItem { title: "Clear Tags"; shortcut: root.menu-keys ? @keys(Meta + "0") : @keys(); activated => { root.menu-command("clear-tags"); } }
+                MenuItem { title: "Tags…"; shortcut: root.menu-keys ? root.bar-key("tags", root.keys-version) : @keys(); activated => { root.menu-command("tags"); } }
+                MenuItem { title: "Clear Tags"; shortcut: root.menu-keys ? root.bar-key("clear-tags", root.keys-version) : @keys(); activated => { root.menu-command("clear-tags"); } }
                 MenuSeparator { }
                 Menu {
                     title: "Rating";
@@ -125,40 +129,40 @@ export component AppWindow inherits Window {
             }
             MenuSeparator { }
             MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
-            MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? @keys(Control + Shift + Backspace) : @keys(); activated => { root.menu-command("empty-trash"); } }
-            MenuItem { title: "Move to Trash"; shortcut: root.menu-keys ? @keys(Control + Backspace) : @keys(); activated => { root.menu-command("trash"); } }
-            MenuItem { title: "Delete Immediately…"; shortcut: root.menu-keys ? @keys(Control + Alt + Backspace) : @keys(); activated => { root.menu-command("delete-permanently"); } }
+            MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? root.bar-key("empty-trash", root.keys-version) : @keys(); activated => { root.menu-command("empty-trash"); } }
+            MenuItem { title: "Move to Trash"; shortcut: root.menu-keys ? root.bar-key("trash", root.keys-version) : @keys(); activated => { root.menu-command("trash"); } }
+            MenuItem { title: "Delete Immediately…"; shortcut: root.menu-keys ? root.bar-key("delete-permanently", root.keys-version) : @keys(); activated => { root.menu-command("delete-permanently"); } }
             MenuSeparator { }
-            MenuItem { title: "Close Tab"; shortcut: root.menu-keys ? @keys(Control + W) : @keys(); activated => { root.menu-command("close-tab"); } }
+            MenuItem { title: "Close Tab"; shortcut: root.menu-keys ? root.bar-key("close-tab", root.keys-version) : @keys(); activated => { root.menu-command("close-tab"); } }
         }
         Menu {
             title: "Edit";
-            MenuItem { title: "Undo"; shortcut: root.menu-keys ? @keys(Control + Z) : @keys(); activated => { root.menu-command("undo"); } }
-            MenuItem { title: "Redo"; shortcut: root.menu-keys ? @keys(Control + Shift + Z) : @keys(); activated => { root.menu-command("redo"); } }
+            MenuItem { title: "Undo"; shortcut: root.menu-keys ? root.bar-key("undo", root.keys-version) : @keys(); activated => { root.menu-command("undo"); } }
+            MenuItem { title: "Redo"; shortcut: root.menu-keys ? root.bar-key("redo", root.keys-version) : @keys(); activated => { root.menu-command("redo"); } }
             MenuSeparator { }
-            MenuItem { title: "Cut"; shortcut: root.menu-keys ? @keys(Control + X) : @keys(); activated => { root.menu-command("cut"); } }
-            MenuItem { title: "Copy"; shortcut: root.menu-keys ? @keys(Control + C) : @keys(); activated => { root.menu-command("copy"); } }
+            MenuItem { title: "Cut"; shortcut: root.menu-keys ? root.bar-key("cut", root.keys-version) : @keys(); activated => { root.menu-command("cut"); } }
+            MenuItem { title: "Copy"; shortcut: root.menu-keys ? root.bar-key("copy", root.keys-version) : @keys(); activated => { root.menu-command("copy"); } }
             MenuItem { title: "Copy with Folders"; activated => { root.menu-command("copy-with-folders"); } }
             MenuItem { title: "Cut with Folders"; activated => { root.menu-command("cut-with-folders"); } }
-            MenuItem { title: "Copy Path"; shortcut: root.menu-keys ? @keys(Control + Alt + C) : @keys(); activated => { root.menu-command("copy-path"); } }
-            MenuItem { title: "Add to Drop Stack"; shortcut: root.menu-keys ? @keys(Control + Shift + S) : @keys(); activated => { root.menu-command("add-to-stack"); } }
-            MenuItem { title: "Paste"; shortcut: root.menu-keys ? @keys(Control + V) : @keys(); activated => { root.menu-command("paste"); } }
-            MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? @keys(Control + Alt + V) : @keys(); activated => { root.menu-command("paste-move"); } }
-            MenuItem { title: "Select All"; shortcut: root.menu-keys ? @keys(Control + A) : @keys(); activated => { root.menu-command("select-all"); } }
+            MenuItem { title: "Copy Path"; shortcut: root.menu-keys ? root.bar-key("copy-path", root.keys-version) : @keys(); activated => { root.menu-command("copy-path"); } }
+            MenuItem { title: "Add to Drop Stack"; shortcut: root.menu-keys ? root.bar-key("add-to-stack", root.keys-version) : @keys(); activated => { root.menu-command("add-to-stack"); } }
+            MenuItem { title: "Paste"; shortcut: root.menu-keys ? root.bar-key("paste", root.keys-version) : @keys(); activated => { root.menu-command("paste"); } }
+            MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? root.bar-key("paste-move", root.keys-version) : @keys(); activated => { root.menu-command("paste-move"); } }
+            MenuItem { title: "Select All"; shortcut: root.menu-keys ? root.bar-key("select-all", root.keys-version) : @keys(); activated => { root.menu-command("select-all"); } }
             MenuSeparator { }
-            MenuItem { title: "Find…"; shortcut: root.menu-keys ? @keys(Control + Shift + F) : @keys(); activated => { root.menu-command("search"); } }
-            MenuItem { title: "Filter…"; shortcut: root.menu-keys ? @keys(Control + F) : @keys(); activated => { root.menu-command("filter"); } }
-            MenuItem { title: "Invert Selection"; shortcut: root.menu-keys ? @keys(Control + Shift + I) : @keys(); activated => { root.menu-command("invert-selection"); } }
-            MenuItem { title: "Select by Pattern…"; shortcut: root.menu-keys ? @keys(Control + "=") : @keys(); activated => { root.menu-command("select-pattern"); } }
-            MenuItem { title: "Deselect by Pattern…"; shortcut: root.menu-keys ? @keys(Control + "-") : @keys(); activated => { root.menu-command("deselect-pattern"); } }
+            MenuItem { title: "Find…"; shortcut: root.menu-keys ? root.bar-key("search", root.keys-version) : @keys(); activated => { root.menu-command("search"); } }
+            MenuItem { title: "Filter…"; shortcut: root.menu-keys ? root.bar-key("filter", root.keys-version) : @keys(); activated => { root.menu-command("filter"); } }
+            MenuItem { title: "Invert Selection"; shortcut: root.menu-keys ? root.bar-key("invert-selection", root.keys-version) : @keys(); activated => { root.menu-command("invert-selection"); } }
+            MenuItem { title: "Select by Pattern…"; shortcut: root.menu-keys ? root.bar-key("select-pattern", root.keys-version) : @keys(); activated => { root.menu-command("select-pattern"); } }
+            MenuItem { title: "Deselect by Pattern…"; shortcut: root.menu-keys ? root.bar-key("deselect-pattern", root.keys-version) : @keys(); activated => { root.menu-command("deselect-pattern"); } }
             MenuItem { title: "Select Same Type"; activated => { root.menu-command("select-same-type"); } }
             MenuItem { title: "Restore Selection"; activated => { root.menu-command("restore-selection"); } }
         }
         Menu {
             title: "View";
-            MenuItem { title: "as List"; shortcut: root.menu-keys ? @keys(Control + Shift + "1") : @keys(); activated => { root.menu-command("view-list"); } }
-            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? @keys(Control + Shift + "2") : @keys(); activated => { root.menu-command("view-grid"); } }
-            MenuItem { title: "as Columns"; shortcut: root.menu-keys ? @keys(Control + Meta + "3") : @keys(); activated => { root.menu-command("view-columns"); } }
+            MenuItem { title: "as List"; shortcut: root.menu-keys ? root.bar-key("view-list", root.keys-version) : @keys(); activated => { root.menu-command("view-list"); } }
+            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? root.bar-key("view-grid", root.keys-version) : @keys(); activated => { root.menu-command("view-grid"); } }
+            MenuItem { title: "as Columns"; shortcut: root.menu-keys ? root.bar-key("view-columns", root.keys-version) : @keys(); activated => { root.menu-command("view-columns"); } }
             Menu {
                 title: "Group By";
                 MenuItem { title: "None"; activated => { root.menu-command("group-none"); } }
@@ -174,20 +178,20 @@ export component AppWindow inherits Window {
             MenuItem { title: "Collapse All Groups"; activated => { root.menu-command("collapse-groups"); } }
             MenuItem { title: "Expand All Groups"; activated => { root.menu-command("expand-groups"); } }
             MenuSeparator { }
-            MenuItem { title: "Flat View"; shortcut: root.menu-keys ? @keys(Control + B) : @keys(); activated => { root.menu-command("flat-view"); } }
+            MenuItem { title: "Flat View"; shortcut: root.menu-keys ? root.bar-key("flat-view", root.keys-version) : @keys(); activated => { root.menu-command("flat-view"); } }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
             MenuItem { title: "Show Preview as Hex"; activated => { root.menu-command("preview-hex"); } }
             MenuItem { title: "Play/Pause Preview"; activated => { root.menu-command("preview-play"); } }
-            MenuItem { title: "Two Panes"; checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? @keys(Control + Meta + P) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
+            MenuItem { title: "Two Panes"; checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? root.bar-key("toggle-dual-pane", root.keys-version) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
             MenuItem { title: "Sync Browsing"; checkable: true; checked <=> root.view-sync; activated => { root.menu-command("sync-browsing"); } }
-            MenuItem { title: "Swap Panes"; shortcut: root.menu-keys ? @keys(Control + Meta + U) : @keys(); activated => { root.menu-command("swap-panes"); } }
+            MenuItem { title: "Swap Panes"; shortcut: root.menu-keys ? root.bar-key("swap-panes", root.keys-version) : @keys(); activated => { root.menu-command("swap-panes"); } }
             MenuItem { title: "Same Folder in the Other Pane"; activated => { root.menu-command("other-pane-same-folder"); } }
             MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }
             MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Calculate Folder Sizes"; activated => { root.menu-command("calculate-folder-sizes"); } }
             MenuItem { title: "Show in Sidebar Tree"; activated => { root.menu-command("reveal-in-tree"); } }
             MenuItem { title: "Tag Dots"; checkable: true; checked <=> root.view-tag-dots; activated => { root.menu-command("tag-dots"); } }
-            MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
+            MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? root.bar-key("toggle-hidden", root.keys-version) : @keys(); activated => { root.menu-command("toggle-hidden"); } }
             MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
             MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
             MenuItem { title: "Single-Click to Open"; checkable: true; checked <=> root.view-single-click; activated => { root.menu-command("view-option:1302"); } }
@@ -204,38 +208,38 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Decimal (1 kB = 1000 bytes)"; checkable: true; checked <=> root.view-size-decimal; activated => { root.menu-command("view-option:1321"); } }
             }
             MenuSeparator { }
-            MenuItem { title: "Refresh"; shortcut: root.menu-keys ? @keys(Control + R) : @keys(); activated => { root.menu-command("refresh"); } }
+            MenuItem { title: "Refresh"; shortcut: root.menu-keys ? root.bar-key("refresh", root.keys-version) : @keys(); activated => { root.menu-command("refresh"); } }
             MenuItem { title: "System Integration…"; activated => { root.menu-command("system-integration"); } }
-            MenuItem { title: "Settings…"; shortcut: root.menu-keys ? @keys(Control + ",") : @keys(); activated => { root.menu-command("settings"); } }
+            MenuItem { title: "Settings…"; shortcut: root.menu-keys ? root.bar-key("settings", root.keys-version) : @keys(); activated => { root.menu-command("settings"); } }
         }
         Menu {
             title: "Go";
-            MenuItem { title: "Back"; shortcut: root.menu-keys ? @keys(Control + "[") : @keys(); activated => { root.menu-command("back"); } }
-            MenuItem { title: "Forward"; shortcut: root.menu-keys ? @keys(Control + "]") : @keys(); activated => { root.menu-command("forward"); } }
-            MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? @keys(Control + UpArrow) : @keys(); activated => { root.menu-command("up"); } }
-            MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? @keys(Control + Shift + E) : @keys(); activated => { root.menu-command("show-in-folder"); } }
+            MenuItem { title: "Back"; shortcut: root.menu-keys ? root.bar-key("back", root.keys-version) : @keys(); activated => { root.menu-command("back"); } }
+            MenuItem { title: "Forward"; shortcut: root.menu-keys ? root.bar-key("forward", root.keys-version) : @keys(); activated => { root.menu-command("forward"); } }
+            MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? root.bar-key("up", root.keys-version) : @keys(); activated => { root.menu-command("up"); } }
+            MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? root.bar-key("show-in-folder", root.keys-version) : @keys(); activated => { root.menu-command("show-in-folder"); } }
             MenuItem { title: "Show Trash"; activated => { root.menu-command("show-trash"); } }
-            MenuItem { title: "Connect to Server…"; shortcut: root.menu-keys ? @keys(Control + K) : @keys(); activated => { root.menu-command("connect-to-server"); } }
+            MenuItem { title: "Connect to Server…"; shortcut: root.menu-keys ? root.bar-key("connect-to-server", root.keys-version) : @keys(); activated => { root.menu-command("connect-to-server"); } }
             MenuSeparator { }
-            MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? @keys(Control + L) : @keys(); activated => { root.menu-command("focus-path"); } }
-            MenuItem { title: "Quick Open…"; shortcut: root.menu-keys ? @keys(Control + P) : @keys(); activated => { root.menu-command("quick-open"); } }
-            MenuItem { title: "Command Palette…"; shortcut: root.menu-keys ? @keys(Control + Shift + P) : @keys(); activated => { root.menu-command("command-palette"); } }
+            MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? root.bar-key("focus-path", root.keys-version) : @keys(); activated => { root.menu-command("focus-path"); } }
+            MenuItem { title: "Quick Open…"; shortcut: root.menu-keys ? root.bar-key("quick-open", root.keys-version) : @keys(); activated => { root.menu-command("quick-open"); } }
+            MenuItem { title: "Command Palette…"; shortcut: root.menu-keys ? root.bar-key("command-palette", root.keys-version) : @keys(); activated => { root.menu-command("command-palette"); } }
             MenuSeparator { }
-            MenuItem { title: "Pinned 1"; shortcut: root.menu-keys ? @keys(Control + Alt + "1") : @keys(); activated => { root.menu-command("pin-1"); } }
-            MenuItem { title: "Pinned 2"; shortcut: root.menu-keys ? @keys(Control + Alt + "2") : @keys(); activated => { root.menu-command("pin-2"); } }
-            MenuItem { title: "Pinned 3"; shortcut: root.menu-keys ? @keys(Control + Alt + "3") : @keys(); activated => { root.menu-command("pin-3"); } }
-            MenuItem { title: "Pinned 4"; shortcut: root.menu-keys ? @keys(Control + Alt + "4") : @keys(); activated => { root.menu-command("pin-4"); } }
-            MenuItem { title: "Pinned 5"; shortcut: root.menu-keys ? @keys(Control + Alt + "5") : @keys(); activated => { root.menu-command("pin-5"); } }
-            MenuItem { title: "Pinned 6"; shortcut: root.menu-keys ? @keys(Control + Alt + "6") : @keys(); activated => { root.menu-command("pin-6"); } }
-            MenuItem { title: "Pinned 7"; shortcut: root.menu-keys ? @keys(Control + Alt + "7") : @keys(); activated => { root.menu-command("pin-7"); } }
-            MenuItem { title: "Pinned 8"; shortcut: root.menu-keys ? @keys(Control + Alt + "8") : @keys(); activated => { root.menu-command("pin-8"); } }
-            MenuItem { title: "Pinned 9"; shortcut: root.menu-keys ? @keys(Control + Alt + "9") : @keys(); activated => { root.menu-command("pin-9"); } }
+            MenuItem { title: "Pinned 1"; shortcut: root.menu-keys ? root.bar-key("pin-1", root.keys-version) : @keys(); activated => { root.menu-command("pin-1"); } }
+            MenuItem { title: "Pinned 2"; shortcut: root.menu-keys ? root.bar-key("pin-2", root.keys-version) : @keys(); activated => { root.menu-command("pin-2"); } }
+            MenuItem { title: "Pinned 3"; shortcut: root.menu-keys ? root.bar-key("pin-3", root.keys-version) : @keys(); activated => { root.menu-command("pin-3"); } }
+            MenuItem { title: "Pinned 4"; shortcut: root.menu-keys ? root.bar-key("pin-4", root.keys-version) : @keys(); activated => { root.menu-command("pin-4"); } }
+            MenuItem { title: "Pinned 5"; shortcut: root.menu-keys ? root.bar-key("pin-5", root.keys-version) : @keys(); activated => { root.menu-command("pin-5"); } }
+            MenuItem { title: "Pinned 6"; shortcut: root.menu-keys ? root.bar-key("pin-6", root.keys-version) : @keys(); activated => { root.menu-command("pin-6"); } }
+            MenuItem { title: "Pinned 7"; shortcut: root.menu-keys ? root.bar-key("pin-7", root.keys-version) : @keys(); activated => { root.menu-command("pin-7"); } }
+            MenuItem { title: "Pinned 8"; shortcut: root.menu-keys ? root.bar-key("pin-8", root.keys-version) : @keys(); activated => { root.menu-command("pin-8"); } }
+            MenuItem { title: "Pinned 9"; shortcut: root.menu-keys ? root.bar-key("pin-9", root.keys-version) : @keys(); activated => { root.menu-command("pin-9"); } }
             MenuSeparator { }
             MenuItem { title: "Clear Folder History"; activated => { root.menu-command("clear-history"); } }
         }
         Menu {
             title: "Tools";
-            MenuItem { title: "Compare"; shortcut: root.menu-keys ? @keys(Control + Meta + C) : @keys(); activated => { root.menu-command("compare"); } }
+            MenuItem { title: "Compare"; shortcut: root.menu-keys ? root.bar-key("compare", root.keys-version) : @keys(); activated => { root.menu-command("compare"); } }
             MenuItem { title: "Select Differences"; activated => { root.menu-command("select-differences"); } }
             MenuSeparator { }
             MenuItem { title: "Calculate Checksums…"; activated => { root.menu-command("checksums"); } }
@@ -266,8 +270,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "Show Next Tab"; activated => { root.menu-command("next-tab"); } }
             MenuItem { title: "Show Previous Tab"; activated => { root.menu-command("prev-tab"); } }
             MenuSeparator { }
-            MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? @keys(Control + Shift + T) : @keys(); activated => { root.menu-command("reopen-tab"); } }
-            MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? @keys(Control + Shift + A) : @keys(); activated => { root.menu-command("tab-picker"); } }
+            MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? root.bar-key("reopen-tab", root.keys-version) : @keys(); activated => { root.menu-command("reopen-tab"); } }
+            MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? root.bar-key("tab-picker", root.keys-version) : @keys(); activated => { root.menu-command("tab-picker"); } }
             MenuItem { title: root.active-tab-locked ? "Unlock Tab" : "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
             MenuItem { title: "Move Tab to New Window"; activated => { root.menu-command("move-tab-to-new-window"); } }
             MenuSeparator { }
@@ -281,15 +285,15 @@ export component AppWindow inherits Window {
                 }
             }
             MenuSeparator { }
-            MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? @keys(Control + "1") : @keys(); activated => { root.menu-command("tab-1"); } }
-            MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? @keys(Control + "2") : @keys(); activated => { root.menu-command("tab-2"); } }
-            MenuItem { title: "Tab 3"; shortcut: root.menu-keys ? @keys(Control + "3") : @keys(); activated => { root.menu-command("tab-3"); } }
-            MenuItem { title: "Tab 4"; shortcut: root.menu-keys ? @keys(Control + "4") : @keys(); activated => { root.menu-command("tab-4"); } }
-            MenuItem { title: "Tab 5"; shortcut: root.menu-keys ? @keys(Control + "5") : @keys(); activated => { root.menu-command("tab-5"); } }
-            MenuItem { title: "Tab 6"; shortcut: root.menu-keys ? @keys(Control + "6") : @keys(); activated => { root.menu-command("tab-6"); } }
-            MenuItem { title: "Tab 7"; shortcut: root.menu-keys ? @keys(Control + "7") : @keys(); activated => { root.menu-command("tab-7"); } }
-            MenuItem { title: "Tab 8"; shortcut: root.menu-keys ? @keys(Control + "8") : @keys(); activated => { root.menu-command("tab-8"); } }
-            MenuItem { title: "Last Tab"; shortcut: root.menu-keys ? @keys(Control + "9") : @keys(); activated => { root.menu-command("tab-last"); } }
+            MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? root.bar-key("tab-1", root.keys-version) : @keys(); activated => { root.menu-command("tab-1"); } }
+            MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? root.bar-key("tab-2", root.keys-version) : @keys(); activated => { root.menu-command("tab-2"); } }
+            MenuItem { title: "Tab 3"; shortcut: root.menu-keys ? root.bar-key("tab-3", root.keys-version) : @keys(); activated => { root.menu-command("tab-3"); } }
+            MenuItem { title: "Tab 4"; shortcut: root.menu-keys ? root.bar-key("tab-4", root.keys-version) : @keys(); activated => { root.menu-command("tab-4"); } }
+            MenuItem { title: "Tab 5"; shortcut: root.menu-keys ? root.bar-key("tab-5", root.keys-version) : @keys(); activated => { root.menu-command("tab-5"); } }
+            MenuItem { title: "Tab 6"; shortcut: root.menu-keys ? root.bar-key("tab-6", root.keys-version) : @keys(); activated => { root.menu-command("tab-6"); } }
+            MenuItem { title: "Tab 7"; shortcut: root.menu-keys ? root.bar-key("tab-7", root.keys-version) : @keys(); activated => { root.menu-command("tab-7"); } }
+            MenuItem { title: "Tab 8"; shortcut: root.menu-keys ? root.bar-key("tab-8", root.keys-version) : @keys(); activated => { root.menu-command("tab-8"); } }
+            MenuItem { title: "Last Tab"; shortcut: root.menu-keys ? root.bar-key("tab-last", root.keys-version) : @keys(); activated => { root.menu-command("tab-last"); } }
             MenuSeparator { }
             for entry in root.bar-windows: MenuItem {
                 title: entry.title;
