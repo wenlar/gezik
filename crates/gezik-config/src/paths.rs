@@ -136,13 +136,27 @@ fn writable(dir: &Path) -> bool {
     made
 }
 
+/// `\\?\C:\x` → `C:\x`, `\\?\UNC\server\share` → `\\server\share` (what `canonicalize` gives on
+/// Windows); anything else as it is.
+pub fn plain_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
 /// This process's [`Location`]: one `metadata` call for the marker when there is none.
 pub fn location() -> &'static Location {
     static LOCATION: std::sync::OnceLock<Location> = std::sync::OnceLock::new();
     LOCATION.get_or_init(|| {
         let env = std::env::var_os("GEZIK_CONFIG_DIR").filter(|d| !d.is_empty()).map(PathBuf::from);
-        // As gezik_platform::system::exe: the real file on macOS and Linux.
-        let exe = std::env::current_exe().ok().map(|e| if cfg!(unix) { e.canonicalize().unwrap_or(e) } else { e });
+        // The real file (a link, junction or subst drive reaches the same folder, so the same
+        // single-instance key); on Windows without the `\\?\` the user would see.
+        let exe = std::env::current_exe().ok().map(|e| e.canonicalize().map(|real| plain_path(&real)).unwrap_or(e));
         let appimage = std::env::var_os("APPIMAGE").filter(|_| cfg!(target_os = "linux")).map(PathBuf::from);
         let system = dirs::config_dir().map(|dir| dir.join("gezik"));
         let choice = choose(env, exe.as_deref(), appimage.as_deref(), |m| m.is_file(), system);
@@ -382,6 +396,14 @@ mod tests {
         let translocated =
             Path::new("/private/var/folders/x/T/AppTranslocation/AB-12/d/Gezik.app/Contents/MacOS/gezik");
         assert_eq!(choose(None, Some(translocated), None, none, system.clone()), Choice::Translocated(system));
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_dropped() {
+        assert_eq!(plain_path(Path::new(r"\\?\E:\Gezik\gezik.exe")), Path::new(r"E:\Gezik\gezik.exe"));
+        assert_eq!(plain_path(Path::new(r"\\?\UNC\nas\usb\gezik.exe")), Path::new(r"\\nas\usb\gezik.exe"));
+        assert_eq!(plain_path(Path::new(r"\\?\Volume{1}\x")), Path::new(r"\\?\Volume{1}\x"));
+        assert_eq!(plain_path(Path::new("/usb/gezik")), Path::new("/usb/gezik"));
     }
 
     #[test]

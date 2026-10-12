@@ -25,7 +25,8 @@ next to Gezik keeps everything next to it instead (see [Portable mode](#portable
   Local to this machine; not meant to be copied.
 - `system-changes.toml` — the changes Gezik made to the system on your command (see
   [System integration](features.md#system-integration)). Written only by Gezik. In portable
-  mode one per computer: `system-changes-<computer name>.toml`.
+  mode one per computer: `system-changes-<computer id>.toml`, named by a short hash of the
+  computer's id, with the computer's name inside.
 - `tools/` — programs Gezik downloaded on your command (7-Zip, ffmpeg, pdfium). In portable mode
   one folder per system, `tools/<os>-<arch>/` (say `windows-x86_64`), so one drive serves three.
 
@@ -145,7 +146,8 @@ runs as a separate instance next to an installed one. Settings ▸ Sync and Back
   `gezik-portable`; `gezik-data/` stays.
 - System integration (default file manager, PATH, the tray at sign-in, the global shortcut)
   still works, but each question first says that it stops working when the drive is removed.
-  Its list of changes is kept per computer (`system-changes-<computer name>.toml`), so a drive
+  Its list of changes is kept per computer (`system-changes-<computer id>.toml`; the id stays when
+  the computer is renamed or gets another network name), so a drive
   used on several computers never undoes another computer's changes.
 - If `gezik-data/` cannot be written (a read-only drive or CD, `Program Files`), Gezik still
   opens with its settings, writes nothing, and the status bar says "Portable data folder is

@@ -1229,9 +1229,14 @@ pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places
 /// The journal in the local config folder; in portable mode one per machine (spec 14 §9.2).
 fn journal_file() -> Option<JournalFile> {
     let dirs = gezik_config::paths::location().dirs.as_ref()?;
-    let machine = if dirs.portable { gezik_platform::system::machine_name() } else { None };
-    let name = gezik_config::system_journal::file_name(machine.as_deref());
-    Some(JournalFile::named(dirs.local.clone(), name))
+    if !dirs.portable {
+        return Some(JournalFile::new(dirs.local.clone()));
+    }
+    // By the computer's stable id (a new host name must not lose the journal), read once.
+    static MACHINE: std::sync::OnceLock<(Option<String>, Option<String>)> = std::sync::OnceLock::new();
+    let (id, host) =
+        MACHINE.get_or_init(|| (gezik_platform::system::machine_id(), gezik_platform::system::machine_name()));
+    Some(JournalFile::portable(dirs.local.clone(), id.as_deref(), host.as_deref()))
 }
 
 /// Said first in every question of the System Integration page in portable mode (spec 14 §9.2).

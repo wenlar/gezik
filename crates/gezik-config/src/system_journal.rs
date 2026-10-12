@@ -25,6 +25,8 @@ const MAX_BYTES: u64 = 1 << 20;
 pub struct Journal {
     /// The exe of the last Gezik that wrote (spec 6.3's moved check).
     pub exe: String,
+    /// The host name of the computer that wrote, for people (portable mode; "" otherwise).
+    pub machine: String,
     pub changes: Vec<Change>,
 }
 
@@ -58,6 +60,7 @@ pub fn parse(text: &str) -> Result<Journal, String> {
         None => return Err("it has no version".into()),
     }
     let exe = table.get("exe").and_then(toml::Value::as_str).unwrap_or_default().to_owned();
+    let machine = table.get("machine").and_then(toml::Value::as_str).unwrap_or_default().to_owned();
     let mut changes = Vec::new();
     if let Some(list) = table.get("change") {
         let list = list.as_array().ok_or("change is not a list")?;
@@ -66,7 +69,7 @@ pub fn parse(text: &str) -> Result<Journal, String> {
             changes.push(parse_change(entry).map_err(|why| format!("change {}: {why}", i + 1))?);
         }
     }
-    Ok(Journal { exe, changes })
+    Ok(Journal { exe, machine, changes })
 }
 
 fn parse_change(table: &toml::Table) -> Result<Change, String> {
@@ -130,6 +133,9 @@ pub fn to_text(journal: &Journal) -> String {
     let mut doc = DocumentMut::new();
     doc["version"] = value(VERSION);
     doc["exe"] = value(journal.exe.as_str());
+    if !journal.machine.is_empty() {
+        doc["machine"] = value(journal.machine.as_str());
+    }
     let mut list = ArrayOfTables::new();
     for change in &journal.changes {
         let mut table = Table::new();
@@ -169,17 +175,54 @@ fn inline(v: &Value) -> InlineTable {
     table
 }
 
-/// The journal's name: `system-changes.toml`, or in portable mode one per machine,
-/// `system-changes-<machine>.toml` (a drive opened on another computer must not list this
-/// one's changes; spec 14 decision 14). Characters a file name cannot hold become `_`.
-pub fn file_name(machine: Option<&str>) -> String {
-    match machine.filter(|m| !m.trim().is_empty()) {
-        None => FILE.to_owned(),
-        Some(machine) => {
-            let safe: String =
-                machine.trim().chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
-            format!("system-changes-{safe}.toml")
-        }
+/// The key a portable journal is named by (spec 14 decision 14): a short hash of the
+/// computer's stable id (it survives a rename and a new network name), else of its host name;
+/// `None` when neither is known.
+pub fn machine_key(id: Option<&str>, host: Option<&str>) -> Option<String> {
+    let source = [id, host].into_iter().flatten().map(str::trim).find(|s| !s.is_empty())?;
+    let hash = source
+        .to_lowercase()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3));
+    Some(format!("{:012x}", hash >> 16))
+}
+
+/// The journal's name: `system-changes.toml`, or in portable mode one per computer,
+/// `system-changes-<key>.toml` (a drive opened on another computer must not list this one's
+/// changes).
+pub fn file_name(key: Option<&str>) -> String {
+    key.map_or_else(|| FILE.to_owned(), |key| format!("system-changes-{key}.toml"))
+}
+
+/// Whether `name` is a journal's file name (one of the portable ones too).
+fn is_journal_name(name: &str) -> bool {
+    name == FILE || (name.starts_with("system-changes-") && name.ends_with(".toml"))
+}
+
+/// The name 14e's first build gave a portable journal: the host name itself.
+fn host_name(host: &str) -> String {
+    let safe: String = host.trim().chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
+    format!("system-changes-{safe}.toml")
+}
+
+/// The portable journal to use (pure): `ours` if it is there; else the one other journal this
+/// computer wrote, told by the host name in it (or in its name, from 14e's first build), when
+/// there is exactly one: the id could not be read then or now. Never another computer's.
+/// `found`: each journal file in the folder, with the `machine` written in it.
+pub fn pick_name(ours: &str, host: Option<&str>, found: &[(String, String)]) -> String {
+    if found.iter().any(|(name, _)| name == ours) {
+        return ours.to_owned();
+    }
+    let Some(host) = host.map(str::trim).filter(|h| !h.is_empty()) else { return ours.to_owned() };
+    let legacy = host_name(host);
+    let mine: Vec<&String> = found
+        .iter()
+        .filter(|(name, machine)| name != FILE && (machine.eq_ignore_ascii_case(host) || *name == legacy))
+        .map(|(name, _)| name)
+        .collect();
+    match mine.as_slice() {
+        [one] => (*one).clone(),
+        _ => ours.to_owned(),
     }
 }
 
@@ -188,16 +231,35 @@ pub fn file_name(machine: Option<&str>) -> String {
 pub struct JournalFile {
     dir: PathBuf,
     name: String,
+    /// Written into the journal as `machine` (portable mode).
+    host: String,
 }
 
 impl JournalFile {
     pub fn new(dir: PathBuf) -> JournalFile {
-        JournalFile { dir, name: FILE.to_owned() }
+        JournalFile { dir, name: FILE.to_owned(), host: String::new() }
     }
 
-    /// The journal named by [`file_name`].
-    pub fn named(dir: PathBuf, name: String) -> JournalFile {
-        JournalFile { dir, name }
+    /// Portable mode's journal in `dir` for the computer of `id` and `host` ([`pick_name`]):
+    /// reads the folder and the `machine` of each other journal in it.
+    pub fn portable(dir: PathBuf, id: Option<&str>, host: Option<&str>) -> JournalFile {
+        let ours = file_name(machine_key(id, host).as_deref());
+        let found: Vec<(String, String)> = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| is_journal_name(name))
+            .map(|name| {
+                let path = dir.join(&name);
+                let small = path.symlink_metadata().is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES);
+                let text = if small { std::fs::read_to_string(&path).unwrap_or_default() } else { String::new() };
+                let machine = parse(&text).map(|journal| journal.machine).unwrap_or_default();
+                (name, machine)
+            })
+            .collect();
+        let name = pick_name(&ours, host, &found);
+        JournalFile { dir, name, host: host.unwrap_or_default().trim().to_owned() }
     }
 
     pub fn path(&self) -> PathBuf {
@@ -230,7 +292,7 @@ impl JournalFile {
                 parse(&text).map_err(JournalError::Bad)?
             }
         };
-        Ok(Locked { _lock: lock, path, journal })
+        Ok(Locked { _lock: lock, path, journal, host: self.host.clone() })
     }
 }
 
@@ -239,6 +301,7 @@ pub struct Locked {
     _lock: File,
     path: PathBuf,
     journal: Journal,
+    host: String,
 }
 
 impl Locked {
@@ -261,6 +324,9 @@ impl Locked {
         make: impl FnOnce(&Change) -> io::Result<()>,
     ) -> io::Result<()> {
         exe.clone_into(&mut self.journal.exe);
+        if !self.host.is_empty() {
+            self.host.clone_into(&mut self.journal.machine);
+        }
         self.journal.changes.push(Change { done: false, ..change });
         if let Err(err) = self.save() {
             // Not on disk, so not made: the list stays what the file holds.
@@ -301,15 +367,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_portable_journal_is_named_by_the_machine() {
+    fn a_portable_journal_is_named_by_the_machine_id() {
         assert_eq!(file_name(None), FILE);
-        assert_eq!(file_name(Some(" ")), FILE);
-        assert_eq!(file_name(Some("OFİS-PC")), "system-changes-OFİS-PC.toml");
-        assert_eq!(file_name(Some("mac.local")), "system-changes-mac_local.toml");
-        assert_eq!(file_name(Some(r"a/b\c:d")), "system-changes-a_b_c_d.toml");
-        let dir = crate::test_dir("journal-named");
-        let file = JournalFile::named(dir.clone(), file_name(Some("PC1")));
-        assert_eq!(file.path(), dir.join("system-changes-PC1.toml"));
+        assert_eq!(machine_key(None, None), None);
+        assert_eq!(machine_key(Some(" "), Some("")), None);
+        let id = machine_key(Some("4c4c4544-0042-3510-8051-b4c04f4d4e31"), Some("OFİS-PC")).unwrap();
+        assert_eq!(id.len(), 12);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        // The id wins: a new host name (DHCP, a rename) keeps the name.
+        assert_eq!(machine_key(Some("4C4C4544-0042-3510-8051-B4C04F4D4E31"), Some("other")).unwrap(), id);
+        // No id: the host name.
+        let by_host = machine_key(None, Some("mac")).unwrap();
+        assert_ne!(by_host, id);
+        assert_eq!(file_name(Some(&id)), format!("system-changes-{id}.toml"));
+    }
+
+    #[test]
+    fn only_this_computers_journal_is_taken_over() {
+        let found = |list: &[(&str, &str)]| -> Vec<(String, String)> {
+            list.iter().map(|(n, m)| ((*n).to_owned(), (*m).to_owned())).collect()
+        };
+        let ours = "system-changes-aaaaaaaaaaaa.toml";
+        let pick = |list: &[(&str, &str)]| pick_name(ours, Some("PC1"), &found(list));
+        assert_eq!(pick(&[]), ours);
+        assert_eq!(pick(&[(ours, "PC1"), ("system-changes-bbbbbbbbbbbb.toml", "PC1")]), ours);
+        // The id could not be read before (or now): the one written by this host is used.
+        assert_eq!(pick(&[("system-changes-bbbbbbbbbbbb.toml", "pc1")]), "system-changes-bbbbbbbbbbbb.toml");
+        // 14e's first build named it by the host.
+        assert_eq!(pick(&[("system-changes-PC1.toml", "")]), "system-changes-PC1.toml");
+        // Another computer's is never taken, even when it is the only one.
+        assert_eq!(pick(&[("system-changes-cccccccccccc.toml", "LAPTOP")]), ours);
+        // Two of this host's: not a guess.
+        assert_eq!(pick(&[("system-changes-b.toml", "PC1"), ("system-changes-PC1.toml", "")]), ours);
+        assert_eq!(pick(&[(FILE, "PC1")]), ours, "the installed Gezik's is not a portable one");
+        assert_eq!(pick_name(ours, None, &found(&[("system-changes-b.toml", "")])), ours);
+    }
+
+    #[test]
+    fn a_portable_journal_keeps_its_host_and_is_found_again() {
+        let dir = crate::test_dir("journal-portable");
+        let file = JournalFile::portable(dir.clone(), None, Some("PC1"));
+        let change = sample().changes[0].clone();
+        file.lock().unwrap().record(change, "x", |_| Ok(())).unwrap();
+        let text = std::fs::read_to_string(file.path()).unwrap();
+        assert!(text.contains("machine = \"PC1\""), "{text}");
+        assert_eq!(parse(&text).unwrap().machine, "PC1");
+        // Now the id can be read: the journal written by host name is still this one.
+        let again = JournalFile::portable(dir.clone(), Some("an-id"), Some("PC1"));
+        assert_eq!(again.path(), file.path());
+        // Another computer starts its own.
+        let other = JournalFile::portable(dir.clone(), Some("other-id"), Some("PC2"));
+        assert_ne!(other.path(), file.path());
+        assert!(!other.exists());
     }
 
     fn sample() -> Journal {
@@ -325,6 +434,7 @@ mod tests {
         };
         Journal {
             exe: r"C:\Tools\Gezik 'x'\gezik.exe".into(),
+            machine: "PC1".into(),
             changes: vec![
                 base.clone(),
                 Change {
