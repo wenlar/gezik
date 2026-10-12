@@ -12,6 +12,11 @@ pub enum Value {
     Strings(Vec<String>),
 }
 
+/// The most a list may decode to: Finder's attributes are a few hundred bytes; a made-up one
+/// could otherwise point thousands of times at one large string.
+const MAX_BYTES: usize = 64 * 1024;
+const MAX_STRINGS: usize = 1000;
+
 struct Doc<'a> {
     data: &'a [u8],
     offset_size: usize,
@@ -54,9 +59,12 @@ impl Doc<'_> {
         Some((n, at + 1 + size))
     }
 
-    fn string(&self, index: usize) -> Option<String> {
+    /// The string at `index`; `budget` is what the whole list may still decode (bytes), so many
+    /// references to one big string cannot add up to more memory than there is.
+    fn string(&self, index: usize, budget: &mut usize) -> Option<String> {
         let (marker, at) = self.object(index)?;
         let (len, at) = self.length(marker, at)?;
+        *budget = budget.checked_sub(len.checked_mul(if marker >> 4 == 0x6 { 2 } else { 1 })?)?;
         match marker >> 4 {
             0x5 => {
                 let bytes = self.data.get(at..at.checked_add(len)?)?;
@@ -98,12 +106,16 @@ pub fn decode(data: &[u8]) -> Option<Value> {
             let n = be(bytes)?;
             Some(Value::Int(if size == 8 { n as i64 } else { i64::try_from(n).ok()? }))
         }
-        0x5 | 0x6 => doc.string(top).map(Value::Str),
+        0x5 | 0x6 => doc.string(top, &mut { MAX_BYTES }).map(Value::Str),
         0xA => {
             let (len, at) = doc.length(marker, at)?;
+            if len > MAX_STRINGS {
+                return None;
+            }
+            let mut budget = MAX_BYTES;
             let refs = data.get(at..at.checked_add(len.checked_mul(ref_size)?)?)?;
             refs.chunks(ref_size)
-                .map(|r| doc.string(usize::try_from(be(r)?).ok()?))
+                .map(|r| doc.string(usize::try_from(be(r)?).ok()?, &mut budget))
                 .collect::<Option<Vec<String>>>()
                 .map(Value::Strings)
         }
@@ -238,6 +250,19 @@ mod tests {
         }
         assert_eq!(decode(&encode_string("Ready")), Some(Value::Str("Ready".into())));
         assert_eq!(decode(&encode_string("Hazır")), Some(Value::Str("Hazır".into())));
+    }
+
+    #[test]
+    fn a_made_up_list_cannot_decode_to_much() {
+        let too_many: Vec<String> = (0..=MAX_STRINGS).map(|i| i.to_string()).collect();
+        assert_eq!(decode(&encode_strings(&too_many)), None);
+        // 900 references to one 100-byte string: 90 KB from a list of 1 KB.
+        let mut array = Vec::new();
+        marker(0xA, 900, &mut array);
+        array.extend(std::iter::repeat_n(1u8, 900));
+        let data = assemble(&[array, string_object(&"x".repeat(100))]);
+        assert!(data.len() < 2048);
+        assert_eq!(decode(&data), None);
     }
 
     #[test]
