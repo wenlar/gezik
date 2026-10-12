@@ -23,8 +23,9 @@ pub const MAX_HEADER: usize = 1024;
 pub const MAX_COMMAND: usize = 64 * 1024;
 /// The largest picture side: a picture is at most 4096 × 4096 × 4 bytes (64 MB).
 pub const MAX_SIDE: u32 = 4096;
-/// The largest scale (pixels per point): 800% on a 3× screen at 96 dpi is 32.
-pub const MAX_SCALE: f32 = 64.0;
+/// The largest scale (pixels per point): 800% on a 3× screen at 96 dpi is 32; a tiny page
+/// fitted to the view's width can ask more. The picture stays within `w` × `h` anyway.
+pub const MAX_SCALE: f32 = 1000.0;
 
 /// What Gezik asks. `Debug` never shows a password.
 #[derive(Clone, PartialEq)]
@@ -255,7 +256,7 @@ mod tests {
             "render\t1\tNaN\t0\t0\t10\t10",
             "render\t1\t1\t0\t0\t0\t10",
             "render\t1\t1\t0\t0\t4097\t10",
-            "render\t1\t1000\t0\t0\t10\t10",
+            "render\t1\t2000\t0\t0\t10\t10",
             "password\tbad\\q",
             "quit\tnow",
         ] {

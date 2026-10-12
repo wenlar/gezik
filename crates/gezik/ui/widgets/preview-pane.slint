@@ -1,6 +1,7 @@
 import { Theme } from "../theme.slint";
 import { FileIcon } from "file-icon.slint";
 import { TextButton } from "text-button.slint";
+import { TextField } from "text-field.slint";
 
 // A colored piece of a viewer row at its column; `class` is gezik_core::syntax::Class (0 plain,
 // 1 keyword, 2 type, 3 string, 4 number, 5 comment, 6 tag).
@@ -32,7 +33,8 @@ export struct PreviewInfo {
     item-kind: int,
     // The picture or text is still loading.
     loading: bool,
-    // The viewer (spec 13 §3.2): 0 none, 1 text, 2 hex, 3 only a Hex button (another file).
+    // The viewer (spec 13 §3.2): 0 none, 1 text, 2 hex, 3 only a Hex button (another file),
+    // 4 a PDF's pages and zoom, 5 a picture's zoom.
     bar: int,
     // The bar's right side (lines, size and place, offset) and a note before it.
     bar-text: string,
@@ -46,6 +48,19 @@ export struct PreviewInfo {
     // The scroll bar: where the top is and how much shows, 0–1.
     scroll-pos: float,
     scroll-size: float,
+    // The zoom surface (13b): `picture` drawn at this place of the preview area, not fitted.
+    zoomed: bool,
+    pic-x: length,
+    pic-y: length,
+    pic-w: length,
+    pic-h: length,
+    // A PDF's page from 1 (0: not a PDF) and its page count (0: not known yet).
+    page: int,
+    pages: int,
+    // "Fit", "Fit Width" or "125%".
+    zoom-text: string,
+    // A button after the note ("Download", "Enter Password…"); "" for none.
+    bar-link: string,
 }
 
 // The viewer's events, for Rust (one connection per window, not one per pane).
@@ -64,6 +79,18 @@ export global PreviewActions {
     callback context-menu(length, length);
     // Bumped by Rust: the viewer says its room again (a window whose events were connected late).
     in property <int> ask;
+    // The zoom surface (spec 13 §5): its size; a page step or a typed page; zoom by steps
+    // around a point (x < 0: the middle), Fit, 100% around a point; a drag by so much; the
+    // wheel (dx, dy, with Ctrl or ⌘, at x, y); the bar's link.
+    callback surface(length, length);
+    callback page-step(int);
+    callback go-to-page(string);
+    callback zoom-step(int, length, length);
+    callback fit();
+    callback actual(length, length);
+    callback panned(length, length);
+    callback wheel(length, length, bool, length, length);
+    callback link();
 }
 
 export component PreviewPane inherits Rectangle {
@@ -207,7 +234,21 @@ export component PreviewPane inherits Rectangle {
 
             }
 
-            if !root.viewer && root.info.has-picture: Image {
+            if !root.viewer && root.info.zoomed: Rectangle {
+                clip: true;
+                Image {
+                    x: root.info.pic-x;
+                    y: root.info.pic-y;
+                    width: root.info.pic-w;
+                    height: root.info.pic-h;
+                    source: root.info.picture;
+                    image-fit: fill;
+                    accessible-role: image;
+                    accessible-label: root.info.pages > 0 ? "Page \{root.info.page} of \{root.info.pages}" : root.info.title;
+                }
+            }
+
+            if !root.viewer && root.info.has-picture && !root.info.zoomed: Image {
                 width: parent.width;
                 height: parent.height;
                 source: root.info.picture;
@@ -222,6 +263,50 @@ export component PreviewPane inherits Rectangle {
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
                 kind: root.info.kind == 4 ? 0 : root.info.item-kind;
+            }
+
+            // A PDF or a picture: drag, wheel, Ctrl+wheel and double click (spec 13 §5).
+            if root.info.bar == 4 || root.info.bar == 5: surface := TouchArea {
+                property <length> sx;
+                property <length> sy;
+                property <int> ask: PreviewActions.ask;
+                mouse-cursor: root.info.zoomed ? (self.pressed ? MouseCursor.grabbing : MouseCursor.grab) : MouseCursor.default;
+                init => {
+                    PreviewActions.surface(self.width, self.height);
+                }
+                changed width => {
+                    PreviewActions.surface(self.width, self.height);
+                }
+                changed height => {
+                    PreviewActions.surface(self.width, self.height);
+                }
+                changed ask => {
+                    PreviewActions.surface(self.width, self.height);
+                }
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down {
+                        scope.focus();
+                        self.sx = self.mouse-x;
+                        self.sy = self.mouse-y;
+                        if event.button == PointerEventButton.right {
+                            PreviewActions.context-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                }
+                moved => {
+                    if self.pressed && root.info.zoomed {
+                        PreviewActions.panned(self.mouse-x - self.sx, self.mouse-y - self.sy);
+                        self.sx = self.mouse-x;
+                        self.sy = self.mouse-y;
+                    }
+                }
+                double-clicked => {
+                    PreviewActions.actual(self.mouse-x, self.mouse-y);
+                }
+                scroll-event(event) => {
+                    PreviewActions.wheel(event.delta-x, event.delta-y, event.modifiers.control || event.modifiers.meta, self.mouse-x, self.mouse-y);
+                    accept
+                }
             }
 
             if root.info.kind == 0: Text {
@@ -243,7 +328,7 @@ export component PreviewPane inherits Rectangle {
         // The viewer's bar: Text │ Hex, Wrap, a note and where it is.
         if root.info.bar != 0: HorizontalLayout {
             spacing: Theme.spacing;
-            if root.info.bar != 3: TextButton {
+            if root.info.bar == 1 || root.info.bar == 2: TextButton {
                 compact: true;
                 text: "Text";
                 checked: root.info.bar == 1;
@@ -263,6 +348,90 @@ export component PreviewPane inherits Rectangle {
                     }
                 }
             }
+            // A PDF's pages: ‹ the page (a click types one) of all ›.
+            if root.info.bar == 4: TextButton {
+                compact: true;
+                text: "‹";
+                label: "Previous page";
+                clicked => {
+                    PreviewActions.page-step(-1);
+                }
+            }
+            if root.info.bar == 4: Rectangle {
+                property <bool> editing;
+                min-width: self.editing ? 48px : page-text.preferred-width;
+                horizontal-stretch: 0;
+                accessible-role: none;
+                page-text := Text {
+                    visible: !parent.editing;
+                    text: root.info.pages > 0 ? "\{root.info.page} / \{root.info.pages}" : "\{root.info.page}";
+                    vertical-alignment: center;
+                    color: Theme.foreground;
+                    accessible-role: text;
+                    accessible-label: root.info.pages > 0 ? "Page \{root.info.page} of \{root.info.pages}" : "Page \{root.info.page}";
+                }
+                TouchArea {
+                    visible: !parent.editing;
+                    clicked => {
+                        parent.editing = true;
+                        field.focus-and-select();
+                    }
+                }
+                field := TextField {
+                    visible: parent.editing;
+                    width: 48px;
+                    text: root.info.page;
+                    accepted(text) => {
+                        parent.editing = false;
+                        PreviewActions.go-to-page(text);
+                        scope.focus();
+                    }
+                    changed has-focus => {
+                        if !self.has-focus {
+                            parent.editing = false;
+                            self.text = root.info.page;
+                        }
+                    }
+                }
+            }
+            if root.info.bar == 4: TextButton {
+                compact: true;
+                text: "›";
+                label: root.info.pages > 0 ? "Next page, page \{root.info.page} of \{root.info.pages}" : "Next page";
+                clicked => {
+                    PreviewActions.page-step(1);
+                }
+            }
+            // The zoom: − 125% + Fit.
+            if root.info.bar >= 4: TextButton {
+                compact: true;
+                text: "−";
+                label: "Zoom out";
+                clicked => {
+                    PreviewActions.zoom-step(-1, -1px, -1px);
+                }
+            }
+            if root.info.bar >= 4: Text {
+                text: root.info.zoom-text;
+                vertical-alignment: center;
+                color: Theme.foreground-muted;
+            }
+            if root.info.bar >= 4: TextButton {
+                compact: true;
+                text: "+";
+                label: "Zoom in";
+                clicked => {
+                    PreviewActions.zoom-step(1, -1px, -1px);
+                }
+            }
+            if root.info.bar >= 4: TextButton {
+                compact: true;
+                text: "Fit";
+                label: root.info.bar == 4 ? "Fit the page or its width" : "Fit the picture";
+                clicked => {
+                    PreviewActions.fit();
+                }
+            }
             if root.info.bar == 1: TextButton {
                 compact: true;
                 text: "Wrap";
@@ -278,6 +447,13 @@ export component PreviewPane inherits Rectangle {
                 overflow: elide;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;
+            }
+            if root.info.bar-link != "": TextButton {
+                compact: true;
+                text: root.info.bar-link;
+                clicked => {
+                    PreviewActions.link();
+                }
             }
             Text {
                 text: root.info.bar-text;

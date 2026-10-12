@@ -282,13 +282,15 @@ pub enum Need {
     Pdf,
     /// The pdfium there could not be loaded (a broken download): get it again.
     PdfiumFailed,
+    /// pdfium, for the preview's PDF pages and zoom (spec 13 §5.1).
+    PdfPages,
 }
 
 impl Need {
     fn tool(&self) -> Tool {
         match self {
             Need::Archive(_) => Tool::SevenZip,
-            Need::Pdf | Need::PdfiumFailed => Tool::Pdfium,
+            Need::Pdf | Need::PdfiumFailed | Need::PdfPages => Tool::Pdfium,
             _ => Tool::Ffmpeg,
         }
     }
@@ -296,14 +298,20 @@ impl Need {
 
 /// The box offering pdfium (`failed`: the one there could not be loaded). Linux distributions
 /// do not package pdfium: no package to suggest.
-fn pdfium_offer(failed: bool, size: Option<u64>, download: bool, hint: Option<&str>) -> (String, Vec<&'static str>) {
+fn pdfium_offer(
+    failed: bool,
+    lead: &str,
+    size: Option<u64>,
+    download: bool,
+    hint: Option<&str>,
+) -> (String, Vec<&'static str>) {
     let ok = vec!["OK"];
     match size {
         Some(size) if download => {
             let mut message = if failed {
                 format!("{} (~{}, free)", crate::pdf::PDFIUM_FAILED.trim_end_matches('?'), format_size(size))
             } else {
-                format!("PDF tools need pdfium (~{}, free)", format_size(size))
+                format!("{lead} (~{}, free)", format_size(size))
             };
             match hint {
                 Some(hint) => {
@@ -317,7 +325,7 @@ fn pdfium_offer(failed: bool, size: Option<u64>, download: bool, hint: Option<&s
             }
         }
         _ => {
-            let lead = if failed { "Could not load pdfium" } else { "PDF tools need pdfium" };
+            let lead = if failed { "Could not load pdfium" } else { lead };
             let why = if download {
                 "Gezik cannot download it for this system yet."
             } else {
@@ -339,9 +347,10 @@ pub fn tool_offer(
     hint: Option<&str>,
 ) -> (&'static str, String, Vec<&'static str>) {
     let lead = match need {
-        Need::Pdf | Need::PdfiumFailed => {
+        Need::Pdf | Need::PdfiumFailed | Need::PdfPages => {
             let failed = *need == Need::PdfiumFailed;
-            let (message, buttons) = pdfium_offer(failed, size, download, hint);
+            let lead = if *need == Need::PdfPages { "More PDF pages need pdfium" } else { "PDF tools need pdfium" };
+            let (message, buttons) = pdfium_offer(failed, lead, size, download, hint);
             return (if failed { "pdfium failed to load" } else { "pdfium needed" }, message, buttons);
         }
         Need::Archive(ext) => {
@@ -801,6 +810,12 @@ impl Archives {
     pub fn offer_pdfium(&self, failed: bool, hint: Option<String>, again: Rc<dyn Fn()>, row: Option<JobId>) {
         let need = if failed { Need::PdfiumFailed } else { Need::Pdf };
         self.offer(need, hint, Then::Again { again, row });
+    }
+
+    /// The box for pdfium from the preview (a PDF's other pages or zoom): Download fetches it
+    /// and then calls `again`.
+    pub fn offer_pdf_pages(&self, hint: Option<String>, again: Rc<dyn Fn()>) {
+        self.offer(Need::PdfPages, hint, Then::Again { again, row: None });
     }
 
     /// The box for `need`'s tool; Download fetches it and then runs `then`. While it is on
@@ -1341,6 +1356,9 @@ mod tests {
         assert_eq!(buttons, ["Download", "Where does it come from?", "Cancel"]);
         assert_eq!(Need::PdfiumFailed.tool(), Tool::Pdfium);
         assert_eq!(Need::Pdf.tool(), Tool::Pdfium);
+        let (title, message, _) = tool_offer(&Need::PdfPages, Some(2_900_000), true, false, None);
+        assert_eq!((title, message.as_str()), ("pdfium needed", "More PDF pages need pdfium (~2.8 MB, free)."));
+        assert_eq!(Need::PdfPages.tool(), Tool::Pdfium);
     }
 
     #[test]

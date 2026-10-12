@@ -70,6 +70,11 @@ impl QuickLook {
         native.size().to_logical(native.scale_factor()).width
     }
 
+    /// Its physical pixels per logical one.
+    pub fn scale_factor(&self) -> f32 {
+        self.window.window().scale_factor()
+    }
+
     pub fn close(self) {
         let _ = self.window.hide();
     }

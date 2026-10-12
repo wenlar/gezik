@@ -4,17 +4,66 @@
 
 use gezik_config::shortcuts::Key;
 use gezik_core::text::display_width;
-use slint::{ModelRc, VecModel};
+use slint::{Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
 use super::hex::HexView;
+use super::pdf::PdfView;
 use super::text::{Row, TextView};
+use super::zoom::{Fit, ZoomView};
 use crate::{PreviewInfo, PreviewPart, PreviewRow};
 
-/// The text view, and the hex view over it while shown (the text keeps its place under it).
+/// The text view, and the hex view over it while shown (the text keeps its place under it);
+/// a PDF's pages or a zoomed picture (spec 13 §5).
 #[derive(Default)]
 pub struct Viewer {
     pub text: Option<TextView>,
     pub hex: Option<HexView>,
+    pub pdf: Option<PdfView>,
+    pub picture: Option<PictureView>,
+}
+
+/// The largest picture zoomed at its own size (spec 13 §5.3: 48 MP, about 192 MB); a larger
+/// one is zoomed from its preview.
+pub const MAX_ZOOM_PIXELS: u64 = 48_000_000;
+
+/// A picture zoomed past "fit": its own size, decoded whole once (when not too large).
+pub struct PictureView {
+    /// Its content is the picture's own size; 100% is one picture pixel a physical pixel.
+    pub zoom: ZoomView,
+    pub full: Option<SharedPixelBuffer<Rgba8Pixel>>,
+    /// Its megapixels, when too large to decode whole.
+    pub too_large: Option<u64>,
+    pub scale_factor: f32,
+}
+
+impl PictureView {
+    pub fn new(size: (u32, u32), scale_factor: f32, view: (f32, f32)) -> PictureView {
+        let pixels = u64::from(size.0) * u64::from(size.1);
+        PictureView {
+            zoom: ZoomView::new((size.0 as f32, size.1 as f32), 1.0, view),
+            full: None,
+            too_large: (pixels > MAX_ZOOM_PIXELS).then(|| pixels.div_ceil(1_000_000)),
+            scale_factor,
+        }
+    }
+}
+
+/// The bar's zoom: "Fit", "Fit Width" or "125%".
+fn zoom_text(zoom: &ZoomView) -> String {
+    match zoom.fit {
+        Fit::Page => "Fit".into(),
+        Fit::Width => "Fit Width".into(),
+        Fit::Zoom(_) => format!("{}%", zoom.percent()),
+    }
+}
+
+/// Shows `picture` (drawn at `scale` physical pixels per content unit, `region` of it) where
+/// `zoom` places it, in logical pixels.
+fn place(info: &mut PreviewInfo, zoom: &ZoomView, scale_factor: f32, scale: f32, region: (u32, u32, u32, u32)) {
+    let (x, y, w, h) = zoom.place(scale, region);
+    let sf = scale_factor.max(0.1);
+    info.zoomed = true;
+    (info.pic_x, info.pic_y, info.pic_w, info.pic_h) = (x / sf, y / sf, w / sf, h / sf);
 }
 
 /// Where the viewer shows: whole characters across, whole rows down.
@@ -28,6 +77,29 @@ impl Viewer {
     pub fn fill(&self, info: &mut PreviewInfo, (cols, page): Room) {
         let (bar, rows, text, note, gutter, (pos, size)) = if let Some(hex) = &self.hex {
             (2, hex.rows(page + 1, cols), hex.status(), "", hex.gutter(), hex.scroll_bar(page, cols))
+        } else if let Some(pdf) = &self.pdf {
+            info.page = i32::try_from(pdf.page).unwrap_or(i32::MAX);
+            info.pages = i32::try_from(pdf.pages).unwrap_or(i32::MAX);
+            info.zoom_text = zoom_text(&pdf.zoom).into();
+            let (note, link) = pdf.note();
+            info.bar_link = link.into();
+            // The last picture stays until the next page's comes.
+            if let Some(shown) = &pdf.shown {
+                info.picture = Image::from_rgba8(shown.picture.clone());
+                info.has_picture = true;
+                place(info, &pdf.zoom, pdf.scale_factor, shown.scale, shown.region);
+            }
+            (4, Vec::new(), String::new(), note, 0, (0.0, 0.0))
+        } else if let Some(picture) = &self.picture {
+            info.zoom_text = zoom_text(&picture.zoom).into();
+            if let Some(full) = &picture.full {
+                info.picture = Image::from_rgba8(full.clone());
+            }
+            let size = info.picture.size();
+            let scale = size.width as f32 / picture.zoom.content().0;
+            place(info, &picture.zoom, picture.scale_factor, scale, (0, 0, size.width, size.height));
+            let text = picture.too_large.map_or_else(String::new, |mp| format!("Too large to zoom ({mp} MP)"));
+            (5, Vec::new(), text, "", 0, (0.0, 0.0))
         } else if let Some(view) = &self.text {
             (
                 1,
@@ -38,9 +110,19 @@ impl Viewer {
                 view.scroll_bar(cols, page),
             )
         } else {
-            // A file shows its picture or icon; Hex is a click away (never by itself).
+            // A file shows its picture or icon; Hex is a click away (never by itself). A PDF
+            // offers its pages and a picture its zoom: nothing runs until one is used.
             let file = matches!(info.kind, 1 | 3) && !info.loading;
-            (if file { 3 } else { 0 }, Vec::new(), String::new(), "", 0, (0.0, 0.0))
+            let bar = match (file, info.kind, info.page) {
+                (false, ..) => 0,
+                (_, _, 1..) => 4,
+                (_, 1, _) => 5,
+                _ => 3,
+            };
+            if bar >= 4 {
+                info.zoom_text = "Fit".into();
+            }
+            (bar, Vec::new(), String::new(), "", 0, (0.0, 0.0))
         };
         info.bar = bar;
         info.max_cols = rows
@@ -74,7 +156,7 @@ impl Viewer {
     }
 
     pub fn shown(&self) -> bool {
-        self.hex.is_some() || self.text.is_some()
+        self.hex.is_some() || self.text.is_some() || self.pdf.is_some() || self.picture.is_some()
     }
 
     pub fn scroll(&mut self, delta: i64, (cols, page): Room) {
