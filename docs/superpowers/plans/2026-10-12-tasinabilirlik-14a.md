@@ -51,3 +51,4 @@
 11. **Sistem satırları (`tray`, `hotkey`) salt gösterim** (`Kind::Integration`), düğme System Integration panelini açar; değerleri o yazar (spec §4.1).
 12. **12f'nin düzeltme turu** (912c7ec) birleştirildi; çakışma yok.
 13. **Exe:** 27.961.344 B, taban 27.705.344 B'ye göre +256.000 B (bütçe +262.144). Pencere kodu kaldırılınca 27.747.840 B: şema, yazma, eylem ve menüler ≈ +42 KB (12f düzeltmeleri dahil), pencere ≈ +214 KB.
+14. **Düzeltme turu (ekran testi ve gözden geçirme):** klavyeyle seçim listesi, Esc, sayfa listesi Tab durağı, Ctrl+PageUp/PageDown/Tab, ikinci açılışta öne gelme, erişilebilir adlar ve devre dışı durum, anahtar çıkarırken yorumların korunması. Erişilebilirlik bütçe için kesilmediğinden exe 27.989.504 B (+284.160 B), bütçe +262.144 B'yi **22.016 B aşıyor**.
