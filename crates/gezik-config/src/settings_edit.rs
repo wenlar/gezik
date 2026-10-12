@@ -108,6 +108,8 @@ pub fn with_value(text: &str, table: Option<&str>, key: &str, literal: Option<&s
         (Some(table), Some(value)) => edit_table(text, table, vec![(key, value)]),
         (table, value) => {
             let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+            // The comment lines above a key taken out, when no key after it in its table takes them.
+            let mut orphan = None;
             let target = match table {
                 None => doc.as_table_mut() as &mut dyn toml_edit::TableLike,
                 Some(name) => match doc.get_mut(name).and_then(|item| item.as_table_like_mut()) {
@@ -117,7 +119,25 @@ pub fn with_value(text: &str, table: Option<&str>, key: &str, literal: Option<&s
             };
             match value {
                 None => {
-                    target.remove(key);
+                    // toml_edit keeps the comment lines above a key in the key's own decor:
+                    // they stay, above the next value of the table (or the next table).
+                    let prefix = target.key(key).and_then(|k| k.leaf_decor().prefix()).and_then(|p| p.as_str());
+                    let prefix = prefix.filter(|p| p.contains('#')).map(str::to_owned);
+                    let values: Vec<String> =
+                        target.iter().filter(|(_, item)| item.is_value()).map(|(k, _)| k.to_owned()).collect();
+                    let next = values.iter().skip_while(|k| k.as_str() != key).nth(1).cloned();
+                    if target.remove(key).is_some()
+                        && let Some(prefix) = prefix
+                    {
+                        match next.and_then(|next| target.key_mut(&next)) {
+                            Some(mut next) => {
+                                let own = next.leaf_decor().prefix().and_then(|p| p.as_str()).unwrap_or_default();
+                                let joined = format!("{prefix}{own}");
+                                next.leaf_decor_mut().set_prefix(joined);
+                            }
+                            None => orphan = Some(prefix),
+                        }
+                    }
                 }
                 Some(value) => match target.get_mut(key).and_then(|item| item.as_value_mut()) {
                     Some(old) => {
@@ -130,7 +150,45 @@ pub fn with_value(text: &str, table: Option<&str>, key: &str, literal: Option<&s
                     }
                 },
             }
+            if let Some(orphan) = orphan {
+                keep_before_next_table(&mut doc, table, &orphan);
+            }
             Ok(doc.to_string())
+        }
+    }
+}
+
+/// Puts `comments` (lines from the end of table `after`, `None` the top) before the table that
+/// follows it in the file, or at the file's end.
+fn keep_before_next_table(doc: &mut toml_edit::DocumentMut, after: Option<&str>, comments: &str) {
+    let from = after.and_then(|name| doc.get(name)).and_then(|item| item.as_table()).and_then(|t| t.position());
+    let from = from.unwrap_or(-1);
+    let mut next: Option<(isize, String)> = None;
+    for (name, item) in doc.iter() {
+        let position = match item {
+            toml_edit::Item::Table(table) => table.position(),
+            toml_edit::Item::ArrayOfTables(array) => array.get(0).and_then(toml_edit::Table::position),
+            _ => None,
+        };
+        if let Some(position) = position.filter(|p| *p > from)
+            && next.as_ref().is_none_or(|(best, _)| position < *best)
+        {
+            next = Some((position, name.to_owned()));
+        }
+    }
+    let table = next.and_then(|(_, name)| match doc.get_mut(&name) {
+        Some(toml_edit::Item::Table(table)) => Some(table),
+        Some(toml_edit::Item::ArrayOfTables(array)) => array.get_mut(0),
+        _ => None,
+    });
+    match table {
+        Some(table) => {
+            let own = table.decor().prefix().and_then(|p| p.as_str()).unwrap_or_default().to_owned();
+            table.decor_mut().set_prefix(format!("{comments}{own}"));
+        }
+        None => {
+            let trailing = doc.trailing().as_str().unwrap_or_default().to_owned();
+            doc.set_trailing(format!("{comments}{trailing}"));
         }
     }
 }
@@ -1180,6 +1238,22 @@ pattern = \"y\"
 
     #[test]
     fn a_value_taken_out_and_a_broken_file() {
+        // The comment above a key taken out stays, above the next key or the next table.
+        let text = "[view]\n# hidden things\nshow-hidden = false # mine\nmode = \"list\"\n";
+        let out = with_value(text, Some("view"), "show-hidden", None).unwrap();
+        assert_eq!(out, "[view]\n# hidden things\nmode = \"list\"\n");
+        let text = "[view]\nmode = \"list\"\n# about hidden\nshow-hidden = false\n\n[tags]\ndots = true\n";
+        let out = with_value(text, Some("view"), "show-hidden", None).unwrap();
+        assert_eq!(out, "[view]\nmode = \"list\"\n# about hidden\n\n[tags]\ndots = true\n");
+        let text = "[view]\nmode = \"list\"\n# about hidden\nshow-hidden = false\n";
+        let out = with_value(text, Some("view"), "show-hidden", None).unwrap();
+        assert_eq!(out, "[view]\nmode = \"list\"\n# about hidden\n", "the last table: the file's end");
+        let text = "# fps\nmax-fps = 60\n\n[view]\nmode = \"list\"\n";
+        let out = with_value(text, None, "max-fps", None).unwrap();
+        assert_eq!(out, "# fps\n\n[view]\nmode = \"list\"\n", "the top: before the first table");
+        let template = include_str!("../templates/settings.toml");
+        let out = with_value(template, Some("layout"), "density", None).unwrap();
+        assert!(out.contains("# compact | comfortable\n# true: no fades"), "a template comment stays");
         let text = "[view]\nshow-hidden = false\nmode = \"list\"\n";
         assert_eq!(with_value(text, Some("view"), "show-hidden", None).unwrap(), "[view]\nmode = \"list\"\n");
         assert_eq!(with_value("[view]\n", Some("tags"), "dots", None).unwrap(), "[view]\n", "nothing to take out");

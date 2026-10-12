@@ -280,11 +280,18 @@ pub fn describe(template: &str) -> Vec<Described> {
             if let Some(mut value) = value {
                 let hint = value.decor().suffix().and_then(|s| s.as_str()).unwrap_or_default();
                 let hint = hint.trim().trim_start_matches('#').trim();
+                // The comment after the value first, as a sentence: it is about this key, the
+                // lines above may be about the ones below it too.
                 if !hint.is_empty() {
-                    if !description.is_empty() {
-                        description.push(' ');
+                    let mut first = hint.to_owned();
+                    if let Some(letter) = first.get_mut(..1) {
+                        letter.make_ascii_uppercase();
                     }
-                    description.push_str(hint);
+                    if !description.is_empty() {
+                        let stop = if first.ends_with(['.', ')', ':']) { " " } else { ". " };
+                        first.push_str(stop);
+                    }
+                    description.insert_str(0, &first);
                 }
                 value.decor_mut().clear();
                 let text = value.to_string();
@@ -470,13 +477,19 @@ mod tests {
         };
         let density = get("layout.density");
         assert_eq!((density.description.as_str(), density.default.as_str()), ("compact | comfortable", "comfortable"));
+        assert!(!described.iter().any(|d| d.description.contains('\u{22ef}')), "the UI font has no ⋯");
         assert_eq!(density.literal.as_deref(), Some("\"comfortable\""));
         let sort = get("view.sort");
-        assert!(sort.description.ends_with("name | modified | created | type | size | tags | rating"), "{sort:?}");
+        assert!(sort.description == "Name | modified | created | type | size | tags | rating", "{sort:?}");
+        let hide = get("view.hide-extensions").description;
+        assert_eq!(
+            hide,
+            "Show names without their extension. The same in every folder; the View menu changes these here too."
+        );
         let hidden = get("view.show-hidden");
         assert_eq!(hidden.literal, None, "commented: Reset takes it out");
         assert_eq!(hidden.default, if cfg!(target_os = "macos") { "false" } else { "true" });
-        assert!(hidden.description.contains("dot names"), "{hidden:?}");
+        assert!(hidden.description.starts_with("Dot names"), "{hidden:?}");
         assert_eq!(get("max-fps").default, "120");
         assert_eq!(get("pinned").default, "", "a list shows its count only");
         assert!(get("pinned").description.starts_with("Folders pinned to the sidebar"), "{:?}", get("pinned"));
