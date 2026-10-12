@@ -1,12 +1,18 @@
 //! The Sync and Backup page's rows (spec 14 §7): Export Settings (a zip's path and Enter, two
 //! boxes for what goes in), Import Settings (a zip's path and Enter: what it would change, the
 //! settings in it that run programs in a red row of their own, a box for each kind of file,
-//! then Import or Cancel), Restore Backup (the last 10) and Undo Import. The zip is read and
+//! then Import or Cancel), Restore Backup (the last 10) and Undo Import. Before them the sync
+//! folder's (spec 14 §8): Keep Settings in a Folder (a path and Enter; Use or Replace when it
+//! has settings already), or the folder in use, its conflicting copies and their Review (a row
+//! per key that differs, This copy or Other copy, then Merge or Cancel). The files are read and
 //! written on a thread (`crate::settings_backup`); these rows only show its outcome.
 
 use std::cell::RefCell;
 
+use std::path::PathBuf;
+
 use gezik_config::bundle::{self, Group};
+use gezik_config::sync_folder::Difference;
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::SettingItem;
@@ -15,6 +21,15 @@ use crate::settings_backup::{Change, Incoming, Preview, Undo};
 pub(super) const IMPORT: &str = "Import";
 pub(super) const UNDO: &str = "Undo";
 pub(super) const OPEN_DATA: &str = "Open Data Folder";
+pub(super) const OPEN_SYNC: &str = "Open Settings Folder";
+pub(super) const CHECK_AGAIN: &str = "Check Again";
+pub(super) const STOP: &str = "Stop Keeping Settings There";
+pub(super) const USE: &str = "Use the Settings in This Folder";
+pub(super) const REPLACE: &str = "Replace Them with This Computer's";
+pub(super) const REVIEW: &str = "Review…";
+pub(super) const THIS_COPY: &str = "This copy";
+pub(super) const OTHER_COPY: &str = "Other copy";
+pub(super) const MERGE: &str = "Merge";
 
 thread_local! {
     /// The last import of this run, for Undo Import (it outlives the window).
@@ -33,6 +48,15 @@ pub(super) fn set_last(undo: Option<Undo>) {
 pub(super) enum Row {
     /// Portable mode's data folder (spec 14 §9.1).
     Portable,
+    /// Keep Settings in a Folder, or the sync folder in use (spec 14 §8).
+    Sync,
+    /// The folder chosen has settings already: Use or Replace.
+    Existing,
+    /// A conflicting copy in the sync folder.
+    Conflict(usize),
+    /// A key the copies under review differ in.
+    Difference(usize),
+    Merge,
     Export,
     Templates,
     Views,
@@ -60,6 +84,35 @@ pub(super) struct Backup {
     pub listing: bool,
     /// A zip is being read or written.
     pub busy: bool,
+    /// Keep Settings in a Folder's folder, as typed.
+    pub sync_to: String,
+    /// The sync folder in use (`None`: none) and whether it could not be read.
+    pub synced: Option<PathBuf>,
+    pub offline: bool,
+    /// Settings changes waiting for the sync folder.
+    pub unsaved: usize,
+    /// A cloud folder to suggest (OneDrive's, Dropbox's…).
+    pub suggest: Option<PathBuf>,
+    /// The folder chosen that has settings already, while Use or Replace is asked.
+    pub found: Option<PathBuf>,
+    /// The sync folder's conflicting copies (`settings (1).toml`, `themes/nord (1).toml`).
+    pub conflicts: Vec<String>,
+    pub review: Option<Review>,
+}
+
+/// A conflicting copy under review (spec 14 §8.3): the keys it differs in, and those taken from it.
+#[derive(Debug, Clone)]
+pub struct Review {
+    /// The copy and the file it is of, as named in the sync folder (`themes/nord (1).toml`).
+    pub copy: String,
+    pub original: String,
+    /// The copy's text.
+    pub other: String,
+    pub differences: Vec<Difference>,
+    /// Per difference: Other copy chosen.
+    pub take: Vec<bool>,
+    /// Only a number in its name says it is a copy: Merge leaves it where it is.
+    pub numbered: bool,
 }
 
 impl Backup {
@@ -79,6 +132,17 @@ impl Backup {
     pub fn rows(&self, query: &str) -> Vec<Row> {
         let portable = gezik_config::paths::location().dirs.as_ref().is_some_and(|d| d.portable);
         let mut all = if portable { vec![Row::Portable] } else { Vec::new() };
+        all.push(Row::Sync);
+        if self.found.is_some() {
+            all.push(Row::Existing);
+        }
+        if self.synced.is_some() {
+            all.extend((0..self.conflicts.len()).map(Row::Conflict));
+        }
+        if let Some(review) = &self.review {
+            all.extend((0..review.differences.len()).map(Row::Difference));
+            all.push(Row::Merge);
+        }
         all.extend([Row::Export, Row::Templates, Row::Views, Row::Import]);
         if let Some(preview) = &self.preview {
             all.extend(Group::ALL.into_iter().filter(|g| preview.files.iter().any(|f| f.group == *g)).map(Row::Group));
@@ -125,6 +189,74 @@ impl Backup {
                              Import move settings between the two."
                         ),
                         vec![OPEN_DATA],
+                    )
+                }
+                Row::Sync => self.sync_item(),
+                Row::Existing => (
+                    1,
+                    "This folder has Gezik settings already".to_owned(),
+                    self.found.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
+                    "Choose".to_owned(),
+                    "Use them: this computer's settings are backed up to backups/ and the folder's are used. Replace \
+                     them: the folder's are backed up to backups/, then this computer's are written there. Nothing \
+                     is merged."
+                        .to_owned(),
+                    vec![USE, REPLACE, "Cancel"],
+                ),
+                Row::Conflict(i) => {
+                    let name = self.conflicts.get(i).cloned().unwrap_or_default();
+                    let of = if name.starts_with("themes/") { "a theme" } else { "settings.toml" };
+                    (
+                        1,
+                        format!("Conflicting copy: {name}"),
+                        name,
+                        "Not reviewed".to_owned(),
+                        format!(
+                            "A sync service made it when two computers changed {of} at once. Review lists each key \
+                             the two copies differ in and you choose which to keep; nothing is merged on its own."
+                        ),
+                        vec![REVIEW],
+                    )
+                }
+                Row::Difference(i) => {
+                    let review = self.review.as_ref();
+                    let difference = review.and_then(|r| r.differences.get(i));
+                    let take = review.and_then(|r| r.take.get(i)).copied().unwrap_or_default();
+                    let not_set = || "(not set)".to_owned();
+                    let (this, other) = difference
+                        .map(|d| (d.this.clone().unwrap_or_else(not_set), d.other.clone().unwrap_or_else(not_set)))
+                        .unwrap_or_default();
+                    (
+                        1,
+                        difference.map(Difference::key).unwrap_or_default(),
+                        review.map(|r| r.original.clone()).unwrap_or_default(),
+                        if take { OTHER_COPY } else { THIS_COPY }.to_owned(),
+                        format!("This copy: {this}  —  other copy: {other}"),
+                        vec![THIS_COPY, OTHER_COPY],
+                    )
+                }
+                Row::Merge => {
+                    let review = self.review.as_ref();
+                    let taken = review.map_or(0, |r| r.take.iter().filter(|t| **t).count());
+                    let (copy, original) = review.map(|r| (r.copy.clone(), r.original.clone())).unwrap_or_default();
+                    (
+                        1,
+                        format!("Merge {copy}"),
+                        original.clone(),
+                        match taken {
+                            1 => "1 key from the other copy".to_owned(),
+                            n => format!("{n} keys from the other copy"),
+                        },
+                        format!(
+                            "Merge writes the keys set to Other copy above into {original} (the rest stays as it \
+                             is) and {}. Cancel leaves both as they are.",
+                            if review.is_some_and(|r| r.numbered) {
+                                "leaves the copy where it is (its name may be one of yours)"
+                            } else {
+                                "moves the conflicting copy to the trash"
+                            }
+                        ),
+                        vec![MERGE, "Cancel"],
                     )
                 }
                 Row::Export => (
@@ -223,7 +355,63 @@ impl Backup {
             is_default: false,
             default: SharedString::new(),
             options: ModelRc::new(VecModel::from(options)),
+            place: 0,
         }
+    }
+
+    /// Keep Settings in a Folder (a path and Enter), or the sync folder in use.
+    fn sync_item(&self) -> (i32, String, String, String, String, Vec<&'static str>) {
+        let key = gezik_config::sync_folder::LOCATION_FILE.to_owned();
+        let Some(folder) = &self.synced else {
+            let suggest = match &self.suggest {
+                Some(cloud) => format!(" (say, {})", cloud.join("Gezik").display()),
+                None => String::new(),
+            };
+            return (
+                2,
+                "Keep Settings in a Folder".to_owned(),
+                key,
+                self.sync_to.clone(),
+                format!(
+                    "Type a folder in OneDrive, Dropbox, iCloud Drive or Syncthing{suggest} and press Enter: \
+                     settings.toml, the themes and the templates are kept there for every computer that uses it. \
+                     State, folder views, tools, backups and the tag store stay on this computer, and so do \
+                     [system] and what you mark Only on This Computer (right-click a setting)."
+                ),
+                Vec::new(),
+            );
+        };
+        let waiting = match self.unsaved {
+            0 => String::new(),
+            1 => " 1 change waits for it.".to_owned(),
+            n => format!(" {n} changes wait for it."),
+        };
+        let (value, description) = if self.offline {
+            (
+                match self.unsaved {
+                    0 => "Not available".to_owned(),
+                    1 => "Not available — 1 change waits".to_owned(),
+                    n => format!("Not available — {n} changes wait"),
+                },
+                format!(
+                    "The folder cannot be read (a drive not plugged in, the sync app not running): the last copy \
+                     is used and the settings are read-only.{waiting} Check Again looks once more."
+                ),
+            )
+        } else {
+            (
+                "On".to_owned(),
+                "Shared by the computers that use this folder; this computer's own values are in \
+                 settings.local.toml. Stop copies the folder's settings back here (after a backup) and leaves the \
+                 folder as it is."
+                    .to_owned(),
+            )
+        };
+        let mut options = vec![OPEN_SYNC, STOP];
+        if self.offline {
+            options.insert(1, CHECK_AGAIN);
+        }
+        (1, format!("Settings are kept in {}", folder.display()), key, value, description, options)
     }
 
     /// A kind of file in the zip: a box, or "The same" when every file of it is.
@@ -298,6 +486,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use slint::Model;
 
     fn incoming(name: &str, change: Change) -> Incoming {
         Incoming { name: name.to_owned(), group: bundle::group_of(name).unwrap(), change, data: Vec::new() }
@@ -330,6 +519,7 @@ mod tests {
         assert_eq!(
             rows,
             [
+                Row::Sync,
                 Row::Export,
                 Row::Templates,
                 Row::Views,
@@ -371,5 +561,55 @@ mod tests {
         assert_eq!(backup.export_groups(), [Group::Settings, Group::Themes, Group::Views]);
         assert_eq!(backup.item(Row::Templates).value, "false");
         assert_eq!(backup.item(Row::Restore).value, "Looking…");
+    }
+
+    #[test]
+    fn the_sync_rows_follow_the_folder_its_copies_and_a_review() {
+        let mut backup = Backup { suggest: Some(PathBuf::from("/u/Dropbox")), ..Backup::default() };
+        assert_eq!(backup.rows("")[0], Row::Sync);
+        let sync = backup.item(Row::Sync);
+        assert_eq!((sync.kind, sync.title.as_str()), (2, "Keep Settings in a Folder"));
+        assert!(sync.description.contains(&PathBuf::from("/u/Dropbox").join("Gezik").display().to_string()));
+        backup.found = Some(PathBuf::from("/u/Dropbox/Gezik"));
+        assert_eq!(backup.rows("")[..2], [Row::Sync, Row::Existing]);
+        let options: Vec<String> = backup.item(Row::Existing).options.iter().map(|o| o.to_string()).collect();
+        assert_eq!(options, [USE, REPLACE, "Cancel"]);
+
+        backup.found = None;
+        backup.synced = Some(PathBuf::from("/u/Dropbox/Gezik"));
+        backup.conflicts = vec!["settings (1).toml".to_owned()];
+        let sync = backup.item(Row::Sync);
+        assert_eq!((sync.kind, sync.value.as_str()), (1, "On"));
+        assert!(!sync.options.iter().any(|o| o == CHECK_AGAIN));
+        (backup.offline, backup.unsaved) = (true, 2);
+        let sync = backup.item(Row::Sync);
+        assert_eq!(sync.value, "Not available — 2 changes wait");
+        assert!(sync.options.iter().any(|o| o == CHECK_AGAIN) && sync.description.contains("2 changes wait"));
+        assert_eq!(backup.rows("")[..2], [Row::Sync, Row::Conflict(0)]);
+        assert_eq!(backup.item(Row::Conflict(0)).title, "Conflicting copy: settings (1).toml");
+
+        let differences = gezik_config::sync_folder::differences(
+            "theme = \"nord\"
+",
+            "theme = \"dark\"
+",
+        )
+        .unwrap();
+        backup.review = Some(Review {
+            copy: "settings (1).toml".to_owned(),
+            original: "settings.toml".to_owned(),
+            other: String::new(),
+            take: vec![false; differences.len()],
+            differences,
+            numbered: true,
+        });
+        assert_eq!(backup.rows("")[..4], [Row::Sync, Row::Conflict(0), Row::Difference(0), Row::Merge]);
+        let key = backup.item(Row::Difference(0));
+        assert_eq!((key.title.as_str(), key.value.as_str()), ("theme", THIS_COPY));
+        assert_eq!(key.description, "This copy: nord  —  other copy: dark");
+        assert_eq!(backup.item(Row::Merge).value, "0 keys from the other copy");
+        backup.review.as_mut().unwrap().take[0] = true;
+        assert_eq!(backup.item(Row::Difference(0)).value, OTHER_COPY);
+        assert_eq!(backup.item(Row::Merge).value, "1 key from the other copy");
     }
 }

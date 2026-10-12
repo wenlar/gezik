@@ -143,7 +143,7 @@ fn blank(value: &Value) -> bool {
 }
 
 /// A value as a line shows it: text without quotes, a list of texts joined by spaces.
-fn shown(value: &Value) -> String {
+pub(crate) fn shown(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Array(items) if items.iter().all(Value::is_str) => {
@@ -184,7 +184,7 @@ fn flatten(prefix: &str, table: &Table, out: &mut Vec<(String, String)>) {
     }
 }
 
-fn short(text: &str) -> String {
+pub(crate) fn short(text: &str) -> String {
     match text.char_indices().nth(40) {
         Some((at, _)) => format!("{}…", &text[..at]),
         None => text.to_owned(),

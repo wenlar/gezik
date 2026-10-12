@@ -134,6 +134,7 @@ pub(super) fn item(row: &KeyRow, platform: Platform) -> SettingItem {
         is_default: row.is_default,
         default: row.default.as_str().into(),
         options: Default::default(),
+        place: 0,
     }
 }
 
