@@ -57,7 +57,17 @@ fn op_at(text: &str) -> Option<(Op, usize)> {
 /// read is the error (`duration>3x: "3x" is not a duration (3m, 1:30)`). A word starts the text
 /// or follows a space or `;`; its value is quoted or runs to the next space or `;`.
 pub fn split(text: &str) -> Result<(String, Vec<FieldTerm>), String> {
-    let (mut rest, mut terms) = (String::with_capacity(text.len()), Vec::new());
+    let (rest, terms, error) = split_lenient(text);
+    match error {
+        Some(error) => Err(error),
+        None => Ok((rest, terms)),
+    }
+}
+
+/// [`split`] that leaves out a word whose value does not read (the filter bar keeps the other
+/// words while it says what is wrong): the rest, the good words and the first error.
+pub fn split_lenient(text: &str) -> (String, Vec<FieldTerm>, Option<String>) {
+    let (mut rest, mut terms, mut error) = (String::with_capacity(text.len()), Vec::new(), None);
     let mut i = 0;
     while i < text.len() {
         let here = text.get(i..).unwrap_or_default();
@@ -93,16 +103,17 @@ pub fn split(text: &str) -> Result<(String, Vec<FieldTerm>), String> {
             Op::Has if raw.eq_ignore_ascii_case("any") => FieldTerm::Any(id),
             Op::Has if raw.eq_ignore_ascii_case("none") => FieldTerm::None(id),
             Op::Has => FieldTerm::Has(id, fold_text(raw)),
-            op => {
-                let value = fields::parse_value(kind, raw).map_err(|e| {
+            op => match fields::parse_value(kind, raw) {
+                Ok(value) => FieldTerm::Cmp(id, op, value),
+                Err(e) => {
                     let word = here.get(..key_len + op_len + used).unwrap_or(here);
-                    format!("{}: {e}", word.trim())
-                })?;
-                FieldTerm::Cmp(id, op, value)
-            }
+                    error.get_or_insert_with(|| format!("{}: {e}", word.trim()));
+                    continue;
+                }
+            },
         });
     }
-    Ok((rest, terms))
+    (rest, terms, error)
 }
 
 /// Whether a row with `values` passes every term.
@@ -116,10 +127,24 @@ pub fn matches(terms: &[FieldTerm], values: &Fields) -> bool {
 }
 
 fn holds(op: Op, value: &Value, wanted: &Value) -> bool {
-    // A date typed in part (`2024`, `2024-05`) is equal to every day it covers.
-    if let (Op::Eq, Value::Date(v), Value::Date(w)) = (op, value, wanted) {
-        return v.year == w.year && (w.month == 0 || v.month == w.month) && (w.day == 0 || v.day == w.day);
-    }
+    // A date typed in part (`2024`, `2024-05`, `2024-05-03`) stands for every moment it covers:
+    // the value is cut to the same part before comparing (`taken>2024` is from 2025 on).
+    let cut;
+    let value = match (value, wanted) {
+        (Value::Date(v), Value::Date(w)) if w.hour == 0 && w.minute == 0 && w.second == 0 => {
+            let mut d = *v;
+            (d.hour, d.minute, d.second) = (0, 0, 0);
+            if w.day == 0 {
+                d.day = 0;
+            }
+            if w.month == 0 {
+                d.month = 0;
+            }
+            cut = Value::Date(d);
+            &cut
+        }
+        _ => value,
+    };
     let order = fields::compare(Some(value), Some(wanted));
     match op {
         Op::Has | Op::Eq => order == Ordering::Equal,
@@ -181,6 +206,11 @@ mod tests {
         assert!(err.starts_with("duration>3x: \"3x\" is not a duration"), "{err}");
         assert!(split("width>=wide").is_err());
         assert!(split("taken>=2024-13").is_err());
+        // Lenient: the broken word goes, the others stay.
+        let (rest, terms, error) = split_lenient("*.mp3 duration>3x artist:tarkan");
+        assert_eq!(rest, "*.mp3  ");
+        assert_eq!(terms, [FieldTerm::Has(ARTIST, "tarkan".into())]);
+        assert!(error.is_some_and(|e| e.starts_with("duration>3x:")));
     }
 
     #[test]
@@ -191,6 +221,11 @@ mod tests {
         assert!(pass("year<2000") && !pass("year>2000") && pass("year=1991") && pass("year:199"));
         assert!(pass("taken>=2024-05") && !pass("taken<2024") && pass("taken=2024") && pass("taken=2024-05"));
         assert!(!pass("taken=2024-06"));
+        // The value cut to the typed part (taken is 2024-05-03).
+        assert!(!pass("taken>2024") && pass("taken<=2024") && pass("taken>=2024") && !pass("taken<2024"));
+        assert!(!pass("taken>2024-05") && pass("taken<=2024-05") && pass("taken>2024-04") && pass("taken<2024-06"));
+        assert!(pass("taken<=2024-05-03") && !pass("taken>2024-05-03") && pass("taken>2024-05-02"));
+        assert!(pass("taken>2023") && pass("taken<2025"));
         assert!(pass("artist:any") && pass("album:none") && !pass("album:any") && !pass("artist:none"));
         assert!(!pass("width>0"), "no value: not more, not less");
         assert!(pass("duration>3m artist:sezen") && !pass("duration>3m artist:x"), "and");

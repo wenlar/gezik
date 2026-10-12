@@ -173,7 +173,7 @@ impl Iterator for Tokens<'_> {
 }
 
 /// Compares two names' keys token by token (natural order, case ignored).
-fn key_cmp(a: &str, b: &str) -> Ordering {
+pub(crate) fn key_cmp(a: &str, b: &str) -> Ordering {
     // The bytes both names start with give the same tokens, unless they end inside a
     // character or a digit run (`file12` and `file13`): start at the last place both agree.
     let mut i = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
@@ -423,7 +423,10 @@ pub fn sort_rows_grouped<'e, 'a>(
         SortKey::Field(id) => Some((id, group.and_then(|g| g.field))),
         _ => None,
     };
+    // A field's values; a text value as name-order tokens in the key buffer instead (Turkish
+    // order, nothing made per comparison), its value then `None`.
     let mut values: Vec<Option<crate::fields::Value>> = Vec::with_capacity(if field.is_some() { len } else { 0 });
+    let mut texts: Vec<(u32, u32)> = Vec::with_capacity(if field.is_some() { len } else { 0 });
     // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
     // column's value when it is not the row's text.
     let mut kinds: Vec<(bool, bool)> = Vec::with_capacity(len);
@@ -432,7 +435,18 @@ pub fn sort_rows_grouped<'e, 'a>(
         let e = entry(i);
         let value = field.map(|(id, look)| look.and_then(|look| look(&e, id)).flatten());
         kinds.push((e.is_dir, last(&e) || value.as_ref().is_some_and(Option::is_none)));
-        values.extend(value);
+        if let Some(value) = value {
+            match value {
+                Some(crate::fields::Value::Text(text)) => {
+                    texts.push(push(&text, false));
+                    values.push(None);
+                }
+                other => {
+                    texts.push((0, 0));
+                    values.push(other);
+                }
+            }
+        }
         keys.extend(match spec.key {
             SortKey::Name | SortKey::Folder | SortKey::Field(_) => None,
             SortKey::Modified => Some(Primary::Time(e.modified)),
@@ -454,7 +468,9 @@ pub fn sort_rows_grouped<'e, 'a>(
             let primary = match spec.key {
                 SortKey::Name => Ordering::Equal,
                 SortKey::Folder => key_cmp(folder(i), folder(j)),
-                SortKey::Field(_) => crate::fields::compare(values[i].as_ref(), values[j].as_ref()),
+                SortKey::Field(_) => span(texts[i])
+                    .cmp(span(texts[j]))
+                    .then_with(|| crate::fields::compare(values[i].as_ref(), values[j].as_ref())),
                 _ => match (&keys[i], &keys[j]) {
                     (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
                         span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))
