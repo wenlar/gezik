@@ -346,6 +346,103 @@ impl MetaStore {
         found.len()
     }
 
+    /// The files in the store whose meta `keep` lets through, on the volumes mounted now, that
+    /// are still there and still the files their entries were made for (a tag clicked in the
+    /// sidebar, spec 12 §7.1). Nothing is read when the store is empty.
+    pub fn find(&self, keep: impl Fn(&Meta) -> bool) -> Vec<PathBuf> {
+        let records: Vec<(String, Record)> = {
+            let mut state = lock(&self.state);
+            let loaded = self.load(&mut state);
+            loaded.store.iter().filter(|(_, r)| keep(&r.meta)).map(|(v, r)| (v.to_owned(), r.clone())).collect()
+        };
+        if records.is_empty() {
+            return Vec::new();
+        }
+        let mounted = mounted();
+        records
+            .into_iter()
+            .filter_map(|(volume, record)| {
+                let path = mounted.get(&volume)?.join(&*record.path);
+                let (size, mtime_ns) = facts(&path).ok()?;
+                let id = record.file_id.and_then(|_| own::file_id(&path));
+                record.fits(size, mtime_ns, id).then_some(path)
+            })
+            .collect()
+    }
+
+    /// The tag `from` is `to` in every store entry now, written at once (the list's Rename…,
+    /// spec 12 §7.3; files keep the name they have). How many entries changed.
+    pub fn rename_tag(&self, from: &str, to: &str) -> usize {
+        let changed = {
+            let mut state = lock(&self.state);
+            let loaded = self.load(&mut state);
+            if loaded.broken.is_some() {
+                return 0;
+            }
+            let changed = loaded.store.rename_tag(from, to);
+            loaded.dirty |= changed > 0;
+            changed
+        };
+        let _ = self.flush();
+        changed
+    }
+
+    /// The store's entries whose files are gone (spec 12 §7.4): on mounted volumes, those whose
+    /// path is no more; entries on volumes not mounted now are only counted (an unplugged stick
+    /// looks empty). Nothing is changed.
+    pub fn orphans(&self) -> io::Result<Orphans> {
+        let traces: Vec<(String, Box<str>)> = {
+            let mut state = lock(&self.state);
+            let loaded = self.load(&mut state);
+            if let Some(broken) = &loaded.broken {
+                return Err(io::Error::other(broken.clone()));
+            }
+            loaded.store.iter().map(|(v, r)| (v.to_owned(), r.path.clone())).collect()
+        };
+        let mounted = if traces.is_empty() { HashMap::new() } else { mounted() };
+        let mut orphans = Orphans::default();
+        for (volume, path) in traces {
+            match mounted.get(&volume) {
+                Some(root) if std::fs::symlink_metadata(root.join(&*path)).is_err() => {
+                    orphans.gone.push((volume, path));
+                }
+                Some(_) => {}
+                None => orphans.unmounted += 1,
+            }
+        }
+        Ok(orphans)
+    }
+
+    /// Removes the entries `gone` names (an answer to [`orphans`](Self::orphans)) whose files
+    /// are still gone now: a file that came back, or a volume unplugged since, keeps its entry.
+    /// The store is copied to `tags-store.tsv.bak` first. How many went.
+    pub fn remove_orphans(&self, gone: &[(String, Box<str>)]) -> io::Result<usize> {
+        let Some(file) = self.file.clone() else { return Ok(0) };
+        self.flush()?;
+        if file.exists() {
+            let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            std::fs::copy(&file, file.with_file_name(format!("{name}.bak")))?;
+        }
+        let mounted = mounted();
+        let mut state = lock(&self.state);
+        let loaded = self.load(&mut state);
+        if let Some(broken) = &loaded.broken {
+            return Err(io::Error::other(broken.clone()));
+        }
+        let mut removed = 0;
+        for (volume, path) in gone {
+            let still_gone =
+                mounted.get(volume).is_some_and(|root| std::fs::symlink_metadata(root.join(&**path)).is_err());
+            if still_gone && loaded.store.remove(volume, path) {
+                removed += 1;
+            }
+        }
+        loaded.dirty |= removed > 0;
+        drop(state);
+        self.flush()?;
+        Ok(removed)
+    }
+
     /// Writes the store if a job changed it: whole, to a temporary file, then renamed over
     /// the old one, so a crash leaves the old or the new store, never half of one. Left dirty
     /// if it cannot be written (the next job tries again).
@@ -362,6 +459,23 @@ impl MetaStore {
     pub fn file(&self) -> Option<&Path> {
         self.file.as_deref()
     }
+}
+
+/// What [`MetaStore::orphans`] found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Orphans {
+    /// Entries on mounted volumes whose files are gone: volume and path in it.
+    pub gone: Vec<(String, Box<str>)>,
+    /// Entries on volumes not mounted now: left alone.
+    pub unmounted: usize,
+}
+
+/// The volumes mounted now, by key, with their roots (each drive asked once).
+fn mounted() -> HashMap<String, PathBuf> {
+    gezik_platform::drives()
+        .into_iter()
+        .filter_map(|drive| own::volume(&drive.path).ok().map(|volume| (volume.key, drive.path)))
+        .collect()
 }
 
 fn broken_store(file: &Path, why: &str) -> Loaded {
@@ -495,6 +609,50 @@ mod tests {
         eprintln!("read 10,000 files' tags in {took:?}");
         assert_eq!(tagged, 1000);
         assert!(took <= Duration::from_secs(1), "took {took:?}");
+    }
+
+    #[test]
+    fn a_clean_up_removes_only_what_is_gone_and_keeps_a_copy() {
+        let dir = test_dir("meta-orphans");
+        let tags = MetaStore::new(Some(dir.join("config/tags-store.tsv")), true);
+        let live = file(&dir, "live.txt", "x");
+        let gone = file(&dir, "gone.txt", "x");
+        tags.write(&live, &red()).unwrap();
+        tags.write(&gone, &red()).unwrap();
+        tags.flush().unwrap();
+        // An entry of a stick that is not plugged in.
+        let text = std::fs::read_to_string(dir.join("config/tags-store.tsv")).unwrap();
+        std::fs::write(dir.join("config/tags-store.tsv"), format!("{text}unplugged\tx.txt\t1\t2\t-\ttag 6 Red\n"))
+            .unwrap();
+        let tags = MetaStore::new(Some(dir.join("config/tags-store.tsv")), true);
+        std::fs::remove_file(&gone).unwrap();
+        let orphans = tags.orphans().unwrap();
+        assert_eq!(orphans.unmounted, 1, "a volume not mounted is only counted");
+        assert_eq!(orphans.gone.len(), 1);
+        assert!(orphans.gone[0].1.ends_with("gone.txt"));
+        // Asked to remove the live one too (a wrong answer): it stays, as does the unplugged one.
+        let mut asked = orphans.gone.clone();
+        asked.push((asked[0].0.clone(), asked[0].1.replace("gone.txt", "live.txt").into()));
+        asked.push(("unplugged".to_owned(), "x.txt".into()));
+        assert_eq!(tags.remove_orphans(&asked).unwrap(), 1);
+        assert_eq!(tags.read(&live).unwrap(), red(), "a live entry is never removed");
+        assert_eq!(tags.orphans().unwrap(), Orphans { gone: Vec::new(), unmounted: 1 });
+        let backup = std::fs::read_to_string(dir.join("config/tags-store.tsv.bak")).unwrap();
+        assert!(backup.contains("gone.txt") && backup.contains("unplugged"), "the copy is from before");
+        assert_eq!(tags.find(|meta| meta.has_tag("red")), [live.clone()], "found where it is mounted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_tag_renamed_in_the_list_is_renamed_in_the_store() {
+        let dir = test_dir("meta-rename-tag");
+        let tags = MetaStore::new(Some(dir.join("config/tags-store.tsv")), true);
+        let a = file(&dir, "a.txt", "x");
+        tags.write(&a, &red()).unwrap();
+        assert_eq!(tags.rename_tag("red", "Crimson"), 1);
+        let again = MetaStore::new(Some(dir.join("config/tags-store.tsv")), true);
+        assert_eq!(&*again.read(&a).unwrap().tags[0].name, "Crimson", "written at once");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

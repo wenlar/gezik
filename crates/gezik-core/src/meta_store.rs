@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::meta::{Meta, meta_from_lines, meta_lines};
+use crate::meta::{Meta, meta_from_lines, meta_lines, same_name};
 
 pub const MAX_RECORDS: usize = 200_000;
 const HEADER: &str = "# gezik tags store";
@@ -256,6 +256,31 @@ impl Store {
             .find(|record| gone(&record.path))
     }
 
+    /// Every record with its volume, in volume and path order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Record)> {
+        self.records.iter().map(|((volume, _), record)| (&**volume, record))
+    }
+
+    /// The tag `from` is called `to` in every record now (the list's Rename…, spec 12 §7.3);
+    /// a record that has both keeps one. How many records changed.
+    pub fn rename_tag(&mut self, from: &str, to: &str) -> usize {
+        if self.read_only {
+            return 0;
+        }
+        let mut changed = 0;
+        for record in self.records.values_mut() {
+            let tags = &mut record.meta.tags;
+            let Some(at) = tags.iter().position(|t| same_name(&t.name, from)) else { continue };
+            if tags.iter().any(|t| same_name(&t.name, to)) {
+                tags.remove(at);
+            } else {
+                tags[at].name = to.into();
+            }
+            changed += 1;
+        }
+        changed
+    }
+
     /// What [`refind_in`] needs of the records on `volume`: copied out, so the search for them
     /// runs without the store's lock.
     pub fn traces(&self, volume: &str) -> Vec<Trace> {
@@ -406,6 +431,27 @@ mod tests {
         assert_eq!(back.len(), 2);
         assert!(back.to_text().ends_with("not a record\n"), "a line it cannot read is kept");
         assert!(!back.read_only);
+    }
+
+    #[test]
+    fn a_tag_is_renamed_in_every_record() {
+        let mut store = Store::default();
+        store.set("v", record("a.txt", "Red")).unwrap();
+        let mut both = record("b.txt", "red");
+        both.meta.tags.push(Tag::new("Crimson", TagColor::Red));
+        store.set("v", both).unwrap();
+        store.set("w", record("c.txt", "Blue")).unwrap();
+        assert_eq!(store.rename_tag("RED", "Crimson"), 2);
+        let names = |path: &str, volume: &str| -> Vec<String> {
+            store.get(volume, path).unwrap().meta.tags.iter().map(|t| t.name.to_string()).collect()
+        };
+        assert_eq!(names("a.txt", "v"), ["Crimson"], "the colour stays");
+        assert_eq!(names("b.txt", "v"), ["Crimson"], "one of two");
+        assert_eq!(names("c.txt", "w"), ["Blue"]);
+        assert_eq!(
+            store.iter().map(|(v, r)| (v, &*r.path)).collect::<Vec<_>>(),
+            [("v", "a.txt"), ("v", "b.txt"), ("w", "c.txt")]
+        );
     }
 
     #[test]
