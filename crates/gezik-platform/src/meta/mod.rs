@@ -188,6 +188,58 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_stream_that_would_grow_too_big_is_not_written() {
+        let dir = test_dir("big");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        let stream = dir.join("a.txt:gezik.meta");
+        let old = format!(
+            "gezik-meta 1
+{}
+",
+            "z".repeat(16_340)
+        );
+        std::fs::write(&stream, &old).unwrap();
+        let err = write(&file, &sample()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(std::fs::read_to_string(&stream).unwrap(), old);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_half_star_rating_stays_unless_the_stars_change() {
+        let dir = test_dir("baloo");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        if write(&file, &sample()).is_err() {
+            return;
+        }
+        let path = c_path_for_tests(&file);
+        let set = |v: &[u8]| unsafe {
+            libc::lsetxattr(path.as_ptr(), c"user.baloo.rating".as_ptr(), v.as_ptr().cast(), v.len(), 0)
+        };
+        assert_eq!(set(b"7"), 0);
+        write(&file, &Meta { rating: 4, ..sample() }).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"x");
+        let mut buf = [0u8; 8];
+        let n = unsafe {
+            libc::lgetxattr(path.as_ptr(), c"user.baloo.rating".as_ptr(), buf.as_mut_ptr().cast(), buf.len())
+        };
+        assert_eq!(&buf[..n as usize], b"7", "Dolphin's half star is kept");
+        write(&file, &Meta { rating: 2, ..sample() }).unwrap();
+        assert_eq!(read(&file).unwrap().meta.rating, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn c_path_for_tests(path: &Path) -> std::ffi::CString {
+        use std::os::unix::ffi::OsStrExt;
+        std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap()
+    }
+
     /// Spec 12 §4.2, the first check of 12a: CopyFileExW takes the stream along to NTFS.
     #[cfg(windows)]
     #[test]

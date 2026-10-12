@@ -85,7 +85,14 @@ pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
             _ => Ok(()),
         }
     } else {
-        write_stream(path, encode_stream(meta, &unknown).as_bytes())
+        let text = encode_stream(meta, &unknown);
+        if text.len() as u64 > MAX_STREAM {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Too many tags and too long a comment for one file",
+            ));
+        }
+        write_stream(path, text.as_bytes())
     };
     let times = FileTimes::new().set_modified(facts.modified()?).set_accessed(facts.accessed()?);
     let restored = base.set_times(times);
