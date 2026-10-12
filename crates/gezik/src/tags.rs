@@ -110,6 +110,19 @@ pub fn read_for_rows(path: &Path) -> Box<[Tag]> {
     STORE.get().and_then(|store| store.read(path).ok()).map(|meta| meta.tags.into_boxed_slice()).unwrap_or_default()
 }
 
+/// A file's tags for a folder read whole (12c, `view/folder_tags.rs`): network drives too, the
+/// view asked for them; a file that cannot be read has none.
+pub fn read_tags(path: &Path) -> Box<[Tag]> {
+    STORE.get().and_then(|store| store.read(path).ok()).map(|meta| meta.tags.into_boxed_slice()).unwrap_or_default()
+}
+
+/// Store entries of files other programs moved into `folder` follow them (12c).
+pub fn refind_in(folder: &Path, files: &[(&str, u64, i64)]) {
+    if let Some(store) = STORE.get() {
+        store.refind_in(folder, files);
+    }
+}
+
 fn on_network(path: &Path) -> bool {
     let folder = path.parent().unwrap_or(path);
     NETWORK.with(|n| {
@@ -165,6 +178,15 @@ pub fn dots_of(tags: &[Tag], list: &[Tag]) -> (Vec<Color>, i32, String) {
 /// Drops what is known of every row's tags and draws the rows again (a tag job ended, F5).
 pub fn forget_rows() {
     crate::media::with_current(crate::media::Media::forget_tags);
+    // This window's panes read again now; other windows' when they next show or sort.
+    let here: Vec<_> = crate::panes::all().iter().map(|p| p.id).collect();
+    for p in crate::panes::everywhere() {
+        if here.contains(&p.id) {
+            p.view.reread_folder_tags();
+        } else {
+            p.view.folder_tags_changed();
+        }
+    }
     if dots_on() {
         redraw_all();
     }

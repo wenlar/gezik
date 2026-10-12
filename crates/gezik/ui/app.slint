@@ -151,6 +151,7 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Type"; activated => { root.menu-command("group-type"); } }
                 MenuItem { title: "Date"; activated => { root.menu-command("group-date"); } }
                 MenuItem { title: "Size"; activated => { root.menu-command("group-size"); } }
+                MenuItem { title: "Tag"; activated => { root.menu-command("group-tag"); } }
             }
             MenuItem { title: "Collapse All Groups"; activated => { root.menu-command("collapse-groups"); } }
             MenuItem { title: "Expand All Groups"; activated => { root.menu-command("expand-groups"); } }
@@ -460,6 +461,7 @@ export component AppWindow inherits Window {
     in-out property <length> col-size;
     in-out property <length> col-folder;
     in-out property <length> col-match;
+    in-out property <length> col-tags;
     callback header-clicked(int, int);
     // Right-click on the column header, at a window position.
     callback header-menu(int, length, length);
@@ -1037,6 +1039,7 @@ export component AppWindow inherits Window {
                             col-size <=> root.col-size;
                             col-folder <=> root.col-folder;
                             col-match <=> root.col-match;
+                            col-tags <=> root.col-tags;
                             sheet-x: sheet-place.x;
                             sheet-y: sheet-place.y;
                             sheet-width: sheet-place.width;

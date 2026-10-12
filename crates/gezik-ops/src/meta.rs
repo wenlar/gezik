@@ -304,6 +304,48 @@ impl MetaStore {
         loaded.dirty |= loaded.store.rename_all(&moves) > 0;
     }
 
+    /// Gezik lists `folder` whole for a view that needs tags (spec 12 §4.4, plan 12a sapma 4):
+    /// store entries of files another program moved or renamed into it (`files`: name, size,
+    /// modification time in ns) follow them, and the store is written. Nothing is read when
+    /// the store has no entries. How many were found.
+    pub fn refind_in(&self, folder: &Path, files: &[(&str, u64, i64)]) -> usize {
+        let Some(first) = files.first() else { return 0 };
+        let mut state = lock(&self.state);
+        let loaded = self.load(&mut state);
+        if loaded.store.is_empty() || loaded.broken.is_some() {
+            return 0;
+        }
+        let Ok(known) = self.volume(&mut state, &folder.join(first.0)) else { return 0 };
+        let (volume, root) = &*known;
+        let at = in_volume(folder, root);
+        let traces = self.load(&mut state).store.traces(&volume.key);
+        // The search opens files: without the lock, so the rows' reads do not wait for it.
+        drop(state);
+        let found = gezik_core::meta_store::refind_in(
+            &traces,
+            &at,
+            files,
+            |i| if volume.holds { own::file_id(&folder.join(files[i].0)) } else { None },
+            |path| std::fs::symlink_metadata(root.join(path)).is_err(),
+        );
+        if found.is_empty() {
+            return 0;
+        }
+        let mut state = lock(&self.state);
+        let moves: Vec<(String, String)> =
+            found.iter().map(|(from, i)| (from.to_string(), gezik_core::meta_store::join(&at, files[*i].0))).collect();
+        let moves: Vec<(&str, &str, &str, &str)> = moves
+            .iter()
+            .map(|(from, to)| (volume.key.as_str(), from.as_str(), volume.key.as_str(), to.as_str()))
+            .collect();
+        let loaded = self.load(&mut state);
+        loaded.dirty |= loaded.store.rename_all(&moves) > 0;
+        drop(state);
+        // Written now: no job ends to write it.
+        let _ = self.flush();
+        found.len()
+    }
+
     /// Writes the store if a job changed it: whole, to a temporary file, then renamed over
     /// the old one, so a crash leaves the old or the new store, never half of one. Left dirty
     /// if it cannot be written (the next job tries again).
@@ -410,6 +452,49 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, text).unwrap();
         path
+    }
+
+    #[test]
+    fn a_folder_read_whole_takes_back_tags_moved_by_another_program() {
+        let dir = test_dir("meta-refind");
+        let tags = store(&dir);
+        tags.fake_holds(fat);
+        let a = file(&dir, "fat/old/a.txt", "x");
+        tags.write(&a, &red()).unwrap();
+        tags.flush().unwrap();
+        // Explorer moves it: same name, size and time.
+        std::fs::create_dir_all(dir.join("fat/new")).unwrap();
+        let moved = dir.join("fat/new/a.txt");
+        std::fs::rename(&a, &moved).unwrap();
+        let (size, mtime) = facts(&moved).unwrap();
+        assert!(tags.read(&moved).unwrap().is_empty(), "not found yet");
+        let files = [("a.txt", size, mtime), ("other.txt", 1, 2)];
+        assert_eq!(tags.refind_in(&dir.join("fat/new"), &files), 1);
+        assert_eq!(tags.read(&moved).unwrap(), red());
+        assert_eq!(tags.refind_in(&dir.join("fat/new"), &files), 0, "its own entry now");
+        let again = store(&dir);
+        again.fake_holds(fat);
+        assert_eq!(again.read(&moved).unwrap(), red(), "the store file was written");
+        assert_eq!(store(&dir.join("empty")).refind_in(&dir, &files), 0);
+    }
+
+    /// `cargo test -p gezik-ops --release -- --ignored reading_10k` (spec 12 §14: a folder of
+    /// 10,000 read whole in ≤ 1 s on Windows, ≤ 300 ms on Linux and macOS).
+    #[test]
+    #[ignore]
+    fn reading_10k_files_whole_is_within_budget() {
+        let dir = test_dir("meta-10k");
+        let tags = store(&dir);
+        let paths: Vec<PathBuf> = (0..10_000).map(|i| file(&dir, &format!("f/{i}.txt"), "x")).collect();
+        for path in paths.iter().step_by(10) {
+            tags.write(path, &red()).unwrap();
+        }
+        let start = Instant::now();
+        let tagged = paths.iter().filter(|p| !tags.read(p).unwrap().tags.is_empty()).count();
+        let took = start.elapsed();
+        eprintln!("read 10,000 files' tags in {took:?}");
+        assert_eq!(tagged, 1000);
+        assert!(took <= Duration::from_secs(1), "took {took:?}");
     }
 
     #[test]

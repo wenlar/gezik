@@ -204,9 +204,10 @@ export component FileView inherits Rectangle {
     in-out property <length> col-size;
     in-out property <length> col-folder;
     in-out property <length> col-match;
+    in-out property <length> col-tags;
     // The trash is shown: Folder and Modified are where items were and when they were deleted.
     in property <bool> trash;
-    // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder) and direction.
+    // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 7 Tags) and direction.
     in property <int> sort-column;
     in property <bool> sort-desc;
     // The entry being renamed (-1: none): its name shows as a text field.
@@ -324,13 +325,13 @@ export component FileView inherits Rectangle {
     property <length> side: Theme.spacing + 4px;
     property <int> shown-columns: (root.col-modified > 0 ? 1 : 0) + (root.col-created > 0 ? 1 : 0)
         + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0) + (root.col-folder > 0 ? 1 : 0)
-        + (root.col-match > 0 ? 1 : 0);
+        + (root.col-match > 0 ? 1 : 0) + (root.col-tags > 0 ? 1 : 0);
 
     // Right edge of the Name column, in a row's own coordinates (rows are inset from the
     // list's edges): a drag that starts right of it, on a row, selects with a rectangle; from
     // the name it is kept for dragging files (sub-project 4).
     property <length> name-end: root.mode == 2 ? list.visible-width : max(root.side + 150px, list.visible-width - 2 * Theme.inset - root.side - root.col-modified - root.col-created
-        - root.col-type - root.col-size - root.col-folder - root.col-match - root.gap * root.shown-columns);
+        - root.col-type - root.col-size - root.col-folder - root.col-match - root.col-tags - root.gap * root.shown-columns);
 
     property <bool> marquee-active;
     property <bool> marquee-additive;
@@ -514,6 +515,17 @@ export component FileView inherits Rectangle {
                 clicked => { root.header-clicked(4); }
                 menu(x, y) => { root.header-menu(x, y); }
                 resize(w) => { root.col-size = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            if root.col-tags > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-tags;
+                text: "Tags";
+                sorted: root.sort-column == 7;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(7); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-tags = clamp(w, 50px, 600px); }
                 resize-done => { root.columns-resized(); }
             }
         }
@@ -778,6 +790,13 @@ export component FileView inherits Rectangle {
                         text: entry.file.size;
                         opacity: entry.file.size-stale ? 0.55 : 1;
                         horizontal-alignment: right;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                    if root.col-tags > 0 && root.mode == 0: Text {
+                        width: root.col-tags;
+                        text: entry.file.tag-names;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;

@@ -270,7 +270,8 @@ pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
         .enumerate()
         .map(|(i, key)| {
             let shown = columns.iter().any(|c| c.key == *key && c.visible);
-            (RESULT_COLUMN_FIRST + i as u32, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
+            let id = if *key == ColumnKey::Tags { TAGS_COLUMN } else { RESULT_COLUMN_FIRST + i as u32 };
+            (id, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
         })
         .collect();
     out.push((RESULT_COLUMNS_RESET, "Reset columns".to_owned()));
@@ -286,7 +287,10 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
     let mut out: Vec<(u32, &'static str)> = columns
         .iter()
         .map(|c| {
-            let id = TOGGLE_COLUMN_FIRST + u32::try_from(c.key.index() - 1).unwrap_or(0);
+            let id = match c.key {
+                ColumnKey::Tags => TAGS_COLUMN,
+                key => TOGGLE_COLUMN_FIRST + u32::try_from(key.index() - 1).unwrap_or(0),
+            };
             let title = match (c.key, c.visible) {
                 (ColumnKey::Modified, true) => "Hide Modified",
                 (ColumnKey::Modified, false) => "Show Modified",
@@ -300,6 +304,8 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
                 (ColumnKey::Folder, false) => "Show Folder",
                 (ColumnKey::Match, true) => "Hide Match",
                 (ColumnKey::Match, false) => "Show Match",
+                (ColumnKey::Tags, true) => "Hide Tags",
+                (ColumnKey::Tags, false) => "Show Tags",
             };
             (id, title)
         })
@@ -563,7 +569,8 @@ pub const TOOLS_SPLIT: u32 = 2209;
 pub const TOOLS_JOIN: u32 = 2210;
 // Step 12 (spec 12 §12.3): 2400–2599. Tags ▸ 2400–2409 (Tags… 2400, Clear tags 2401; Comment…
 // and New Tag… later), the list's tags 2410–2469, ratings 2470–2475, the sidebar's tag menu
-// 2480–2489, colours 2490–2497, View items 2500–2509 (Tag dots 2500).
+// 2480–2489, colours 2490–2497, View items 2500–2509 (Tag dots 2500; 12c: Sort by tags 2501,
+// Group by ▸ Tag 2502, Show/Hide Tags in the column headers 2503).
 /// Tags ▸ Tags… and Clear tags (12b), on rows.
 pub const TAGS_PICKER: u32 = 2400;
 pub const TAGS_CLEAR: u32 = 2401;
@@ -573,6 +580,10 @@ pub const TAGS_TAG_MAX: u32 = gezik_config::tags::TAGS_MAX as u32;
 const TAGS_TAG_LAST: u32 = TAGS_TAG_FIRST + TAGS_TAG_MAX - 1;
 /// The View menu's Tag dots (12b).
 pub const TAG_DOTS: u32 = 2500;
+/// Sort by tags, Group by ▸ Tag, and the Tags column in both header menus (12c).
+pub const SORT_BY_TAGS: u32 = 2501;
+pub const GROUP_BY_TAG: u32 = 2502;
+pub const TAGS_COLUMN: u32 = 2503;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
 /// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
@@ -916,6 +927,7 @@ pub fn view_items(
         (SORT_BY_CREATED, SortKey::Created, "Sort by date created"),
         (SORT_BY_TYPE, SortKey::Type, "Sort by type"),
         (SORT_BY_SIZE, SortKey::Size, "Sort by size"),
+        (SORT_BY_TAGS, SortKey::Tags, "Sort by tags"),
     ];
     for (id, key, title) in sorts {
         out.push((id, mark(view.sort.key == key, title)));
@@ -973,10 +985,10 @@ pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
     ]
 }
 
-/// Group by ▸ (spec 10 §6.2): None, Type, Date, Size, the current one marked; at place `at`.
+/// Group by ▸ (spec 10 §6.2): None, Type, Date, Size, Tag, the current one marked; at place `at`.
 pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
-    let items = [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]
+    let items = [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG]
         .into_iter()
         .zip(GroupBy::ALL)
         .map(|(id, by)| (id, mark(by == current, by.title()), true))
@@ -2019,6 +2031,10 @@ impl Menus {
             (id, _) if (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id) => {
                 crate::panes::active_view().set_group(GroupBy::ALL[(id - GROUP_BY_NONE) as usize]);
             }
+            (GROUP_BY_TAG, _) => crate::panes::active_view().set_group(GroupBy::Tag),
+            (SORT_BY_TAGS, Subject::View) => crate::panes::active_view()
+                .set_sort(SortSpec { key: SortKey::Tags, dir: crate::panes::active_view().sort().dir }),
+            (TAGS_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Tags),
             (COLLAPSE_GROUPS, _) => crate::panes::active_view().collapse_all(true),
             (EXPAND_GROUPS, _) => crate::panes::active_view().collapse_all(false),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
@@ -2539,6 +2555,7 @@ fn from_submenu(id: u32) -> bool {
         || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id)
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
         || (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id)
+        || id == GROUP_BY_TAG
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
@@ -2605,10 +2622,10 @@ mod tests {
     fn the_results_header_menu_has_its_own_ids() {
         let items = result_header_items(&gezik_core::view::default_result_columns());
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
-        assert_eq!(ids, [1550, 1551, 1552, 1553, 1554, 1555, RESULT_COLUMNS_RESET]);
+        assert_eq!(ids, [1550, 1551, 1552, 1553, 1554, 1555, TAGS_COLUMN, RESULT_COLUMNS_RESET]);
         assert_eq!(items[0].1, "Hide Folder");
         assert_eq!(items[3].1, "Show Created");
-        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "8a's range");
+        assert!(ids.iter().all(|id| (1500..1600).contains(id) || *id == TAGS_COLUMN), "8a's range, and 12c's Tags");
     }
 
     #[test]
@@ -2911,7 +2928,7 @@ mod tests {
         let sub = group_by_sub(GroupBy::Date, 3);
         assert_eq!((sub.title.as_str(), sub.at), ("Group by", 3));
         let ids: Vec<u32> = sub.items.iter().map(|(id, _, _)| *id).collect();
-        assert_eq!(ids, [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]);
+        assert_eq!(ids, [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG]);
         let marked: Vec<&str> =
             sub.items.iter().filter(|(_, t, _)| t.starts_with("• ")).map(|(_, t, _)| t.as_str()).collect();
         assert_eq!(marked, ["• Date"]);
@@ -3062,6 +3079,10 @@ mod tests {
             TOOLS_MOVE_TO,
             TOOLS_SPLIT,
             TOOLS_JOIN,
+            TAG_DOTS,
+            SORT_BY_TAGS,
+            GROUP_BY_TAG,
+            TAGS_COLUMN,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -3390,6 +3411,7 @@ mod tests {
                 (TOGGLE_COLUMN_FIRST + 1, "Show Created"),
                 (TOGGLE_COLUMN_FIRST + 2, "Hide Type"),
                 (TOGGLE_COLUMN_FIRST + 3, "Hide Size"),
+                (TAGS_COLUMN, "Show Tags"),
                 (RESET_COLUMNS, "Reset columns"),
             ]
         );
@@ -3496,6 +3518,7 @@ mod tests {
                 SORT_BY_CREATED,
                 SORT_BY_TYPE,
                 SORT_BY_SIZE,
+                SORT_BY_TAGS,
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,

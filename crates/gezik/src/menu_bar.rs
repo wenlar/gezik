@@ -46,6 +46,9 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
             if name == "tag-dots" {
                 return crate::tags::toggle_dots();
             }
+            if name == "group-tag" {
+                return crate::panes::active_view().set_group(gezik_core::group::GroupBy::Tag);
+            }
             if let Some(id) = name.strip_prefix("view-option:").and_then(|i| i.parse::<u32>().ok()) {
                 let options = crate::view_options::current();
                 if let Some(option) = crate::context_menu::view_option_for(id, options) {

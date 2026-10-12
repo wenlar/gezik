@@ -187,14 +187,24 @@ pub fn filtered_results(full: &Arc<ResultSet>, pattern: &Pattern) -> (Listing, O
 
 /// The listing of `dir` showing what `pattern` lets through of `full`, and where each of its
 /// entries is in `full`: the same entries (no copy, `None`) for an empty pattern.
-pub fn filtered_listing(dir: &Path, full: &Rc<Vec<Entry>>, pattern: &Pattern) -> (Listing, Option<Vec<usize>>) {
-    if pattern.is_empty() {
-        (Listing::Files(dir.to_path_buf(), full.clone()), None)
-    } else {
-        let rows = matching_rows(full, pattern);
-        let entries = rows.iter().map(|&i| full[i].clone()).collect();
-        (Listing::Files(dir.to_path_buf(), Rc::new(entries)), Some(rows))
+/// `keep`: a test of its own each entry must pass too (`tag:` words).
+pub fn filtered_with(
+    dir: &Path,
+    full: &Rc<Vec<Entry>>,
+    pattern: &Pattern,
+    keep: Option<&dyn Fn(&Entry) -> bool>,
+) -> (Listing, Option<Vec<usize>>) {
+    if pattern.is_empty() && keep.is_none() {
+        return (Listing::Files(dir.to_path_buf(), full.clone()), None);
     }
+    let rows = match keep {
+        Some(keep) => {
+            full.iter().enumerate().filter(|(_, e)| pattern.matches(&e.name) && keep(e)).map(|(i, _)| i).collect()
+        }
+        None => matching_rows(full, pattern),
+    };
+    let entries = rows.iter().map(|&i: &usize| full[i].clone()).collect();
+    (Listing::Files(dir.to_path_buf(), Rc::new(entries)), Some(rows))
 }
 
 /// Whether an entry of `entries` other than `except` is called `name` (ignoring case where
@@ -314,10 +324,10 @@ mod tests {
     #[test]
     fn a_filtered_listing_shares_the_entries_without_a_pattern() {
         let Listing::Files(_, full) = files("/x", &["a.jpg", "b.txt", "c.JPG"]) else { unreachable!() };
-        let (all, rows) = filtered_listing(Path::new("/x"), &full, &Pattern::default());
+        let (all, rows) = filtered_with(Path::new("/x"), &full, &Pattern::default(), None);
         assert!(matches!(&all, Listing::Files(_, shown) if Rc::ptr_eq(shown, &full)), "no copy");
         assert_eq!(rows, None);
-        let (jpgs, rows) = filtered_listing(Path::new("/x"), &full, &Pattern::compile("*.jpg").unwrap());
+        let (jpgs, rows) = filtered_with(Path::new("/x"), &full, &Pattern::compile("*.jpg").unwrap(), None);
         assert_eq!(rows, Some(vec![0, 2]), "where they are in the full list");
         let names: Vec<&str> = (0..jpgs.len()).filter_map(|i| jpgs.name_at(i)).collect();
         assert_eq!(names, ["a.jpg", "c.JPG"]);

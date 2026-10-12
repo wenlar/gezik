@@ -756,6 +756,13 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 347. **Finder sees them.** Tags given in Gezik show in Finder's list and Get Info with the same colours; a tag given in Finder shows as a dot in Gezik after F5. Modified dates do not change.
 348. **Dots.** List, grid and columns: up to three overlapping dots after the name (under it in the grid), `+2` past three, a ring for a tag without colour; on a selected row each dot has a white edge. View ▸ Tag Dots off: no dots and settings.toml says `dots = false`.
 
+### 12c, Tags column, sort, group and filter
+
+349. **Tags column.** Right-click the list's header ▸ Show Tags: a Tags column after Size with each row's tag names (`Red, Proj`); it is off in a fresh config. A click on its header sorts by tags (▲/▼). Hide it again: settings.toml's `[[columns]]` and views.toml keep the choice.
+350. **Sort and group.** In a folder with tagged and untagged files (some tagged in Finder): the View button ▸ Sort by tags puts Red's files first, then the list's other colours in its order, then tags not in the list by name, untagged last; Descending turns it round. View ▸ Group By ▸ Tag: `● Red (3)`, `● Green (1)`, …, `No Tags (12)` last; a file with Red and Green is only under Red.
+351. **Filter.** ⌘F, type `tag:Red`: only Red files; `*.jpg tag:Red` the Red pictures; `tag:"Project X"` a tag with a space; `tag:none` the untagged; `tag:any` the tagged; `tag:red` matches Red (case does not matter).
+352. **A big folder.** `mkdir /tmp/t100k && cd /tmp/t100k && seq 1 100000 | xargs touch` (one minute), open it in Gezik, Sort by tags: the list stays usable while the status line says `Reading tags… 40,000 of 100,000`, then sorts once. Leaving the folder in the middle stops the read (Activity Monitor: Gezik's CPU drops). Write down how long 100,000 took. With name sort and no Tags column, `sudo fs_usage -w -f filesys gezik | grep getxattr` shows no reads while scrolling (dots off: View ▸ Tag Dots).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

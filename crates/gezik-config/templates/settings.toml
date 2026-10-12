@@ -34,10 +34,10 @@ reduce-motion = false
 # How folders look. A folder you change keeps its own view; "Apply to all folders"
 # in the View menu writes mode, sort, sort-dir, grid-size and group here.
 mode = "list"          # list | grid | columns
-sort = "name"          # name | modified | created | type | size
+sort = "name"          # name | modified | created | type | size | tags
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
-group = "none"         # none | type | date | size: the list's groups when a folder has no view of its own
+group = "none"         # none | type | date | size | tag: the list's groups when a folder has no view of its own
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
 folder-sizes = "off"      # sizes of the folders shown: off (only when asked) | local (not on network folders) | all
 thumbnails = true      # pictures and videos show a preview in the grid
@@ -327,7 +327,7 @@ dots = "auto"
 # cloud) and by content ("pictures >= 50%" of the items shown; pictures, videos, audio,
 # documents, archives, code or folders); with more than one, all must match. Search results
 # match by kind only. A rule sets mode (list | grid | columns), sort, sort-dir, group, grid-size and
-# columns (modified, created, type, size; name always shows); what it leaves out stays
+# columns (modified, created, type, size, tags; name always shows); what it leaves out stays
 # [view]'s. A rule with a mistake is reported and left out.
 # [[view-rules]]
 # path = "{pictures}/**"

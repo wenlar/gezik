@@ -52,6 +52,10 @@ pub struct ViewData {
     pub groups: Vec<Span>,
     /// Each group's key, as `groups`.
     pub group_keys: Vec<GroupKey>,
+    /// The folder's tags read whole (spec 12 §3.4): only while a sort, grouping or filter needs them.
+    pub folder_tags: Option<Rc<super::FolderTags>>,
+    /// The Tags column shows: rows on screen read their tags.
+    pub tags_column: bool,
 }
 
 pub struct ItemsModel {
@@ -241,7 +245,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         icon: icon.unwrap_or_default(),
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),
-        cut: entries && listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)),
+        cut: entries && (listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)) || waiting(data)),
         cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
@@ -254,19 +258,54 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     }
 }
 
-/// Entry `i`'s tag dots while dots show (spec 12 §5.4): asked for only here, so only for rows
-/// on screen; until they are read, none. Cloud folders are read only with `dots = true`.
+/// Entry `i`'s tags' names as far as they are known (an export: nothing is read for it).
+pub fn known_tag_names(data: &ViewData, i: usize) -> String {
+    let tags = match (&data.listing, &data.folder_tags) {
+        (Listing::Files(dir, entries), Some(f)) if f.dir == *dir => {
+            entries.get(i).and_then(|e| f.of(&e.name)).map(<Box<[gezik_core::meta::Tag]>>::from)
+        }
+        _ => data.listing.path_at(i).and_then(|(path, _)| data.media.known_tags(&path)),
+    };
+    tags.map(|tags| tags.iter().map(|t| &*t.name).collect::<Vec<_>>().join(", ")).unwrap_or_default()
+}
+
+/// Whether a `tag:` filter waits for the folder's tags: the rows it lets through meanwhile are
+/// drawn faint (spec 12 §6.3).
+fn waiting(data: &ViewData) -> bool {
+    data.folder_tags.as_ref().is_some_and(|f| f.faint.get() && !f.complete)
+}
+
+/// Entry `i`'s tag dots while dots show (spec 12 §5.4), and its tags' names while they or the
+/// Tags column show (§6.1): asked for only here, so only for rows on screen; until they are read,
+/// none. A folder read whole answers without asking. Cloud folders are read only with
+/// `dots = true`.
 fn row_tags(data: &ViewData, i: usize) -> ([slint::Color; 3], i32, i32, String) {
-    if matches!(data.listing, Listing::Drives(_)) || !crate::tags::dots_on() {
+    let dots_on = crate::tags::dots_on();
+    if matches!(data.listing, Listing::Drives(_)) || !(dots_on || data.tags_column) {
         return Default::default();
     }
-    let Some((path, _)) = data.listing.path_at(i) else { return Default::default() };
-    if !crate::tags::dots_forced() && crate::cloud::root_of(&path).is_some() {
-        return Default::default();
-    }
-    match data.media.tags(path, i) {
+    let known = match (&data.listing, &data.folder_tags) {
+        (Listing::Files(dir, entries), Some(f)) if f.dir == *dir => {
+            entries.get(i).and_then(|e| f.of(&e.name)).map(<Box<[gezik_core::meta::Tag]>>::from)
+        }
+        _ => None,
+    };
+    let tags = match known {
+        Some(tags) => Some(tags),
+        None => {
+            let Some((path, _)) = data.listing.path_at(i) else { return Default::default() };
+            if !crate::tags::dots_forced() && crate::cloud::root_of(&path).is_some() {
+                return Default::default();
+            }
+            data.media.tags(path, i)
+        }
+    };
+    match tags {
         Some(tags) if !tags.is_empty() => {
             let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&tags, list));
+            if !dots_on {
+                return ([slint::Color::default(); 3], 0, 0, names);
+            }
             let mut dots = [slint::Color::default(); 3];
             dots.iter_mut().zip(&colors).for_each(|(dot, color)| *dot = *color);
             (dots, i32::try_from(colors.len()).unwrap_or(3), more, names)
@@ -715,5 +754,43 @@ mod tests {
         assert_eq!(data.media.pending(), before + 1, "asked again");
         crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
         assert_eq!(file_row(&data, 0).dots, 0, "dots off: none drawn");
+    }
+
+    #[test]
+    fn the_tags_column_asks_for_the_rows_drawn_and_a_folder_read_whole_answers() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::{Tag, TagColor};
+        let entries: Vec<Entry> = (0..100)
+            .map(|i| Entry {
+                name: format!("f{i}.txt"),
+                is_dir: false,
+                flags: 0,
+                size: 1,
+                modified: None,
+                created: None,
+            })
+            .collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\c" } else { "/c" });
+        let mut data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        (0..20).for_each(|i| drop(file_row(&data, i)));
+        let others = data.media.pending();
+        assert!(others <= 2, "no column, no dots: a type name and an icon, no tags: {others}");
+        data.tags_column = true;
+        (0..20).for_each(|i| drop(file_row(&data, i)));
+        assert_eq!(data.media.pending(), others + 20, "the rows on screen");
+        // Read whole: answered from it, names without dots (they are off), nothing asked.
+        let tags =
+            std::collections::HashMap::from([(Box::from("f30.txt"), vec![Tag::new("Red", TagColor::Red)].into())]);
+        data.folder_tags = Some(Rc::new(super::super::FolderTags::read(dir, tags)));
+        let pending = data.media.pending();
+        let row = file_row(&data, 30);
+        assert_eq!((row.dots, row.tag_names.as_str(), row.cut), (0, "Red", false));
+        assert_eq!(file_row(&data, 31).tag_names.as_str(), "");
+        assert_eq!(data.media.pending(), pending);
     }
 }
