@@ -29,6 +29,8 @@ next to Gezik keeps everything next to it instead (see [Portable mode](#portable
   computer's id, with the computer's name inside.
 - `tools/` — programs Gezik downloaded on your command (7-Zip, ffmpeg, pdfium). In portable mode
   one folder per system, `tools/<os>-<arch>/` (say `windows-x86_64`), so one drive serves three.
+- `location.toml`, `settings.local.toml`, `sync-cache/` — only with a sync folder (see
+  [Sync folder](#sync-folder)): where it is, this computer's own values, and its last copy.
 
 The top of `settings.toml` holds:
 
@@ -123,6 +125,49 @@ moves your settings to another computer, or to the same one after a reinstall.
   and names Windows cannot hold are left out (the Import row lists them). A zip whose
   `settings.toml` or `views.toml` does not read is refused with the line. Paths written with a
   token (`{home}`, `{documents}`…) work on the other system; others may not exist there.
+
+## Sync folder
+
+Settings ▸ **Sync and Backup** ▸ **Keep Settings in a Folder**: type a folder in OneDrive,
+Dropbox, iCloud Drive, Syncthing or on a network drive (say `~/Dropbox/Gezik`) and press Enter.
+`settings.toml`, the themes and the templates are then kept there for every computer that uses
+the folder; each computer keeps its own `state.toml`, `views.toml`, tag store, tools, backups and
+system changes.
+
+- An empty folder gets this computer's files (nothing there is written over). A folder another
+  computer set up first asks: **Use the Settings in This Folder** (this computer's are backed up
+  to `backups/`) or **Replace Them with This Computer's** (the folder's are backed up to
+  `backups/` first). Nothing is merged. Templates are never written over in either direction.
+- Where the folder is lives in `location.toml` in this computer's config folder, written with a
+  token (`shared = "{home}/Dropbox/Gezik"`), so the same Dropbox found elsewhere on another
+  system still works. The folder's `machines/` holds an empty file per computer that set it up
+  (OneDrive names its conflicting copies by computer).
+- **This computer only**: `settings.local.toml` in this computer's config folder (same format as
+  `settings.toml`) is read over the shared file: its keys win, tables key by key, lists whole.
+  Right-click a setting in the window ▸ **Only on This Computer** (the row then says "this
+  computer"; **Use the Shared Value** takes it out again). `[system]` (the tray, the global
+  shortcut) always goes there while a sync folder is used, and this computer's `[system]` is
+  copied there when the folder is set up. Without a sync folder the file is not read.
+- **Two computers at once**: Gezik writes a setting key by key; if `settings.toml` changed between
+  its read and its write (another computer's change synced in), it makes the edit again on the
+  new text, up to three times, then keeps the change and writes it at the next reload. When a
+  sync service still made a conflicting copy (Dropbox and Nextcloud `settings (… conflicted copy
+  …).toml`, Google Drive `settings (1).toml`, OneDrive `settings-<COMPUTER>.toml`, Syncthing
+  `settings.sync-conflict-….toml`, iCloud `settings 2.toml`; also for themes), the status bar
+  says so and the page lists it with **Review…**: a row per key the copies differ in (a list such
+  as `[[commands]]` is one row), **This copy** or **Other copy** each, then **Merge** (the keys
+  chosen are written, the copy goes to the trash) or **Cancel**. Nothing is merged on its own.
+  A sync service that makes no copy (iCloud at times: the last writer wins) can still lose one
+  of two changes made at the same moment.
+- **Folder not available** (the drive not plugged in, Dropbox not running): Gezik starts from the
+  last copy in `sync-cache/`, the status bar says "Settings folder not available — using the last
+  copy", and the settings window is read-only. Changes made meanwhile (a pin) stay in memory and
+  are written when the folder is back; they are lost if Gezik quits first. Gezik notices the
+  folder coming back while its parent folder is there; otherwise **Check Again**. Nothing polls.
+- **Stop Keeping Settings There** copies the folder's files (or its last copy) back into this
+  computer's config folder after a backup, and removes `location.toml`; the folder is left as it
+  is. Export and Import (above) work with a sync folder too: the shared files come from the
+  folder, `views.toml` and the backups from this computer.
 
 ## Portable mode
 

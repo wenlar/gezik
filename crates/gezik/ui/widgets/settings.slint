@@ -18,6 +18,9 @@ export struct SettingItem {
     // The default as shown ("" for a list).
     default: string,
     options: [string],
+    // With a sync folder (spec 14 §8.2): 1 shared, 2 this computer's (settings.local.toml); 0 no
+    // sync folder, or not a setting.
+    place: int,
 }
 
 // A plain button. No `if` inside (TextButton has two): every `if` and every inlined copy of one
@@ -89,7 +92,7 @@ component SettingLine inherits Rectangle {
     in property <bool> read-only;
     // The text the control speaks: the title, the value, and "default" when it is one, else the
     // default.
-    property <string> spoken: root.item.title + ", " + root.item.value
+    property <string> spoken: root.item.title + ", " + root.item.value + (root.item.place == 2 ? ", this computer" : "")
         + (root.item.is-default ? ", default" : root.item.default == "" ? "" : ", default " + root.item.default);
     property <string> value: root.item.value;
     property <bool> on: root.value == "true";
@@ -107,7 +110,8 @@ component SettingLine inherits Rectangle {
     callback hovered(string);
     // The list's or System Integration's button.
     callback button();
-    // The right-click menu's item (2810 Reset to Default, 2811 Copy Key, 2812 Edit in settings.toml):
+    // The right-click menu's item (2810 Reset to Default, 2811 Copy Key, 2812 Edit in settings.toml,
+    // 2813 Only on This Computer or Use the Shared Value):
     // 2 asks Replace? (Reset to Default's key is another's), as `key` does.
     callback action(int) -> int;
     // The window asks for this row: scrolled into view, its control gets the keyboard.
@@ -189,7 +193,8 @@ component SettingLine inherits Rectangle {
     }
 
     function open-lines(menu: bool) {
-        root.lines = menu ? ["Reset to Default", "Copy Key", "Edit in settings.toml"] : root.item.options;
+        root.lines = !menu ? root.item.options : root.item.place == 0 ? ["Reset to Default", "Copy Key", "Edit in settings.toml"]
+            : ["Reset to Default", "Copy Key", "Edit in settings.toml", root.item.place == 2 ? "Use the Shared Value" : "Only on This Computer"];
         root.menu-shown = menu;
         root.cursor = -1;
         root.lines-open = true;
@@ -339,7 +344,7 @@ component SettingLine inherits Rectangle {
         }
         // The key, "default", the template's comment: one text (each element is code).
         Text {
-            text: root.item.key + (root.item.is-default ? "  ·  default" : "") + (root.item.description == "" ? "" : "  —  " + root.item.description);
+            text: root.item.key + (root.item.place == 2 ? "  ·  this computer" : "") + (root.item.is-default ? "  ·  default" : "") + (root.item.description == "" ? "" : "  —  " + root.item.description);
             color: Theme.foreground-muted;
             font-size: Theme.font-size-small;
             wrap: word-wrap;

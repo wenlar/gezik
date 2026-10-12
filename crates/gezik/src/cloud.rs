@@ -22,6 +22,11 @@ pub fn set_roots(roots: Vec<CloudRoot>) {
     STATE.with(|s| *s.borrow_mut() = State { roots, last: None });
 }
 
+/// The first cloud folder found, to suggest for the sync folder (spec 14 §8.1).
+pub fn first_root() -> Option<PathBuf> {
+    STATE.with(|s| s.borrow().roots.first().map(|root| root.path.clone()))
+}
+
 pub fn root_of(path: &Path) -> Option<CloudRoot> {
     STATE.with(|s| gezik_platform::cloud::root_of(&s.borrow().roots, path).cloned())
 }

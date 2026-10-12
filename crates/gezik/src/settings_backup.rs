@@ -1,10 +1,10 @@
 //! Export Settings, Import Settings, the backups and Undo (spec 14 §7), run on a worker thread:
 //! `gezik_config::bundle` says which files may come in and what they change; this reads and
 //! writes them. An import never merges: each file chosen replaces the one here, after every
-//! file it touches has gone into a backup zip in `backups/` (the last 10 are kept).
-//!
-//! shortcut: one folder (the store's shared one) holds views.toml and `backups/` here too; while
-//! shared and local are the same folder (no sync folder) that is right; 14f splits them.
+//! file it touches has gone into a backup zip in `backups/` (the last 10 are kept). Also the
+//! sync folder's setting up and leaving (spec 14 §8.1), which back up first the same way.
+//! settings.toml, the themes and the templates are in the shared folder (a sync folder, when one
+//! is used); views.toml and `backups/` in this computer's own.
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -64,9 +64,41 @@ pub struct Done {
     pub views: Option<String>,
 }
 
-/// The file `name` (as in the zip) stands for in config folder `dir`.
+/// The file `name` (as in the zip) stands for in folder `dir`.
 fn path_of(dir: &Path, name: &str) -> PathBuf {
     name.split('/').fold(dir.to_path_buf(), |path, part| path.join(part))
+}
+
+/// The config folders (spec 14 §3.1): views.toml and `backups/` are in `local`, settings.toml,
+/// the themes and the templates in `shared`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Folders {
+    pub shared: PathBuf,
+    pub local: PathBuf,
+}
+
+impl Folders {
+    /// Both in `dir` (no sync folder).
+    pub fn one(dir: &Path) -> Folders {
+        Folders { shared: dir.to_path_buf(), local: dir.to_path_buf() }
+    }
+
+    pub fn of(store: &gezik_config::store::ConfigStore) -> Folders {
+        Folders { shared: store.shared_dir(), local: store.local_dir().to_path_buf() }
+    }
+
+    /// The folder file `name` (as in the zip) is in.
+    fn dir_of(&self, name: &str) -> &Path {
+        if name == "views.toml" { &self.local } else { &self.shared }
+    }
+
+    fn path_of(&self, name: &str) -> PathBuf {
+        path_of(self.dir_of(name), name)
+    }
+
+    fn backups(&self) -> PathBuf {
+        self.local.join("backups")
+    }
 }
 
 fn describe(err: &std::io::Error) -> String {
@@ -82,15 +114,16 @@ fn read_if_there(path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
 }
 
-/// The files of config folder `dir` in `groups`. state.toml, the tag store, the system changes,
+/// The files of the config folders in `groups`. state.toml, the tag store, the system changes,
 /// the tools and the backups are never among them (they belong to this computer).
-pub fn collect(dir: &Path, groups: &[Group]) -> Result<Vec<File>, String> {
+pub fn collect(folders: &Folders, groups: &[Group]) -> Result<Vec<File>, String> {
+    let dir = &folders.shared;
     let mut files = Vec::new();
     for group in groups {
         match group {
             Group::Settings | Group::Views => {
                 let name = if *group == Group::Settings { "settings.toml" } else { "views.toml" };
-                if let Some(data) = read_if_there(&dir.join(name))? {
+                if let Some(data) = read_if_there(&folders.path_of(name))? {
                     files.push((name.to_owned(), data));
                 }
             }
@@ -167,13 +200,13 @@ fn zip(files: &[File]) -> Result<Vec<u8>, String> {
     gezik_batch::archive::write_zip_entries(&all).map_err(|err| format!("Cannot make the zip: {}", describe(&err)))
 }
 
-/// Writes config folder `dir`'s files in `groups` to the zip `out` (which must not be there
-/// yet); how many files went in.
-pub fn export(dir: &Path, out: &Path, groups: &[Group]) -> Result<usize, String> {
+/// Writes the config folders' files in `groups` to the zip `out` (which must not be there yet);
+/// how many files went in.
+pub fn export(folders: &Folders, out: &Path, groups: &[Group]) -> Result<usize, String> {
     if out.symlink_metadata().is_ok() {
         return Err(format!("{} is there already: give another name", out.display()));
     }
-    let files = collect(dir, groups)?;
+    let files = collect(folders, groups)?;
     let bytes = zip(&files)?;
     write_atomic_bytes(out, &bytes).map_err(|err| format!("Cannot write {}: {}", out.display(), describe(&err)))?;
     Ok(files.len())
@@ -243,19 +276,19 @@ pub fn read(path: &Path, check: bool) -> Result<Read, String> {
     Ok((os, files, left_out))
 }
 
-/// Export `path` compared with config folder `dir` (`check`: see [`read`]).
-pub fn preview(dir: &Path, path: &Path, check: bool) -> Result<Preview, String> {
+/// Export `path` compared with the config folders (`check`: see [`read`]).
+pub fn preview(folders: &Folders, path: &Path, check: bool) -> Result<Preview, String> {
     let (os, entries, left_out) = read(path, check)?;
     let mut files = Vec::new();
     for (name, group, data) in entries {
-        let change = match read_if_there(&path_of(dir, &name))? {
+        let change = match read_if_there(&folders.path_of(&name))? {
             None => Change::New,
             Some(here) if here == data => Change::Same,
             Some(_) => Change::Replaces,
         };
         files.push(Incoming { name, group, change, data });
     }
-    let current = read_if_there(&dir.join("settings.toml"))?.unwrap_or_default();
+    let current = read_if_there(&folders.path_of("settings.toml"))?.unwrap_or_default();
     let current = String::from_utf8_lossy(&current);
     let (settings, programs) = match files.iter().find(|f| f.group == Group::Settings) {
         Some(file) => {
@@ -284,17 +317,22 @@ pub fn stamp() -> String {
     )
 }
 
-/// Backs up config folder `dir`'s settings and themes, and `also`, to `backups/<name>`; the
+/// Backs up the config folders' settings and themes, and `also`, to `backups/<name>`; the
 /// oldest backups beyond 10 go to `discard` (the trash). The backup's path and its files.
-pub fn backup(dir: &Path, also: &[Group], name: &str, discard: &dyn Fn(&Path)) -> Result<(PathBuf, Vec<File>), String> {
+pub fn backup(
+    folders: &Folders,
+    also: &[Group],
+    name: &str,
+    discard: &dyn Fn(&Path),
+) -> Result<(PathBuf, Vec<File>), String> {
     let groups: Vec<Group> =
         Group::ALL.into_iter().filter(|g| matches!(g, Group::Settings | Group::Themes) || also.contains(g)).collect();
-    let files = collect(dir, &groups).map_err(|why| format!("Nothing imported: the backup failed: {why}"))?;
-    let folder = dir.join("backups");
+    let files = collect(folders, &groups).map_err(|why| format!("Nothing changed: the backup failed: {why}"))?;
+    let folder = folders.backups();
     let path = folder.join(name);
     std::fs::create_dir_all(&folder)
         .and_then(|()| zip(&files).map_err(std::io::Error::other).and_then(|bytes| write_atomic_bytes(&path, &bytes)))
-        .map_err(|err| format!("Nothing imported: cannot write the backup {}: {}", path.display(), describe(&err)))?;
+        .map_err(|err| format!("Nothing changed: cannot write the backup {}: {}", path.display(), describe(&err)))?;
     for old in bundle::backups_to_drop(names_in(&folder)) {
         discard(&folder.join(old));
     }
@@ -306,25 +344,25 @@ fn names_in(folder: &Path) -> Vec<String> {
     entries.filter_map(Result::ok).filter_map(|e| e.file_name().into_string().ok()).collect()
 }
 
-/// The backups in config folder `dir`, newest first (10 at most).
-pub fn backups(dir: &Path) -> Vec<String> {
-    let mut names = bundle::newest_first(names_in(&dir.join("backups")));
+/// The backups, newest first (10 at most).
+pub fn backups(folders: &Folders) -> Vec<String> {
+    let mut names = bundle::newest_first(names_in(&folders.backups()));
     names.truncate(bundle::KEEP_BACKUPS);
     names
 }
 
-/// Writes the files chosen of an import into config folder `dir`, after the backup `name`.
+/// Writes the files chosen of an import into the config folders, after the backup `name`.
 /// A write that fails puts back what was written before it.
-pub fn import(dir: &Path, chosen: Vec<Incoming>, name: &str, discard: &dyn Fn(&Path)) -> Result<Done, String> {
+pub fn import(folders: &Folders, chosen: Vec<Incoming>, name: &str, discard: &dyn Fn(&Path)) -> Result<Done, String> {
     let chosen: Vec<Incoming> = chosen.into_iter().filter(|f| f.change != Change::Same).collect();
     let groups: Vec<Group> = chosen.iter().map(|f| f.group).collect();
-    let (backup, before) = backup(dir, &groups, name, discard)?;
+    let (backup, before) = backup(folders, &groups, name, discard)?;
     // Each file written over goes by its name on disk (`nord.toml` for the zip's `Nord.toml` on
     // Windows and macOS), and must be in the backup: else nothing is written.
     let mut targets = Vec::new();
     for file in &chosen {
-        let there = path_of(dir, &file.name).symlink_metadata().is_ok();
-        let real = if there { real_name(dir, &file.name) } else { None };
+        let there = folders.path_of(&file.name).symlink_metadata().is_ok();
+        let real = if there { real_name(folders.dir_of(&file.name), &file.name) } else { None };
         if there && real.as_ref().is_none_or(|real| !before.iter().any(|(n, _)| n == real)) {
             return Err(format!(
                 "Nothing imported: {} here is a link or has a name the backup cannot hold; move it away or leave \
@@ -337,11 +375,11 @@ pub fn import(dir: &Path, chosen: Vec<Incoming>, name: &str, discard: &dyn Fn(&P
     let mut undo = Undo { backup, replaced: Vec::new(), created: Vec::new() };
     let mut views = None;
     for (file, real) in chosen.into_iter().zip(targets) {
-        let path = path_of(dir, real.as_deref().unwrap_or(&file.name));
+        let path = folders.path_of(real.as_deref().unwrap_or(&file.name));
         let written =
             path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| write_atomic_bytes(&path, &file.data));
         if let Err(err) = written {
-            let put_back = match put_back(dir, &undo, &before) {
+            let put_back = match put_back(folders, &undo, &before) {
                 Ok(()) => "the files written before it are back as they were".to_owned(),
                 Err(why) => format!("{why}; Restore Backup has them"),
             };
@@ -381,19 +419,19 @@ fn real_name(dir: &Path, name: &str) -> Option<String> {
 
 /// Puts the files `undo` names back as `before` has them: those replaced written, those made
 /// removed.
-fn put_back(dir: &Path, undo: &Undo, before: &[File]) -> Result<(), String> {
+fn put_back(folders: &Folders, undo: &Undo, before: &[File]) -> Result<(), String> {
     let mut failed = None;
     for name in &undo.replaced {
         let Some((_, data)) = before.iter().find(|(n, _)| n == name) else {
             failed = Some(format!("Cannot put back {name}: it is not in the backup"));
             continue;
         };
-        if let Err(err) = write_atomic_bytes(&path_of(dir, name), data) {
+        if let Err(err) = write_atomic_bytes(&folders.path_of(name), data) {
             failed = Some(format!("Cannot put back {name}: {}", describe(&err)));
         }
     }
     for name in &undo.created {
-        match std::fs::remove_file(path_of(dir, name)) {
+        match std::fs::remove_file(folders.path_of(name)) {
             Err(err) if err.kind() != ErrorKind::NotFound => {
                 failed = Some(format!("Cannot remove {name}: {}", describe(&err)));
             }
@@ -405,12 +443,12 @@ fn put_back(dir: &Path, undo: &Undo, before: &[File]) -> Result<(), String> {
 
 /// Undoes an import: the files it replaced come back from its backup, byte for byte, and those
 /// it made go. What is there now is backed up first (Restore Backup has it).
-pub fn undo(dir: &Path, undo: &Undo, name: &str, discard: &dyn Fn(&Path)) -> Result<Done, String> {
+pub fn undo(folders: &Folders, undo: &Undo, name: &str, discard: &dyn Fn(&Path)) -> Result<Done, String> {
     let (_, files, _) = read(&undo.backup, false)?;
     let before: Vec<File> = files.into_iter().map(|(name, _, data)| (name, data)).collect();
     let touched: Vec<Group> = undo.replaced.iter().chain(&undo.created).filter_map(|n| bundle::group_of(n)).collect();
-    let (backup, _) = backup(dir, &touched, name, discard)?;
-    put_back(dir, undo, &before)?;
+    let (backup, _) = backup(folders, &touched, name, discard)?;
+    put_back(folders, undo, &before)?;
     let views = touched.contains(&Group::Views).then(|| {
         before
             .iter()
@@ -419,6 +457,119 @@ pub fn undo(dir: &Path, undo: &Undo, name: &str, discard: &dyn Fn(&Path)) -> Res
             .unwrap_or_default()
     });
     Ok(Done { undo: Undo { backup, replaced: Vec::new(), created: Vec::new() }, views })
+}
+
+/// What a folder chosen to keep the settings in holds (spec 14 §8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Found {
+    Empty,
+    /// A settings.toml: another computer set it up first.
+    Settings,
+}
+
+/// How a sync folder is taken up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Start {
+    /// No settings.toml there: this computer's files are copied in.
+    Copy,
+    /// "Use the Settings in This Folder": this computer's are only backed up.
+    Use,
+    /// "Replace Them with This Computer's": the folder's are backed up, then written over.
+    Replace,
+}
+
+/// Whether `folder` holds Gezik's settings; made when it is not there. The config folders
+/// themselves are refused.
+pub fn look(folders: &Folders, folder: &Path) -> Result<Found, String> {
+    if !folder.is_absolute() {
+        return Err("Type the whole path of a folder".to_owned());
+    }
+    let same =
+        |a: &Path, b: &Path| a == b || std::fs::canonicalize(a).ok().is_some_and(|a| b.canonicalize().ok() == Some(a));
+    if same(folder, &folders.shared) || same(folder, &folders.local) {
+        return Err("The settings are in that folder already".to_owned());
+    }
+    std::fs::create_dir_all(folder).map_err(|err| format!("Cannot make {}: {}", folder.display(), describe(&err)))?;
+    Ok(if folder.join("settings.toml").is_file() { Found::Settings } else { Found::Empty })
+}
+
+/// Writes `files` into folder `dir`; a template there already is never written over.
+fn write_into(dir: &Path, files: Vec<File>) -> Result<(), String> {
+    for (name, data) in files {
+        let path = path_of(dir, &name);
+        if bundle::group_of(&name) == Some(Group::Templates) && path.symlink_metadata().is_ok() {
+            continue;
+        }
+        path.parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| write_atomic_bytes(&path, &data))
+            .map_err(|err| format!("Cannot write {}: {}", path.display(), describe(&err)))?;
+    }
+    Ok(())
+}
+
+/// Takes up sync folder `folder` as `start` says (spec 14 §8.1): what would be written over is
+/// backed up first (`backups/`); this computer's `[system]` goes to settings.local.toml (a tray
+/// here is not the others'; decision 12) unless that has one; the computer's name goes in the
+/// folder's `machines/` (OneDrive names conflicting copies by it); `location.toml` is written
+/// last. The caller then moves the store there. The backup's path.
+pub fn start_sync(
+    folders: &Folders,
+    folder: &Path,
+    start: Start,
+    machine: Option<&str>,
+    discard: &dyn Fn(&Path),
+) -> Result<PathBuf, String> {
+    use gezik_config::sync_folder::{self, LOCAL_SETTINGS, LOCATION_FILE};
+    let theirs = Folders { shared: folder.to_path_buf(), local: folders.local.clone() };
+    let (backup, _) = backup(if start == Start::Replace { &theirs } else { folders }, &[], &stamp(), discard)?;
+    if start != Start::Use {
+        let mut mine = collect(folders, &[Group::Settings, Group::Themes, Group::Templates])?;
+        if start == Start::Copy {
+            // Nothing there is written over.
+            mine.retain(|(name, _)| path_of(folder, name).symlink_metadata().is_err());
+        }
+        write_into(folder, mine)?;
+    }
+    let local = folders.local.join(LOCAL_SETTINGS);
+    let mine = std::fs::read_to_string(folders.shared.join("settings.toml")).unwrap_or_default();
+    let here = std::fs::read_to_string(&local).unwrap_or_default();
+    if let Some(text) = sync_folder::local_with_system(&mine, &here) {
+        write_atomic_bytes(&local, text.as_bytes())
+            .map_err(|err| format!("Cannot write {}: {}", local.display(), describe(&err)))?;
+    }
+    if let Some(machine) = machine {
+        let _ = sync_folder::add_machine(folder, machine);
+    }
+    let text = sync_folder::location_text(folder, &gezik_config::paths::KnownDirs::system());
+    let location = folders.local.join(LOCATION_FILE);
+    write_atomic_bytes(&location, text.as_bytes())
+        .map_err(|err| format!("Cannot write {}: {}", location.display(), describe(&err)))?;
+    Ok(backup)
+}
+
+/// Leaves the sync folder (spec 14 §8.1): its settings.toml, themes and templates (its last
+/// copy when it is not there) are copied into this computer's folder after a backup of what is
+/// there, and `location.toml` goes. Nothing in the sync folder is touched. The backup's path.
+pub fn stop_sync(folders: &Folders, discard: &dyn Fn(&Path)) -> Result<PathBuf, String> {
+    use gezik_config::sync_folder::{CACHE, LOCATION_FILE};
+    let there = folders.shared.join("settings.toml").is_file();
+    let from = if there { folders.shared.clone() } else { folders.local.join(CACHE) };
+    let source = Folders { shared: from, local: folders.local.clone() };
+    let groups: &[Group] = if there { &[Group::Settings, Group::Themes, Group::Templates] } else { &Group::ALL[..2] };
+    let files = collect(&source, groups)?;
+    if !files.iter().any(|(name, _)| name == "settings.toml") {
+        return Err("The settings folder is not available and no copy of it is here: nothing changed".to_owned());
+    }
+    let mine = Folders::one(&folders.local);
+    let (backup, _) = backup(&mine, &[], &stamp(), discard)?;
+    write_into(&folders.local, files)?;
+    match std::fs::remove_file(folders.local.join(LOCATION_FILE)) {
+        Err(err) if err.kind() != ErrorKind::NotFound => {
+            Err(format!("Cannot remove {LOCATION_FILE}: {}", describe(&err)))
+        }
+        _ => Ok(backup),
+    }
 }
 
 #[cfg(test)]
@@ -462,8 +613,8 @@ mod tests {
             put(&dir, local, "x");
         }
         let out = dir.join("out.zip");
-        assert_eq!(export(&dir, &out, &[Group::Settings, Group::Themes, Group::Templates]), Ok(3));
-        assert!(export(&dir, &out, &[Group::Settings]).unwrap_err().contains("there already"));
+        assert_eq!(export(&Folders::one(&dir), &out, &[Group::Settings, Group::Themes, Group::Templates]), Ok(3));
+        assert!(export(&Folders::one(&dir), &out, &[Group::Settings]).unwrap_err().contains("there already"));
         let (os, files, left_out) = read(&out, true).unwrap();
         assert_eq!(os, std::env::consts::OS);
         let names: Vec<&str> = files.iter().map(|(n, _, _)| n.as_str()).collect();
@@ -524,9 +675,9 @@ mod tests {
         put(&source, "themes/frost.toml", "frost");
         put(&source, "templates/a/b.txt", "b");
         let zip = source.join("out.zip");
-        export(&source, &zip, &[Group::Settings, Group::Themes, Group::Templates]).unwrap();
+        export(&Folders::one(&source), &zip, &[Group::Settings, Group::Themes, Group::Templates]).unwrap();
 
-        let shown = preview(&dir, &zip, true).unwrap();
+        let shown = preview(&Folders::one(&dir), &zip, true).unwrap();
         let changes: Vec<(&str, Change)> = shown.files.iter().map(|f| (f.name.as_str(), f.change)).collect();
         assert_eq!(
             changes,
@@ -540,7 +691,8 @@ mod tests {
         );
         assert_eq!(shown.settings, ["theme: dark → nord", "pinned: (default) → {home}/Projects"]);
 
-        let done = import(&dir, shown.files, "gezik-settings-1.zip", &|_| panic!("nothing to drop")).unwrap();
+        let done =
+            import(&Folders::one(&dir), shown.files, "gezik-settings-1.zip", &|_| panic!("nothing to drop")).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("settings.toml")).unwrap(), SETTINGS);
         assert_eq!(std::fs::read_to_string(path_of(&dir, "templates/a/b.txt")).unwrap(), "b");
         assert_eq!(done.undo.replaced, ["settings.toml", "themes/nord.toml"]);
@@ -549,11 +701,11 @@ mod tests {
         let backed_up: Vec<&str> = backed_up.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(backed_up, ["settings.toml", "themes/mine.toml", "themes/nord.toml"], "as they were");
 
-        undo(&dir, &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
+        undo(&Folders::one(&dir), &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
         assert_eq!(std::fs::read(dir.join("settings.toml")).unwrap(), old_settings.as_bytes());
         assert_eq!(std::fs::read_to_string(dir.join("themes/nord.toml")).unwrap(), "old nord");
         assert!(!dir.join("themes/frost.toml").exists() && !path_of(&dir, "templates/a/b.txt").exists());
-        assert_eq!(backups(&dir), ["gezik-settings-2.zip", "gezik-settings-1.zip"]);
+        assert_eq!(backups(&Folders::one(&dir)), ["gezik-settings-2.zip", "gezik-settings-1.zip"]);
     }
 
     #[test]
@@ -564,12 +716,12 @@ mod tests {
         let source = scratch("broken-source");
         put(&source, "settings.toml", SETTINGS);
         let zip = source.join("out.zip");
-        export(&source, &zip, &[Group::Settings]).unwrap();
-        let shown = preview(&dir, &zip, true).unwrap();
-        let done = import(&dir, shown.files, "gezik-settings-1.zip", &|_| {}).unwrap();
+        export(&Folders::one(&source), &zip, &[Group::Settings]).unwrap();
+        let shown = preview(&Folders::one(&dir), &zip, true).unwrap();
+        let done = import(&Folders::one(&dir), shown.files, "gezik-settings-1.zip", &|_| {}).unwrap();
         assert!(read(&done.undo.backup, true).is_err(), "checked, the backup would be refused");
-        assert!(preview(&dir, &done.undo.backup, false).is_ok(), "Restore Backup reads it");
-        undo(&dir, &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
+        assert!(preview(&Folders::one(&dir), &done.undo.backup, false).is_ok(), "Restore Backup reads it");
+        undo(&Folders::one(&dir), &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("settings.toml")).unwrap(), broken);
     }
 
@@ -580,9 +732,9 @@ mod tests {
         let source = scratch("case-source");
         put(&source, "themes/Nord.toml", "new nord");
         let zip = source.join("out.zip");
-        export(&source, &zip, &[Group::Themes]).unwrap();
-        let shown = preview(&dir, &zip, true).unwrap();
-        let done = import(&dir, shown.files, "gezik-settings-1.zip", &|_| {}).unwrap();
+        export(&Folders::one(&source), &zip, &[Group::Themes]).unwrap();
+        let shown = preview(&Folders::one(&dir), &zip, true).unwrap();
+        let done = import(&Folders::one(&dir), shown.files, "gezik-settings-1.zip", &|_| {}).unwrap();
         let insensitive = dir.join("themes/NORD.toml").exists();
         if insensitive {
             assert_eq!(done.undo.replaced, ["themes/nord.toml"], "the name on disk, as the backup has it");
@@ -590,13 +742,13 @@ mod tests {
         } else {
             assert_eq!(done.undo.created, ["themes/Nord.toml"], "another file where case counts");
         }
-        undo(&dir, &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
+        undo(&Folders::one(&dir), &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
         assert_eq!(std::fs::read_to_string(dir.join("themes/nord.toml")).unwrap(), "old nord");
 
         let missing =
             Undo { backup: PathBuf::new(), replaced: vec!["themes/gone.toml".to_owned()], created: Vec::new() };
         assert_eq!(
-            put_back(&dir, &missing, &[]),
+            put_back(&Folders::one(&dir), &missing, &[]),
             Err("Cannot put back themes/gone.toml: it is not in the backup".to_owned())
         );
     }
@@ -611,9 +763,9 @@ mod tests {
         let source = scratch("link-source");
         put(&source, "templates/a.txt", "new");
         let zip = source.join("out.zip");
-        export(&source, &zip, &[Group::Templates]).unwrap();
-        let shown = preview(&dir, &zip, true).unwrap();
-        let refused = import(&dir, shown.files, "gezik-settings-1.zip", &|_| {}).unwrap_err();
+        export(&Folders::one(&source), &zip, &[Group::Templates]).unwrap();
+        let shown = preview(&Folders::one(&dir), &zip, true).unwrap();
+        let refused = import(&Folders::one(&dir), shown.files, "gezik-settings-1.zip", &|_| {}).unwrap_err();
         assert!(refused.starts_with("Nothing imported: templates/a.txt"), "{refused}");
         assert_eq!(std::fs::read_to_string(dir.join("elsewhere.txt")).unwrap(), "mine");
     }
@@ -623,14 +775,94 @@ mod tests {
         let dir = scratch("rotate");
         put(&dir, "settings.toml", SETTINGS);
         for i in 0..11 {
-            backup(&dir, &[], &format!("gezik-settings-{i:02}.zip"), &|old| std::fs::remove_file(old).unwrap())
-                .unwrap();
+            backup(&Folders::one(&dir), &[], &format!("gezik-settings-{i:02}.zip"), &|old| {
+                std::fs::remove_file(old).unwrap()
+            })
+            .unwrap();
         }
-        let kept = backups(&dir);
+        let kept = backups(&Folders::one(&dir));
         assert_eq!(
             (kept.len(), kept[0].as_str(), kept[9].as_str()),
             (10, "gezik-settings-10.zip", "gezik-settings-01.zip")
         );
         assert!(!dir.join("backups/gezik-settings-00.zip").exists());
+    }
+
+    #[test]
+    fn a_sync_folder_is_set_up_each_way_with_a_backup_first_and_left_again() {
+        use gezik_config::sync_folder::{CACHE, LOCAL_SETTINGS, LOCATION_FILE, MACHINES};
+        let root = scratch("sync");
+        let local = root.join("local");
+        let mine = Folders::one(&local);
+        put(&local, "settings.toml", "theme = \"nord\"\n[system]\ntray = true\n");
+        put(&local, "themes/nord.toml", "mine");
+        put(&local, "templates/a.txt", "a");
+        let folder = root.join("Dropbox").join("Gezik");
+        assert!(look(&mine, Path::new("relative/x")).is_err());
+        assert!(look(&mine, &local).unwrap_err().contains("already"));
+        // An empty folder: this computer's files are copied in.
+        assert_eq!(look(&mine, &folder), Ok(Found::Empty));
+        put(&folder, "templates/a.txt", "theirs");
+        let backup = start_sync(&mine, &folder, Start::Copy, Some("DESKTOP-AB12"), &|_| {}).unwrap();
+        assert!(backup.starts_with(local.join("backups")));
+        assert_eq!(
+            std::fs::read_to_string(folder.join("settings.toml")).unwrap(),
+            "theme = \"nord\"\n[system]\ntray = true\n"
+        );
+        assert_eq!(std::fs::read_to_string(folder.join("themes/nord.toml")).unwrap(), "mine");
+        assert_eq!(std::fs::read_to_string(folder.join("templates/a.txt")).unwrap(), "theirs", "never written over");
+        assert!(folder.join(MACHINES).join("DESKTOP-AB12").is_file());
+        assert!(std::fs::read_to_string(local.join(LOCAL_SETTINGS)).unwrap().contains("tray = true"));
+        let known = gezik_config::paths::KnownDirs::system();
+        assert_eq!(gezik_config::sync_folder::read_location(&local, &known), Some(folder.clone()));
+
+        // A second computer: Use keeps the folder's, Replace backs them up and writes over.
+        let other = root.join("other");
+        let theirs = Folders::one(&other);
+        put(&other, "settings.toml", "theme = \"dark\"\n");
+        assert_eq!(look(&theirs, &folder), Ok(Found::Settings));
+        start_sync(&theirs, &folder, Start::Use, None, &|_| {}).unwrap();
+        assert!(std::fs::read_to_string(folder.join("settings.toml")).unwrap().contains("nord"));
+        assert!(!other.join(LOCAL_SETTINGS).exists(), "no [system] here: none copied");
+        let backup = start_sync(&theirs, &folder, Start::Replace, None, &|_| {}).unwrap();
+        assert_eq!(std::fs::read_to_string(folder.join("settings.toml")).unwrap(), "theme = \"dark\"\n");
+        let (_, kept, _) = read(&backup, false).unwrap();
+        assert!(
+            kept.iter().any(|(n, _, d)| n == "settings.toml" && d.starts_with(b"theme = \"nord\"")),
+            "the folder's"
+        );
+
+        // Leaving: the folder's files come here, after a backup; the folder is left as it is.
+        let synced = Folders { shared: folder.clone(), local: local.clone() };
+        put(&folder, "themes/frost.toml", "frost");
+        stop_sync(&synced, &|_| {}).unwrap();
+        assert_eq!(std::fs::read_to_string(local.join("settings.toml")).unwrap(), "theme = \"dark\"\n");
+        assert_eq!(std::fs::read_to_string(local.join("themes/frost.toml")).unwrap(), "frost");
+        assert!(!local.join(LOCATION_FILE).exists() && folder.join("settings.toml").is_file());
+        // The folder gone: its last copy; no copy either: nothing changes.
+        put(&local, &format!("{CACHE}/settings.toml"), "theme = \"light\"\n");
+        let gone = Folders { shared: root.join("gone"), local: local.clone() };
+        stop_sync(&gone, &|_| {}).unwrap();
+        assert_eq!(std::fs::read_to_string(local.join("settings.toml")).unwrap(), "theme = \"light\"\n");
+        std::fs::remove_dir_all(local.join(CACHE)).unwrap();
+        assert!(stop_sync(&gone, &|_| {}).unwrap_err().contains("nothing changed"));
+    }
+
+    #[test]
+    fn views_and_backups_are_this_computers_and_the_rest_is_shared() {
+        let root = scratch("split");
+        let folders = Folders { shared: root.join("shared"), local: root.join("local") };
+        put(&folders.shared, "settings.toml", SETTINGS);
+        put(&folders.local, "views.toml", "");
+        put(&folders.shared, "views.toml", "not this one");
+        let out = root.join("out.zip");
+        assert_eq!(export(&folders, &out, &[Group::Settings, Group::Views]), Ok(2));
+        let (_, files, _) = read(&out, true).unwrap();
+        assert_eq!(files[1].2, b"", "views.toml from this computer's folder");
+        backup(&folders, &[], "gezik-settings-1.zip", &|_| {}).unwrap();
+        assert_eq!(backups(&folders), ["gezik-settings-1.zip"]);
+        assert!(
+            folders.local.join("backups/gezik-settings-1.zip").is_file() && !folders.shared.join("backups").exists()
+        );
     }
 }

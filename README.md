@@ -79,6 +79,8 @@ Settings move as one zip: Settings ▸ Sync and Backup ▸ Export Settings, then
 
 Portable mode: put an empty file named `gezik-portable` next to Gezik (next to `Gezik.app` on macOS, next to the AppImage on Linux) and everything Gezik keeps goes into `gezik-data/` beside it, so Gezik runs from a USB drive next to an installed copy. [More](docs/configuration.md#portable-mode)
 
+Sync folder: Settings ▸ Sync and Backup ▸ Keep Settings in a Folder puts settings, themes and templates in a OneDrive, Dropbox, iCloud Drive or Syncthing folder shared by your computers; each keeps its own state, views, tools and tray. Changes made on two computers at once are never lost silently: Gezik re-applies its own edit when the file changed under it, notices the sync service's conflicting copy and lets you review it key by key. Without the folder Gezik starts from its last copy, read-only. [More](docs/configuration.md#sync-folder)
+
 → [Configuration](docs/configuration.md) · [Writing a theme](docs/themes.md) · [Keyboard shortcuts](docs/shortcuts.md)
 
 ## Build

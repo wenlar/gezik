@@ -189,6 +189,7 @@ impl Themes {
             is_default: false,
             default: SharedString::new(),
             options: ModelRc::new(VecModel::from(options)),
+            place: 0,
         }
     }
 

@@ -764,7 +764,8 @@ impl Sidebar {
         let (last, in_file) = {
             let mut inner = self.0.borrow_mut();
             inner.pins_on_their_way = inner.pins_on_their_way.saturating_sub(1);
-            if result.is_ok() {
+            // Kept for a sync folder that is away: shown, and written when it is back.
+            if result.as_ref().is_ok() || result.as_ref().is_err_and(gezik_config::settings_writer::kept) {
                 inner.pins_in_file = pinned;
             }
             (inner.pins_on_their_way == 0, inner.pins_in_file.clone())
