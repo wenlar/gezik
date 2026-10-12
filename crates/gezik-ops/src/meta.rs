@@ -639,7 +639,7 @@ mod tests {
         assert_eq!(tags.orphans().unwrap(), Orphans { gone: Vec::new(), unmounted: 1 });
         let backup = std::fs::read_to_string(dir.join("config/tags-store.tsv.bak")).unwrap();
         assert!(backup.contains("gone.txt") && backup.contains("unplugged"), "the copy is from before");
-        assert_eq!(tags.find(|meta| meta.has_tag("red")), [live.clone()], "found where it is mounted");
+        assert_eq!(tags.find(|meta| meta.has_tag("red")), std::slice::from_ref(&live), "found where it is mounted");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
