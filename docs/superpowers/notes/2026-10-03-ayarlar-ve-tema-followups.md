@@ -2729,6 +2729,35 @@ Gözlemler (hata değil):
 - Sürüm exe'si 27.705.344 B (taban `feat/tags-12e` 09da8c4 `t12e-fix.exe`: 27.679.744 B, **+25.600 B**; bütçe 262.144; spec tahmini ≈ 50 KB). macOS clippy temiz. Kopya `%TEMP%\gezik-gui-12\bin\t12f.exe`.
 - Bekleyen: Windows ekran testi (açık/koyu tema, seçim karşıtlığı, 150/200 % ölçekte kalın ad), macOS 362–364, Linux 264–265.
 
+## Windows ekran testleri: 12f
+
+Date 2026-10-12, overnight, primary monitor. Exe `%TEMP%\gezik-gui-12\bin\t12f.exe`, baseline `t12e-fix.exe`.
+Config `%TEMP%\gezik-gui-12\cfg\12f` via GEZIK_CONFIG_DIR (the template settings.toml, `confirm-trash = true`,
+`theme` light/dark), data `%TEMP%\gezik-gui-12\data\12f` (removed after the run). Screenshots `%TEMP%\gezik-gui-12\shots\12f\`.
+Scripts: scratchpad `m12g\12f\` (h.ps1, data.ps1). Colors are pixel samples of PrintWindow captures.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | Four template rules uncommented and saved while running: `.tmp/.bak` gray (6E6E73), today's folder green (#2e7d32), Red-tagged files bold, 1.1 GB sparse unrated file orange (C93400); rated 1.1 GB file and old folder untouched | PASS (1a, 1b) |
+| 2 | Grid, Miller columns, search results take the same colors/bold; list view's Modified/Type/Size take the color too | PASS (2a, 2b, 2c) |
+| 3 | Dark theme: gray AEAEB2, orange FFB340, folder rule uses dark-color 81C784; back to light restores light tones | PASS (3a) |
+| 4 | Selected colored row keeps a readable color (orange/gray/green, both themes); low-contrast `#f0d4c8` rule falls back to selection text 16171A, bold stays; Ctrl+X cut row is colored but faded | PASS (4-*, 4c, 4d) |
+| 5 | `min-size = "lots"` -> `settings.toml: highlight-rules[1]: min-size: expected a size like "500 MB", got "lots"`, other rules keep coloring | PASS (5) |
+| 6 | 10,000 files, only `name = "*.tmp"` rule, 250 wheel notches down + 250 up: t12e-fix 10.70 / 11.02 s CPU, t12f 11.00 / 10.86 s CPU (wall ~32.6 s both, WS 38 MB both) | PASS (same within noise) |
+| 6b | Tag rule (`tag = "Red"` red bold) before `*.gzt` blue: opening the folder (3 runs, ~70 frames each) and 6 scroll jumps (~18 frames each, smooth-scroll offset compensated): no frame shows a tagged row blue | PASS (6b, 6c) |
+| 7 | Scroll a folder with gray rows, go back, open a plain folder (and scroll it): no gray left on reused rows; back to the colored folder colors are right | PASS (7a-7c) |
+| - | 150/200% display scaling | SKIPPED (display settings not changed, by rule) |
+
+## Notes (not failures)
+
+- Light `orange` (C93400) reads close to red next to a Red tag; dark tone FFB340 is clearly orange.
+- Light `gray` (6E6E73) is close to the muted column text (575B65), so a gray row's Modified/Type/Size barely differ from normal rows; the name difference is clear.
+- Cut row fades only the name and icon, other columns keep full color; t12e-fix does the same (existing behavior, not 12f).
+- Warning index is `highlight-rules[1]` for the first rule (1-based).
+- Ctrl+X did not put a file drop list on the system clipboard (internal cut); the clipboard text was saved and restored anyway.
+
+- Gözden geçirme düzeltmeleri: `[tags] dots = false` iken etiket/puan/yorum koşullu kural varsa etiket işinden sonra satırlar yeniden çizilir (`forget_rows`); açık temada adlı turuncu `#B85C00` (kırmızıdan ayrı) ve gri `#8E8E93` (ikincil sütun metninden belirgin soluk; beyazda 3,26:1), bütün adlı açık tonlar beyazda ≥ 3:1 (test). Uyarı numaraları öbür dizilerle aynı (1'den), değişmedi.
+
 ## Windows ekran testleri: 12e
 
 Exe: `%TEMP%\gezik-gui-12\bin\t12e.exe` (perf compare: `t12d-fix.exe`). Config `%TEMP%\gezik-gui-12\cfg\12e` (GEZIK_CONFIG_DIR, `confirm-trash = true`, commented `[tags] list`), data `%TEMP%\gezik-gui-12\data\12e` (.gzt files, metadata written as the `gezik.meta` stream). Primary monitor, window 1600x900 at 40,40. Scripts: `scratchpad\m12g\12e\h.ps1` (reuses m12g `g/d/s/t/b.ps1`). Screenshots: `%TEMP%\gezik-gui-12\shots\12e\`. Test data and configs were deleted afterwards; the screenshots were kept. No unexpected windows, no focus pauses, no Alt+Shift keys, no keyboard layout changes, E: not touched.
