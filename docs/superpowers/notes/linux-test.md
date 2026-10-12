@@ -664,6 +664,13 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 247. **Removable disk and network.** A USB stick (vfat or ext4) gets Mirror deletions in its `.Trash-<uid>` and Ctrl+Z brings them back; on an SMB or NFS mount (no trash) deletions are left out and replacing needs Replace them anyway, as macOS 337.
 248. **Profiles and memory.** As macOS 338–339 with Ctrl+Shift+P and `ps -o rss= -p $(pgrep -x gezik)`.
 
+### 13a, text, code and hex viewer
+
+Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 249–265).
+
+266. **Colors and the end of a big log.** As macOS 366 and 367 with Alt+P, Space and `ps -o rss= -p $(pgrep -x gezik)` (a `.rs` or `.py` file colored and numbered; a 3 GB log's End shows its last line within a moment and memory stays within +5 MB). Then `H` on `/usr/lib/x86_64-linux-gnu/libc.so.6` shows hex rows (`7F 45 4C 46` first).
+267. **Japanese text wraps in line.** A text file with long Japanese lines (`日本語のテキスト` repeated, mixed with Latin words): with Wrap on, every row ends at the same column width (a wide character takes two columns); the characters come from a fallback font and do not overlap. Write the font you see if they do not line up (GNOME and KDE).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
