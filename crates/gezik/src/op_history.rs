@@ -82,14 +82,11 @@ pub fn show_target(report: &Report) -> Option<(PathBuf, Vec<String>)> {
     report.changed_dirs.first().map(|dir| (dir.clone(), Vec::new()))
 }
 
-/// The failures, then what was skipped under its own heading; at most `MAX_DETAILS` lines
-/// in all (the blank line, the heading and the "…and N more" line count); None when there
-/// are neither.
+/// The failures, then what was skipped and the notes (tags kept in Gezik's store), each under
+/// its own heading; at most `MAX_DETAILS` lines in all (the blank lines, the headings and the
+/// "…and N more" line count); None when there are none of them.
 pub fn details_text(report: &Report) -> Option<String> {
-    let (failed, skipped) = (report.failures.len(), report.skipped.len());
-    if failed == 0 && skipped == 0 {
-        return None;
-    }
+    let sections = [(None, &report.failures), (Some("Skipped:"), &report.skipped), (Some("Notes:"), &report.notes)];
     let named = |f: &Failure| {
         format!(
             "{}: {}",
@@ -97,25 +94,35 @@ pub fn details_text(report: &Report) -> Option<String> {
             crate::pdf::failure_shown(&f.message)
         )
     };
-    // The blank line between the lists, and the heading.
-    let overhead = if failed > 0 { 2 } else { 1 };
-    let everything = failed + if skipped > 0 { overhead + skipped } else { 0 };
+    let items: usize = sections.iter().map(|(_, list)| list.len()).sum();
+    if items == 0 {
+        return None;
+    }
+    // Each list after the first takes a blank line; each with a heading takes that line too.
+    let mut everything = 0;
+    for (heading, list) in sections.iter().filter(|(_, list)| !list.is_empty()) {
+        everything += usize::from(everything > 0) + usize::from(heading.is_some()) + list.len();
+    }
     // When it does not all fit, the last line is the "…and N more".
     let room = if everything <= MAX_DETAILS { MAX_DETAILS } else { MAX_DETAILS - 1 };
-    let shown_failures = failed.min(room);
-    let left = room - shown_failures;
-    let shown_skipped = if skipped > 0 && left > overhead { skipped.min(left - overhead) } else { 0 };
-    let mut lines: Vec<String> = report.failures.iter().take(shown_failures).map(named).collect();
-    if shown_skipped > 0 {
-        if failed > 0 {
+    let mut lines: Vec<String> = Vec::new();
+    let mut shown = 0;
+    for (heading, list) in sections.iter().filter(|(_, list)| !list.is_empty()) {
+        let overhead = usize::from(!lines.is_empty()) + usize::from(heading.is_some());
+        let left = room - lines.len();
+        if left <= overhead {
+            continue;
+        }
+        if !lines.is_empty() {
             lines.push(String::new());
         }
-        lines.push("Skipped:".to_owned());
-        lines.extend(report.skipped.iter().take(shown_skipped).map(named));
+        lines.extend(heading.map(str::to_owned));
+        let n = list.len().min(left - overhead);
+        lines.extend(list.iter().take(n).map(named));
+        shown += n;
     }
-    let more = failed + skipped - shown_failures - shown_skipped;
-    if more > 0 {
-        lines.push(format!("…and {more} more"));
+    if items > shown {
+        lines.push(format!("…and {} more", items - shown));
     }
     Some(lines.join("\n"))
 }
