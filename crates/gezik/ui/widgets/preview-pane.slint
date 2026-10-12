@@ -171,20 +171,22 @@ export component PropRows inherits VerticalLayout {
                     root.menu(row.value, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                 }
             }
-            HorizontalLayout {
-                spacing: Theme.spacing * 2;
-                Text {
-                    width: 96px;
-                    text: row.label;
-                    overflow: elide;
-                    color: Theme.foreground-muted;
-                }
-                Text {
-                    text: row.value;
-                    wrap: word-wrap;
-                    horizontal-stretch: 1;
-                    color: Theme.foreground;
-                }
+            // Placed by hand, not in a layout: a layout measures the wrapped value at the row's
+            // width, not its own, and the list came out too short to scroll (13d screen test).
+            height: max(label.preferred-height, value.preferred-height);
+            label := Text {
+                x: 0;
+                width: 96px;
+                text: row.label;
+                overflow: elide;
+                color: Theme.foreground-muted;
+            }
+            value := Text {
+                x: 96px + Theme.spacing * 2;
+                width: parent.width - self.x;
+                text: row.value;
+                wrap: word-wrap;
+                color: Theme.foreground;
             }
         }
     }
@@ -539,6 +541,8 @@ export component PreviewPane inherits Rectangle {
             max-height: facts-text.preferred-height;
             content-height: facts-text.preferred-height;
             facts-text := VerticalLayout {
+                // Measured at the pane's width (its wrapped values decide how far it scrolls).
+                width: facts.width;
                 spacing: Theme.spacing * 2;
                 Text {
                     text: root.info.title;
