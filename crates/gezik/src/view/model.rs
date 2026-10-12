@@ -272,7 +272,7 @@ pub fn known_tag_names(data: &ViewData, i: usize) -> String {
 /// Whether a `tag:` filter waits for the folder's tags: the rows it lets through meanwhile are
 /// drawn faint (spec 12 §6.3).
 fn waiting(data: &ViewData) -> bool {
-    data.folder_tags.as_ref().is_some_and(|f| f.faint && !f.complete)
+    data.folder_tags.as_ref().is_some_and(|f| f.faint.get() && !f.complete)
 }
 
 /// Entry `i`'s tag dots while dots show (spec 12 §5.4), and its tags' names while they or the
@@ -786,7 +786,7 @@ mod tests {
         // Read whole: answered from it, names without dots (they are off), nothing asked.
         let tags =
             std::collections::HashMap::from([(Box::from("f30.txt"), vec![Tag::new("Red", TagColor::Red)].into())]);
-        data.folder_tags = Some(Rc::new(super::super::FolderTags { dir, tags, complete: true, faint: false }));
+        data.folder_tags = Some(Rc::new(super::super::FolderTags::read(dir, tags)));
         let pending = data.media.pending();
         let row = file_row(&data, 30);
         assert_eq!((row.dots, row.tag_names.as_str(), row.cut), (0, "Red", false));
