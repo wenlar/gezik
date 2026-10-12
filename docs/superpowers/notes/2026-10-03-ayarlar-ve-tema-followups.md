@@ -2707,6 +2707,17 @@ Gözlemler (hata değil):
 - Sürüm exe'si düzeltmelerle 27.586.560 B (taban `feat/tags-12c` f6654e3: 27.430.912 B, **+155.648 B**; bütçe 262.144). Kopya `%TEMP%\gezik-gui-12\bin\t12d-fix.exe`.
 - Bekleyen: OneDrive ve 150/200 % ölçek ekran testi, macOS 353–356, Linux 258–260.
 
+## Adım 12, alt parça 12e (Kenar çubuğu ve arama) sonrası
+
+- Plan `docs/superpowers/plans/2026-10-12-etiketler-12e.md` (sapmalar 1–12); dal `feat/tags-12e`, `feat/tags-12d`'nin üstüne yığılı (12d'nin son hâli c6ee7dc yerel daldan birleştirildi, çakışma yok). Yeni Slint katmanı yok: `SidebarRow.dot` ve bir nokta dikdörtgeni, macOS `File ▸ Tags ▸ Clean Up Tag Store…`.
+- Arama: `SearchSpec`'e `tags`, `untagged`, `min_rating`, `comment` (`[[searches]]`/oturum `tags`, `untagged`, `min-rating`, `comment`); arama çubuğunun ad alanında `tag:`, `rating:` ve yeni `comment:` sözcükleri ölçüt (12c'nin reddi kalktı; `comment:` klasör süzgecinde de çalışır). `Query` metayı ad/tür/boyut/tarihten sonra, içerikten önce okur; ölçüt yokken hiç okumaz (sayaçlı test). Tarayıcı, ad önbelleği, Everything adayları, kopya bulucu ve iş sonrası denetim aynı yoldan; Everything'e sözcükler gönderilmez. Meta ölçütlü arama yazarken değil Enter'la koşar. Filters ▸ `Tags…` (2404; `none` etiketsiz), `Comment…` (2405), `Rating ▸` (2510–2515).
+- macOS: bütün disk + Spotlight'ın anlatabildiği bir meta terimi → `mdfind -0` (`kMDItemUserTags == "Red"cd`, `kMDItemStarRating >= 4`, `kMDItemFinderComment == "*x*"cd`; `"`, `\`, `*` kaçışlı); Gezik her sonucu yeniden denetler; durum satırı `via Spotlight (drives it does not index are not in it)`. Sorgu metni saf, her sistemde test edilir; `mdfind` koşucusu yalnız macOS'ta derlenir (bu makinede yalnız macOS clippy).
+- Kenar çubuğu `TAGS` (`SECTION_TAGS` 9, `[sidebar] tags = true`): satırlar yalnız listeden (G/Ç yok, test). Tık: Windows/Linux gösterilen klasör, macOS Spotlight; orta tık yeni sekme. Bütün sürücü aramasında merkezi kayıtta eşleşen ve tarayıcı köklerinin dışındaki (USB, ağ) dosyalar eklenir (o zaman Everything atlanır). Satır menüsü 2480–2486, `Color ▸` 2490–2497, `New tag…` 2403. Liste düzenlemeleri `SettingsChange::TagList` ile yerinde (yorumlar, atlanan öğeler kalır; test), dosyalara dokunmaz; `Rename…` merkezi kayıttaki adı da çevirir, `Search and Retag…` eski etiketin aramasını açar ve o sonuçlarda açılan ilk seçiciyi hazır getirir.
+- Bırakma: etiket satırına bırakılan dosyalar `Action::Tag` (`Tag 3 items Red`), tek `TagsTask`, geri alınır; sanal öğeler reddedilir.
+- `clean-tag-store` (`Clean Up Tag Store…`, `Action::ALL` 124, tuş yok, palet ve macOS menüsü): takılı birimlerde yolu olmayanları sayar, sorar; `Remove` önce `tags-store.tsv.bak`, sonra yalnız hâlâ yolu olmayanları siler; takılı olmayan birimin kayıtları sayılır, dokunulmaz (test: canlı kayıt istense de silinmez).
+- Sürüm exe'si 27.674.624 B (taban `feat/tags-12d` c6ee7dc: 27.586.560 B, **+88.064 B**; bütçe 262.144; spec tahmini ≈ 90 KB). macOS clippy temiz. Kopya `%TEMP%\gezik-gui-12\bin\t12e.exe`. Not: sürüm derlemesi `-j 2` ile iki kez `rustc` erişim ihlaliyle (0xc0000005) düştü, `-j 1` ile geçti (koddan bağımsız).
+- Bekleyen: Windows ekran testi (TAGS bölümü, tık ve orta tık, satır menüsü ve settings.toml'un yorumları, sürükle-bırak ve Ctrl+Z, `tag:`/`rating:`/`comment:` sözcükleri ve Filters, Search and Retag…, Clean Up Tag Store… FAT USB ile), macOS 357–361, Linux 261–263.
+
 ## Windows ekran testleri: 12c
 
 
