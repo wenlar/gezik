@@ -1,6 +1,6 @@
 # Özellik durumu: rakip özetine göre (2026-10-12)
 
-- **Tarih:** 2026-10-12. **Taban:** `master` c103e95 (PR #88: 12. adımın spec'i). 5–11. adımlar birleşti (10a–10g, 11a–11i); 12. adımdan (Etiketler) yalnız spec var.
+- **Tarih:** 2026-10-12, 14. adımdan sonra 2026-10-13'te güncellendi. **Taban:** `master` 92f3078 (PR #112: 14f). 5–14. adımlar birleşti: 12 Etiketler (#91–#97), 13 Önizleme 2 (#92, #98–#100, #102, #103), 14 Taşınabilirlik (#104, #105, #108–#110, #112).
 - **Kaynak:** `2026-10-07-rakip-ozet.md` §1 tablosu (1–66), §3 ayırt edici yanlar, önerilmeyenler (§1 ve §6).
 - **Nasıl denetlendi:** her satır `docs/features.md`, `README.md`, adım spec'lerinin "Kapsam dışı" bölümleri, `2026-10-03-ayarlar-ve-tema-followups.md`'deki adım notları ve gerekince kodla (`shortcuts.rs` eylem listesi, `settings.rs`, `preview.rs`, komut yer tutucuları) karşılaştırıldı. PR numaraları `git log --merges`'ten.
 
@@ -10,12 +10,12 @@ Rakip kısaltmaları rakip özetindeki gibi: OC, Fi, DO, FP, Far, FL, PF, TC.
 
 | Durum | §1 tablosu (66 satır) | Önerilmeyenler (13 madde) |
 |---|---|---|
-| ✅ Var | 44 | 0 |
-| 🟡 Kısmen | 12 | 0 |
-| 🔜 Planlı | 9 | 0 |
+| ✅ Var | 51 | 0 |
+| 🟡 Kısmen | 7 | 0 |
+| 🔜 Planlı | 7 | 0 |
 | ❌ Yok / bilerek kapsam dışı | 1 | 13 |
 
-Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi.
+Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65).
 
 ## Ana tablo
 
@@ -27,7 +27,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 2 | Özyinelemeli arama (ad, içerik, tarih/boyut, önizleme) | 8/8 | Planlı | ✅ Var | 8a (#22); Windows'ta Everything |
 | 3 | Klasör boyutu (arka planda, sütun, sıralama) | 8/8 | Yok | ✅ Var | 8b (#29); varsayılan `folder-sizes = "off"` (#31), istekle ya da `local`/`all` |
 | 4 | Çift panel + karşı panele kopyala/taşı | 8/8 | Planlı | ✅ Var | 10b (#64): F3, F5/F6, Tab, Ctrl+U, sekmeyi diğer bölmeye taşı |
-| 5 | Grafik ayar penceresi | 8/8 | Kısmen (yalnız TOML) | 🟡 Kısmen | Ayarlar hâlâ TOML; menüden yalnız görünüm seçenekleri (7b). Pencere 14. adımda |
+| 5 | Grafik ayar penceresi | 8/8 | Kısmen (yalnız TOML) | ✅ Var | 14a (#104): sayfalar, arama, tema önizlemesi, anında uygulama, yorumlar korunur; 14b (#105) kısayol sayfası; 14d (#109) dışa/içe aktarma |
 | 6 | Sürücü çıkarma, ağ paylaşımı, ağ keşfi | 8/8 | Kısmen | 🟡 Kısmen | 9b6 (#44): çıkarma, Sunucuya Bağlan, Windows sunucu paylaşımları. Ağ keşfi bilerek kapsam dışı (9 spec §1) |
 | 7 | Yolu kopyala: kısayol, biçimler, üç sistem | 7/8 | Kısmen | ✅ Var | 7a (#17): Ctrl+Shift+C, Copy path as ▸ (tırnaklı, `/`, ad, klasör, `file://`, UNC) |
 | 8 | Oturum geri yükleme, sekme setleri | 7/8 | Yok | ✅ Var | 7a (#17): `[session] restore`, `[[tab-sets]]`; çift bölme 10b, pencereler 10g (#71) |
@@ -35,19 +35,19 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 10 | Yol tamamlama, son klasörler, geçmiş, ortam değişkeni | 7/8 | Kısmen (Ctrl+L) | ✅ Var | 6b (#14): tamamlama, Recent/Frequent, `~`, `%AD%` |
 | 11 | Görünüm seçenekleri (gizli/sistem, uzantı, klasörler önce, biçimler) | 7/8 | Kısmen | ✅ Var | 7b (#19): `[view]` ve View menüsü |
 | 12 | Arşivin içinde klasör gibi gezinme | 7/8 | Planlı | 🔜 Planlı | 16 Gelişmiş (VFS) |
-| 13 | Zengin önizleme (video/ses, çok sayfalı PDF, renklendirme, yakınlaştırma, hex) | 7/8 | Kısmen | 🟡 Kısmen | Önizleme resim, küçük resim, 64 KB metin ve klasör özeti; macOS'ta sistem Quick Look paneli (9a2, #36). Gerisi 13 Önizleme 2 |
+| 13 | Zengin önizleme (video/ses, çok sayfalı PDF, renklendirme, yakınlaştırma, hex) | 7/8 | Kısmen | ✅ Var | 13a (#92) renkli kod, büyük metin, hex; 13b (#98) PDF sayfaları (pdfium, istekle) ve resim yakınlaştırma; 13c (#99) ffmpeg ile video/ses |
 | 14 | Varsayılan dosya yöneticisi (Win+E, `NSFileViewer`) | 6/8 | Yok | ✅ Var | 9b4 (#42), geri alınabilir. Windows'ta başka programların "Klasörde göster"i yönlendirilemiyor (9b11 düştü) |
 | 15 | Kısayol / symlink / hardlink / junction oluşturma | 7/8 | Yok | 🟡 Kısmen | 7c (#20): `.lnk`, junction, symlink; macOS takma ad 9a1 (#34). Hardlink bilerek kapsam dışı (7 spec) |
 | 16 | Terminalde aç (seçim, yönetici olarak) | 6/8 | Yok | ✅ Var | 7a (#17): Shift+F4, `[terminal] command`, Windows'ta yönetici olarak |
 | 17 | Otomatik güncelleme | 5/8 | Planlı | 🔜 Planlı | Yayın hazırlığı |
-| 18 | Etiketler (renk, kenar çubuğu, süz/sırala, Finder uyumu) | 5/8 | Planlı | 🔜 Planlı | 12 Etiketler (12a–12c, 12e); spec #88 |
+| 18 | Etiketler (renk, kenar çubuğu, süz/sırala, Finder uyumu) | 5/8 | Planlı | ✅ Var | 12a–12c (#91, #93, #94), 12e (#96): Finder xattr, Linux `user.xdg.*`, Windows `:gezik.meta` akışı + merkezi kayıt; TAGS kenar çubuğu, `tag:` süzgeci, Spotlight araması |
 | 19 | Favori grupları, takma ad, simge/renk, numaralı kısayol | 6/8 | Kısmen | 🟡 Kısmen | 7b (#19): takma ad, grup, Alt+1…9. Simge ve renk bilerek kapsam dışı (7 spec) |
-| 20 | Gruplama (tür, tarih, boyut, etiket) | 5/8 | Yok | ✅ Var | 10d (#58): tür, tarih, boyut. Etikete göre 12c'de |
-| 21 | Meta veri paneli ve sütunları (EXIF, ID3, süre) | 6/8 | Kısmen (piksel boyutu) | 🟡 Kısmen | Önizlemede yalnız piksel boyutu; macOS/Linux Bilgi penceresi 9a3 (#39). Panel ve sütunlar 13 Önizleme 2 |
+| 20 | Gruplama (tür, tarih, boyut, etiket) | 5/8 | Yok | ✅ Var | 10d (#58): tür, tarih, boyut; etiket ve puan 12c/12d (#94, #95); meta veri alanları 13e (#102) |
+| 21 | Meta veri paneli ve sütunları (EXIF, ID3, süre) | 6/8 | Kısmen (piksel boyutu) | ✅ Var | 13d (#100): 31 alanlı kayıt, EXIF/HEIF, ID3/FLAC/Ogg/MP4/MKV/AVI, DOCX/PDF okuyucuları, önizleme paneli; 13e (#102): sütun, sıralama, gruplama, süzgeç |
 | 22 | Bulut sürücüleri: kenar çubuğu, durum, indir/boşalt | 6/8 | Yok | ✅ Var | 9b5 (#41). Linux'ta indir/boşalt yok (standart yok) |
 | 23 | Çok pencere, sekmeyi koparıp yeni pencere | 5/8 | Kısmen (ikinci süreç) | ✅ Var | 10g (#71): tek süreçte pencereler; koparma Windows ve macOS'ta, her yerde "Move to new window" |
 | 24 | Uzak bağlantılar (SFTP, FTP, WebDAV, S3) | 6/8 | Yok | 🔜 Planlı | 18 Uzak bağlantılar (açık karar) |
-| 25 | Puan, yorum, klasör notu | 6/8 | Yok | 🔜 Planlı | 12d (puan, yorum). `descript.ion`/`.2do` bilerek kapsam dışı (12 spec) |
+| 25 | Puan, yorum, klasör notu | 6/8 | Yok | ✅ Var | 12d (#95): yıldız puan, yorum, sütun, sıralama, `rating:` süzgeci; Windows'ta Explorer puanı salt okunur. `descript.ion`/`.2do` bilerek kapsam dışı (12 spec) |
 | 26 | Get Info: izin, sahip, öznitelik, zaman damgası düzenleme | 6/8 | Kısmen | 🟡 Kısmen | 9a3 (#39), 9b7 (#46): macOS/Linux'ta izin, sahip, gizli/kilitli; Windows'ta sistem Özellikler. Zaman damgası ve ACL bilerek kapsam dışı (9 spec) |
 | 27 | Komut paleti / Quick Open | 4/8 | Planlı | ✅ Var | 8b (#29): Ctrl+Shift+P, Ctrl+P, `>` |
 | 28 | Sekme kolaylıkları (kapatılanı aç, Ctrl+1…9, seçici) | 5/8 | Yok | ✅ Var | 6a (#13): Ctrl+Shift+T, Ctrl+1…9, Ctrl+Shift+A |
@@ -72,7 +72,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 47 | Yeni dosya şablonları; seçimle yeni klasör | 3/8 | Kısmen | ✅ Var | 7c (#20): `templates/`, Ctrl+Alt+N |
 | 48 | Drop Stack | 2/8 | Yok | ✅ Var | 7c (#20): oturum boyu |
 | 49 | Kayıtlı aramalar | 3/8 | Yok | ✅ Var | 8b (#29): `[[searches]]`, kenar çubuğunda |
-| 50 | Vurgulama kuralları, sıralama grupları | 3/8 | Kısmen (tür rengi) | 🟡 Kısmen | Bugün yalnız tür rengi; `[[highlight-rules]]` 12f'de |
+| 50 | Vurgulama kuralları, sıralama grupları | 3/8 | Kısmen (tür rengi) | ✅ Var | 12f (#97): `[[highlight-rules]]` ad, tür, boyut, yaş, etiket, puan, yoruma göre renk ve kalınlık |
 | 51 | Düz görünüm | 3/8 | Yok | ✅ Var | 8a (#22): Ctrl+B |
 | 52 | Yinelenen dosya bulucu | 3/8 | Yok | ✅ Var | 11f (#81) |
 | 53 | Gömülü terminal / adres çubuğunda komut | 3/8 | Yok | 🔜 Planlı | 16 Gelişmiş (sonra) |
@@ -87,8 +87,8 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 62 | Dosya bölme / birleştirme | 2/8 | Kısmen | ✅ Var | 11i (#79): `.001` + `.crc` |
 | 63 | Otomatik görünüm kuralları | 1/8 | Kısmen | ✅ Var | 10f (#60): `[[view-rules]]` |
 | 64 | Kilitli sekmeler | 2/8 | Yok | ✅ Var | 6a (#13); kilit oturumla gelir (7a) |
-| 65 | Taşınabilir mod | 4/8 | Kısmen (`GEZIK_CONFIG_DIR`) | 🟡 Kısmen | Hâlâ yalnız `GEZIK_CONFIG_DIR`; paket Yayın hazırlığında |
-| 66 | Meta veri alanlarını her yerde kullanma | 2/8 | Kısmen (EXIF tarihi adda) | 🟡 Kısmen | Yalnız `{taken:…}` adda; alan kaydı 13 Önizleme 2 |
+| 65 | Taşınabilir mod | 4/8 | Kısmen (`GEZIK_CONFIG_DIR`) | ✅ Var | 14e (#110): exe yanındaki `gezik-portable` işareti → `gezik-data/`; makine başına sistem günlüğü. Hazır taşınabilir paket Yayın hazırlığında |
+| 66 | Meta veri alanlarını her yerde kullanma | 2/8 | Kısmen (EXIF tarihi adda) | 🟡 Kısmen | 13e/13f (#102, #103): sütun, süzgeç, arama (`artist:… duration>3m`), ad şablonu (`{track:02} {artist}`). Eksik: vurgulama kuralında `where`, etiketlerin alan kaydına bağlanması |
 
 ### Önerilmeyenler (rakip özeti §1 ve §6)
 
@@ -125,32 +125,24 @@ Rakip özeti §3'ün listesi bugün de geçerli; aşağıda o liste ve sonradan 
 - **Sisteme yazılan her şeyin günlüğü ve tek komutla geri alınması** (`system-changes.toml`, Undo all, `gezik --unregister`, Windows'ta `restore-explorer.reg`; 9b3, 9b4). Rakip notlarında bunun karşılığı geçmiyor.
 - **Ölçülmüş hafiflik:** açılış 32–38 ms, boşta 5,1 MB, 100 bin dosya 13,1 MB, 20 sekme +0,4 MB (README, Windows). Boşta belleğin 7 MB'tan 5,1 MB'a inmesinin bir nedeni Windows'ta satır satır çizim (#73): tam pencere çerçeve arabelleği tutulmuyor.
 - **Türkçe harf sırasıyla doğal sıralama.**
-- Rakip özetinde "planlı" geçen **şifreli ayar senkronu** henüz yok (17. adım).
+- **Eşitleme klasöründe çok bilgisayarlı ayarlar** (14f, #112): paylaşılan ve bilgisayara özel katman, çevrimdışı bekleyen değişikliklerin yalnız farkıyla uygulanması, bulut servislerinin çakışan kopyalarını anahtar anahtar inceleme; hiçbir şey kendiliğinden birleşmez.
+- **GitHub'dan tema kurma** (14c, #108) yalnız veri olarak: zip diske açılmaz, boyut sınırlı, kurmadan önce önizleme.
+- Rakip özetinde "planlı" geçen **şifreli, hesapsız ayar senkronu** henüz yok (17. adım); 14f bir eşitleme klasörü kullanır, şifrelemez.
 
 Bu listeye girmeyenler: **görünüm kuralları** (TC'de var, satır 63), **bırakma yığını** (Fi ve PF'de var, satır 48), **boyut haritası** (PF'de var), **komut paleti** ve **Git** (rakip özeti §3 düzeltmesi).
 
 ## Kalan boşluklar
 
-**12 Etiketler** (spec #88, parçalar 12a–12f)
-- 18 Etiketler (renk, kenar çubuğu, süz/sırala/grupla, Finder uyumu)
-- 25 Puan ve yorum (`descript.ion` bilerek dışarıda)
-- 50 Vurgulama kuralları (bugün yalnız tür rengi)
-- 20'nin eksiği: etikete göre gruplama
-
-**13 Önizleme 2**
-- 13 Zengin önizleme (video/ses, çok sayfalı PDF, renklendirme, yakınlaştırma, hex)
-- 21 Meta veri paneli ve sütunları
-- 66 Meta veri alanı kaydı (sütun, arama, ad şablonu, renk kuralı)
-
-**14 Taşınabilirlik**
-- 5 Grafik ayar penceresi (ayrıca dışa/içe aktarma, senkron klasör, GitHub'dan tema)
+**12–14. adımlardan kalanlar**
+- 66'nın eksiği: vurgulama kuralında `where`, etiketlerin meta veri alanı kaydına bağlanması
+- macOS ve Linux'ta 12–14. adımlar gerçek cihazda sınanmadı (macOS: `checklists/release-macos.md`, #111; Linux: Docker turu sürüyor)
 
 **15 Yerelleştirme**
 - 9 Arayüz çevirisi
 
 **Yayın hazırlığı**
 - 17 Otomatik güncelleme
-- 65 Taşınabilir paket
+- 65'in eksiği: hazır taşınabilir paket (zip/AppImage), imza
 
 **16 Gelişmiş**
 - 12 Arşivin içinde gezinme
