@@ -1345,7 +1345,9 @@ impl Preview {
             self.redraw();
             return true;
         }
-        self.0.viewer.borrow().pdf.is_some() && self.with_zoom(|zoom| zoom.fit_to(Fit::Page))
+        // Asked first: the borrow must be gone before `with_zoom` borrows it mutably.
+        let pdf = self.0.viewer.borrow().pdf.is_some();
+        pdf && self.with_zoom(|zoom| zoom.fit_to(Fit::Page))
     }
 
     /// The bar's Fit: a PDF goes between the whole page and its width; a picture back to fit.
@@ -1705,5 +1707,35 @@ Some folders could not be read"
         viewer.fill(&mut info, (80, 2));
         assert_eq!(info.rows.row_data(0).unwrap().number.as_str(), "1", "back at the top");
         assert_eq!(info.max_cols, 4, "bbbb");
+    }
+
+    #[test]
+    fn a_pdf_offers_its_pages_and_a_picture_its_zoom_and_fit_lets_the_large_copy_go() {
+        let pdf = entry(PathBuf::from("/x/a.PDF"), false);
+        let mut info = describe(&pdf, Some(Body::Picture(SharedPixelBuffer::new(2, 2), None)));
+        Viewer::default().fill(&mut info, (80, 40));
+        assert_eq!((info.bar, info.page, info.zoom_text.as_str(), info.zoomed), (4, 1, "Fit", false));
+        // A 4000 × 3000 photo shown from its 1024 px preview.
+        let photo = entry(PathBuf::from("/x/p.jpg"), false);
+        let base = describe(&photo, Some(Body::Picture(SharedPixelBuffer::new(1024, 768), Some((4000, 3000)))));
+        let mut info = base.clone();
+        Viewer::default().fill(&mut info, (80, 40));
+        assert_eq!((info.bar, info.page), (5, 0));
+        let mut view = PictureView::new((4000, 3000), 1.0, (400.0, 300.0));
+        assert_eq!(view.too_large, None);
+        view.full = Some(SharedPixelBuffer::new(4000, 3000));
+        view.zoom.fit_to(Fit::Zoom(1.0));
+        let viewer = Viewer { picture: Some(view), ..Viewer::default() };
+        let mut info = base.clone();
+        viewer.fill(&mut info, (80, 40));
+        assert!(info.zoomed && info.zoom_text == "100%" && info.picture.size().width == 4000);
+        assert_eq!((info.pic_w, info.pic_h), (4000.0, 3000.0), "one picture pixel a physical pixel");
+        // Back to fit: filled from the file's own preview again, the large copy is not held.
+        let mut info = base;
+        Viewer::default().fill(&mut info, (80, 40));
+        assert!(!info.zoomed && info.picture.size().width == 1024);
+        // Past 48 MP only the preview is zoomed.
+        assert_eq!(PictureView::new((9000, 6000), 1.0, (400.0, 300.0)).too_large, Some(54));
+        assert_eq!(PictureView::new((8000, 6000), 1.0, (400.0, 300.0)).too_large, None);
     }
 }

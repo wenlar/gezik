@@ -671,6 +671,14 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 266. **Colors and the end of a big log.** As macOS 366 and 367 with Alt+P, Space and `ps -o rss= -p $(pgrep -x gezik)` (a `.rs` or `.py` file colored and numbered; a 3 GB log's End shows its last line within a moment and memory stays within +5 MB). Then `H` on `/usr/lib/x86_64-linux-gnu/libc.so.6` shows hex rows (`7F 45 4C 46` first).
 267. **Japanese text wraps in line.** A text file with long Japanese lines (`日本語のテキスト` repeated, mixed with Latin words): with Wrap on, every row ends at the same column width (a wide character takes two columns); the characters come from a fallback font and do not overlap. Write the font you see if they do not line up (GNOME and KDE).
 
+### 13b, PDF pages and zoom
+
+13b uses 268–270.
+
+268. **Pages and password.** As macOS 369 and 371 with Alt+P and Space (pdfium from the preview bar's `Download` or a PDF tool): `›`, Page Down/Up, Home/End, the page field and the wheel at a page's end; an encrypted PDF asks for its password.
+269. **Zoom.** As macOS 370 with Ctrl+wheel (X11 and Wayland, 100% and 200% scaling): the text stays sharp at 400%, a drag moves it and the edges fill in after stopping; a photo zooms to `100%` and back.
+270. **The worker goes.** `pgrep -af -- --pdf-view` shows one process after 268; 10 s after selecting a text file none; selecting a PDF without touching its pages starts none.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

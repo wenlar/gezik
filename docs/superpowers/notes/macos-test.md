@@ -737,6 +737,15 @@ Numbers stay as they are when branches merge. 13a uses 366–368 (step 12 has 34
 367. **A 3 GB log.** Make one (`yes "$(date) a line of a log file" | head -c 3000000000 > /tmp/big.log`), select it with the preview pane open (⌥P): the first lines show at once. Click into the text and press End: the last line shows within a moment, the bar says `2.8 GB · 100%`; drag the scroll bar to the middle: lines from there (`… · 50%`). Activity Monitor's memory for Gezik: within +5 MB of before the file was selected; select another file: it goes back.
 368. **Hex.** Select a `.dylib` (e.g. `/usr/lib/libz.dylib` or any in an app's `Contents/Frameworks`): the preview shows its icon and a `Hex` button. Press Space, then `H`: hex rows `00000000  CF FA ED FE …  ....` with the offset in the bar; End goes to the last row; `H` goes back to the icon. Right-click in a text preview of the pane: `Show as Hex` and `Wrap Lines`; View ▸ Show Preview as Hex in the menu bar does the same for the selection.
 
+### 13b, PDF pages and zoom
+
+13b uses 369–372. First `cargo test -p gezik preview::`, `cargo test -p gezik-core pdf_view`, and with the downloaded pdfium `GEZIK_TEST_PDFIUM=…/libpdfium.dylib cargo test -p gezik-batch --test pdf_view`; paste the output. pdfium must be there (Convert ▸ any PDF tool offers it, or click `Download` in the preview's bar).
+
+369. **Pages.** `[system] quick-look = "gezik"`. Select a PDF of about 50 pages with the preview pane open (⌥P): page 1 shows as today, the bar has `‹ 1 ›`, `−`, `Fit`, `+`. Click `›`: page 2 within a moment, the bar says `2 / 50`. Click into the preview and press Page Down, Page Up, End (`50 / 50`), Home. Click the page number, type `25`, Return: page 25. The wheel at the bottom of a page turns to the next one. The same in Space's Quick Look. The pages are sharp on the Retina screen (not blurry at Fit).
+370. **Zoom and drag.** On a page with small text: `+` until `400%` (or ⌘+wheel over a word: that word stays under the pointer). The text is sharp; drag the page: it follows the pointer, the edges are briefly empty and fill in a moment after you stop. `Fit` toggles between `Fit` and `Fit Width`; `0` fits the page, `1` is `100%`. Turn the page: the zoom stays. A large photo (a 12 MP JPEG): `+` or a double click shows it at its own size (`100%`), drag works, `0` (or `Fit`) goes back; Activity Monitor shows the memory going back down after `0`.
+371. **Password.** A PDF with a password (`qpdf --encrypt --user-password=pw --owner-password=own --bits=256 -- in.pdf enc.pdf`, or any): `›` makes the bar say `Password protected · Enter Password…`; a wrong one says `Wrong password`, `pw` shows page 2.
+372. **The worker goes.** After 369, `ps ax | grep -- --pdf-view` shows one `gezik --pdf-view`. Select a text file: within 10 s (and not before about 10 s) it is gone. Select PDFs one after another within 10 s: still one process. Selecting a PDF without touching its pages starts none.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.
