@@ -3020,3 +3020,17 @@ Without the column t13e = t13d-fix2 (within noise). With the column about +20–
 - Harness: walking the UIA desktop tree while a native popup menu was open hung the test script twice (not a Gezik issue); stopping that task also ended its child Gezik.
 
 - Gözden geçirme ve ekran testi düzeltmeleri (13e fix): alanla gruplanıp aynı alanla sıralanınca gruplar artık ters dönmüyor (artan sırada `No Artist` ve okunmayanlar sonda); kısmi tarih (`2024`, `2024-05`) her işleçte o dönemi kapsar (`taken>2024` 2025'ten başlar, `taken<=2024-05` Mayıs'ı içerir); metin alanları adların sırasıyla (doğal, Türk alfabesi, harf duyarsız; `Şebnem` `Zeki`'den önce) ve satır başına bir anahtarla sıralanır (karşılaştırmada ayırma yok); `[[view-rules]] columns` alan sütunlarını kuralın sırasıyla gösterir; hatalı süzgeç sözcüğü (`duration>3x`) iletisini verir ama yalnız o sözcük atlanır, öbürleri ve ad deseni süzer (yalnızsa liste tam görünür). 100k ölçüm (sürüm, en iyi 7): ad 47 ms, boyut 19 ms, alan Artist 63 ms (değerler yapılırken dizeler dahil), Duration 23 ms. Klasör okumasının dosya başına yeniden kullanımı yapılmadı (isteğe bağlıydı). Sürüm exe'si **27.911.168 B** (13d e5a0e48 tabanı 27.790.336 B, **+120.832 B**); yapı `t13e-fix.exe`.
+
+### Yeniden deneme: 13e fix re-check (t13e-fix.exe, 2026-10-12)
+
+Data regenerated: 24 MP3s (artists Ahmet Kaya, Cem Karaca, Çiğdem Talu, Ilgaz, İlhan İrem, Sezen Aksu, Şebnem Ferah, Uğur Işılak, Ümit Besen, Zeki Müren; 3 untagged) + 4 .txt; 60 EXIF JPEGs, 12 each in 2023-12, 2024-04, 2024-05, 2024-06, 2025-03. Sort/group set through `[[view-rules]]` and Artist header clicks. Shots: %TEMP%\gezik-gui-13\shots\13e\f*.png
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Group by Artist, sort Artist asc / desc | PARTIAL. Asc: Ahmet > Cem > Çiğdem > Ilgaz > İlhan > Sezen > Şebnem > Uğur > Ümit > Zeki > No Artist (7) - PASS. Desc (rule `sort-dir = "desc"` and also one header click): values reversed correctly, but **`No Artist (7)` is FIRST**, not last - FAIL (f1-desc, f1-click1). Second click returns to asc with No Artist last. |
+| 2 | Sort by Artist alone | PASS: same Turkish order asc; desc reversed; valueless rows (3 untagged MP3 + .txt) last both ways (f2-asc, f2-desc). |
+| 3 | `taken` partial dates | PASS: `taken>2024` 12 items, all 2025; `taken<=2024` 48 (2023-12 + 2024-04/05/06); `taken>2024-05` 24 (2024-06 + 2025); `taken<=2024-05` 36 (2023-12, 2024-04, 2024-05 incl.). |
+| 4 | `duration>3x` | PASS: error `duration>3x: "3x" is not a duration (3m, 1:30)` shows, list stays 28 items (full). `*.mp3 duration>3x`: 24 items (the MP3s), same error text. |
+| 5 | Rule `columns = ["duration","track","artist","album"]` | PASS: headers Name, Duration, Track, Artist, Album in that order (f5). |
+
+- Fix2: alanla gruplamada `No Artist` ve `Reading properties…` grupları artık her iki yönde sonda (yön çevirmesinin dışında; azalan sıra testi eklendi).

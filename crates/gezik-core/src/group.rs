@@ -295,6 +295,8 @@ pub type FieldLook<'a> = dyn Fn(&Entry, crate::fields::FieldId) -> Option<Option
 
 /// Ranks below this go first in either direction (the folders' group with folders-first).
 const HALF: u32 = 1 << 31;
+/// Places from here on (a field's `No …` and `Reading properties…`) go last in either direction.
+const TAIL: u32 = HALF - 4;
 
 impl Grouping<'_> {
     /// Row `e`'s group; `None` when not grouped.
@@ -367,9 +369,10 @@ impl Grouping<'_> {
                 }
                 GroupKey::Date(g) => self.dates.place(g),
                 GroupKey::Size(g) => g as u32,
-                // After every value: `No Artist`, then the rows on their way.
-                GroupKey::Field(FieldGroup::Missing(_)) => HALF - 3,
-                GroupKey::Field(FieldGroup::Pending) => HALF - 2,
+                // After every value in either direction: `No Artist`, then the rows on their
+                // way (`TAIL` below, never turned round).
+                GroupKey::Field(FieldGroup::Missing(_)) => TAIL,
+                GroupKey::Field(FieldGroup::Pending) => TAIL + 1,
                 GroupKey::Duplicates { id, .. } => id,
             };
             rows.push((pinned, place, named));
@@ -388,9 +391,10 @@ impl Grouping<'_> {
         let reversed = self.reversed();
         rows.into_iter()
             .map(|(pinned, place, _)| match (pinned, reversed) {
+                _ if place >= TAIL => u32::MAX - (TAIL + 1 - place),
                 (true, _) => place.min(HALF - 1),
-                (false, false) => HALF + place.min(HALF - 1),
-                (false, true) => u32::MAX - place.min(HALF - 1),
+                (false, false) => HALF + place.min(TAIL - 1),
+                (false, true) => u32::MAX - 2 - place.min(TAIL - 1),
             })
             .collect()
     }
@@ -843,8 +847,15 @@ mod tests {
         let (names, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Asc);
         assert_eq!(groups, ["Sezen Aksu", "Tarkan", "tarkan", "No Artist", "Reading properties…"]);
         assert_eq!(names, ["b.mp3", "c.mp3", "a.mp3", "d.txt", "e.mp3"]);
-        let (_, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Desc);
-        assert_eq!(groups, ["Reading properties…", "No Artist", "tarkan", "Tarkan", "Sezen Aksu"], "as any sort");
+        let (names, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Desc);
+        assert_eq!(
+            groups,
+            ["tarkan", "Tarkan", "Sezen Aksu", "No Artist", "Reading properties…"],
+            "none and on their way last"
+        );
+        assert_eq!(&names[3..], ["d.txt", "e.mp3"]);
+        let (_, groups) = order(GroupBy::Field(ARTIST), SortKey::Name, SortDir::Desc);
+        assert_eq!(&groups[3..], ["No Artist", "Reading properties…"], "also under another sort's descending");
         assert_eq!(GroupBy::parse("artist"), Some(GroupBy::Field(ARTIST)));
         assert_eq!(GroupBy::parse("taken"), Some(GroupBy::Field(TAKEN)));
         assert_eq!(GroupBy::parse("duration"), None, "numbers do not group (decision 25)");
