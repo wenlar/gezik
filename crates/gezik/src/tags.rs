@@ -1216,6 +1216,22 @@ fn key_label_of(action: Action) -> String {
     crate::keys::chord_for(action).map(|c| crate::keys::chord_label(&c, Platform::current())).unwrap_or_default()
 }
 
+/// What the status bar adds while a Search and Retag… search shows (plan sapma 7).
+pub fn retag_hint() -> Option<String> {
+    let gezik_core::nav::Location::Search(spec) = crate::panes::active_nav().active_location() else { return None };
+    RETAG.with(|r| {
+        let r = r.borrow();
+        let (old, new) = r.as_ref()?;
+        spec.tags.iter().any(|t| same_name(t, old)).then(|| {
+            format!(
+                "Select them, then Tags… ({}): {old} comes off and {} goes on",
+                key_label_of(Action::Tags),
+                new.name
+            )
+        })
+    })
+}
+
 /// The picker's edits when it opens on the results of a Search and Retag… search (taken once).
 fn retag_edits() -> Option<Edits> {
     let gezik_core::nav::Location::Search(spec) = crate::panes::active_nav().active_location() else { return None };

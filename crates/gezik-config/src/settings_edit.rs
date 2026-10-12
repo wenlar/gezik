@@ -226,8 +226,28 @@ pub fn with_tag_list_edit(
             let neighbour = k.and_then(|k| if *up { k.checked_sub(1) } else { Some(k + 1) }).and_then(|k| list.get(k));
             let Some(other) = neighbour.and_then(|t| find(array, &t.name)) else { return Ok(doc.to_string()) };
             let (mine, theirs) = (entry, array.get(other).cloned().unwrap_or_else(|| toml_edit::Value::from("")));
-            put(array, at, theirs);
-            put(array, other, mine);
+            // Each slot keeps the end of the line before it (a comment on the previous entry's
+            // line); the comment lines above an entry go with it.
+            let parts = |value: &toml_edit::Value| -> (String, String) {
+                let prefix = value.decor().prefix().and_then(|p| p.as_str()).unwrap_or_default().to_owned();
+                match prefix.find('\n') {
+                    Some(end) => (prefix[..=end].to_owned(), prefix[end + 1..].to_owned()),
+                    None => (prefix, String::new()),
+                }
+            };
+            let ((mine_head, mine_tail), (their_head, their_tail)) = (parts(&mine), parts(&theirs));
+            let moved = |mut value: toml_edit::Value, head: &str, tail: &str| {
+                value.decor_mut().set_prefix(format!("{head}{tail}"));
+                value
+            };
+            let (to_at, to_other) =
+                (moved(theirs.clone(), &mine_head, &their_tail), moved(mine.clone(), &their_head, &mine_tail));
+            if let Some(slot) = array.get_mut(at) {
+                *slot = to_at;
+            }
+            if let Some(slot) = array.get_mut(other) {
+                *slot = to_other;
+            }
         }
         TagListEdit::Remove(_) => {
             array.remove(at);
@@ -1016,6 +1036,23 @@ pattern = \"y\"
         // No list in the file: the list in effect, edited.
         let fresh = with_tag_list_edit("[tags]\n", &TagListEdit::Remove("Home".into()), &list).unwrap();
         assert_eq!(names(&fresh), ["Work", "Late"]);
+    }
+
+    #[test]
+    fn a_moved_tag_takes_its_comment_lines_along() {
+        use crate::tags::TagListEdit;
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "[tags]\nlist = [\n  # work first\n  { name = \"Work\", color = \"blue\" },\n  # home stuff\n  # more\n  { name = \"Home\" },\n]\n";
+        let list = vec![Tag::new("Work", TagColor::Blue), Tag::new("Home", TagColor::None)];
+        let moved = with_tag_list_edit(text, &TagListEdit::Move("Home".into(), true), &list).unwrap();
+        let home = moved.find("# home stuff").unwrap();
+        assert!(home < moved.find("# more").unwrap() && moved.find("# more").unwrap() < moved.find("Home").unwrap());
+        assert!(moved.find("Home").unwrap() < moved.find("# work first").unwrap(), "{moved}");
+        assert!(moved.find("# work first").unwrap() < moved.find("Work").unwrap(), "{moved}");
+        let back =
+            with_tag_list_edit(&moved, &TagListEdit::Move("Home".into(), false), &[list[1].clone(), list[0].clone()])
+                .unwrap();
+        assert_eq!(back, text, "and back as it was");
     }
 
     #[test]
