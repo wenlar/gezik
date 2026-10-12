@@ -1867,14 +1867,18 @@ Some folders could not be read"
             use slint::Model;
             let texts =
                 |narrow| viewer::bar_tools(&info, narrow).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
-            assert_eq!(texts(false), ["Hex", "‹", "1", "›", "−", "Fit", "+", "Fit"]);
+            assert_eq!(texts(false), ["Hex", "‹", "1", "›", "−", "+", "Fit"], "Fit once");
             assert_eq!(texts(true), ["‹", "1", "›", "−", "+", "Fit"], "narrow: no Hex, no figure");
+            let mut zoomed = info.clone();
+            zoomed.zoom_text = "125%".into();
+            assert_eq!(viewer::bar_tools(&zoomed, true).row_count(), 6);
+            assert_eq!(viewer::bar_tools(&zoomed, false).row_data(5).unwrap().text.as_str(), "125%");
             let mut locked = info.clone();
             locked.bar_link = "Enter Password…".into();
-            assert_eq!(
-                viewer::bar_tools(&locked, true).iter().map(|t| t.text.to_string()).collect::<Vec<_>>(),
-                ["Enter Password…", "‹", "1", "›"]
-            );
+            let locked =
+                |narrow| viewer::bar_tools(&locked, narrow).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+            assert_eq!(locked(true), ["Enter Password…"], "locked: the note gets the room");
+            assert_eq!(locked(false), ["Enter Password…", "Hex"]);
         }
         // A 4000 × 3000 photo shown from its 1024 px preview.
         let photo = entry(PathBuf::from("/x/p.jpg"), false);

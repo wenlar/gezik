@@ -248,13 +248,14 @@ impl PdfView {
         }
     }
 
-    /// Moves `step` pages (the last page's number unknown while opening), the view at the
-    /// new page's top (or its bottom when not `top`: the wheel going back); whether it moved.
+    /// Moves `step` pages once the document is open, the view at the new page's top (or its
+    /// bottom when not `top`: the wheel going back); whether it moved. Before that (pdfium
+    /// looked for, a password asked, a failure) the count stays at the page shown.
     pub fn step(&mut self, step: i64, top: bool) -> bool {
-        if self.stuck() {
+        if self.state != State::Ready {
             return false;
         }
-        let last = if self.pages == 0 { i64::from(u32::MAX) } else { i64::from(self.pages) };
+        let last = i64::from(self.pages.max(1));
         let page = (i64::from(self.page) + step).clamp(1, last.max(1)) as u32;
         if page == self.page {
             return false;
@@ -267,11 +268,6 @@ impl PdfView {
             self.zoom.go_top();
         }
         true
-    }
-
-    /// It cannot go on (no pdfium, a broken one, a failed file): pages do not turn.
-    fn stuck(&self) -> bool {
-        matches!(self.state, State::NoPdfium(_) | State::BrokenPdfium | State::Failed)
     }
 
     /// It cannot go on: the bar counts the page shown (a step made while opening never
@@ -434,8 +430,10 @@ mod tests {
     #[test]
     fn pages_step_within_the_document_and_a_picture_sizes_the_page() {
         let mut pdf = PdfView::new("a.pdf".into(), 1.0, (400.0, 400.0));
-        assert!(pdf.step(5, true), "the count is not known yet");
-        pdf.pages = 3;
+        assert!(!pdf.step(5, true), "not open yet: the count stays");
+        pdf.state = State::Password { wrong: false };
+        assert!(!pdf.step(1, true), "a password asked: no page turns");
+        (pdf.pages, pdf.state) = (3, State::Ready);
         pdf.page = 1;
         assert!(!pdf.step(-1, true) && pdf.step(1, true) && pdf.step(9, true));
         assert_eq!(pdf.page, 3);
@@ -448,9 +446,10 @@ mod tests {
         assert_eq!((shown.scale, shown.region), (1.0, (0, 0, 200, 400)));
         let Command::Render { scale, w, h, .. } = pdf.next_render() else { panic!() };
         assert_eq!((scale, w, h), (1.0, 200, 400), "the whole page, now that its size is known");
+        assert_eq!(pdf.note(), ("", ""));
+        pdf.state = State::Opening;
         assert_eq!(pdf.note(), ("Opening…", ""));
         pdf.state = State::Ready;
-        assert_eq!(pdf.note(), ("", ""));
         pdf.page_failed = true;
         assert_eq!(pdf.note(), ("This page could not be shown", ""), "one bad page keeps the document");
         pdf.state = State::NoPdfium(None);
@@ -462,7 +461,7 @@ mod tests {
     #[test]
     fn without_pdfium_the_count_says_the_page_shown_and_pages_do_not_turn() {
         let mut pdf = PdfView::new("a.pdf".into(), 1.0, (400.0, 400.0));
-        assert!(pdf.step(1, true), "page 2 asked while pdfium is looked for");
+        assert!(!pdf.step(1, true), "no page turns while pdfium is looked for");
         pdf.set_stuck(State::NoPdfium(None));
         assert_eq!(pdf.page, 1, "the first look is page 1");
         assert!(!pdf.step(1, true));
