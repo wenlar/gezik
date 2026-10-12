@@ -44,7 +44,13 @@ impl Shown {
         let text = files.settings.as_deref().unwrap_or(gezik_config::store::SETTINGS_TEMPLATE);
         match schema::values(text) {
             Ok(values) => (self.values, self.broken) = (values, None),
-            Err(warning) => (self.values, self.broken) = (vec![None; FIELDS.len()], Some(warning.to_string())),
+            Err(warning) => {
+                // Read-only, with the values of the last text that read (what was in effect
+                // before the file broke), not the built-in defaults.
+                let last = LAST_GOOD.with(|l| l.borrow().as_deref().and_then(|text| schema::values(text).ok()));
+                self.values = last.unwrap_or_else(|| vec![None; FIELDS.len()]);
+                self.broken = Some(warning.to_string());
+            }
         }
         self.unknown = schema::unknown_keys(text);
         let mut themes: Vec<String> =
@@ -153,6 +159,17 @@ struct Open {
 
 thread_local! {
     static OPEN: RefCell<Option<Rc<Open>>> = const { RefCell::new(None) };
+    /// settings.toml's last text that read, for the rows while the file is broken.
+    static LAST_GOOD: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// The config files are about to be replaced by a fresh read: their settings.toml text is kept
+/// if it reads (the rows show it while the new one is broken). Only on a reload, never idle.
+pub fn keep_last_good(files: &ConfigFiles) {
+    let Some(text) = files.settings.as_deref() else { return };
+    if schema::values(text).is_ok() {
+        LAST_GOOD.with(|l| *l.borrow_mut() = Some(text.to_owned()));
+    }
 }
 
 fn current() -> Option<Rc<Open>> {
@@ -515,8 +532,23 @@ mod tests {
         let s = shown("theme = \"auto\"\n[layout\n");
         assert!(s.broken.as_deref().is_some_and(|b| b.starts_with("settings.toml line 2: ")), "{:?}", s.broken);
         assert_eq!(s.change(0, "{home}/x"), Err("Fix settings.toml first".to_owned()));
-        assert!(s.item(s.rows[0]).is_default, "the defaults show");
+        assert!(s.item(s.rows[0]).is_default, "no good text before: the defaults show");
         assert!(s.status().1 && s.status().0.starts_with("settings.toml line 2: "), "{:?}", s.status());
+    }
+
+    #[test]
+    fn a_broken_file_shows_the_last_values_that_read() {
+        let good =
+            ConfigFiles { settings: Some("[files]\nconfirm-trash = true\n".to_owned()), ..ConfigFiles::default() };
+        keep_last_good(&good);
+        keep_last_good(&ConfigFiles { settings: Some("[files\n".to_owned()), ..ConfigFiles::default() });
+        let s = shown("[files]\nconfirm-trash = true\n[layout\n");
+        assert!(s.broken.is_some());
+        let trash = s.item(s.rows[row_of(&s, "files.confirm-trash")]);
+        assert_eq!((trash.value.as_str(), trash.is_default, trash.default.as_str()), ("true", false, "false"));
+        let verify = s.item(s.rows[row_of(&s, "files.verify")]);
+        assert_eq!((verify.is_default, verify.default.as_str()), (true, "false"), "the default text stays");
+        LAST_GOOD.with(|l| l.borrow_mut().take());
     }
 
     #[test]
