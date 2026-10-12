@@ -18,6 +18,8 @@ pub enum SortKey {
     Size,
     /// The search results' own sort (a result's folder), not a folder's.
     Folder,
+    /// A metadata field (spec 13 §8.2): from `Grouping::field`, rows without a value last.
+    Field(crate::fields::FieldId),
     /// Each row's front tag (spec 12 §6.2): from `Grouping::tags`, none without it.
     Tags,
     /// Each row's stars (spec 12 §8.2): from `Grouping::rating`, none without it.
@@ -44,14 +46,19 @@ impl SortKey {
             SortKey::Type => "type",
             SortKey::Size => "size",
             SortKey::Folder => "folder",
+            SortKey::Field(id) => id.def().key,
             SortKey::Tags => "tags",
             SortKey::Rating => "rating",
         }
     }
 
-    /// `ALL` and `Folder` (the search results' own sort, spec 4.5).
+    /// `ALL`, `Folder` (the search results' own sort, spec 4.5) and a field's key (`duration`).
     pub fn parse(text: &str) -> Option<SortKey> {
-        SortKey::ALL.into_iter().chain([SortKey::Folder]).find(|k| k.as_str() == text)
+        SortKey::ALL
+            .into_iter()
+            .chain([SortKey::Folder])
+            .find(|k| k.as_str() == text)
+            .or_else(|| crate::fields::by_key(text).map(SortKey::Field))
     }
 }
 
@@ -181,7 +188,7 @@ impl Iterator for Tokens<'_> {
 }
 
 /// Compares two names' keys token by token (natural order, case ignored).
-fn key_cmp(a: &str, b: &str) -> Ordering {
+pub(crate) fn key_cmp(a: &str, b: &str) -> Ordering {
     // The bytes both names start with give the same tokens, unless they end inside a
     // character or a digit run (`file12` and `file13`): start at the last place both agree.
     let mut i = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
@@ -430,7 +437,8 @@ pub fn sort_rows_grouped<'e, 'a>(
     };
     // Folders whose size is on their way go last in either direction (spec 6.3); so do rows
     // whose tags or rating are (spec 12 §3.4). In a rating sort the rows not rated go last too,
-    // before those not read, both by name whatever the direction (12d screen test).
+    // before those not read, both by name whatever the direction (12d screen test). So do rows
+    // whose field is on its way or has no value (spec 13 §8.2).
     let tags = group.and_then(|g| g.tags).filter(|_| spec.key == SortKey::Tags);
     let ratings = group.and_then(|g| g.rating).filter(|_| spec.key == SortKey::Rating);
     let last = |e: &Entry, key: Option<&TagKey>, stars: Option<Option<u8>>| -> u8 {
@@ -440,7 +448,15 @@ pub fn sort_rows_grouped<'e, 'a>(
             _ => u8::from((spec.key == SortKey::Size && e.size_pending()) || key == Some(&TagKey::Pending)),
         }
     };
-    let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder);
+    let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder | SortKey::Field(_));
+    let field = match spec.key {
+        SortKey::Field(id) => Some((id, group.and_then(|g| g.field))),
+        _ => None,
+    };
+    // A field's values; a text value as name-order tokens in the key buffer instead (Turkish
+    // order, nothing made per comparison), its value then `None`.
+    let mut values: Vec<Option<crate::fields::Value>> = Vec::with_capacity(if field.is_some() { len } else { 0 });
+    let mut texts: Vec<(u32, u32)> = Vec::with_capacity(if field.is_some() { len } else { 0 });
     // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
     // column's value when it is not the row's text.
     let mut kinds: Vec<(bool, u8)> = Vec::with_capacity(len);
@@ -449,9 +465,23 @@ pub fn sort_rows_grouped<'e, 'a>(
         let e = entry(i);
         let tag = tags.map(|key| key(&e));
         let stars = ratings.map(|key| key(&e));
-        kinds.push((e.is_dir, last(&e, tag.as_ref(), stars)));
+        let value = field.map(|(id, look)| look.and_then(|look| look(&e, id)).flatten());
+        let after = u8::from(value.as_ref().is_some_and(Option::is_none));
+        kinds.push((e.is_dir, last(&e, tag.as_ref(), stars).max(after)));
+        if let Some(value) = value {
+            match value {
+                Some(crate::fields::Value::Text(text)) => {
+                    texts.push(push(&text, false));
+                    values.push(None);
+                }
+                other => {
+                    texts.push((0, 0));
+                    values.push(other);
+                }
+            }
+        }
         keys.extend(match spec.key {
-            SortKey::Name | SortKey::Folder => None,
+            SortKey::Name | SortKey::Folder | SortKey::Field(_) => None,
             SortKey::Modified => Some(Primary::Time(e.modified)),
             SortKey::Created => Some(Primary::Time(e.created)),
             // A file's size, a folder's worked-out total; a folder without one as 0 (as before).
@@ -477,6 +507,9 @@ pub fn sort_rows_grouped<'e, 'a>(
             let primary = match spec.key {
                 SortKey::Name => Ordering::Equal,
                 SortKey::Folder => key_cmp(folder(i), folder(j)),
+                SortKey::Field(_) => span(texts[i])
+                    .cmp(span(texts[j]))
+                    .then_with(|| crate::fields::compare(values[i].as_ref(), values[j].as_ref())),
                 _ => match (&keys[i], &keys[j]) {
                     (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
                         span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))

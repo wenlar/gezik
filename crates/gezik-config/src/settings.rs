@@ -868,7 +868,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     {
         out.view.mode = mode;
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\" or \"rating\"";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)";
     // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
     let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
     if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
@@ -881,7 +881,8 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
         out.view.grid_size = size;
     }
-    let groups = "\"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\"";
+    let groups =
+        "\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)";
     if let Some(group) = view_choice(table, "group", groups, GroupBy::parse, file, warnings) {
         out.view.group = group;
     }
@@ -2695,8 +2696,9 @@ width = 900
         assert!(messages[0].starts_with("view.mode:") && messages[0].contains("\"tiles\""));
         assert!(messages[1].starts_with("view.sort-dir:"));
         assert!(
-            messages[2]
-                .starts_with("view.group: expected \"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\""),
+            messages[2].starts_with(
+                "view.group: expected \"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property"
+            ),
             "{messages:?}"
         );
         assert!(messages[3].starts_with("view.thumbnails:"));
@@ -2715,6 +2717,25 @@ width = 900
         let back = State::parse(&state.to_toml());
         assert_eq!(back, state);
         assert_eq!(back.columns.unwrap()[3].key, ColumnKey::Size);
+    }
+
+    #[test]
+    fn field_columns_round_trip_in_the_state() {
+        use gezik_core::view::{ColumnKey, default_columns, show_field};
+        let mut columns = default_columns();
+        show_field(&mut columns, gezik_core::fields::ARTIST);
+        let state = State { columns: Some(columns.clone()), ..State::default() };
+        assert!(state.to_toml().contains("key = \"artist\""), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()).columns, Some(columns));
+        let unknown = State::parse(
+            "[[columns]]
+key = \"artsit\"
+width = 100
+",
+        )
+        .columns
+        .unwrap();
+        assert!(unknown.iter().all(|c| !matches!(c.key, ColumnKey::Field(_))), "an unknown name is left out");
     }
 
     #[test]

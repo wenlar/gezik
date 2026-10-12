@@ -209,6 +209,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::TogglePreview
         | Action::PreviewHex
         | Action::PreviewPlay
+        | Action::MoreColumns
         | Action::QuickLook
         | Action::Trash
         | Action::DeletePermanently

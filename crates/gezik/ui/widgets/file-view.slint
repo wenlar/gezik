@@ -48,6 +48,16 @@ export struct FileRow {
     // the theme's) and a bold name.
     tint: color,
     bold: bool,
+    // The field columns' cells (spec 13 §8.1), as `FileView.field-columns`; empty until read.
+    fields: [string],
+}
+
+// A field column's header (spec 13 §8.1): its title, width, alignment and its sort number.
+export struct FieldColumn {
+    title: string,
+    width: length,
+    right: bool,
+    index: int,
 }
 
 // A row's tag dots: up to three 8 px dots overlapping as in Finder, then "+2" for more. On a
@@ -216,6 +226,12 @@ export component FileView inherits Rectangle {
     in-out property <length> col-tags;
     in-out property <length> col-rating;
     in-out property <length> col-comment;
+    // The field columns after Size (spec 13 §8.1), their widths' sum and count.
+    in property <[FieldColumn]> field-columns;
+    in property <length> field-width;
+    in property <int> field-count;
+    // A field column's edge is dragged: its new width (Rust changes its header in place).
+    callback field-resized(int, length);
     // The trash is shown: Folder and Modified are where items were and when they were deleted.
     in property <bool> trash;
     // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 7 Tags, 8 Rating) and direction.
@@ -337,14 +353,14 @@ export component FileView inherits Rectangle {
     property <int> shown-columns: (root.col-modified > 0 ? 1 : 0) + (root.col-created > 0 ? 1 : 0)
         + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0) + (root.col-folder > 0 ? 1 : 0)
         + (root.col-match > 0 ? 1 : 0) + (root.col-tags > 0 ? 1 : 0) + (root.col-rating > 0 ? 1 : 0)
-        + (root.col-comment > 0 ? 1 : 0);
+        + (root.col-comment > 0 ? 1 : 0) + root.field-count;
 
     // Right edge of the Name column, in a row's own coordinates (rows are inset from the
     // list's edges): a drag that starts right of it, on a row, selects with a rectangle; from
     // the name it is kept for dragging files (sub-project 4).
     property <length> name-end: root.mode == 2 ? list.visible-width : max(root.side + 150px, list.visible-width - 2 * Theme.inset - root.side - root.col-modified - root.col-created
         - root.col-type - root.col-size - root.col-folder - root.col-match - root.col-tags - root.col-rating
-        - root.col-comment - root.gap * root.shown-columns);
+        - root.col-comment - root.field-width - root.gap * root.shown-columns);
 
     property <bool> marquee-active;
     property <bool> marquee-additive;
@@ -559,6 +575,18 @@ export component FileView inherits Rectangle {
                 text: "Comment";
                 menu(x, y) => { root.header-menu(x, y); }
                 resize(w) => { root.col-comment = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            for column[i] in root.field-columns: HeaderCell {
+                gap-before: root.gap;
+                width: column.width;
+                text: column.title;
+                right-aligned: column.right;
+                sorted: root.sort-column == column.index;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(column.index); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.field-resized(i, w); }
                 resize-done => { root.columns-resized(); }
             }
         }
@@ -846,6 +874,15 @@ export component FileView inherits Rectangle {
                     if root.col-comment > 0 && root.mode == 0: Text {
                         width: root.col-comment;
                         text: entry.file.comment;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                    // Rust leaves the cells empty outside the list (file_row).
+                    for cell[i] in entry.file.fields: Text {
+                        width: root.field-columns[i].width;
+                        text: cell;
+                        horizontal-alignment: root.field-columns[i].right ? right : left;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;

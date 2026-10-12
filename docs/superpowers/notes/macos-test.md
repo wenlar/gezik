@@ -807,6 +807,14 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 380. **Music.** An MP3 with tags and a cover: the poster is its own cover (also when Finder shows none), `Media` Duration, Audio Codec `MP3`, Bit Rate, Sample Rate; `Music` Title, Artist, Album, Track, Year. The bar shows the length before `▶` (not `--:--`). An M4A and a FLAC the same.
 381. **Document.** A DOCX saved by Word or Pages (File ▸ Properties filled in): `Document` Title, Author, Pages, Words. A PDF with a title shows its Title and Pages. In `settings.toml` set `[preview]` `properties = false`: no Properties rows (and Get Info still shows them).
 
+### 13e, property columns
+
+13e uses 382–384. First `cargo test -p gezik-core field` and `cargo test -p gezik field`; paste the output.
+
+382. **Music columns.** In a music folder right-click the column header ▸ `More Columns…`, type `art`, Enter on Artist; then Album and Duration (Esc closes). The three columns show after Size, filled for the rows on screen within a moment; scrolling fills the next rows. Click Duration's header: shortest first, files without one (a `.txt`) last; again: longest first. Drag Artist's left edge: it widens, the rows follow; quit and start Gezik: the columns and widths are back. View ▸ Group By ▸ Property… ▸ Album: one group per album, `No Album` last. Right-click a header ▸ `Hide Artist`.
+383. **Photo filter.** In a folder of iPhone photos press ⌘F and type `taken>=2024 camera:iphone`: while the status line says `Reading properties… n of m` the rows are faint, then only the 2024+ iPhone photos stay. `duration>3x` shows `duration>3x: "3x" is not a duration (3m, 1:30)` and the list stays. A name part too: `IMG_1* taken>=2024`.
+384. **View rule.** Add to `settings.toml`: `[[view-rules]]` `path = "~/Music/**"` `columns = ["artist", "album", "track", "duration"]` `sort = "track"`. Open a folder under ~/Music: the four columns show, sorted by Track; another folder keeps its own columns. In the preview pane right-click a property row (Camera) ▸ `Show Column`: that column appears.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

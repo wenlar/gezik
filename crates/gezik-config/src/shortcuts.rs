@@ -445,10 +445,12 @@ pub enum Action {
     PreviewHex,
     /// The selected video or sound file plays in the preview, or pauses (spec 13 §6; no key).
     PreviewPlay,
+    /// The metadata fields to show as columns (spec 13 §8.1; no key).
+    MoreColumns,
 }
 
 impl Action {
-    pub const ALL: [Action; 126] = [
+    pub const ALL: [Action; 127] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -575,6 +577,7 @@ impl Action {
         Action::CleanTagStore,
         Action::PreviewHex,
         Action::PreviewPlay,
+        Action::MoreColumns,
     ];
 
     pub fn name(self) -> &'static str {
@@ -705,6 +708,7 @@ impl Action {
             Action::CleanTagStore => "clean-tag-store",
             Action::PreviewHex => "preview-hex",
             Action::PreviewPlay => "preview-play",
+            Action::MoreColumns => "more-columns",
         }
     }
 
@@ -849,6 +853,7 @@ impl Action {
             Action::CleanTagStore => "Clean Up Tag Store…",
             Action::PreviewHex => "Show Preview as Hex",
             Action::PreviewPlay => "Play/Pause Preview",
+            Action::MoreColumns => "More Columns…",
         }
     }
 
@@ -1074,7 +1079,8 @@ impl Action {
                 | Action::EditComment
                 | Action::CleanTagStore
                 | Action::PreviewHex
-                | Action::PreviewPlay,
+                | Action::PreviewPlay
+                | Action::MoreColumns,
                 _,
             ) => &[],
             // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
@@ -2292,6 +2298,8 @@ refresh = [\"f5\", \"ctrl+r\"]
         assert_eq!(Action::PreviewHex.title(), "Show Preview as Hex");
         assert_eq!(Action::from_name("preview-play"), Some(Action::PreviewPlay));
         assert_eq!(Action::PreviewPlay.title(), "Play/Pause Preview");
+        assert_eq!(Action::from_name("more-columns"), Some(Action::MoreColumns));
+        assert_eq!(Action::MoreColumns.title(), "More Columns…");
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::PreviewHex), None, "spec 13 §10.2");
         }

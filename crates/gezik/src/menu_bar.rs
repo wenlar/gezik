@@ -40,6 +40,14 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
                 let names = crate::tab_sets::names();
                 return crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
             }
+            // Sorting or grouping by a property: the picker of fields (spec 13 §8.2).
+            if let Some(purpose) = match name {
+                "sort-property" => Some(crate::field_picker::Purpose::Sort),
+                "group-property" => Some(crate::field_picker::Purpose::Group),
+                _ => None,
+            } {
+                return crate::field_picker::with_current(|p| p.open(purpose));
+            }
             if let Some(index) = name.strip_prefix("tag:").and_then(|i| i.parse::<usize>().ok()) {
                 return crate::tags::toggle_nth(index + 1, &crate::panes::active_view());
             }
