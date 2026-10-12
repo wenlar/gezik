@@ -1,5 +1,5 @@
 //! A virtual pointer for trying drag and drop under a wlroots compositor with no real mouse
-//! (scripts/linux/test.sh): `vpointer WIDTH HEIGHT move X Y | down | up | sleep MS ...`,
+//! (scripts/linux/test.sh): `vpointer WIDTH HEIGHT move X Y | down | up | rdown | rup | sleep MS ...`,
 //! positions in the output's pixels.
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -26,8 +26,9 @@ mod linux {
     use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
     use wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 
-    /// Linux's code for the left button.
+    /// Linux's codes for the left and right buttons.
     const BTN_LEFT: u32 = 0x110;
+    const BTN_RIGHT: u32 = 0x111;
 
     #[derive(Default)]
     struct State {
@@ -81,6 +82,8 @@ mod linux {
                 }
                 "down" => pointer.button(time(), BTN_LEFT, ButtonState::Pressed),
                 "up" => pointer.button(time(), BTN_LEFT, ButtonState::Released),
+                "rdown" => pointer.button(time(), BTN_RIGHT, ButtonState::Pressed),
+                "rup" => pointer.button(time(), BTN_RIGHT, ButtonState::Released),
                 "sleep" => {
                     conn.flush().map_err(|e| e.to_string())?;
                     std::thread::sleep(Duration::from_millis(u64::from(number(words.next())?)));

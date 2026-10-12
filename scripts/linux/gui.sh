@@ -3,8 +3,8 @@
 # input: xdotool (XTEST) under Xvfb, wtype and the vpointer example under a headless sway.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
-#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|terminal|copy-path|session|tabsets|pins|view-options|all]
-#   (not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
+#       -e CARGO_TARGET_DIR=/target gezik-linux bash scripts/linux/gui.sh [x11|wayland|popups|tabdrag|pdf|pdfnote|filter|select|tabs|keyboard|commands|paths|history|terminal|copy-path|session|tabsets|pins|view-options|steps|steps-x11|steps-wayland|all]
+#   (`steps*`: steps 12-14, see gui-steps.sh. Not in `all`, release builds: `filterperf` times the filter at 100,000 files, `memory [exe]`
 #   gives idle memory)
 # Needs the network (apt for 7-Zip, Gezik's own 7-Zip download). Screenshots go to
 # .superpowers/linux-shots/gui-*.png. Each check prints "ok" or "FAIL"; the exit code is the
@@ -12,7 +12,9 @@
 # at 0,0); dialogs are found where Gezik put them at the window sizes set below.
 set -u
 cd /src
-cargo build -p gezik 2>&1 | tail -1
+# GEZIK_NO_BUILD=1: use the binaries built before (one build per run on a machine that crashes
+# under parallel compiles).
+[ -n "${GEZIK_NO_BUILD:-}" ] || cargo build -p gezik 2>&1 | tail -1
 GEZIK=/target/debug/gezik
 export HOME=/root
 failures=0
@@ -264,7 +266,7 @@ wayland() {
     export SWAYSOCK=$(ls $XDG_RUNTIME_DIR/sway-ipc.*.sock 2>/dev/null | head -1)
     unset DISPLAY
     check "wayland: sway runs" '[ -n "$WAYLAND_DISPLAY" ]'
-    cargo build -p gezik-platform --example vpointer 2>&1 | tail -1
+    [ -n "${GEZIK_NO_BUILD:-}" ] || cargo build -p gezik-platform --example vpointer 2>&1 | tail -1
     SHOTS=/src/.superpowers/linux-shots
     wshot() { mkdir -p $SHOTS && grim "$SHOTS/$1.png" 2>/dev/null; }
     # Each wtype is a new virtual keyboard that goes away at its end, which Gezik sees as the
@@ -1978,7 +1980,11 @@ scoped() {
 }
 
 setup_7zip
+. /src/scripts/linux/gui-steps.sh
 case "${1:-all}" in
+    steps-x11) steps_setup; scoped steps_x11 ;;
+    steps-wayland) steps_setup; scoped steps_wayland ;;
+    steps) steps_setup; scoped steps_x11; scoped steps_wayland ;;
     x11) scoped x11 ;;
     wayland) scoped wayland ;;
     popups) scoped popups ;;

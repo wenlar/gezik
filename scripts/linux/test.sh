@@ -7,7 +7,7 @@
 # `cargo test --workspace` instead (not part of `all`).
 set -u
 cd /src
-cargo build -p gezik 2>&1 | tail -1
+[ -n "${GEZIK_NO_BUILD:-}" ] || cargo build -p gezik 2>&1 | tail -1   # GEZIK_NO_BUILD=1: reuse the last build
 GEZIK=/target/debug/gezik
 failures=0
 pass() { echo "ok   $1"; }
@@ -106,7 +106,7 @@ wayland() {
 
     # Drag and drop between two Gezik windows (sway puts them side by side), with a virtual
     # pointer: b.txt from the first window onto folder D in the second.
-    cargo build -p gezik-platform --example vpointer 2>&1 | tail -1
+    [ -n "${GEZIK_NO_BUILD:-}" ] || cargo build -p gezik-platform --example vpointer 2>&1 | tail -1
     GEZIK_CONFIG_DIR=/tmp/cfg $GEZIK /tmp/t >/tmp/gezik-wl-b.log 2>&1 &
     local second=$!
     sleep 3
