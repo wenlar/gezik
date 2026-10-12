@@ -519,6 +519,10 @@ actions! {
     EditShortcuts,
     /// The settings window's Appearance page, where a theme is got from GitHub (spec 14 §6).
     InstallTheme,
+    /// Settings' Sync and Backup page, at Export Settings (spec 14 §7.1).
+    ExportSettings,
+    /// Settings' Sync and Backup page, at Import Settings (spec 14 §7.2).
+    ImportSettings,
 }
 
 impl Action {
@@ -654,6 +658,8 @@ impl Action {
             Action::Settings => "settings",
             Action::EditShortcuts => "edit-shortcuts",
             Action::InstallTheme => "install-theme",
+            Action::ExportSettings => "export-settings",
+            Action::ImportSettings => "import-settings",
         }
     }
 
@@ -802,6 +808,8 @@ impl Action {
             Action::Settings => "Settings…",
             Action::EditShortcuts => "Keyboard Shortcuts…",
             Action::InstallTheme => "Get Theme…",
+            Action::ExportSettings => "Export Settings…",
+            Action::ImportSettings => "Import Settings…",
         }
     }
 
@@ -2362,6 +2370,7 @@ copy-path = \"ctrl+k\"
         assert_eq!(s.chords_for(Action::Refresh), [chord("f5"), chord("ctrl+r")]);
         assert_eq!(Action::from_name("edit-shortcuts"), Some(Action::EditShortcuts));
         assert_eq!(Action::from_name("install-theme"), Some(Action::InstallTheme));
+        assert_eq!(Action::from_name("import-settings"), Some(Action::ImportSettings));
     }
 
     #[test]

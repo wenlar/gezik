@@ -2236,6 +2236,11 @@ impl View {
         }
     }
 
+    /// The folder views read from an imported views.toml, in place of those in memory.
+    pub fn replace_memory(&self, memory: ViewMemory) {
+        *self.0.memory.borrow_mut() = memory;
+    }
+
     /// Hands a change still waiting for its timer to the `views.toml` writer now (on close).
     pub fn flush_memory(&self) {
         if SAVE_PENDING.with(Cell::get) {

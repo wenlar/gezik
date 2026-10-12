@@ -160,6 +160,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::Settings => crate::settings_window::open(),
         Action::EditShortcuts => crate::settings_window::open_shortcuts(),
         Action::InstallTheme => crate::settings_window::open_themes(),
+        Action::ExportSettings => crate::settings_window::open_backup(false),
+        Action::ImportSettings => crate::settings_window::open_backup(true),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

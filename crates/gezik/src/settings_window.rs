@@ -4,6 +4,7 @@
 //! the settings writer's queue; the reload that follows updates every window and this one.
 //! The window is made when it opens and let go when it closes: nothing of it stays.
 
+mod backup;
 mod shortcuts;
 mod themes;
 
@@ -15,7 +16,7 @@ use gezik_config::schema::{self, Described, FIELDS, Field, Kind, Page};
 use gezik_config::settings::Settings;
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::shortcuts::Platform;
-use gezik_config::store::ConfigFiles;
+use gezik_config::store::{ConfigFiles, ConfigStore};
 use gezik_config::theme::{BUILTIN_THEMES, ResolvedTheme};
 use gezik_core::nav::Location;
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
@@ -60,6 +61,9 @@ struct Shown {
     /// Themes from GitHub, and those of their rows shown (after the key rows).
     got: themes::Themes,
     theme_rows: Vec<themes::Row>,
+    /// Export, import and the backups, and those of their rows shown (after the theme rows).
+    backup: backup::Backup,
+    backup_rows: Vec<backup::Row>,
 }
 
 impl Shown {
@@ -107,6 +111,20 @@ impl Shown {
             "" if page != Page::Appearance => Vec::new(),
             _ => self.got.rows(query),
         };
+        self.backup_rows = match query {
+            "" if page != Page::SyncAndBackup => Vec::new(),
+            _ => self.backup.rows(query),
+        };
+    }
+
+    /// The rows that edit settings.toml (read-only while it does not read): the fields and keys.
+    fn locked_rows(&self) -> usize {
+        self.rows.len() + self.key_rows.len()
+    }
+
+    /// The backup row of window row `row` (they come after the theme rows).
+    fn backup_of(&self, row: usize) -> Option<backup::Row> {
+        self.backup_rows.get(row.checked_sub(self.locked_rows() + self.theme_rows.len())?).copied()
     }
 
     /// The theme row of window row `row` (they come after the key rows).
@@ -158,7 +176,7 @@ impl Shown {
         if let Some(broken) = &self.broken {
             return (format!("{broken} — fix it in settings.toml; until then these are read-only"), true);
         }
-        if self.rows.is_empty() && self.key_rows.is_empty() && self.theme_rows.is_empty() {
+        if self.locked_rows() + self.theme_rows.len() + self.backup_rows.len() == 0 {
             return ("No setting matches".to_owned(), false);
         }
         let advanced = Page::ALL[self.page.min(Page::ALL.len() - 1)] == Page::Advanced && self.query.trim().is_empty();
@@ -251,6 +269,11 @@ pub fn open() {
         Some(files) => shown.read(&gezik_config::lock(&files), settings),
         None => shown.read(&ConfigFiles::default(), settings),
     });
+    let date = gezik_platform::local_date_parts(std::time::SystemTime::now())
+        .map(|p| format!("{:04}-{:02}-{:02}", p.year, p.month, p.day))
+        .unwrap_or_default();
+    let zip = gezik_config::paths::KnownDirs::system().expand(&format!("{{documents}}/gezik-settings-{date}.zip"));
+    shown.backup.export_to = zip.display().to_string();
     shown.pick_rows();
     let links = ["Open settings.toml", "Open Config Folder"];
     let pages: Vec<SharedString> = Page::ALL.iter().map(|p| p.title()).chain(links).map(Into::into).collect();
@@ -279,8 +302,32 @@ pub fn open_shortcuts() {
 /// Opens the window at its Appearance page, where Get Theme is (`install-theme`).
 pub fn open_themes() {
     if let Some(open) = open_at(Page::Appearance) {
-        say(&open, "Paste the address in Get Theme, after the settings of this page");
+        say(&open, "Paste the address in Get Theme and press Enter");
+        let get = open.shown.borrow().theme_rows.iter().position(|r| *r == themes::Row::Get);
+        let before = open.shown.borrow().locked_rows();
+        if let Some(get) = get {
+            focus_row(&open, before + get);
+        }
     }
+}
+
+/// Opens the window at its Sync and Backup page (`export-settings`, `import-settings`).
+pub fn open_backup(import: bool) {
+    if let Some(open) = open_at(Page::SyncAndBackup) {
+        let row = if import { "Import Settings" } else { "Export Settings" };
+        say(&open, &format!("Type the zip's path in {row} and press Enter"));
+    }
+}
+
+/// Scrolls row `row` into view and gives its control the keyboard (once the rows are laid out).
+fn focus_row(open: &Open, row: usize) {
+    open.window.set_focus_row(-1);
+    let row = i32::try_from(row).unwrap_or(-1);
+    slint::Timer::single_shot(Duration::ZERO, move || {
+        if let Some(open) = current() {
+            open.window.set_focus_row(row);
+        }
+    });
 }
 
 fn open_at(page: Page) -> Option<Rc<Open>> {
@@ -312,6 +359,7 @@ pub fn close() {
 pub fn refresh(files: &ConfigFiles) {
     let Some(open) = current() else { return };
     with_settings(|settings| open.shown.borrow_mut().read(files, settings));
+    open.shown.borrow_mut().pick_rows();
     show_rows(&open, false);
 }
 
@@ -323,31 +371,49 @@ pub fn retheme(theme: &ResolvedTheme) {
 }
 
 /// Puts the rows in the window: all new (a page or a search) or row by row, so a field being
-/// typed in keeps its text.
+/// typed in keeps its text and the keyboard (rows that come or go are added or taken at the end).
 fn show_rows(open: &Open, new: bool) {
     let shown = open.shown.borrow();
     let keys = shown.key_rows.iter().map(|&k| shortcuts::item(&shown.keys[k], Platform::current()));
     let found = shown.theme_rows.iter().map(|&row| shown.got.item(row));
-    let items: Vec<SettingItem> = shown.rows.iter().map(|&i| shown.item(i)).chain(keys).chain(found).collect();
-    if new || items.len() != open.rows.row_count() {
+    let backups = shown.backup_rows.iter().map(|&row| shown.backup.item(row));
+    let items: Vec<SettingItem> =
+        shown.rows.iter().map(|&i| shown.item(i)).chain(keys).chain(found).chain(backups).collect();
+    if new {
         open.rows.set_vec(items);
     } else {
+        let count = items.len();
         for (row, item) in items.into_iter().enumerate() {
-            if open.rows.row_data(row).is_none_or(|old| !same(&old, &item)) {
-                open.rows.set_row_data(row, item);
+            match open.rows.row_data(row) {
+                None => open.rows.push(item),
+                Some(old) if !same(&old, &item) => open.rows.set_row_data(row, item),
+                Some(_) => {}
             }
+        }
+        while open.rows.row_count() > count {
+            open.rows.remove(open.rows.row_count() - 1);
         }
     }
     open.window.set_page(i32::try_from(shown.page).unwrap_or(0));
     open.window.set_read_only(shown.broken.is_some());
+    open.window.set_locked_rows(i32::try_from(shown.locked_rows()).unwrap_or(i32::MAX));
     let (status, bad) = shown.status();
-    open.window.set_status(status.into());
-    open.window.set_status_bad(bad);
+    let list = shown.backup_rows.contains(&backup::Row::Restore) && shown.backup.backups.is_none();
+    drop(shown);
+    // A reload keeps what the status line says (an import's outcome) unless it is a problem.
+    if new || bad || open.window.get_status_bad() {
+        open.window.set_status(status.into());
+        open.window.set_status_bad(bad);
+    }
+    if list {
+        list_backups(open);
+    }
 }
 
 /// Whether two rows show the same (their choices are new models each time).
 fn same(a: &SettingItem, b: &SettingItem) -> bool {
-    (&a.key, &a.value, a.is_default, &a.description) == (&b.key, &b.value, b.is_default, &b.description)
+    (a.kind, &a.title, &a.key, &a.value, a.is_default, &a.description)
+        == (b.kind, &b.title, &b.key, &b.value, b.is_default, &b.description)
         && a.options.iter().eq(b.options.iter())
 }
 
@@ -383,6 +449,10 @@ fn bind(open: &Rc<Open>) {
             let theme_row = open.shown.borrow().theme_of(row);
             if let Some(theme_row) = theme_row {
                 return theme_chosen(&open, theme_row, &text);
+            }
+            let backup_row = open.shown.borrow().backup_of(row);
+            if let Some(backup_row) = backup_row {
+                return backup_chosen(&open, backup_row, &text);
             }
             // A shortcut's Replace? answered.
             // Bound first: the borrow must end before `pending` is taken below.
@@ -491,10 +561,11 @@ fn bind(open: &Rc<Open>) {
     window.on_row_action({
         let weak = weak.clone();
         move |row, id| {
-            let Some(open) = weak.upgrade() else { return };
-            let theme_row = open.shown.borrow().theme_of(usize::try_from(row).unwrap_or(usize::MAX));
-            if let Some(theme_row) = theme_row {
-                let key = open.shown.borrow().got.item(theme_row).key;
+            let Some(open) = weak.upgrade() else { return 1 };
+            // A theme or backup row: its key is what Copy Key copies.
+            if usize::try_from(row).is_ok_and(|row| row >= open.shown.borrow().locked_rows()) {
+                let key = usize::try_from(row).ok().and_then(|row| open.rows.row_data(row)).map(|i| i.key);
+                let key = key.unwrap_or_default();
                 match id {
                     COPY_KEY if gezik_platform::clipboard::write_text(&key).is_err() => {
                         say(&open, "Cannot use the clipboard");
@@ -502,27 +573,37 @@ fn bind(open: &Rc<Open>) {
                     EDIT_FILE => edit_file(),
                     _ => {}
                 }
-                return;
+                return 1;
             }
             let key = open.shown.borrow().key_of(usize::try_from(row).unwrap_or(usize::MAX));
-            if let Some(key) = key {
+            if let Some(index) = key {
                 let shown = open.shown.borrow();
-                let key = &shown.keys[key];
+                let key = &shown.keys[index];
                 match id {
                     RESET if shown.broken.is_some() => say(&open, "Fix settings.toml first"),
-                    RESET => match shortcuts::reset(key, Platform::current()) {
-                        Ok(change) => write(change),
-                        Err(why) => say(&open, why),
-                    },
+                    RESET => {
+                        let reset = with_settings(|s| shortcuts::reset(key, s, &shown.text, Platform::current()));
+                        drop(shown);
+                        match reset {
+                            Ok(Pressed::Ask(question, changes)) => {
+                                open.shown.borrow_mut().pending = Some((index, changes));
+                                say(&open, &question);
+                                return 2;
+                            }
+                            Ok(Pressed::Write(changes)) => changes.into_iter().for_each(write),
+                            Ok(Pressed::Wait(why) | Pressed::Done(why)) => say(&open, &why),
+                            Err(why) => say(&open, why),
+                        }
+                    }
                     COPY_KEY if gezik_platform::clipboard::write_text(&key.path).is_err() => {
                         say(&open, "Cannot use the clipboard");
                     }
                     EDIT_FILE => edit_file(),
                     _ => {}
                 }
-                return;
+                return 1;
             }
-            let Some(i) = field_of(&open, row) else { return };
+            let Some(i) = field_of(&open, row) else { return 1 };
             let field = &FIELDS[i];
             match id {
                 RESET if matches!(field.kind, Kind::List | Kind::Integration) => {
@@ -538,6 +619,7 @@ fn bind(open: &Rc<Open>) {
                 EDIT_FILE => edit_file(),
                 _ => {}
             }
+            1
         }
     });
     window.on_escape(|| slint::Timer::single_shot(Duration::ZERO, close));
@@ -619,7 +701,14 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(open) = current() else { return };
                     match written {
-                        Ok(()) => say(&open, &format!("Installed {name} as themes/{id}.toml: Use Now is in its row")),
+                        Ok(()) => {
+                            let mut themes = open.shown.borrow().got.files.clone();
+                            themes.insert(id.clone(), contents);
+                            open.shown.borrow_mut().got.read(&themes);
+                            open.shown.borrow_mut().pick_rows();
+                            show_rows(&open, false);
+                            say(&open, &format!("Installed {name} as themes/{id}.toml: Use Now is in its row"));
+                        }
                         Err(err) => say_bad(
                             &open,
                             &format!("Cannot write themes/{id}.toml: {}", gezik_platform::fs::describe(&err)),
@@ -678,7 +767,7 @@ fn fetch(open: &Open, address: &str) {
         shown.got.found.clear();
         shown.pick_rows();
     }
-    show_rows(open, true);
+    show_rows(open, false);
     let Some(fetch) = fetch else { return };
     say(open, &format!("Downloading {}…", fetch.url));
     themes::start(
@@ -695,13 +784,234 @@ fn fetch(open: &Open, address: &str) {
                     let count = found.len();
                     open.shown.borrow_mut().got.found = found;
                     open.shown.borrow_mut().pick_rows();
-                    show_rows(&open, true);
+                    show_rows(&open, false);
                     say(&open, &format!("{count} found: point at a choice in a row to preview the theme"));
                 }
                 Err(why) => say_bad(&open, &why),
             }
         },
     );
+}
+
+/// A Sync and Backup row's change: an export's or import's path, a box, Import or Cancel, a
+/// backup to restore, Undo.
+fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
+    use backup::Row;
+    use gezik_config::bundle::Group;
+    let path = || gezik_config::paths::KnownDirs::system().expand(text.trim().trim_matches('"'));
+    let on = text == "true";
+    let mut shown = open.shown.borrow_mut();
+    let state = &mut shown.backup;
+    match row {
+        Row::Templates => state.without_templates = !on,
+        Row::Views => state.with_views = on,
+        Row::Group(group) => {
+            state.skipped.retain(|g| *g != group);
+            if !on {
+                state.skipped.push(group);
+            }
+        }
+        Row::Programs => {}
+        Row::Export => {
+            text.trim().clone_into(&mut state.export_to);
+            if text.trim().is_empty() {
+                return;
+            }
+            let (out, groups) = (path(), state.export_groups());
+            drop(shown);
+            if groups.contains(&Group::Views) {
+                flush_views();
+            }
+            let saying = format!("Exporting to {}…", out.display());
+            let job = move |store: &ConfigStore| {
+                store.flush_settings();
+                store.flush_views();
+                crate::settings_backup::export(store.dir(), &out, &groups).map(|n| (n, out))
+            };
+            return work(open, &saying, job, |open, result| match (open, result) {
+                (Some(open), Ok((n, out))) => say(open, &format!("Exported {n} files to {}", out.display())),
+                (Some(open), Err(why)) => say_bad(open, &why),
+                (None, _) => {}
+            });
+        }
+        Row::Import | Row::Restore => {
+            let from = match row {
+                Row::Import => path(),
+                _ => match crate::windows::config() {
+                    Some(store) => store.dir().join("backups").join(text),
+                    None => return,
+                },
+            };
+            state.import_from = if row == Row::Import { text.trim().to_owned() } else { from.display().to_string() };
+            state.preview = None;
+            state.skipped.clear();
+            shown.pick_rows();
+            drop(shown);
+            show_rows(open, false);
+            if text.trim().is_empty() {
+                return;
+            }
+            let saying = format!("Reading {}…", from.display());
+            // Gezik's own backups are not checked: a broken settings.toml comes back as it was.
+            let check = row == Row::Import;
+            let job = move |store: &ConfigStore| crate::settings_backup::preview(store.dir(), &from, check);
+            return work(open, &saying, job, |open, result| {
+                let Some(open) = open else { return };
+                let programs = match result {
+                    Ok(preview) => {
+                        let programs = preview.programs.len();
+                        open.shown.borrow_mut().backup.preview = Some(preview);
+                        programs
+                    }
+                    Err(why) => return say_bad(open, &why),
+                };
+                open.shown.borrow_mut().pick_rows();
+                show_rows(open, false);
+                match programs {
+                    0 => say(open, "Untick what not to import, then choose Import in the last of these rows"),
+                    n => say_bad(
+                        open,
+                        &format!("{n} settings in it run programs (the red row): import only files you trust"),
+                    ),
+                }
+            });
+        }
+        Row::Confirm => {
+            if text != backup::IMPORT {
+                state.preview = None;
+                shown.pick_rows();
+                drop(shown);
+                show_rows(open, false);
+                return say(open, "Nothing imported");
+            }
+            if state.busy {
+                drop(shown);
+                return say(open, BUSY);
+            }
+            let chosen = state.chosen();
+            shown.pick_rows();
+            drop(shown);
+            if chosen.iter().any(|f| f.group == Group::Views) {
+                flush_views();
+            }
+            show_rows(open, false);
+            // The flushes are channel round trips to the writer threads (no UI, no watcher): safe here.
+            let job = move |store: &ConfigStore| {
+                store.flush_settings();
+                store.flush_views();
+                crate::settings_backup::import(store.dir(), chosen, &crate::settings_backup::stamp(), &discard)
+            };
+            return work(open, "Backing up, then importing…", job, |open, result| {
+                imported(open, result, "Imported: Undo Import puts the files back");
+            });
+        }
+        Row::Undo => {
+            let Some(last) = backup::last() else { return };
+            drop(shown);
+            if text != backup::UNDO {
+                return;
+            }
+            flush_views();
+            let job = move |store: &ConfigStore| {
+                store.flush_settings();
+                store.flush_views();
+                crate::settings_backup::undo(store.dir(), &last, &crate::settings_backup::stamp(), &discard)
+            };
+            return work(open, "Undoing the import…", job, |open, result| {
+                imported(open, result, "Undone: the files are as they were before the import");
+            });
+        }
+    }
+    drop(shown);
+    show_rows(open, false);
+}
+
+const BUSY: &str = "Wait: Gezik is still reading or writing a zip";
+
+/// An import's or undo's outcome: Undo Import follows it, the folder views in memory too.
+fn imported(open: Option<&Open>, result: Result<crate::settings_backup::Done, String>, done: &str) {
+    let ok = result.is_ok();
+    match result {
+        Ok(outcome) => {
+            let undone = outcome.undo.replaced.is_empty() && outcome.undo.created.is_empty();
+            backup::set_last((!undone).then_some(outcome.undo));
+            if let Some(text) = outcome.views {
+                let folders = gezik_config::views_file::parse_views(&text).unwrap_or_default();
+                let memory = gezik_core::view_memory::ViewMemory::from_folders(folders);
+                crate::windows::with_focused(|_| crate::panes::with_active(|p| p.view.replace_memory(memory)));
+            }
+        }
+        Err(why) => {
+            if let Some(open) = open {
+                say_bad(open, &why);
+            }
+        }
+    }
+    let Some(open) = open else { return };
+    open.shown.borrow_mut().backup.backups = None;
+    open.shown.borrow_mut().pick_rows();
+    show_rows(open, false);
+    if ok {
+        say(open, done);
+    }
+}
+
+/// An old backup goes to the trash (kept when it cannot).
+fn discard(path: &std::path::Path) {
+    let _ = gezik_platform::fs::trash(path);
+}
+
+/// The folder views changed but not yet handed to their writer go now (an export or import
+/// of views.toml reads the file).
+fn flush_views() {
+    crate::windows::with_focused(|_| crate::panes::with_active(|p| p.view.flush_memory()));
+}
+
+/// Runs `job` on a thread with the config store, then `done` on the UI thread with the window
+/// if it is still open. One at a time.
+fn work<R: Send + 'static>(
+    open: &Open,
+    saying: &str,
+    job: impl FnOnce(&ConfigStore) -> R + Send + 'static,
+    done: fn(Option<&Open>, R),
+) {
+    let Some(store) = crate::windows::config() else { return };
+    if std::mem::replace(&mut open.shown.borrow_mut().backup.busy, true) {
+        return say(open, BUSY);
+    }
+    say(open, saying);
+    let spawned = std::thread::Builder::new().name("settings backup".into()).spawn(move || {
+        let result = job(&store);
+        let _ = slint::invoke_from_event_loop(move || {
+            let open = current();
+            if let Some(open) = &open {
+                open.shown.borrow_mut().backup.busy = false;
+            }
+            done(open.as_deref(), result);
+        });
+    });
+    if spawned.is_err() {
+        open.shown.borrow_mut().backup.busy = false;
+        say_bad(open, "Cannot start a thread");
+    }
+}
+
+/// Lists the backups on a thread for Restore Backup.
+fn list_backups(open: &Open) {
+    let Some(store) = crate::windows::config() else { return };
+    if std::mem::replace(&mut open.shown.borrow_mut().backup.listing, true) {
+        return;
+    }
+    std::thread::spawn(move || {
+        let names = crate::settings_backup::backups(store.dir());
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(open) = current() else { return };
+            open.shown.borrow_mut().backup.listing = false;
+            open.shown.borrow_mut().backup.backups = Some(names);
+            open.shown.borrow_mut().pick_rows();
+            show_rows(&open, false);
+        });
+    });
 }
 
 /// Shows theme `id` in every window without writing it ("" or "auto": back to the theme in

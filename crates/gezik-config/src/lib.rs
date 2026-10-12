@@ -2,6 +2,7 @@
 //! text, outputs are validated values plus warnings to show the user.
 
 pub mod batch_toml;
+pub mod bundle;
 mod highlight_rules;
 pub mod paths;
 pub mod pins;

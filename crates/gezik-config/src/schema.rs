@@ -17,10 +17,12 @@ pub enum Page {
     Keyboard,
     System,
     Advanced,
+    /// Export, import and the backups (no fields: `settings_window`'s rows).
+    SyncAndBackup,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [
+    pub const ALL: [Page; 9] = [
         Page::General,
         Page::Appearance,
         Page::FilesAndTools,
@@ -29,6 +31,7 @@ impl Page {
         Page::Keyboard,
         Page::System,
         Page::Advanced,
+        Page::SyncAndBackup,
     ];
 
     pub fn title(self) -> &'static str {
@@ -41,6 +44,7 @@ impl Page {
             Page::Keyboard => "Keyboard",
             Page::System => "System",
             Page::Advanced => "Advanced",
+            Page::SyncAndBackup => "Sync and Backup",
         }
     }
 }

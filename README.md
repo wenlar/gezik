@@ -75,6 +75,8 @@ accent = "#ff8a3d"
 
 Themes from GitHub install from Settings ▸ Appearance ▸ Get Theme: paste a repository or `.toml` address, preview, install. A theme is data only (colors, sizes, a font name); nothing in it runs. [More](docs/themes.md#installing-from-github)
 
+Settings move as one zip: Settings ▸ Sync and Backup ▸ Export Settings, then Import Settings on the other computer. The import shows what changes, warns about settings that run programs, backs up first and can be undone. [More](docs/configuration.md#backup-and-moving)
+
 → [Configuration](docs/configuration.md) · [Writing a theme](docs/themes.md) · [Keyboard shortcuts](docs/shortcuts.md)
 
 ## Build
