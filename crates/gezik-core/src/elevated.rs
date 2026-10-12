@@ -784,6 +784,10 @@ mod tests {
             assert_eq!(check(&[Op::Delete(p(path))], &m), Err((0, GUARDED)), "{path}");
         }
         assert_eq!(check(&[Op::Delete(p("/Applications/Old.app"))], &m), Ok(()));
+        // `C:\Users\teo` has a parent folder only where `\` separates (the helper's own host).
+        if !cfg!(windows) {
+            return;
+        }
         let win_list = windows_protected(r"C:\Windows");
         let w = System { windows: true, macos: false, protected: &win_list };
         for path in [
