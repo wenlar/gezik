@@ -1111,6 +1111,9 @@ fn main() -> Result<(), slint::PlatformError> {
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
         verify: initial_settings.files.verify,
         max_speed: initial_settings.files.max_speed,
+        tags_store: config.as_ref().map(|store| store.dir().join("tags-store.tsv")),
+        // `[tags] write-to-files` (spec 12 §4.5) arrives with the tag picker (12b).
+        tags_store_only: false,
     };
     let ops = operations::Operations::new(
         &window,

@@ -664,6 +664,12 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 247. **Removable disk and network.** A USB stick (vfat or ext4) gets Mirror deletions in its `.Trash-<uid>` and Ctrl+Z brings them back; on an SMB or NFS mount (no trash) deletions are left out and replacing needs Replace them anyway, as macOS 337.
 248. **Profiles and memory.** As macOS 338–339 with Ctrl+Shift+P and `ps -o rss= -p $(pgrep -x gezik)`.
 
+### 12a, tag storage (no interface yet)
+
+249. **Tests first.** `cargo test -p gezik-core meta`, `cargo test -p gezik-platform meta`, `cargo test -p gezik-ops meta`, `cargo test -p gezik-ops tags`; paste the output (in `/tmp` on tmpfs before Linux 6.6 some platform tests return early: write `findmnt -T /tmp`).
+250. **Dolphin sees Gezik's tags.** `cargo test -p gezik-platform meta::tests::dolphin_probe -- --ignored`, then `getfattr -d ~/gezik-tag-probe.txt` shows `user.xdg.tags="Red,Öncelikli"`, `user.baloo.rating="8"` and `user.xdg.comment="Ready for review"`. In Dolphin (if installed), the file's Information panel shows the two tags, 4 stars and the comment. Tag it `Blue` and 3 stars in Dolphin, then `getfattr -d` shows `Red,Öncelikli,Blue` (or Dolphin's order) and `6`. The file's modification time did not change (`stat -c %y` before and after the probe).
+251. **vfat stick.** With a vfat USB stick mounted: `GEZIK_TEST_TAG_DIR=/media/$USER/<STICK> cargo test -p gezik-ops meta::tests::the_store_on_a_drive_without_records -- --ignored` passes: the tag goes to the store (vfat keeps no attributes), the store file is made and follows the rename. Write the stick's line of `lsblk -f` (the UUID is the store's key for it).
+
 ### 13a, text, code and hex viewer
 
 Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 249–265).
