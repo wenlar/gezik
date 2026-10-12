@@ -17,7 +17,8 @@ use crate::views_writer::ViewsWriter;
 use gezik_core::view::ViewSettings;
 use gezik_core::view_memory::ViewMemory;
 
-pub(crate) const SETTINGS_TEMPLATE: &str = include_str!("../templates/settings.toml");
+/// The commented `settings.toml` written on the first run (the settings window reads its comments).
+pub const SETTINGS_TEMPLATE: &str = include_str!("../templates/settings.toml");
 const THEME_TEMPLATE: &str = include_str!("../templates/example.toml");
 
 /// Raw contents of the config folder. Reading does I/O, so it happens off the UI thread;

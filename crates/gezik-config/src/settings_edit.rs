@@ -91,6 +91,50 @@ pub fn with_panes_confirm(text: &str, on: bool) -> Result<String, String> {
     edit_table(text, "panes", vec![("confirm", on.into())])
 }
 
+/// Returns `text` with one value set (the settings window, spec 14 §3.2): `key` in `[table]`,
+/// or at the top with no table. `literal` is the value as TOML (`"compact"`, `true`, `120`);
+/// `None` takes the key out (a key the template only mentions in a comment, back to its
+/// default). The old value's line and comment stay; nothing else changes.
+pub fn with_value(text: &str, table: Option<&str>, key: &str, literal: Option<&str>) -> Result<String, String> {
+    let value = match literal {
+        Some(literal) => {
+            let mut value = literal.parse::<toml_edit::Value>().map_err(|err| err.to_string().trim().to_owned())?;
+            value.decor_mut().clear();
+            Some(value)
+        }
+        None => None,
+    };
+    match (table, value) {
+        (Some(table), Some(value)) => edit_table(text, table, vec![(key, value)]),
+        (table, value) => {
+            let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+            let target = match table {
+                None => doc.as_table_mut() as &mut dyn toml_edit::TableLike,
+                Some(name) => match doc.get_mut(name).and_then(|item| item.as_table_like_mut()) {
+                    Some(target) => target,
+                    None => return Ok(doc.to_string()),
+                },
+            };
+            match value {
+                None => {
+                    target.remove(key);
+                }
+                Some(value) => match target.get_mut(key).and_then(|item| item.as_value_mut()) {
+                    Some(old) => {
+                        let decor = old.decor().clone();
+                        *old = value;
+                        *old.decor_mut() = decor;
+                    }
+                    None => {
+                        target.insert(key, toml_edit::Item::Value(value));
+                    }
+                },
+            }
+            Ok(doc.to_string())
+        }
+    }
+}
+
 /// Adds an empty `[name]` at the end. Comments after the file's last value are the document's
 /// trailing part, which toml_edit writes after every table: they go before the new table, so
 /// they stay where they were.
@@ -1076,5 +1120,70 @@ pattern = \"y\"
         let text = "[panes]\nconfirm = true           # F5/F6 ask\n";
         assert_eq!(with_panes_confirm(text, false).unwrap(), "[panes]\nconfirm = false           # F5/F6 ask\n");
         assert!(with_panes_confirm("", false).unwrap().contains("[panes]\nconfirm = false"));
+    }
+
+    /// The lines of `after` that differ from `before`'s, which must have as many.
+    fn changed_lines(before: &str, after: &str) -> Vec<String> {
+        assert_eq!(before.lines().count(), after.lines().count(), "{after}");
+        before.lines().zip(after.lines()).filter(|(a, b)| a != b).map(|(_, b)| b.to_owned()).collect()
+    }
+
+    #[test]
+    fn a_value_changes_only_its_own_line() {
+        let template = include_str!("../templates/settings.toml");
+        // Commented, with an inline hint, at the top, a number.
+        let out = with_value(template, Some("layout"), "density", Some("\"compact\"")).unwrap();
+        assert_eq!(changed_lines(template, &out), ["density = \"compact\""]);
+        let out = with_value(template, Some("view"), "sort", Some("\"size\"")).unwrap();
+        assert_eq!(
+            changed_lines(template, &out),
+            ["sort = \"size\"          # name | modified | created | type | size | tags | rating"]
+        );
+        let out = with_value(template, None, "theme", Some("\"nord\"")).unwrap();
+        assert_eq!(changed_lines(template, &out), ["theme = \"nord\""]);
+        let out = with_value(template, Some("search"), "max-results", Some("5000")).unwrap();
+        assert_eq!(changed_lines(template, &out), ["max-results = 5000       # 1000-2000000; a search stops there"]);
+        // Back to what it was: the same bytes.
+        let back = with_value(&out, Some("search"), "max-results", Some("250000")).unwrap();
+        assert_eq!(back, template);
+    }
+
+    #[test]
+    fn a_missing_key_or_table_is_added_and_the_rest_stays() {
+        let out = with_value("# mine\n[layout]\nsidebar = \"left\"\n", Some("layout"), "density", Some("\"compact\""))
+            .unwrap();
+        assert_eq!(out, "# mine\n[layout]\nsidebar = \"left\"\ndensity = \"compact\"\n");
+        let out = with_value("theme = \"auto\"\n# the end\n", Some("panes"), "confirm", Some("false")).unwrap();
+        assert_eq!(out, "theme = \"auto\"\n# the end\n[panes]\nconfirm = false\n");
+        let out = with_value("[layout]\ndensity = \"compact\"\n", None, "max-fps", Some("60")).unwrap();
+        assert_eq!(out, "max-fps = 60\n[layout]\ndensity = \"compact\"\n");
+        let out = with_value("[view]\nunknown = 1 # mine\nmode = \"list\"\n", Some("view"), "mode", Some("\"grid\""))
+            .unwrap();
+        assert_eq!(out, "[view]\nunknown = 1 # mine\nmode = \"grid\"\n", "unknown keys stay");
+    }
+
+    #[test]
+    fn inline_tables_and_dotted_keys_are_edited_where_they_are() {
+        let out = with_value(
+            "layout = { density = \"compact\", sidebar = \"left\" }\n",
+            Some("layout"),
+            "density",
+            Some("\"comfortable\""),
+        )
+        .unwrap();
+        assert_eq!(out, "layout = { density = \"comfortable\", sidebar = \"left\" }\n");
+        let out =
+            with_value("layout.density = \"compact\" # dense\n", Some("layout"), "density", Some("\"comfortable\""))
+                .unwrap();
+        assert_eq!(out, "layout.density = \"comfortable\" # dense\n");
+    }
+
+    #[test]
+    fn a_value_taken_out_and_a_broken_file() {
+        let text = "[view]\nshow-hidden = false\nmode = \"list\"\n";
+        assert_eq!(with_value(text, Some("view"), "show-hidden", None).unwrap(), "[view]\nmode = \"list\"\n");
+        assert_eq!(with_value("[view]\n", Some("tags"), "dots", None).unwrap(), "[view]\n", "nothing to take out");
+        assert!(with_value("[view\n", Some("view"), "mode", Some("\"grid\"")).is_err());
+        assert!(with_value("[view]\n", Some("view"), "mode", Some("grid")).is_err(), "not a TOML value");
     }
 }
