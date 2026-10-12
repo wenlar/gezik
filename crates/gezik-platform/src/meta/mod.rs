@@ -17,7 +17,20 @@ pub(crate) use unix::copy_xattrs;
 #[cfg(unix)]
 pub use unix::{read, volume, write};
 #[cfg(windows)]
-pub use windows::{read, volume, write};
+pub use windows::{explorer, read, volume, write};
+
+/// `work`'s answer if it comes within `limit`; else `None`, and `work` is left to finish on its
+/// own thread (a property handler that hangs on a broken file cannot be stopped; spec 12 §8.3).
+pub fn within<T: Send + 'static>(limit: std::time::Duration, work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (send, answer) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("gezik-props".into())
+        .spawn(move || {
+            let _ = send.send(work());
+        })
+        .ok()?;
+    answer.recv_timeout(limit).ok()
+}
 
 /// What a file's own record holds.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -82,6 +95,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_call_that_hangs_is_left_behind_after_its_time() {
+        use std::time::{Duration, Instant};
+        assert_eq!(within(Duration::from_secs(2), || 7), Some(7));
+        let start = Instant::now();
+        let hung = within(Duration::from_millis(50), || std::thread::sleep(Duration::from_secs(3)));
+        assert_eq!(hung, None);
+        assert!(start.elapsed() < Duration::from_secs(1), "not waited for: {:?}", start.elapsed());
     }
 
     fn sample() -> Meta {
