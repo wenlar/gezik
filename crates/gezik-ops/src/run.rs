@@ -498,7 +498,13 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
     }
     // A cancelled or failed item may have made or removed something (a partial copy): its
     // folders are reloaded like those of a finished one.
-    let touch = || job.touch(item.source.as_deref().into_iter().chain(item.target.as_deref()), item.is_root);
+    // Tags change no listing (names, sizes and times stay): their folders are not read again,
+    // which would cost a big folder its selection (the window redraws the dots itself).
+    let touch = || {
+        if task.kind() != TaskKind::Tags {
+            job.touch(item.source.as_deref().into_iter().chain(item.target.as_deref()), item.is_root);
+        }
+    };
     // Some(whether it was done) once the item ended; None once the job stopped.
     let ended = loop {
         match task.run(&item, &cx) {

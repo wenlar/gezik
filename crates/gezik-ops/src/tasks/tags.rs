@@ -144,8 +144,10 @@ mod tests {
             vec![a.clone(), b.clone()],
             vec![MetaEdit::AddTags(vec![red(), Tag::new("Project X", TagColor::None)]), MetaEdit::Rating(3)],
         )));
-        let (report, _) = finish(&engine, job, |_| Vec::new());
+        let (report, events) = finish(&engine, job, |_| Vec::new());
         assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(report.changed_dirs.is_empty(), "no folder to read again: {:?}", report.changed_dirs);
+        assert!(!events.iter().any(|e| matches!(e, crate::Event::Changed { .. })), "{events:?}");
         assert_eq!(engine.undo_label().as_deref(), Some("Change tags of 2 items"));
         assert_eq!(store.read(&a).unwrap().tags.len(), 2);
         assert_eq!(store.read(&b).unwrap().rating, 3);
