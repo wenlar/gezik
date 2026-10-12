@@ -209,6 +209,8 @@ fn apply_to_window(window: &AppWindow, loaded: &Loaded) {
     // Gezik's own menus (where Slint has no system ones) stay inside the window.
     window.set_native_menus(context_menu::native_menus());
     #[cfg(target_os = "macos")]
+    menu_bar::set_keys_changed(window);
+    #[cfg(target_os = "macos")]
     menu_bar::set_commands(window, &loaded.settings.commands);
     #[cfg(target_os = "macos")]
     menu_bar::set_tab_sets(window, &tab_sets::names());
