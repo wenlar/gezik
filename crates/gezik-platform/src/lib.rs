@@ -1,6 +1,7 @@
 //! Platform-specific code for Gezik: drives, known folders, native menus, icons, thumbnails and dates. Everything else in the app is platform-independent.
 
 pub mod attrs;
+pub mod audio;
 pub mod clipboard;
 pub mod cloud;
 pub mod cloud_pin;
