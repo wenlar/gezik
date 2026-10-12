@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use super::{DiskKind, DriveFacts, cancelled, nearest_existing};
 
 /// The entry's device and inode (the last part not followed), for `same_entry`.
-pub(super) fn entry_id(path: &Path) -> io::Result<(u64, u64)> {
+pub(crate) fn entry_id(path: &Path) -> io::Result<(u64, u64)> {
     let meta = std::fs::symlink_metadata(path)?;
     Ok((meta.dev(), meta.ino()))
 }
@@ -44,6 +44,10 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
         let times = FileTimes::new().set_modified(meta.modified()?).set_accessed(meta.accessed()?);
         target.set_times(times).map(|()| cloned)
     });
+    if copied.is_ok() {
+        // Tags and other programs' attributes go along (spec 12 §4.3); a clone on macOS has them.
+        crate::meta::copy_xattrs(&source, &target);
+    }
     if copied.is_err() {
         drop(target);
         let _ = std::fs::remove_file(to);

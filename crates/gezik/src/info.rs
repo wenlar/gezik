@@ -747,6 +747,7 @@ mod tests {
                 .map(|(p, m)| Failure { path: p.into(), message: (*m).to_owned(), denied: false })
                 .collect(),
             skipped: Vec::new(),
+            notes: Vec::new(),
             skipped_changed: changed,
             no_trash: Vec::new(),
             unchecked: Vec::new(),

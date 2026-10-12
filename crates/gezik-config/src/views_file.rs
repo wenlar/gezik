@@ -101,7 +101,7 @@ mod tests {
         let folders = parse_views(
             "[[folder]]
 path = \"/a\"
-group = \"tag\"
+group = \"label\"
 
 [[folder]]
 path = \"/b\"

@@ -187,7 +187,7 @@ pub fn filtered_results(full: &Arc<ResultSet>, pattern: &Pattern) -> (Listing, O
 
 /// The listing of `dir` showing what `pattern` lets through of `full`, and where each of its
 /// entries is in `full`: the same entries (no copy, `None`) for an empty pattern.
-/// `keep`: a test of its own each entry must pass too (property words).
+/// `keep`: a test of its own each entry must pass too (`tag:` and property words).
 pub fn filtered_with(
     dir: &Path,
     full: &Rc<Vec<Entry>>,

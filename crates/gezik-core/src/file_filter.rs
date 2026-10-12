@@ -89,6 +89,16 @@ impl FileFilter {
         (self.files.is_empty() || any(&self.files, name)) && !any(&self.skip_files, name)
     }
 
+    /// A row of a highlight rule (spec 12 §9.1): a file by the file patterns, a folder by the
+    /// folder ones (`name/`); patterns of only one sort take nothing of the other.
+    pub fn takes(&self, name: &str, is_dir: bool) -> bool {
+        if is_dir {
+            (self.files.is_empty() || !self.folders.is_empty()) && self.top_folder(name) == Some(true)
+        } else {
+            (self.folders.is_empty() || !self.files.is_empty()) && self.takes_file(name)
+        }
+    }
+
     /// A chosen folder: `None` if it is left out, else whether its files are taken (no taken
     /// folder patterns, or it matches one).
     pub fn top_folder(&self, name: &str) -> Option<bool> {

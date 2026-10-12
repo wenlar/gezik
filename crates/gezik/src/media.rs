@@ -18,6 +18,8 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
+
+use crate::tags::RowMeta;
 use std::time::SystemTime;
 
 use gezik_core::fields::{FieldSet, Fields};
@@ -32,6 +34,8 @@ pub const MAX_PATH_ICONS: usize = 512;
 const MISSING_COST: usize = 64;
 /// Folders found to have no custom icon; forgotten wholesale beyond this many.
 const MAX_PLAIN_FOLDERS: usize = 10_000;
+/// Rows whose tags are known; forgotten wholesale beyond this many.
+const MAX_TAGGED: usize = 50_000;
 /// Rows whose fields are known; forgotten wholesale beyond this many.
 const MAX_FIELD_ROWS: usize = 50_000;
 
@@ -65,6 +69,11 @@ pub enum MediaKey {
         modified: Option<SystemTime>,
         px: u32,
     },
+    /// A row's tags, rating and comment, for its dots and columns (spec 12 §3.4): only rows on
+    /// screen ask, only while dots or a meta column show.
+    Tags {
+        path: PathBuf,
+    },
     /// A row's metadata fields for the field columns (spec 13 §7.5): only rows on screen ask,
     /// only for the fields not read yet.
     Fields {
@@ -86,6 +95,7 @@ pub enum Outcome {
     Picture(SharedPixelBuffer<Rgba8Pixel>),
     /// A folder without a custom icon: the generic folder icon applies.
     PlainFolder,
+    Tags(Arc<RowMeta>),
     Fields(Fields),
     Nothing,
 }
@@ -120,6 +130,8 @@ fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
         }
         MediaKey::PathIcon { path, px } => picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px)),
         MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
+        MediaKey::Tags { path } if wanted() => Outcome::Tags(Arc::new(crate::tags::read_for_rows(path))),
+        MediaKey::Tags { .. } => Outcome::Nothing,
         MediaKey::Fields { path, want } if wanted() => {
             Outcome::Fields(gezik_batch::fields::read(path, *want, &|| !wanted()))
         }
@@ -218,6 +230,8 @@ impl<K: Eq + Hash + Clone, V: Clone> ByteLru<K, V> {
     }
 }
 
+/// A row's meta and the generation it was read in.
+type ReadTags = (u64, Arc<RowMeta>);
 /// A row's fields once read: the generation they were read in, which fields were read, and the
 /// values found.
 type ReadFields = (u64, FieldSet, Rc<Fields>);
@@ -237,6 +251,10 @@ struct Inner {
     paths: RefCell<ByteLru<MediaKey, Option<Image>>>,
     thumbnails: RefCell<ByteLru<MediaKey, Option<Image>>>,
     plain_folders: RefCell<HashSet<PathBuf>>,
+    /// Each row's tags once read (empty: none), by path, with the generation they were read in:
+    /// an older one is still drawn (no flicker) but read again.
+    tags: RefCell<HashMap<PathBuf, ReadTags>>,
+    tags_generation: Cell<u64>,
     /// Each row's fields once read, by path (spec 13 §7.5): an older generation's are still
     /// drawn (no flicker) but read again; a wider set reads only the missing fields.
     fields: RefCell<HashMap<PathBuf, ReadFields>>,
@@ -292,6 +310,8 @@ impl Media {
                 paths: RefCell::new(ByteLru::new(PATH_ICON_BUDGET, MAX_PATH_ICONS)),
                 thumbnails: RefCell::new(ByteLru::new(THUMBNAIL_BUDGET, usize::MAX)),
                 plain_folders: RefCell::default(),
+                tags: RefCell::default(),
+                tags_generation: Cell::new(0),
                 fields: RefCell::default(),
                 fields_generation: Cell::new(0),
                 pending: RefCell::default(),
@@ -390,8 +410,38 @@ impl Media {
             MediaKey::ExtIcon { .. } | MediaKey::GenericFolder { .. } => self.shared.shared.borrow().get(key).cloned(),
             MediaKey::FolderIcon { .. } | MediaKey::PathIcon { .. } => self.shared.paths.borrow_mut().get(key),
             MediaKey::Thumbnail { .. } => self.shared.thumbnails.borrow_mut().get(key),
-            MediaKey::TypeName { .. } | MediaKey::Fields { .. } => None,
+            MediaKey::TypeName { .. } | MediaKey::Tags { .. } | MediaKey::Fields { .. } => None,
         }
+    }
+
+    /// `path`'s meta, if read; otherwise it is asked for and entry `entry` is redrawn when it
+    /// arrives. What was read before the last [`forget_tags`] is drawn until the new one lands.
+    pub fn tags(&self, path: PathBuf, entry: usize) -> Option<Arc<RowMeta>> {
+        let found = self.shared.tags.borrow().get(&path).cloned();
+        match found {
+            Some((generation, meta)) if generation == self.shared.tags_generation.get() => Some(meta),
+            Some((_, old)) => {
+                self.request(MediaKey::Tags { path }, Some(entry));
+                Some(old)
+            }
+            None => {
+                self.request(MediaKey::Tags { path }, Some(entry));
+                None
+            }
+        }
+    }
+
+    /// Only what is already known; asks for nothing (menus).
+    pub fn known_tags(&self, path: &std::path::Path) -> Option<Arc<RowMeta>> {
+        self.shared.tags.borrow().get(path).map(|(_, meta)| meta.clone())
+    }
+
+    /// Every row's tags read again when next drawn (a listing shown, a tag job ended, F5);
+    /// those already old once are dropped, so the cache holds two listings' at most.
+    pub fn forget_tags(&self) {
+        let generation = self.shared.tags_generation.get();
+        self.shared.tags.borrow_mut().retain(|_, (g, _)| *g == generation);
+        self.shared.tags_generation.set(generation + 1);
     }
 
     /// `path`'s values of `want` as far as read: those of an older generation, or of fewer
@@ -443,7 +493,7 @@ impl Media {
                 self.shared.paths.borrow_mut().insert(key, picture, bytes)
             }
             MediaKey::Thumbnail { .. } => self.shared.thumbnails.borrow_mut().insert(key, picture, bytes),
-            MediaKey::TypeName { .. } | MediaKey::Fields { .. } => {}
+            MediaKey::TypeName { .. } | MediaKey::Tags { .. } | MediaKey::Fields { .. } => {}
         }
     }
 
@@ -542,6 +592,14 @@ impl Media {
                 };
                 self.shared.type_names.borrow_mut().insert((ext.clone(), *is_dir), name);
                 Ready::TypeName
+            }
+            (MediaKey::Tags { path }, Outcome::Tags(tags)) => {
+                let mut known = self.shared.tags.borrow_mut();
+                if known.len() >= MAX_TAGGED {
+                    known.clear();
+                }
+                known.insert(path.clone(), (self.shared.tags_generation.get(), tags));
+                Ready::Picture
             }
             (MediaKey::Fields { path, want }, Outcome::Fields(values)) => {
                 // An older listing's read may be of a file since changed: not kept.

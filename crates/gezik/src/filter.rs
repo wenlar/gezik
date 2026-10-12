@@ -215,10 +215,16 @@ impl Filter {
     pub fn apply_saved(&self, name: &str) {
         let filters = saved();
         let Some(i) = find_saved(&filters, name) else { return };
+        self.apply_text(&filters[i].pattern);
+    }
+
+    /// `text` into the bar (opening it), applied; the keyboard stays with the list (a saved
+    /// filter, a sidebar tag's Filter this folder).
+    pub fn apply_text(&self, text: &str) {
         if !self.can_filter() {
             return;
         }
-        self.view.set_filter(Some(&filters[i].pattern));
+        self.view.set_filter(Some(text));
         // Once the menu is gone (it gives the keyboard back to where it was).
         let weak = self.window.clone();
         slint::Timer::single_shot(

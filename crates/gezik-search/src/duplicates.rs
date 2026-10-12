@@ -72,13 +72,14 @@ impl Visit for Collect {
         !is_dir && self.query.passes_name(name, false)
     }
 
-    fn folder(&self, _dir: &Path, relative: &str, items: Vec<DirItem>) {
+    fn folder(&self, dir: &Path, relative: &str, items: Vec<DirItem>) {
         let mut mine = Vec::new();
         for item in items {
             if !item.is_file
                 || item.is_link
                 || item.size == 0
                 || !self.query.passes(&item.name, false, item.size, item.modified)
+                || !self.query.passes_meta(|| dir.join(&item.name))
             {
                 continue;
             }

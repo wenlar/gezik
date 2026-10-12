@@ -42,7 +42,7 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
     if path.is_none() && kind.is_none() && content.is_none() {
         return Err("needs path, kind or content".to_owned());
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\" or a property (\"duration\", \"artist\"…)";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)";
     let set = RuleView {
         mode: text(table, "mode")?.map(mode_of).transpose()?,
         // `folder` is the search results' own sort, as in [view].
@@ -54,12 +54,7 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
             .transpose()?,
         group: text(table, "group")?
             .map(|t| {
-                choice(
-                    t,
-                    "group",
-                    "\"none\", \"type\", \"date\", \"size\" or a text property (\"artist\", \"year\"…)",
-                    GroupBy::parse,
-                )
+                choice(t, "group", "\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)", GroupBy::parse)
             })
             .transpose()?,
         grid_size: text(table, "grid-size")?
@@ -130,7 +125,7 @@ fn mode_of(text: &str) -> Result<ViewMode, String> {
 fn columns_of(value: &toml::Value) -> Result<Columns, String> {
     let bad = || {
         format!(
-            "columns: expected a list of modified, created, type, size, folder, match or properties (artist, duration…), got {value}"
+            "columns: expected a list of modified, created, type, size, folder, match, tags, rating, comment or properties (artist, duration…), got {value}"
         )
     };
     let items = value.as_array().ok_or_else(bad)?;
