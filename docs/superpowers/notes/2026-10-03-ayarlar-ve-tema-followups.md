@@ -2852,3 +2852,27 @@ Skipped: headphones / device change (no device changes allowed). Test config and
 - Duraklat düğmesi iki çizgi olarak çizilir (`TextButton.icon`; UI yazı tipinde ❚❚ yok). Çubuk notunun (`Cannot play this file`) UIA adı var.
 - Dar bölmede Hex'in düşmesi bilerek (13b'nin dar çubuk kuralı); checklist ve notlar buna göre düzeltildi.
 - Sürüm exe'si düzeltmelerle **27.596.288 B** (13b tabanı 27.475.968 B, **+120.320 B**).
+
+### Yeniden test (düzeltmeler sonrası)
+
+
+Primary monitor, window 1600x900 at 40,40, preview 420 px, config `cfg\13c` (confirm-trash = true,
+`[preview] volume = 1, muted = true`). Media: `a20.mp4` (ffmpeg testsrc2 640x360 + quiet sine, 20 s), `junk.mp4`
+(8 KB random). Muted throughout; Windows volume scalar 0.0600, not muted, before and after.
+Screenshots: `%TEMP%\gezik-gui-13\shots\13cfix\`. Keys sent only with focus on the preview picture (Custom, my pid).
+
+| # | Item | Result |
+|---|------|--------|
+| 1 | L near the end (0:16 → L) | PASS: 0:20 / 0:20, button Play, no ffmpeg, no "Cannot play this file" (01-L-end) |
+| 1 | Drag seek bar past the far right | PASS: label 0:20 while held (same pids), after release 0:20 Play, no ffmpeg, no error (01-drag-end) |
+| 1 | ▶ / K after the end | PASS: restarts at 0:00 with a new ffmpeg pair |
+| 2 | Hold L 1 s (500 ms delay + 33 ms repeat, pids sampled ~50 ms) from 0:02 | PASS: one pair at 201 ms (the first press), none after release; ends at 0:20 stopped, no ffmpeg |
+| 2 | Hold J 1 s from 0:13 (to get a non-end final position) | PASS: one pair for the first press, exactly one new pair 125 ms after release, plays from 0:00 |
+| 3 | Pause glyph | PASS: two bars (1 px wide, 6 px tall, 2 px gap; bars lum ~205, gap ~90 on bg 29), UIA name "Pause" (03-pause-zoom). Small but visible |
+| 4 | junk.mp4 ▶ | PASS: "Cannot play this file" drawn, UIA Text name is that text, time `0:00 / --:--`, no ffmpeg (04-junk) |
+| 5 | K pause / resume | PASS: 0:04 held for 1.5 s while paused (pids kept), resumed to 0:06 |
+| 5 | Select another file while playing | PASS: both ffmpeg gone in 177 ms, audio session state 0 |
+| 5 | Alt+F4 while playing | PASS: Gezik exited, both ffmpeg pids gone |
+
+Note: clicking ▶ still leaves focus on the window (K/J/L need a click on the picture first), as in finding 3 of the first run.
+Test data and `cfg\13c` removed; `cfg\q1` kept.
