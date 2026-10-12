@@ -256,52 +256,92 @@ impl Store {
             .find(|record| gone(&record.path))
     }
 
-    /// [`Store::refind`] for a whole folder listed at once (spec 12 §4.4): which of `files`
-    /// (name, size, modification time) in `folder` (in `volume`) are records whose path is gone.
-    /// Only files without a record of their own count, and only records of their size are
-    /// looked at, so a folder of 10,000 files against 20,000 records costs one pass; at most 64
-    /// paths are asked about. `id_of` gives file `i`'s id (asked only where the name differs).
-    /// Each found record's path, with the file it is.
-    pub fn refind_in(
-        &self,
-        volume: &str,
-        folder: &str,
-        files: &[(&str, u64, i64)],
-        mut id_of: impl FnMut(usize) -> Option<u64>,
-        mut gone: impl FnMut(&str) -> bool,
-    ) -> Vec<(Box<str>, usize)> {
-        const TOLERANCE_NS: i64 = 2_000_000_000;
-        let mut by_size: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
-        for (i, (name, size, _)) in files.iter().enumerate() {
-            if self.get(volume, &join(folder, name)).is_none() {
-                by_size.entry(*size).or_default().push(i);
-            }
-        }
-        let (mut found, mut asked) = (Vec::new(), 0);
-        if by_size.is_empty() {
-            return found;
-        }
+    /// What [`refind_in`] needs of the records on `volume`: copied out, so the search for them
+    /// runs without the store's lock.
+    pub fn traces(&self, volume: &str) -> Vec<Trace> {
         let from = (Box::<str>::from(volume), Box::<str>::from(""));
-        for (_, record) in self.records.range(from..).take_while(|((v, _), _)| &**v == volume) {
-            let Some(candidates) = by_size.get(&record.size) else { continue };
-            let base = key_path(record.path.rsplit('/').next().unwrap_or(&record.path));
-            let hit = candidates.iter().copied().find(|&i| {
-                let (name, _, mtime) = files[i];
-                !found.iter().any(|(_, j)| *j == i)
-                    && (record.mtime_ns - mtime).abs() <= TOLERANCE_NS
-                    && (key_path(name) == base || matches!((record.file_id, id_of(i)), (Some(a), Some(b)) if a == b))
-            });
-            let Some(i) = hit else { continue };
-            if asked == 64 {
-                break;
-            }
-            asked += 1;
-            if gone(&record.path) {
-                found.push((record.path.clone(), i));
+        self.records
+            .range(from..)
+            .take_while(|((v, _), _)| &**v == volume)
+            .map(|(_, r)| Trace { path: r.path.clone(), size: r.size, mtime_ns: r.mtime_ns, file_id: r.file_id })
+            .collect()
+    }
+}
+
+/// A record's path, size, time and id ([`Store::traces`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trace {
+    pub path: Box<str>,
+    pub size: u64,
+    pub mtime_ns: i64,
+    pub file_id: Option<u64>,
+}
+
+/// [`Store::refind`] for a whole folder listed at once (spec 12 §4.4): which of `files` (name,
+/// size, modification time) in `folder` are records of `traces` (one volume's) whose path is
+/// gone. Only files without a record of their own count. Files are indexed once by size and
+/// name, so each record costs one lookup; a record that has a file id also looks at the files
+/// of its size within 2 s (sorted by time; at most 64 of them), asking `id_of(i)` once per file at most. At most 64
+/// paths are asked about (`gone`). Each found record's path, with the file it is.
+pub fn refind_in(
+    traces: &[Trace],
+    folder: &str,
+    files: &[(&str, u64, i64)],
+    mut id_of: impl FnMut(usize) -> Option<u64>,
+    mut gone: impl FnMut(&str) -> bool,
+) -> Vec<(Box<str>, usize)> {
+    use std::collections::{HashMap, HashSet};
+    const TOLERANCE_NS: i64 = 2_000_000_000;
+    let own: HashSet<Box<str>> = traces.iter().map(|t| key_path(&t.path)).collect();
+    let mut by_name: HashMap<(u64, Box<str>), Vec<usize>> = HashMap::new();
+    let mut by_size: HashMap<u64, Vec<usize>> = HashMap::new();
+    for (i, (name, size, _)) in files.iter().enumerate() {
+        if !own.contains(&key_path(&join(folder, name))) {
+            by_name.entry((*size, key_path(name))).or_default().push(i);
+            by_size.entry(*size).or_default().push(i);
+        }
+    }
+    let mut found: Vec<(Box<str>, usize)> = Vec::new();
+    if by_name.is_empty() {
+        return found;
+    }
+    for list in by_size.values_mut() {
+        list.sort_unstable_by_key(|&i| files[i].2);
+    }
+    let mut ids: HashMap<usize, Option<u64>> = HashMap::new();
+    let mut taken: HashSet<usize> = HashSet::new();
+    let mut asked = 0;
+    for t in traces {
+        let near = |i: &usize| (t.mtime_ns - files[*i].2).abs() <= TOLERANCE_NS;
+        let base = key_path(t.path.rsplit('/').next().unwrap_or(&t.path));
+        let mut hit =
+            by_name.get(&(t.size, base)).and_then(|list| list.iter().copied().find(|i| near(i) && !taken.contains(i)));
+        if hit.is_none()
+            && let (Some(id), Some(list)) = (t.file_id, by_size.get(&t.size))
+        {
+            let from = list.partition_point(|&i| files[i].2 < t.mtime_ns.saturating_sub(TOLERANCE_NS));
+            let to = list.partition_point(|&i| files[i].2 <= t.mtime_ns.saturating_add(TOLERANCE_NS));
+            // shortcut: more than 64 files of one size and time (empty files made at once) are
+            // not told apart by id; a renamed one among them is not found.
+            if to - from <= 64 {
+                hit = list[from..to]
+                    .iter()
+                    .copied()
+                    .filter(|i| !taken.contains(i))
+                    .find(|&i| *ids.entry(i).or_insert_with(|| id_of(i)) == Some(id));
             }
         }
-        found
+        let Some(i) = hit else { continue };
+        if asked == 64 {
+            break;
+        }
+        asked += 1;
+        if gone(&t.path) {
+            taken.insert(i);
+            found.push((t.path.clone(), i));
+        }
     }
+    found
 }
 
 /// `name` in `folder` (both in a volume, with `/`).
@@ -489,17 +529,17 @@ mod tests {
         let files = [("a.txt", 10, t + 1_500_000_000), ("b.txt", 10, t), ("renamed.bin", 10, t), ("own.txt", 10, t)];
         let ids = [None, None, Some(99), None];
         let gone = |path: &str| path.starts_with("old/");
-        let found = store.refind_in("v", "new", &files, |i| ids[i], gone);
+        let found = refind_in(&store.traces("v"), "new", &files, |i| ids[i], gone);
         assert_eq!(found, [(Box::from("old/a.txt"), 0), (Box::from("old/c.bin"), 2)], "b.txt is still in its place");
-        assert!(store.refind_in("w", "new", &files, |i| ids[i], gone).is_empty(), "only on its volume");
+        assert!(refind_in(&store.traces("w"), "new", &files, |i| ids[i], gone).is_empty(), "only on its volume");
         let late = [("a.txt", 10, t + 3_000_000_000)];
-        assert!(store.refind_in("v", "new", &late, |_| None, gone).is_empty(), "past FAT's 2 s");
+        assert!(refind_in(&store.traces("v"), "new", &late, |_| None, gone).is_empty(), "past FAT's 2 s");
         let mut asked = 0;
         for i in 0..100 {
             store.set("v", record(&format!("x/{i}/a.txt"), "Red")).unwrap();
         }
-        store.refind_in(
-            "v",
+        refind_in(
+            &store.traces("v"),
             "new",
             &[("a.txt", 10, t)],
             |_| None,
@@ -509,6 +549,38 @@ mod tests {
             },
         );
         assert_eq!(asked, 64, "at most 64 paths are asked about");
+    }
+
+    #[test]
+    fn a_big_folder_against_many_records_is_one_pass() {
+        let mut store = Store::default();
+        for i in 0..20_000 {
+            let mut r = record(&format!("old/{i}.txt"), "Red");
+            r.size = 0;
+            r.file_id = (i % 2 == 0).then_some(i);
+            store.set("v", r).unwrap();
+        }
+        let names: Vec<String> = (0..100_000).map(|i| format!("new{i}.txt")).collect();
+        let files: Vec<(&str, u64, i64)> = names.iter().map(|n| (n.as_str(), 0, 1_000_000_000_000)).collect();
+        let (mut ids, mut asked) = (0, 0);
+        let start = std::time::Instant::now();
+        let found = refind_in(
+            &store.traces("v"),
+            "new",
+            &files,
+            |_| {
+                ids += 1;
+                None
+            },
+            |_| {
+                asked += 1;
+                false
+            },
+        );
+        let took = start.elapsed();
+        assert!(found.is_empty() && asked == 0);
+        assert!(ids <= files.len(), "each file's id asked once at most: {ids}");
+        assert!(took.as_secs() < 5, "took {took:?}");
     }
 
     #[test]

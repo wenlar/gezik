@@ -206,8 +206,14 @@ pub fn dots_of(tags: &[Tag], list: &[Tag]) -> (Vec<Color>, i32, String) {
 /// Drops what is known of every row's tags and draws the rows again (a tag job ended, F5).
 pub fn forget_rows() {
     crate::media::with_current(crate::media::Media::forget_tags);
+    // This window's panes read again now; other windows' when they next show or sort.
+    let here: Vec<_> = crate::panes::all().iter().map(|p| p.id).collect();
     for p in crate::panes::everywhere() {
-        p.view.reread_folder_tags();
+        if here.contains(&p.id) {
+            p.view.reread_folder_tags();
+        } else {
+            p.view.folder_tags_changed();
+        }
     }
     if dots_on() {
         redraw_all();

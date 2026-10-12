@@ -828,7 +828,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     {
         out.view.mode = mode;
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\" or \"tags\"";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\" or \"rating\"";
     // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
     let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
     if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
@@ -841,7 +841,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
         out.view.grid_size = size;
     }
-    let groups = "\"none\", \"type\", \"date\", \"size\" or \"tag\"";
+    let groups = "\"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\"";
     if let Some(group) = view_choice(table, "group", groups, GroupBy::parse, file, warnings) {
         out.view.group = group;
     }
@@ -2622,7 +2622,7 @@ width = 900
              [[columns]]\nwidth = 100\n\n[preview]\nopen = true\nwidth = 9000\n",
         );
         let columns = state.columns.unwrap();
-        assert_eq!(columns.len(), 5);
+        assert_eq!(columns.len(), ColumnKey::ALL.len());
         assert_eq!((columns[3].width, columns[3].visible), (gezik_core::view::MIN_COLUMN_WIDTH, true));
         assert!(state.preview_open);
         assert_eq!(state.preview_width, None);

@@ -318,8 +318,11 @@ impl MetaStore {
         let Ok(known) = self.volume(&mut state, &folder.join(first.0)) else { return 0 };
         let (volume, root) = &*known;
         let at = in_volume(folder, root);
-        let found = self.load(&mut state).store.refind_in(
-            &volume.key,
+        let traces = self.load(&mut state).store.traces(&volume.key);
+        // The search opens files: without the lock, so the rows' reads do not wait for it.
+        drop(state);
+        let found = gezik_core::meta_store::refind_in(
+            &traces,
             &at,
             files,
             |i| if volume.holds { own::file_id(&folder.join(files[i].0)) } else { None },
@@ -328,6 +331,7 @@ impl MetaStore {
         if found.is_empty() {
             return 0;
         }
+        let mut state = lock(&self.state);
         let moves: Vec<(String, String)> =
             found.iter().map(|(from, i)| (from.to_string(), gezik_core::meta_store::join(&at, files[*i].0))).collect();
         let moves: Vec<(&str, &str, &str, &str)> = moves

@@ -42,7 +42,7 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
     if path.is_none() && kind.is_none() && content.is_none() {
         return Err("needs path, kind or content".to_owned());
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\" or \"tags\"";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\" or \"rating\"";
     let set = RuleView {
         mode: text(table, "mode")?.map(mode_of).transpose()?,
         // `folder` is the search results' own sort, as in [view].
@@ -53,7 +53,9 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
             .map(|t| choice(t, "sort-dir", "\"asc\" or \"desc\"", SortDir::parse))
             .transpose()?,
         group: text(table, "group")?
-            .map(|t| choice(t, "group", "\"none\", \"type\", \"date\", \"size\" or \"tag\"", GroupBy::parse))
+            .map(|t| {
+                choice(t, "group", "\"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\"", GroupBy::parse)
+            })
             .transpose()?,
         grid_size: text(table, "grid-size")?
             .map(|t| choice(t, "grid-size", "\"small\", \"medium\" or \"large\"", GridSize::parse))

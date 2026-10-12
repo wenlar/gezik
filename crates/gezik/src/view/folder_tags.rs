@@ -3,6 +3,7 @@
 //! it got, and hands the result over once; the list is then sorted, grouped and filtered again,
 //! once. Rows not read yet sort last, group as `Reading tags…` and pass the filter, drawn faint.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -32,7 +33,10 @@ pub struct FolderTags {
     /// Every name was read; until then every row is on its way.
     pub complete: bool,
     /// A `tag:` filter waits for the first read: the rows it lets through meanwhile are faint.
-    pub faint: bool,
+    pub faint: Cell<bool>,
+    /// The files (names, sizes, times) it was read from: a listing of the same files is not
+    /// read again.
+    stamp: u64,
 }
 
 impl FolderTags {
@@ -41,13 +45,27 @@ impl FolderTags {
         static NONE: std::sync::LazyLock<Meta> = std::sync::LazyLock::new(Meta::default);
         self.complete.then(|| self.tags.get(name).unwrap_or(&NONE))
     }
+
+    #[cfg(test)]
+    pub fn read(dir: PathBuf, tags: HashMap<Box<str>, Meta>) -> FolderTags {
+        FolderTags { dir, tags, complete: true, faint: Cell::new(false), stamp: 0 }
+    }
 }
 
-/// The read going on.
+/// The read going on; dropped (a read overtaken, a pane or window closed), it stops.
 pub struct TagRun {
     id: u64,
     dir: PathBuf,
     cancel: Arc<AtomicBool>,
+    stamp: u64,
+    /// The files or their tags changed while it went on: read once more when it is done.
+    stale: Cell<bool>,
+}
+
+impl Drop for TagRun {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
 }
 
 /// What the reading thread sends.
@@ -63,6 +81,17 @@ pub fn needed(sort: SortKey, group: GroupBy, filter_has_tags: bool) -> bool {
         || filter_has_tags
 }
 
+/// The same for the same files in any order (names, sizes, modification times).
+fn stamp_of(entries: &[Entry]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let one = |e: &Entry| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&e.name, e.size, e.modified).hash(&mut h);
+        h.finish()
+    };
+    entries.iter().fold(entries.len() as u64, |sum, e| sum.wrapping_add(one(e)))
+}
+
 #[cfg(test)]
 thread_local! {
     /// Reads started (tests: none while nothing needs them).
@@ -74,9 +103,10 @@ impl View {
         self.0.filter.borrow().as_ref().is_some_and(|f| !f.tags.is_empty())
     }
 
-    /// Reads the folder shown whole if its sort, grouping or filter needs it; `fresh`: its files
-    /// may have changed (a listing shown, a tag job ended), so it is read again, the old tags
-    /// used until then. Not needed: what was read goes.
+    /// Reads the folder shown whole if its sort, grouping or filter needs it; `fresh`: a listing
+    /// was shown, read again if its files differ from those read (one read at a time: one going
+    /// on reads once more when done). Tags a job changed (`reread_folder_tags`) are read again
+    /// even when the files look the same. Not needed: what was read goes.
     pub(super) fn sync_folder_tags(&self, fresh: bool) {
         let dir = match &self.0.data.borrow().listing {
             Listing::Files(dir, _) if !dir.as_os_str().is_empty() => Some(dir.clone()),
@@ -87,46 +117,74 @@ impl View {
         let Some(dir) = dir.filter(|_| wanted) else {
             self.stop_tag_read();
             self.0.data.borrow_mut().folder_tags = None;
+            self.0.tags_dirty.set(false);
             return;
         };
-        let (same, complete) = match &self.0.data.borrow().folder_tags {
-            Some(f) if f.dir == dir => (true, f.complete),
-            _ => (false, false),
+        let dirty = self.0.tags_dirty.replace(false);
+        let (same, complete, read_stamp) = match &self.0.data.borrow().folder_tags {
+            Some(f) if f.dir == dir => {
+                f.faint.set(filter && !f.complete);
+                (true, f.complete, f.stamp)
+            }
+            _ => (false, false, 0),
         };
         if !same {
-            let tags = FolderTags { dir: dir.clone(), tags: HashMap::new(), complete: false, faint: filter };
+            let tags = FolderTags {
+                dir: dir.clone(),
+                tags: HashMap::new(),
+                complete: false,
+                faint: Cell::new(filter),
+                stamp: 0,
+            };
             self.0.data.borrow_mut().folder_tags = Some(Rc::new(tags));
         }
-        let running = self.0.tag_run.borrow().as_ref().is_some_and(|run| run.dir == dir);
-        if !same || fresh || (!running && !complete) {
-            self.start_tag_read(dir);
+        let stamp = stamp_of(&self.0.data.borrow().full);
+        let run_stamp = self.0.tag_run.borrow().as_ref().filter(|run| run.dir == dir).map(|run| run.stamp);
+        match run_stamp {
+            Some(run_stamp) => {
+                if (dirty || (fresh && stamp != run_stamp))
+                    && let Some(run) = self.0.tag_run.borrow().as_ref()
+                {
+                    run.stale.set(true);
+                }
+            }
+            None if !same || !complete || dirty || (fresh && stamp != read_stamp) => self.start_tag_read(dir, stamp),
+            None => {}
         }
     }
 
     /// A tag job ended: a folder read whole is read again.
     pub fn reread_folder_tags(&self) {
         if self.0.data.borrow().folder_tags.is_some() {
+            self.0.tags_dirty.set(true);
             self.sync_folder_tags(true);
         }
     }
 
-    fn stop_tag_read(&self) {
-        if let Some(run) = self.0.tag_run.borrow_mut().take() {
-            run.cancel.store(true, Ordering::Relaxed);
+    /// The same, for a pane of another window: read when it next shows, sorts or filters.
+    pub fn folder_tags_changed(&self) {
+        if self.0.data.borrow().folder_tags.is_some() {
+            self.0.tags_dirty.set(true);
         }
+    }
+
+    fn stop_tag_read(&self) {
+        // Dropped, it stops.
+        self.0.tag_run.borrow_mut().take();
         if self.0.tag_progress.borrow_mut().take().is_some() {
             self.update_status();
         }
     }
 
-    fn start_tag_read(&self, dir: PathBuf) {
+    fn start_tag_read(&self, dir: PathBuf, stamp: u64) {
         self.stop_tag_read();
         #[cfg(test)]
         STARTED.with(|s| s.set(s.get() + 1));
         let id = self.0.tag_runs.get() + 1;
         self.0.tag_runs.set(id);
         let cancel = Arc::new(AtomicBool::new(false));
-        *self.0.tag_run.borrow_mut() = Some(TagRun { id, dir: dir.clone(), cancel: cancel.clone() });
+        let run = TagRun { id, dir: dir.clone(), cancel: cancel.clone(), stamp, stale: Cell::new(false) };
+        *self.0.tag_run.borrow_mut() = Some(run);
         let names: Vec<(String, bool, u64, i64)> =
             self.0.data.borrow().full.iter().map(|e| (e.name.clone(), e.is_dir, e.size, mtime_ns(e))).collect();
         let (pane, window) = (self.0.id, self.0.window.clone());
@@ -135,17 +193,22 @@ impl View {
                 crate::panes::with_id(pane, |p| p.view.tags_arrived(id, arrival));
             });
         };
-        let _ = std::thread::Builder::new().name("gezik-tags".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("gezik-tags".into()).spawn(move || {
             gezik_platform::priority::lower_this_thread();
             read_whole(&dir, &names, &cancel, &send);
         });
+        if spawned.is_err() {
+            // Nothing reads: the next sort, filter or listing tries again.
+            self.0.tag_run.borrow_mut().take();
+            self.note("Tags could not be read (no thread to read them)".to_owned());
+        }
     }
 
     /// The reading thread's news, on the UI thread.
     pub fn tags_arrived(&self, id: u64, arrival: TagArrival) {
-        let Some(dir) = self.0.tag_run.borrow().as_ref().filter(|run| run.id == id).map(|run| run.dir.clone()) else {
+        if !self.0.tag_run.borrow().as_ref().is_some_and(|run| run.id == id) {
             return;
-        };
+        }
         match arrival {
             TagArrival::Progress { done, total } => {
                 let (done, total) = (gezik_core::group_digits(done as u64), gezik_core::group_digits(total as u64));
@@ -153,13 +216,19 @@ impl View {
                 self.update_status();
             }
             TagArrival::Done(tags) => {
-                self.0.tag_run.borrow_mut().take();
+                let Some(run) = self.0.tag_run.borrow_mut().take() else { return };
                 self.0.tag_progress.borrow_mut().take();
-                self.0.data.borrow_mut().folder_tags =
-                    Some(Rc::new(FolderTags { dir, tags, complete: true, faint: false }));
+                let (dir, stamp, stale) = (run.dir.clone(), run.stamp, run.stale.get());
+                let done = FolderTags { dir: dir.clone(), tags, complete: true, faint: Cell::new(false), stamp };
+                self.0.data.borrow_mut().folder_tags = Some(Rc::new(done));
                 // Once: the rows take their places, groups and filter.
                 self.resort(false);
                 self.update_status();
+                // Changed meanwhile: once more, from the files shown now.
+                if stale && self.0.data.borrow().folder_tags.is_some() {
+                    let stamp = stamp_of(&self.0.data.borrow().full);
+                    self.start_tag_read(dir, stamp);
+                }
             }
         }
     }
@@ -290,8 +359,11 @@ mod tests {
         view.sync_folder_tags(false);
         assert_eq!(started(), before + 1, "read and complete: nothing more");
 
-        // A listing shown again reads again; the old tags hold until then.
+        // The same files shown again: not read again; a job's tag change: read again, the old
+        // tags holding until then.
         view.sync_folder_tags(true);
+        assert_eq!(started(), before + 1, "same files");
+        view.reread_folder_tags();
         assert_eq!(started(), before + 2);
         assert!(view.0.data.borrow().folder_tags.as_ref().unwrap().complete, "no jump meanwhile");
 
@@ -336,9 +408,78 @@ mod tests {
             &[TagTerm::Named("Red".into())],
         );
         assert_eq!(listing.len(), 2, "not read yet: shown");
-        assert!(view.0.data.borrow().folder_tags.as_ref().unwrap().faint);
+        assert!(view.0.data.borrow().folder_tags.as_ref().unwrap().faint.get());
         let id = view.0.tag_runs.get();
         view.tags_arrived(id, TagArrival::Done(HashMap::from([(Box::from("a.txt"), red())])));
         assert_eq!(shown(&view), ["a.txt"]);
+    }
+
+    #[test]
+    fn a_busy_folder_is_read_once_more_after_the_read_going_on() {
+        let view = view_of(&["a.txt", "b.txt"]);
+        let started = || STARTED.with(std::cell::Cell::get);
+        view.0.current.set(gezik_core::view::ViewSettings { group: GroupBy::Tag, ..view.0.current.get() });
+        let before = started();
+        view.sync_folder_tags(true);
+        assert_eq!(started(), before + 1);
+        // Shown again unchanged, then changed, while it reads: no restart.
+        view.sync_folder_tags(true);
+        assert!(!view.0.tag_run.borrow().as_ref().unwrap().stale.get(), "the same files");
+        let Listing::Files(_, more) = files("/x", &["a.txt", "b.txt", "c.txt"]) else { unreachable!() };
+        view.0.data.borrow_mut().full = more;
+        view.sync_folder_tags(true);
+        view.sync_folder_tags(true);
+        assert_eq!(started(), before + 1, "never restarted, so it ends");
+        assert!(view.0.tag_run.borrow().as_ref().unwrap().stale.get());
+        let id = view.0.tag_runs.get();
+        view.tags_arrived(id, TagArrival::Done(HashMap::new()));
+        assert!(view.0.data.borrow().folder_tags.as_ref().unwrap().complete, "its result is used");
+        assert_eq!(started(), before + 2, "then once more");
+        let id = view.0.tag_runs.get();
+        view.tags_arrived(id, TagArrival::Done(HashMap::new()));
+        assert_eq!(started(), before + 2, "done");
+    }
+
+    #[test]
+    fn closing_a_view_stops_its_read() {
+        let view = view_of(&["a.txt"]);
+        view.0.current.set(gezik_core::view::ViewSettings {
+            sort: SortSpec { key: SortKey::Tags, dir: SortDir::Asc },
+            ..view.0.current.get()
+        });
+        view.sync_folder_tags(false);
+        let cancel = view.0.tag_run.borrow().as_ref().unwrap().cancel.clone();
+        assert!(!cancel.load(Ordering::Relaxed));
+        drop(view);
+        assert!(cancel.load(Ordering::Relaxed), "the thread sees it before its next file");
+    }
+
+    #[test]
+    fn the_faint_rows_follow_the_filter() {
+        let view = view_of(&["a.txt"]);
+        view.0.current.set(gezik_core::view::ViewSettings {
+            sort: SortSpec { key: SortKey::Tags, dir: SortDir::Asc },
+            ..view.0.current.get()
+        });
+        view.sync_folder_tags(false);
+        let faint = || view.0.data.borrow().folder_tags.as_ref().unwrap().faint.get();
+        assert!(!faint(), "a sort does not wait with faint rows");
+        *view.0.filter.borrow_mut() = Some(super::super::FilterState::new("tag:Red", None));
+        view.sync_folder_tags(false);
+        assert!(faint(), "a tag filter added while it reads");
+        *view.0.filter.borrow_mut() = None;
+        view.sync_folder_tags(false);
+        assert!(!faint());
+    }
+
+    #[test]
+    fn sorting_by_a_hidden_column_shows_it() {
+        use gezik_core::view::ColumnKey;
+        let view = view_of(&["a.txt"]);
+        let tags_shown = || view.columns_shown().iter().any(|c| c.key == ColumnKey::Tags && c.visible);
+        assert!(!tags_shown());
+        view.set_sort(SortSpec { key: SortKey::Tags, dir: SortDir::Asc });
+        assert!(tags_shown(), "its header carries the arrow");
+        assert_eq!(view.sort().key, SortKey::Tags);
     }
 }
