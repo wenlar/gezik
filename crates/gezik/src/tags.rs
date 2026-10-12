@@ -105,13 +105,10 @@ thread_local! {
     static NETWORK: RefCell<Option<(PathBuf, bool)>> = const { RefCell::new(None) };
 }
 
-/// A row's meta as drawn: its own record, and Explorer's Tags and rating once asked for
-/// (Windows, spec 12 §8.3; read only, never used to filter, sort or group).
+/// A row's meta as drawn (its own record and Gezik's store).
 #[derive(Debug, Default)]
 pub struct RowMeta {
     pub meta: Meta,
-    /// `None`: not asked for.
-    pub explorer: Option<Explorer>,
 }
 
 /// What Explorer keeps in a file (`System.Keywords`, `System.Rating`).
@@ -133,13 +130,104 @@ pub fn read_explorer(path: &Path) -> Explorer {
 }
 
 /// A row's meta, on the icon worker (media.rs); a file that cannot be read has none, nor one on
-/// a network drive unless dots are forced on (each read would cross the network). `explorer`:
-/// Explorer's too.
-pub fn read_for_rows(path: &Path, explorer: bool) -> RowMeta {
+/// a network drive unless dots are forced on (each read would cross the network).
+pub fn read_for_rows(path: &Path) -> RowMeta {
     if !dots_forced() && on_network(path) {
-        return RowMeta { meta: Meta::default(), explorer: explorer.then(Explorer::default) };
+        return RowMeta::default();
     }
-    RowMeta { meta: read_meta(path), explorer: explorer.then(|| read_explorer(path)) }
+    RowMeta { meta: read_meta(path) }
+}
+
+/// Explorer's reads (Windows, spec 12 §8.3): their own worker and small queue, so a slow
+/// property handler never holds up icons and dots. Answers are kept by path until F5 or a tag
+/// job; rows are drawn again as they come.
+struct ExplorerReads {
+    queue: std::collections::VecDeque<PathBuf>,
+    known: std::collections::HashMap<PathBuf, Explorer>,
+    started: bool,
+}
+
+/// The most queued: the newest win (rows scrolled past are not read).
+const EXPLORER_QUEUE: usize = 64;
+/// Answers kept; forgotten wholesale beyond this.
+const EXPLORER_KNOWN: usize = 10_000;
+
+static EXPLORER: std::sync::Mutex<Option<ExplorerReads>> = std::sync::Mutex::new(None);
+static EXPLORER_WAKE: std::sync::Condvar = std::sync::Condvar::new();
+static EXPLORER_REDRAW: AtomicBool = AtomicBool::new(false);
+
+fn explorer_reads() -> std::sync::MutexGuard<'static, Option<ExplorerReads>> {
+    EXPLORER.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Explorer's Tags and stars of `path` if read; otherwise queued for its worker.
+pub fn explorer_of(path: &Path) -> Option<Explorer> {
+    let mut guard = explorer_reads();
+    let reads = guard.get_or_insert_with(|| ExplorerReads {
+        queue: std::collections::VecDeque::new(),
+        known: std::collections::HashMap::new(),
+        started: false,
+    });
+    if let Some(found) = reads.known.get(path) {
+        return Some(found.clone());
+    }
+    if !reads.queue.iter().any(|p| p == path) {
+        if reads.queue.len() >= EXPLORER_QUEUE {
+            reads.queue.pop_front();
+        }
+        reads.queue.push_back(path.to_path_buf());
+    }
+    if !reads.started {
+        reads.started = std::thread::Builder::new().name("gezik-explorer".into()).spawn(explorer_worker).is_ok();
+    }
+    EXPLORER_WAKE.notify_one();
+    None
+}
+
+fn explorer_worker() {
+    gezik_platform::priority::lower_this_thread();
+    loop {
+        let path = {
+            let mut guard = explorer_reads();
+            loop {
+                if let Some(path) = guard.as_mut().and_then(|r| r.queue.pop_back()) {
+                    break path;
+                }
+                guard = EXPLORER_WAKE.wait(guard).unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+        };
+        let found = read_explorer(&path);
+        if let Some(reads) = explorer_reads().as_mut() {
+            if reads.known.len() >= EXPLORER_KNOWN {
+                reads.known.clear();
+            }
+            reads.known.insert(path, found);
+        }
+        // One redraw for answers that come together.
+        if !EXPLORER_REDRAW.swap(true, Ordering::SeqCst) {
+            let _ = slint::invoke_from_event_loop(|| {
+                EXPLORER_REDRAW.store(false, Ordering::SeqCst);
+                redraw_all();
+            });
+        }
+    }
+}
+
+/// F5, a tag job: Explorer's answers are asked for again.
+fn forget_explorer() {
+    if let Some(reads) = explorer_reads().as_mut() {
+        reads.known.clear();
+    }
+}
+
+/// Tests: an answer as if read.
+#[cfg(test)]
+pub fn set_explorer_for_tests(path: &Path, found: Explorer) {
+    drop(explorer_of(path));
+    if let Some(reads) = explorer_reads().as_mut() {
+        reads.queue.retain(|p| p != path);
+        reads.known.insert(path.to_path_buf(), found);
+    }
 }
 
 /// A file's meta for a folder read whole (12c, `view/folder_tags.rs`): network drives too, the
@@ -210,6 +298,7 @@ pub fn dots_of(tags: &[Tag], list: &[Tag]) -> (Vec<Color>, i32, String) {
 /// Drops what is known of every row's tags and draws the rows again (a tag job ended, F5).
 pub fn forget_rows() {
     crate::media::with_current(crate::media::Media::forget_tags);
+    forget_explorer();
     // This window's panes read again now; other windows' when they next show or sort.
     let here: Vec<_> = crate::panes::all().iter().map(|p| p.id).collect();
     for p in crate::panes::everywhere() {
@@ -411,12 +500,12 @@ pub fn edit_comment(view: &View) {
     }
 }
 
-/// The comment the field starts with: the items' own when all have the same, else none and how
-/// many have one.
+/// The comment the field starts with: the items' own when all have the same (0), else none and
+/// how many items there are (their comments differ).
 pub fn shared_comment(metas: &[Meta]) -> (String, usize) {
     match metas.split_first() {
         Some((first, rest)) if rest.iter().all(|m| m.comment == first.comment) => (first.comment.to_string(), 0),
-        _ => (String::new(), metas.iter().filter(|m| !m.comment.is_empty()).count()),
+        _ => (String::new(), metas.len()),
     }
 }
 
@@ -430,9 +519,20 @@ pub fn comment_note(text: &str, differing: usize) -> (String, bool) {
     } else if text.chars().any(char::is_control) {
         ("Line breaks and tabs become spaces".to_owned(), false)
     } else if text.is_empty() && differing > 0 {
-        (format!("(different on {})", crate::stack::count_text(differing)), false)
+        (format!("Comments differ across {}", crate::stack::count_text(differing)), false)
     } else {
         (String::new(), false)
+    }
+}
+
+/// The comment a question's answer writes: Save with a changed field writes it (empty: removes
+/// it); `Remove Comments` (button 1, only when they differ) removes them all; an untouched field
+/// does nothing, so different comments are never cleared by a Save.
+pub fn comment_answer(choice: usize, text: &str, initial: &str, differing: usize) -> Option<String> {
+    match choice {
+        1 if differing > 0 => Some(String::new()),
+        0 if text.trim() != initial.trim() => Some(text.to_owned()),
+        _ => None,
     }
 }
 
@@ -442,22 +542,14 @@ pub fn edit_comment_paths(paths: Vec<PathBuf>) {
         let message = format!("Comment for {}:", crate::operations::items_text(&paths));
         let note = move |text: &str| comment_note(text, differing);
         let unchanged = initial.clone();
+        let buttons: &[&str] = if differing > 0 { &["Save", "Remove Comments", "Cancel"] } else { &["Save", "Cancel"] };
         crate::operations::with_current(|ops| {
-            ops.dialogs().ask_form(
-                "Comment",
-                message,
-                (initial, Vec::new()),
-                &["Save", "Cancel"],
-                note,
-                move |answer| {
-                    // Esc, or the text as it was on items that all had it: nothing to do.
-                    let Some((_, text, _)) = answer else { return };
-                    if differing == 0 && text.trim() == unchanged.trim() {
-                        return;
-                    }
-                    submit(paths, vec![MetaEdit::Comment(text.into())]);
-                },
-            );
+            ops.dialogs().ask_form("Comment", message, (initial, Vec::new()), buttons, note, move |answer| {
+                let Some((choice, text, _)) = answer else { return };
+                if let Some(comment) = comment_answer(choice, &text, &unchanged, differing) {
+                    submit(paths, vec![MetaEdit::Comment(comment.into())]);
+                }
+            });
         });
     });
 }
@@ -1377,14 +1469,23 @@ mod tests {
     #[test]
     fn a_comment_starts_from_the_shared_one_and_stays_within_its_rules() {
         assert_eq!(shared_comment(&[rated(0, "draft"), rated(2, "draft")]), ("draft".to_owned(), 0));
-        assert_eq!(shared_comment(&[rated(0, "a"), rated(0, ""), rated(0, "b")]), (String::new(), 2));
+        assert_eq!(shared_comment(&[rated(0, "a"), rated(0, ""), rated(0, "b")]), (String::new(), 3));
+        assert_eq!(shared_comment(&[rated(0, "a"), rated(0, "")]), (String::new(), 2), "1 has one: 2 differ");
         assert_eq!(shared_comment(&[rated(0, ""), rated(0, "")]), (String::new(), 0));
         assert_eq!(comment_note("ok", 0), (String::new(), false));
-        assert_eq!(comment_note("", 2), ("(different on 2 items)".to_owned(), false));
+        assert_eq!(comment_note("", 2), ("Comments differ across 2 items".to_owned(), false));
         assert_eq!(comment_note("a\tb", 0), ("Line breaks and tabs become spaces".to_owned(), false));
         let (line, stops) = comment_note(&"ğ".repeat(1001), 0);
         assert!(stops && line.ends_with("1,001"), "{line}");
         assert!(!comment_note(&"ğ".repeat(1000), 0).1, "1,000 characters (not bytes) fit");
+        // Different comments: an untouched Save leaves them; Remove Comments clears them.
+        assert_eq!(comment_answer(0, "", "", 2), None);
+        assert_eq!(comment_answer(0, "new", "", 2), Some("new".to_owned()));
+        assert_eq!(comment_answer(1, "", "", 2), Some(String::new()));
+        // One shared comment: Save as it was does nothing, emptied removes it.
+        assert_eq!(comment_answer(0, " draft ", "draft", 0), None);
+        assert_eq!(comment_answer(0, "", "draft", 0), Some(String::new()));
+        assert_eq!(comment_answer(1, "x", "draft", 0), None, "Cancel");
     }
 
     #[test]

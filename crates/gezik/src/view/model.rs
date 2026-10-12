@@ -324,17 +324,16 @@ fn row_meta(data: &ViewData, i: usize) -> RowCells {
         (Listing::Files(dir, _), Some(f)) if f.dir == *dir => entry.as_deref().and_then(|e| f.of(&e.name)),
         _ => None,
     };
-    let row = if whole.is_none() || explorer {
-        let Some((path, _)) = data.listing.path_at(i) else { return RowCells::default() };
-        if !crate::tags::dots_forced() && crate::cloud::root_of(&path).is_some() {
-            return RowCells::default();
-        }
-        data.media.tags(path, i, explorer)
-    } else {
-        None
+    let path = (whole.is_none() || explorer).then(|| data.listing.path_at(i)).flatten().map(|(path, _)| path);
+    // Cloud folders are not read row by row (a folder read whole was asked for: it answers).
+    let cloud = path.as_ref().is_some_and(|p| !crate::tags::dots_forced() && crate::cloud::root_of(p).is_some());
+    let windows = path.as_deref().filter(|_| explorer && !cloud).and_then(crate::tags::explorer_of);
+    let row = match path {
+        Some(path) if whole.is_none() && !cloud => data.media.tags(path, i),
+        _ => None,
     };
     let Some(meta) = whole.or(row.as_deref().map(|r| &r.meta)) else { return RowCells::default() };
-    let windows = row.as_deref().and_then(|r| r.explorer.as_ref()).filter(|_| explorer);
+    let windows = windows.as_ref();
     let mut cells = RowCells::default();
     if !meta.tags.is_empty() {
         let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&meta.tags, list));
@@ -783,9 +782,9 @@ mod tests {
         assert!(data.media.pending() <= crate::media::MAX_QUEUED + others, "{}", data.media.pending());
         // Once read, a row draws its dots; no colour is a ring.
         let red = Tag::new("Red", TagColor::None);
-        let key = crate::media::MediaKey::Tags { path: dir.join("f0.txt"), explorer: false };
+        let key = crate::media::MediaKey::Tags { path: dir.join("f0.txt") };
         let meta = gezik_core::meta::Meta { tags: vec![red, Tag::new("Mine", TagColor::None)], ..Default::default() };
-        let row = crate::tags::RowMeta { meta, explorer: None };
+        let row = crate::tags::RowMeta { meta };
         data.media.finish(
             &std::sync::atomic::AtomicBool::new(true),
             key,
@@ -827,9 +826,12 @@ mod tests {
         drop(file_row(&data, 1));
         assert_eq!(data.media.pending(), others + 1, "the comment column asks");
         let meta = Meta { rating: 0, comment: "Ready".into(), ..Meta::default() };
-        let explorer = Some(crate::tags::Explorer { keywords: "beach".into(), stars: 4 });
-        let key = crate::media::MediaKey::Tags { path: dir.join("a.jpg"), explorer: cfg!(windows) };
-        let row = std::sync::Arc::new(crate::tags::RowMeta { meta, explorer });
+        crate::tags::set_explorer_for_tests(
+            &dir.join("a.jpg"),
+            crate::tags::Explorer { keywords: "beach".into(), stars: 4 },
+        );
+        let key = crate::media::MediaKey::Tags { path: dir.join("a.jpg") };
+        let row = std::sync::Arc::new(crate::tags::RowMeta { meta });
         data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Tags(row));
         data.rating_column = true;
         data.tags_column = true;
@@ -843,6 +845,37 @@ mod tests {
         }
         data.rating_column = false;
         assert_eq!(file_row(&data, 0).rating.as_str(), "", "column hidden: no stars");
+    }
+
+    #[test]
+    fn a_cloud_folder_read_whole_keeps_its_stars_and_reads_nothing_more() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::Meta;
+        let root = std::env::temp_dir().join("gezik-12d").join(format!("cloud-{}", std::process::id()));
+        crate::cloud::set_roots(vec![gezik_platform::cloud::CloudRoot {
+            path: root.clone(),
+            label: "OneDrive".into(),
+            account: String::new(),
+        }]);
+        let entries =
+            vec![Entry { name: "a.jpg".into(), is_dir: false, flags: 0, size: 1, modified: None, created: None }];
+        let mut data = ViewData {
+            listing: Listing::Files(root.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            rating_column: true,
+            comment_column: true,
+            ..ViewData::default()
+        };
+        crate::tags::set_settings(TagsSettings { dots: Dots::Auto, ..TagsSettings::default() });
+        let known = Meta { rating: 3, comment: "Ready".into(), ..Meta::default() };
+        let tags = std::collections::HashMap::from([(Box::from("a.jpg"), known)]);
+        data.folder_tags = Some(Rc::new(super::super::FolderTags::read(root, tags)));
+        drop(file_row(&data, 0));
+        let pending = data.media.pending();
+        let row = file_row(&data, 0);
+        assert_eq!((row.rating.as_str(), row.comment.as_str()), ("★★★☆☆", "Ready"), "a picture keeps its stars");
+        assert_eq!(data.media.pending(), pending, "no row read, no Explorer read in the cloud");
+        crate::cloud::set_roots(Vec::new());
     }
 
     #[test]

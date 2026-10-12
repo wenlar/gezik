@@ -134,10 +134,37 @@ pub fn volume(root: &Path) -> io::Result<Volume> {
 
 /// Explorer's Tags (`System.Keywords`) and rating (`System.Rating`, 0–99) of `path`, read
 /// through its property handler (spec 12 §8.3): read only, never written. `None` when it has
-/// no handler, cannot be read, or the handler takes over 2 s (that call is left behind).
+/// no handler, cannot be read, is a link or only in the cloud now (the handler would download
+/// it), or the handler takes over 2 s: that call is left behind and the file is not tried again
+/// in this session.
 pub fn explorer(path: &Path) -> Option<(Vec<String>, u32)> {
-    let path = path.to_path_buf();
-    super::within(std::time::Duration::from_secs(2), move || explorer_now(&path)).flatten()
+    use std::collections::HashSet;
+    use std::sync::{Mutex, PoisonError};
+    static HUNG: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+    let hung = || HUNG.lock().unwrap_or_else(PoisonError::into_inner);
+    if hung().as_ref().is_some_and(|h| h.contains(path)) {
+        return None;
+    }
+    let facts = std::fs::symlink_metadata(path).ok()?;
+    let cloud_only = gezik_core::attribute_flags(&facts) & gezik_core::Entry::CLOUD_ONLY != 0;
+    if facts.is_symlink() || !facts.is_file() || cloud_only {
+        return None;
+    }
+    let owned = path.to_path_buf();
+    let (send, answer) = std::sync::mpsc::sync_channel(1);
+    let started = super::within(std::time::Duration::from_secs(2), move || {
+        let _ = send.send(());
+        explorer_now(&owned)
+    });
+    match started {
+        Some(found) => found,
+        // Started but not done in time (not a refusal for too many calls): never again.
+        None if answer.try_recv().is_ok() => {
+            hung().get_or_insert_with(HashSet::new).insert(path.to_path_buf());
+            None
+        }
+        None => None,
+    }
 }
 
 /// `System.Keywords` and `System.Rating`.
@@ -198,6 +225,7 @@ mod tests {
 
     #[test]
     fn explorers_tags_and_rating_are_read_and_the_file_is_left_alone() {
+        let _alone = super::super::within_alone();
         // Written only under %TEMP%\gezik-12d: the test plays Explorer on its own picture.
         let dir = std::env::temp_dir().join("gezik-12d").join(format!("explorer-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

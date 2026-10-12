@@ -142,7 +142,9 @@ pub enum MetaEdit {
 /// `text` on one line, at most [`MAX_COMMENT`] characters.
 fn one_paragraph(text: &str) -> Box<str> {
     // Line breaks, tabs and the store's field separator (U+001F) are all control characters.
-    let line: String = text.trim().chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    // A Windows line break is one break: one space.
+    let line: String =
+        text.trim().replace("\r\n", "\n").chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     line.chars().take(MAX_COMMENT).collect::<String>().into()
 }
 
@@ -374,6 +376,8 @@ mod tests {
         assert_eq!(m.comment.chars().count(), MAX_COMMENT);
         m.apply(&MetaEdit::Comment("a\u{1f}b\tc".into()));
         assert_eq!(&*m.comment, "a b c", "no control characters: the store parts fields with U+001F");
+        m.apply(&MetaEdit::Comment("one\r\ntwo\rthree".into()));
+        assert_eq!(&*m.comment, "one two three", "CRLF is one space");
         m.apply(&MetaEdit::AddTags(vec![Tag::new("bad\u{1f}", TagColor::Red)]));
         assert!(m.tags.is_empty(), "a name no system holds is not added");
         let many: Vec<Tag> = (0..100).map(|i| Tag::new(&format!("tag {i}"), TagColor::Red)).collect();

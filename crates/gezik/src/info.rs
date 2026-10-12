@@ -68,8 +68,6 @@ struct Loaded {
     names: Option<Names>,
     /// macOS and Linux, one file: the apps that open it.
     apps: Vec<AppChoice>,
-    /// Windows, one file of a kind that keeps them: Explorer's Tags and rating (spec 12 §8.3).
-    explorer: String,
 }
 
 fn load(paths: &[PathBuf], names: bool) -> Loaded {
@@ -98,11 +96,7 @@ fn load(paths: &[PathBuf], names: bool) -> Loaded {
         }
         _ => Vec::new(),
     };
-    let explorer = match items.as_slice() {
-        [(path, e)] if cfg!(windows) && !e.is_dir && !e.is_link => explorer_text(path),
-        _ => String::new(),
-    };
-    Loaded { unreadable: paths.len() - items.len(), items, acl, times, names, apps, explorer }
+    Loaded { unreadable: paths.len() - items.len(), items, acl, times, names, apps }
 }
 
 struct State {
@@ -114,7 +108,6 @@ struct State {
     acl: bool,
     times: [Option<SystemTime>; 3],
     apps: Vec<AppChoice>,
-    explorer: String,
     size: String,
     note: (String, bool),
     /// This window's jobs and what each was to change.
@@ -238,7 +231,6 @@ impl Info {
                 state.acl = loaded.acl;
                 state.times = loaded.times;
                 state.apps = loaded.apps;
-                state.explorer = loaded.explorer;
             }
             return self.show(true);
         };
@@ -252,7 +244,6 @@ impl Info {
             acl: loaded.acl,
             times: loaded.times,
             apps: loaded.apps,
-            explorer: loaded.explorer,
             size: "Size: calculating…".to_owned(),
             note: unreadable_note(loaded.unreadable),
             jobs: Vec::new(),
@@ -285,7 +276,7 @@ impl Info {
         let perms = perm_digits(attrs::perm_states(&all));
         window.set_info_view(InfoView {
             title: title(&state.items).into(),
-            general: (general_text(&state.items, state.times, &state.size) + &state.explorer).into(),
+            general: general_text(&state.items, state.times, &state.size).into(),
             perms,
             perms_enabled,
             ids_enabled,
@@ -610,37 +601,6 @@ impl Info {
     }
 }
 
-/// Explorer's Tags and rating lines of the file at `path` (Windows, read only; spec 12 §8.3),
-/// each after a line break; none for a kind without them, a file only in the cloud, or none set.
-fn explorer_text(path: &std::path::Path) -> String {
-    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
-    let in_cloud = std::fs::symlink_metadata(path)
-        .is_ok_and(|m| gezik_core::attribute_flags(&m) & gezik_core::Entry::CLOUD_ONLY != 0);
-    if !gezik_core::meta::explorer_kind(&name) || in_cloud {
-        return String::new();
-    }
-    explorer_lines(&crate::tags::read_explorer(path))
-}
-
-fn explorer_lines(explorer: &crate::tags::Explorer) -> String {
-    let mut text = String::new();
-    if !explorer.keywords.is_empty() {
-        text.push_str(&format!(
-            "
-Tags (Windows): {}",
-            explorer.keywords
-        ));
-    }
-    if explorer.stars > 0 {
-        text.push_str(&format!(
-            "
-Rating (Windows): {}",
-            gezik_core::meta::stars_text(explorer.stars)
-        ));
-    }
-    text
-}
-
 /// "rapor.pdf Info", or "3 items".
 fn title(items: &[(PathBuf, Entry)]) -> String {
     match items {
@@ -813,13 +773,6 @@ mod tests {
         );
         assert_eq!(job_note(&report(&[], 0), 0), (String::new(), false));
         assert!(denied(&wanted, &report(&[("/d/z", NEEDS_ADMIN)], 0)).is_empty(), "not this window's item");
-    }
-
-    #[test]
-    fn explorers_lines_say_what_it_keeps() {
-        let both = crate::tags::Explorer { keywords: "beach, sea".into(), stars: 4 };
-        assert_eq!(explorer_lines(&both), "\nTags (Windows): beach, sea\nRating (Windows): ★★★★☆");
-        assert_eq!(explorer_lines(&crate::tags::Explorer::default()), "");
     }
 
     #[test]
