@@ -2859,3 +2859,11 @@ Güvenlik: her tuş/tıktan önce ön plan ve nokta kontrolü; picker/yorum/süz
 Temizlik: başlatılan Gezik süreci WM_CLOSE ile kapandı (çalışan yok); `data\t` (p.jpg dahil) ve `cfg\d1` silindi. Kayıt defteri, Çöp, `%APPDATA%\gezik`, E: ve klavye düzeni kullanılmadı; dosyalar kabukla açılmadı.
 
 Düzeltmeler (aynı gün): bulgu 1 Info'nun Windows dalı kaldırıldı (planda sapma 9); bulgu 2 not `Comments differ across 2 items`; bulgu 3 puansızlar iki yönde ad sırasıyla sonda; bulgu 4 bilerek (sapma 17); bulgu 5 dokunulmadı (sütun genişliği kullanıcının).
+
+## Adım 14, alt parça 14a sonrası
+
+- `settings` (`Settings…`, `Action::ALL` 125, Windows/Linux `Ctrl+,`, macOS `⌘,`): ayrı `SettingsWindow` (`ui/widgets/settings.slint`, `src/settings_window.rs`), açılınca kurulur, kapanınca bırakılır. Sekiz sayfa, bütün sayfalarda arama, tek satır bileşeni (aç/kapa, seçim, yazılan değer, liste, sistem); seçimler ve sağ tık menüsü satırın altında açılır (`PopupWindow` yok), uyarılar durum satırında. Menü: View düğmesi ve klasör arka plan menüsü (`SETTINGS` 2800), satır menüsü 2810–2812; macOS View menüsü.
+- Şema `gezik-config/src/schema.rs`: 63 ayar (49 tekil, 14 liste) ayar; açıklama/varsayılan gömülü şablondan, değer son okunan `settings.toml` metninden; doğrulama `Settings::parse`'la. Testler şablon ↔ şema ↔ ayrıştırıcıyı bağlar: şablona eklenen her yeni ayar şemaya yazılana kadar test kırılır.
+- Yazma `SettingsChange::Value` (aynı kuyruk); `\r\n`'li dosyalar artık bütün yazmalarda satır sonlarını korur (önceden her yazma bütün dosyayı `\n`'ye çeviriyordu).
+- `Key::parse` `,` ve `comma`'yı tanır.
+- Açık kalanlar: yol satırında klasör seçici yok; macOS'ta öğe uygulama menüsünde değil View'da; pencere aç/kapa bellek ölçümü ve Windows ekran testi yapılmadı (GUI çalıştırılmadı); Esc seçim listesini kapatmaz, seçim listesi klavyeyle gezilmez (ekran okuyucu eylemiyle seçilir). Exe 27.961.344 B (+256.000 B; ilk sürüm +371.200 B'ydi, Slint'in `if`'leri ve satır içi bileşen kopyaları sadeleştirildi; plan sapma 9). Kopya `%TEMP%\gezik-gui-14\bin\t14a.exe`.

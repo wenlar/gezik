@@ -776,6 +776,13 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 363. **Dark theme and selection.** Switch System Settings ▸ Appearance to Dark: the named colors become lighter shades, the folder rule uses its `dark-color`. Select a colored row: its text keeps the color where it reads on the selection, else it is the selection's white; bold stays. Bold names are crisp on Retina.
 364. **Only when asked.** With only the `name`/`kind` rules (no `tag`/`rating`/`comment`) and tag dots and columns off, a 10,000-file folder scrolls as before (Activity Monitor: no extra CPU). With the `tag` rule, tag a file Red in Finder: its name turns bold after the row is read, with no other rule's color flashing first.
 
+### 14a, the settings window
+
+365. **⌘, opens it.** ⌘, (or View ▸ Settings…) opens Settings — Gezik with eight pages on the left; a second ⌘, (with Gezik's main window in front) brings the same window forward, not a second one. Closing it and opening it again starts fresh; Activity Monitor's memory for Gezik is back near where it was after it closes.
+366. **A change, one line.** `cp ~/Library/Application\ Support/gezik/settings.toml /tmp/before.toml`, then Appearance ▸ Density ▸ compact: the main window's rows tighten at once. `diff /tmp/before.toml ~/Library/Application\ Support/gezik/settings.toml` shows only the `density` line. Type `5` into General ▸ Max fps and press Return: the line at the bottom turns red with the reason and the file does not change. Pointing at themes in Appearance ▸ Theme previews them; moving away goes back.
+367. **A broken file.** Add a line `[layout` to settings.toml in TextEdit and save while the window is open: the line at the bottom says `settings.toml line N: …` and the controls do nothing; fix the line and save: they work again.
+368. **VoiceOver.** With VoiceOver on, Tab to a row's control: it reads the title, the value and "default" when the file does not set it; the pages read as tabs.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.
@@ -797,7 +804,7 @@ These are known differences from Finder and ForkLift (from the ForkLift comparis
 - **App bundle and menus:**
   - No `.app`, signing or notarization. The app menu items read "About/Hide/Quit gezik".
   - The menu bar shows the default shortcuts, not ones changed in settings.toml.
-  - ⌘, does nothing.
+  - Settings… is in the View menu, not the app menu (Slint adds no item there); ⌘, works.
 - **Names:**
   - A kept copy is `b (2).txt` (Finder: `b 2.txt`).
   - A new folder is "New folder" (Finder: "untitled folder").

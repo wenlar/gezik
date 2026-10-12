@@ -44,7 +44,7 @@ Windows · macOS · Linux
 
 ## Configuration
 
-Gezik keeps its settings in a plain-text folder. Changes apply as soon as you save, with no restart.
+Gezik keeps its settings in a plain-text folder. Changes apply as soon as you save, with no restart. **Settings…** (Ctrl+, , macOS ⌘,) shows the same file in a window: pages, a search, each setting with its comment; a change is written at once and only its line in `settings.toml` changes.
 
 | OS | Location |
 |---|---|

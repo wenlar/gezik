@@ -14,7 +14,7 @@
 4. **Satır sonları:** toml_edit her satır sonunu `\n` yazıyordu; `\r\n`'li (Not Defteri) dosyada her yazma bütün dosyayı değiştiriyordu. `SettingsChange::apply` artık dosyanın `\r\n`'sini korur (bütün değişiklik türleri için).
 5. **Şema `gezik-config/src/schema.rs`:** `FIELDS` (tablo, anahtar, sayfa, tür); açıklama ve varsayılan gömülü şablondan bir satır tarayıcısıyla (yorumlu örnek anahtarlar ve `[[…]]` örnekleri tanınır), değer dosya metninden (`toml::Table`). Doğrulama ayrıştırıcıyla: değer tek anahtarlık bir metinde `Settings::parse`'tan uyarısız geçmezse yazılmaz, uyarının metni satırın altında kırmızı. Bu yüzden `Int`'te min/max yok, `Float` yok (şablonda kesirli ayar yok).
 6. **Türler:** `Bool`, `Choice`, `Int`, `Text`, `Path`, `Theme`, `Integration` (`[system] tray`/`hotkey`: System Integration yazar, satırda düğme), `List` (sayı ve `Edit in settings.toml`).
-7. **Pencere `gezik/src/settings_window.rs` + `ui/widgets/settings.slint`:** `SettingsWindow` tek; satırlar tek `SettingLine` bileşeni (onay kutusu, açılır seçim `PopupWindow`'la, metin alanı Enter/odak kaybında yazar, liste/sistem düğmesi), sağ tık satır menüsü. Kapanınca `drop` (bir sonraki olay döngüsü turunda). UI iş parçacığı dosya okumaz: değerler `Process.files`'ın son okunan metninden; dış değişiklikte izleyicinin yeniden yüklemesi pencereyi tazeler (odaktaki alan korunur, farklıysa "Changed in settings.toml: …").
+7. **Pencere `gezik/src/settings_window.rs` + `ui/widgets/settings.slint`:** `SettingsWindow` tek; satırlar tek `SettingLine` bileşeni (onay kutusu, seçim listesi satırın altında açılır, metin alanı Enter/odak kaybında yazar, liste/sistem düğmesi), sağ tık satır menüsü de satırın altında. Kapanınca `drop` (bir sonraki olay döngüsü turunda). UI iş parçacığı dosya okumaz: değerler `Process.files`'ın son okunan metninden; dış değişiklikte izleyicinin yeniden yüklemesi pencereyi tazeler (odaktaki alan korunur, farklıysa "Changed in settings.toml: …").
 8. **Tema önizlemesi:** seçim listesinde temanın üstüne gelince `resolve_theme` bellekte, bütün pencerelere; ayrılınca (kısa gecikmeyle) ya da pencere kapanınca yüklü temaya döner. Seçim yazılır.
 9. **Menüler:** Windows/Linux View düğmesinin menüsünde System Integration'dan sonra ve klasör arka plan menüsünün sonunda `Settings…`; macOS View menüsünün sonunda `Settings… ⌘,` (Slint uygulama menüsüne öğe ekletmiyor); palet eylemden.
 
@@ -38,4 +38,16 @@
 
 ## Sapmalar (spec'ten)
 
-Uygulama sonunda doldurulur.
+1. **Sayılar tabana göre:** `Action::ALL` 125 (spec 128 diyordu), denetim listeleri macOS 365–368, Linux 266–267 (spec 388–391, 282–283); 13 bu tabanda yok.
+2. **macOS menüsü:** `Settings… ⌘,` uygulama menüsünde değil View menüsünün sonunda (Slint'in `MenuBar`'ı uygulama menüsüne öğe ekletmiyor); macOS bilinen boşluklarındaki "⌘, does nothing" satırı buna göre değişti.
+3. **`≡` menüsü yok:** Windows/Linux'ta karşılığı View düğmesinin menüsü (System Integration orada); `Settings…` oraya ve klasör arka plan menüsünün sonuna.
+4. **Yol satırında `…` (klasör seçici) yok:** kod tabanında sistem klasör seçicisi yok; yeni bağımlılık ve bütçe yerine yol yazılır (`{home}` belirteçleri çalışır). Sonraki parçada gerekirse.
+5. **`Int { min, max }` ve `Float` yok:** sınırları ayrıştırıcı denetler (`schema::check`, tek anahtarlık metinde `Settings::parse`); aralık iki yerde yazılmaz. Şablonda kesirli ayar yok.
+6. **Satır içi tablo ve noktalı anahtar düzenlenir** (spec salt okunur diyordu): toml_edit yerinde değiştiriyor, bayt testleri bunu gösteriyor.
+7. **`\r\n` korunur:** toml_edit her satır sonunu `\n` yazıyordu; Not Defteri'yle kaydedilmiş dosyada her Gezik yazması bütün satırları değiştiriyordu. Düzeltme `SettingsChange::apply`'da, bütün değişiklik türleri için.
+8. **`show-hidden`'ın Reset'i anahtarı çıkarır:** şablonda yalnız yorum olarak duran (sisteme göre değişen) tek ayar; varsayılanı `platform_default`'tan.
+9. **Bütçe için sadeleştirilen arayüz:** ilk sürüm +371.200 B'ydi (pencere tek başına ≈ 300 KB; Slint'in her `if`'i ve satır içine açılan her `Check`/`TextButton` kopyası ayrı kod). Bütçeye inmek için: `PopupWindow` yok, seçimler ve sağ tık menüsü satırın altında açılır (ikinci tık ya da seçim kapatır; Esc yok); `Check` ve `TextButton` yerine `if`siz kendi kutu ve düğmesi (açık kutu dolu, onay işareti yok); reddedilen değer, dosyada değişen odaktaki alan ve bozuk dosyanın satırı satırın altında değil pencerenin durum satırında (kırmızı/soluk); `Open settings.toml` ve `Open Config Folder` sayfa listesinin sonunda; anahtar adı açıklamayla aynı metinde; arama kutusunun etiketi yok (ipucu durum satırında).
+10. **Pencere bırakma testi yok:** Slint arka ucu olmadan bileşen kurulamıyor (testlerde hiç kurulmuyor); kapanış `OPEN.take()` + `hide`, `release_all` de kapatır. 20 aç/kapa bellek ölçümü (`scripts/perf/settings.ps1`) yazılmadı: GUI çalıştırılmadı; Windows ekran testine kaldı.
+11. **Sistem satırları (`tray`, `hotkey`) salt gösterim** (`Kind::Integration`), düğme System Integration panelini açar; değerleri o yazar (spec §4.1).
+12. **12f'nin düzeltme turu** (912c7ec) birleştirildi; çakışma yok.
+13. **Exe:** 27.961.344 B, taban 27.705.344 B'ye göre +256.000 B (bütçe +262.144). Pencere kodu kaldırılınca 27.747.840 B: şema, yazma, eylem ve menüler ≈ +42 KB (12f düzeltmeleri dahil), pencere ≈ +214 KB.
