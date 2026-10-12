@@ -37,7 +37,11 @@ jobs:
             os: macos-latest
           - name: Linux
             os: ubuntu-24.04
-            container: rust:1-trixie
+            # --init: a PID 1 that reaps orphans (process_tree_is_killed waits for the
+            # killed shell's children to be gone, not left as zombies).
+            container:
+              image: rust:1-trixie
+              options: --init
     steps:
       - name: Install Linux packages
         if: runner.os == 'Linux'
@@ -63,6 +67,14 @@ jobs:
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
+
+      # The runner's TEMP is a short 8.3 path (C:\Users\RUNNER~1); links, the Recycle Bin and
+      # PowerShell give back the long one, so the tests comparing them would differ.
+      - name: Use a long TEMP path
+        if: runner.os == 'Windows'
+        run: |
+          "TEMP=${{ runner.temp }}" >> $env:GITHUB_ENV
+          "TMP=${{ runner.temp }}" >> $env:GITHUB_ENV
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

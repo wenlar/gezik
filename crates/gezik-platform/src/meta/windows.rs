@@ -225,6 +225,11 @@ mod tests {
 
     #[test]
     fn explorers_tags_and_rating_are_read_and_the_file_is_left_alone() {
+        // Listed in docs/superpowers/notes/parts/ci-skips.md.
+        if std::env::var_os("CI").is_some() {
+            eprintln!("skipped in CI: the runner's service session gives no Explorer property store");
+            return;
+        }
         let _alone = super::super::within_alone();
         // Written only under %TEMP%\gezik-12d: the test plays Explorer on its own picture.
         let dir = std::env::temp_dir().join("gezik-12d").join(format!("explorer-{}", std::process::id()));
