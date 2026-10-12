@@ -100,14 +100,22 @@ impl Shown {
         }
     }
 
-    /// What the status line says: the unknown keys on the Advanced page.
-    fn status(&self) -> String {
+    /// What the status line says, and whether it is a problem: settings.toml's error, a search
+    /// that finds nothing, the unknown keys on the Advanced page.
+    fn status(&self) -> (String, bool) {
+        if let Some(broken) = &self.broken {
+            return (format!("{broken} — fix it in settings.toml; until then these are read-only"), true);
+        }
+        if self.rows.is_empty() {
+            return ("No setting matches".to_owned(), false);
+        }
         let advanced = Page::ALL[self.page.min(Page::ALL.len() - 1)] == Page::Advanced && self.query.trim().is_empty();
-        match self.unknown {
-            n if !advanced || n == 0 => String::new(),
+        let text = match self.unknown {
+            n if !advanced || n == 0 => "Type in the box above to search every page".to_owned(),
             1 => "1 key Gezik does not know is in settings.toml (it stays there; see the notice)".to_owned(),
             n => format!("{n} keys Gezik does not know are in settings.toml (they stay there; see the notice)"),
-        }
+        };
+        (text, false)
     }
 
     /// The change `input` makes to row `row`'s field, or why it makes none.
@@ -171,7 +179,8 @@ pub fn open() {
         shown.read(&ConfigFiles::default());
     }
     shown.pick_rows();
-    let pages: Vec<SharedString> = Page::ALL.iter().map(|p| p.title().into()).collect();
+    let links = ["Open settings.toml", "Open Config Folder"];
+    let pages: Vec<SharedString> = Page::ALL.iter().map(|p| p.title()).chain(links).map(Into::into).collect();
     window.set_pages(ModelRc::new(VecModel::from(pages)));
     let open = Rc::new(Open {
         window,
@@ -225,8 +234,10 @@ fn show_rows(open: &Open, new: bool) {
         }
     }
     open.window.set_page(i32::try_from(shown.page).unwrap_or(0));
-    open.window.set_broken(shown.broken.clone().unwrap_or_default().into());
-    open.window.set_status(shown.status().into());
+    open.window.set_read_only(shown.broken.is_some());
+    let (status, bad) = shown.status();
+    open.window.set_status(status.into());
+    open.window.set_status_bad(bad);
 }
 
 /// Whether two rows show the same (their choices are new models each time).
@@ -249,7 +260,11 @@ fn bind(open: &Rc<Open>) {
     };
     window.on_page_chosen({
         let weak = weak.clone();
-        move |page| rows_from(&weak, &|shown| shown.page = usize::try_from(page).unwrap_or(0))
+        move |page| match usize::try_from(page).unwrap_or(0).checked_sub(Page::ALL.len()) {
+            None => rows_from(&weak, &|shown| shown.page = usize::try_from(page).unwrap_or(0)),
+            Some(0) => edit_file(),
+            Some(_) => open_folder(),
+        }
     });
     window.on_search({
         let weak = weak.clone();
@@ -258,14 +273,20 @@ fn bind(open: &Rc<Open>) {
     window.on_commit({
         let weak = weak.clone();
         move |row, text| {
-            let Some(open) = weak.upgrade() else { return SharedString::new() };
-            let change = open.shown.borrow().change(usize::try_from(row).unwrap_or(usize::MAX), &text);
+            let Some(open) = weak.upgrade() else { return };
+            let row = usize::try_from(row).unwrap_or(usize::MAX);
+            let change = open.shown.borrow().change(row, &text);
             match change {
-                Ok(Some(change)) => write(change),
+                Ok(Some(change)) => {
+                    say(&open, "");
+                    write(change);
+                }
                 Ok(None) => {}
-                Err(why) => return why.into(),
+                Err(why) => {
+                    let title = open.shown.borrow().rows.get(row).map(|&i| FIELDS[i].title()).unwrap_or_default();
+                    say_bad(&open, &format!("{title}: {why} — not written"));
+                }
             }
-            SharedString::new()
         }
     });
     window.on_hovered({
@@ -315,17 +336,18 @@ fn bind(open: &Rc<Open>) {
             }
         }
     });
-    window.on_edit_file(edit_file);
-    window.on_open_folder(|| {
-        let Some(dir) = crate::windows::config().map(|store| store.dir().to_owned()) else { return };
-        crate::windows::with_focused(|_| {
-            crate::panes::with_active(|p| p.nav.open_tab(Location::Path(dir), true));
-        });
-    });
     window.window().on_close_requested(|| {
         // Not inside the window's own event: on the next turn of the event loop.
         slint::Timer::single_shot(Duration::ZERO, close);
         slint::CloseRequestResponse::HideWindow
+    });
+}
+
+/// Opens the config folder in a new tab of the window last used.
+fn open_folder() {
+    let Some(dir) = crate::windows::config().map(|store| store.dir().to_owned()) else { return };
+    crate::windows::with_focused(|_| {
+        crate::panes::with_active(|p| p.nav.open_tab(Location::Path(dir), true));
     });
 }
 
@@ -336,7 +358,7 @@ fn write(change: SettingsChange) {
         if let Err(warning) = result {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(open) = current() {
-                    say(&open, &warning.to_string());
+                    say_bad(&open, &warning.to_string());
                 }
             });
         }
@@ -345,6 +367,12 @@ fn write(change: SettingsChange) {
 
 fn say(open: &Open, text: &str) {
     open.window.set_status(text.into());
+    open.window.set_status_bad(false);
+}
+
+fn say_bad(open: &Open, text: &str) {
+    open.window.set_status(text.into());
+    open.window.set_status_bad(true);
 }
 
 /// The status bar of the window last used, when this window cannot show it.
@@ -358,7 +386,7 @@ fn edit_file() {
     if let Err(err) = open::that_detached(&path) {
         let text = format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err));
         match current() {
-            Some(open) => say(&open, &text),
+            Some(open) => say_bad(&open, &text),
             None => note(text),
         }
     }
@@ -484,15 +512,16 @@ mod tests {
         assert!(s.broken.as_deref().is_some_and(|b| b.starts_with("settings.toml line 2: ")), "{:?}", s.broken);
         assert_eq!(s.change(0, "{home}/x"), Err("Fix settings.toml first".to_owned()));
         assert!(s.item(s.rows[0]).is_default, "the defaults show");
+        assert!(s.status().1 && s.status().0.starts_with("settings.toml line 2: "), "{:?}", s.status());
     }
 
     #[test]
     fn the_advanced_page_counts_unknown_keys() {
         let mut s = shown("colour = 1\n");
-        assert_eq!(s.status(), "");
+        assert_eq!(s.status(), ("Type in the box above to search every page".to_owned(), false));
         s.page = Page::ALL.iter().position(|p| *p == Page::Advanced).unwrap();
         s.pick_rows();
-        assert!(s.status().starts_with("1 key Gezik does not know"), "{}", s.status());
+        assert!(s.status().0.starts_with("1 key Gezik does not know"), "{:?}", s.status());
         assert!(s.rows.iter().all(|&i| FIELDS[i].kind == Kind::List));
     }
 }
