@@ -141,7 +141,7 @@ impl Backup {
                     "Export Templates".to_owned(),
                     "export-settings.templates".to_owned(),
                     check(!self.without_templates),
-                    "The New ▸ templates (at most 256 MB)".to_owned(),
+                    "The New > templates (at most 256 MB)".to_owned(),
                     Vec::new(),
                 ),
                 Row::Views => (

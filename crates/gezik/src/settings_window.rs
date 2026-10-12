@@ -122,6 +122,12 @@ impl Shown {
         self.rows.len() + self.key_rows.len()
     }
 
+    /// The window row of backup row `row`, if shown.
+    fn backup_index(&self, row: backup::Row) -> Option<usize> {
+        let at = self.backup_rows.iter().position(|r| *r == row)?;
+        Some(self.locked_rows() + self.theme_rows.len() + at)
+    }
+
     /// The backup row of window row `row` (they come after the theme rows).
     fn backup_of(&self, row: usize) -> Option<backup::Row> {
         self.backup_rows.get(row.checked_sub(self.locked_rows() + self.theme_rows.len())?).copied()
@@ -162,7 +168,8 @@ impl Shown {
             },
             title: field.title().into(),
             key: field.path().into(),
-            description: described.description.as_str().into(),
+            // The bundled font has no ▸ (the template's "Group by ▸ Type").
+            description: described.description.replace('▸', ">").into(),
             value: self.values[i].as_deref().unwrap_or(&described.default).into(),
             is_default: self.values[i].is_none(),
             default: described.default.as_str().into(),
@@ -218,6 +225,8 @@ struct Open {
     rows: Rc<VecModel<SettingItem>>,
     /// Counts the theme previews: a revert waits and goes only if no newer one came.
     previews: Cell<u64>,
+    /// The status the rows last asked for (to tell it from an outcome said since).
+    auto_status: RefCell<String>,
 }
 
 thread_local! {
@@ -283,6 +292,7 @@ pub fn open() {
         shown: RefCell::new(shown),
         rows: Rc::new(VecModel::default()),
         previews: Cell::new(0),
+        auto_status: RefCell::default(),
     });
     open.window.set_rows(ModelRc::from(open.rows.clone()));
     show_rows(&open, true);
@@ -316,6 +326,11 @@ pub fn open_backup(import: bool) {
     if let Some(open) = open_at(Page::SyncAndBackup) {
         let row = if import { "Import Settings" } else { "Export Settings" };
         say(&open, &format!("Type the zip's path in {row} and press Enter"));
+        let wanted = if import { backup::Row::Import } else { backup::Row::Export };
+        let at = open.shown.borrow().backup_index(wanted);
+        if let Some(at) = at {
+            focus_row(&open, at);
+        }
     }
 }
 
@@ -400,8 +415,11 @@ fn show_rows(open: &Open, new: bool) {
     let (status, bad) = shown.status();
     let list = shown.backup_rows.contains(&backup::Row::Restore) && shown.backup.backups.is_none();
     drop(shown);
-    // A reload keeps what the status line says (an import's outcome) unless it is a problem.
-    if new || bad || open.window.get_status_bad() {
+    // A reload keeps what the status line says (an import's outcome) unless it is a new
+    // problem; the rows' own earlier status (a problem now fixed) is replaced.
+    let before = open.auto_status.replace(status.clone());
+    let ours = open.window.get_status().as_str() == before;
+    if new || ours || (bad && status != before) {
         open.window.set_status(status.into());
         open.window.set_status_bad(bad);
     }
@@ -878,8 +896,14 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 };
                 open.shown.borrow_mut().pick_rows();
                 show_rows(open, false);
+                // The Import or Cancel row is below the fold at the window's first size.
+                let confirm = open.shown.borrow().backup_index(backup::Row::Confirm);
+                if let Some(confirm) = confirm {
+                    focus_row(open, confirm);
+                }
                 match programs {
                     0 => say(open, "Untick what not to import, then choose Import in the last of these rows"),
+                    1 => say_bad(open, "1 setting in it runs programs (the red row): import only files you trust"),
                     n => say_bad(
                         open,
                         &format!("{n} settings in it run programs (the red row): import only files you trust"),
