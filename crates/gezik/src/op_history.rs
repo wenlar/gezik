@@ -218,6 +218,18 @@ mod tests {
     }
 
     #[test]
+    fn details_list_notes_after_the_rest() {
+        let notes = details_text(&Report { notes: failures(1), ..report() }).unwrap();
+        assert_eq!(notes, "Notes:\nf0.txt: It is open");
+        let all = details_text(&Report { failures: failures(1), skipped: failures(1), notes: failures(1), ..report() });
+        assert_eq!(all.unwrap(), "f0.txt: It is open\n\nSkipped:\nf0.txt: It is open\n\nNotes:\nf0.txt: It is open");
+        let many = details_text(&Report { failures: failures(49), notes: failures(5), ..report() }).unwrap();
+        assert_eq!(many.lines().count(), MAX_DETAILS);
+        assert!(!many.contains("Notes:"), "no room for the heading: counted");
+        assert_eq!(many.lines().last(), Some("…and 5 more"));
+    }
+
+    #[test]
     fn details_with_skipped_items_stay_within_fifty_lines() {
         // 49 failures leave no room for the skipped heading: they are only counted.
         let text = details_text(&Report { failures: failures(49), skipped: failures(10), ..report() }).unwrap();
