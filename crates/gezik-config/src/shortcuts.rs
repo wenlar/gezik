@@ -196,10 +196,11 @@ pub fn refused(chord: &Chord, command: bool, platform: Platform) -> Option<Strin
     }
     let types = command || matches!(chord.key, Key::Char(_) | Key::Num(_));
     if types && !chord.leaves_typing_alone() {
+        let mods = if platform == Platform::Mac { "Ctrl, Option or Cmd" } else { "Ctrl or Alt" };
         return Some(if command {
-            "A command's key needs Ctrl, Alt or Cmd, or an F key".to_owned()
+            format!("A command's key needs {mods}, or an F key")
         } else {
-            "That key types in the file list: add Ctrl, Alt or Cmd".to_owned()
+            format!("That key types in the file list: add {mods}")
         });
     }
     None
