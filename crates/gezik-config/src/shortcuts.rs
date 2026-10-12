@@ -438,10 +438,12 @@ pub enum Action {
     ClearTags,
     /// Asks for the selection's comment (spec 12 §8.1).
     EditComment,
+    /// The preview of the selected file as hex, or back (spec 13 §4.4; no key).
+    PreviewHex,
 }
 
 impl Action {
-    pub const ALL: [Action; 123] = [
+    pub const ALL: [Action; 124] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -565,6 +567,7 @@ impl Action {
         Action::Tag7,
         Action::ClearTags,
         Action::EditComment,
+        Action::PreviewHex,
     ];
 
     pub fn name(self) -> &'static str {
@@ -692,6 +695,7 @@ impl Action {
             Action::Tag7 => "tag-7",
             Action::ClearTags => "clear-tags",
             Action::EditComment => "edit-comment",
+            Action::PreviewHex => "preview-hex",
         }
     }
 
@@ -833,6 +837,7 @@ impl Action {
             Action::Tag7 => "Toggle Tag 7",
             Action::ClearTags => "Clear Tags",
             Action::EditComment => "Comment…",
+            Action::PreviewHex => "Show Preview as Hex",
         }
     }
 
@@ -1055,7 +1060,8 @@ impl Action {
                 | Action::MoveTo
                 | Action::SplitFile
                 | Action::JoinFiles
-                | Action::EditComment,
+                | Action::EditComment
+                | Action::PreviewHex,
                 _,
             ) => &[],
             // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
@@ -2261,6 +2267,15 @@ refresh = [\"f5\", \"ctrl+r\"]
             for platform in [Platform::Other, Platform::Mac] {
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
+        }
+    }
+
+    #[test]
+    fn the_preview_hex_action_has_no_key() {
+        assert_eq!(Action::from_name("preview-hex"), Some(Action::PreviewHex));
+        assert_eq!(Action::PreviewHex.title(), "Show Preview as Hex");
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::PreviewHex), None, "spec 13 §10.2");
         }
     }
 }
