@@ -133,6 +133,11 @@ folder-diff = false       # also hand it two folders
 - **Filter** (Ctrl+F or `/`) narrows the folder as you type. Parts split by `;`, `*` and `?`
   as wildcards (a part without them matches anywhere in the name), `!` in front leaves out:
   `*.jpg;*.png;!*draft*`. Save filters from the bar's ▾ button (`[[filters]]`).
+  Property words narrow by what is inside the files, together with the name parts:
+  `*.mp3 artist:tarkan duration>3m`, `taken>=2024-05 camera:iphone`, `album:none`,
+  `artist="Sezen Aksu"` (`:` holds, `=`, `<`, `<=`, `>`, `>=`, `any`, `none`). The folder's
+  files are read once in the background ("Reading properties… 4,000 of 12,000"); until then
+  the rows show faint. Folders only, not search results.
 - **Select / deselect by pattern** (Ctrl+= / Ctrl+-, or keypad + / −), **invert selection**
   (Ctrl+Shift+I), **select the same type** (Alt+keypad +) and **restore selection** (keypad /:
   the selection before the last file operation).
@@ -235,6 +240,14 @@ restore = true            # open the tabs of last time at start
   sort, grouping, grid size, list columns), by path (`{pictures}/**`), by kind (network, removable,
   cloud, search, …) or by content (`pictures >= 50%`). A view you set yourself wins; the View
   button menu's **Reset to rule** goes back to the rule.
+- **Property columns**: the column header's right-click menu ▸ **More Columns…** (also the
+  palette and View on the macOS menu bar) lists the file properties (Artist, Album, Duration,
+  Date Taken, Camera, Dimensions, Pages…); up to 8 show after Size. Only the rows on screen are
+  read, only for the columns shown, in the background. A click on the header sorts by it, View ▸
+  **Sort by property…** and **Group by ▸ Artist** (or another text property, or Date Taken by
+  year) read the folder once. A property row of the preview has **Show Column**. View rules
+  name them too: `columns = ["artist", "album", "track", "duration"]`, `sort = "track"`,
+  `group = "album"`.
 
 ```toml
 [sidebar]
