@@ -308,7 +308,8 @@ pub fn forget_rows() {
             p.view.folder_tags_changed();
         }
     }
-    if dots_on() {
+    // Dots, or a highlight rule asking for tags, ratings or comments, show what changed.
+    if dots_on() || highlight_needs_meta() {
         redraw_all();
     }
 }
@@ -1440,6 +1441,18 @@ pub fn clean_up_store() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_highlight_colors_read_on_a_light_background() {
+        use gezik_config::theme_rules::contrast;
+        use gezik_core::highlight::Hue;
+        let white = gezik_config::Color { r: 255, g: 255, b: 255, a: 255 };
+        for n in 1..8 {
+            let [r, g, b] = Hue::Named(TagColor::from_number(n)).rgb(false);
+            let ratio = contrast(gezik_config::Color { r, g, b, a: 255 }, white);
+            assert!(ratio >= 3.0, "{:?}: {ratio:.2}", TagColor::from_number(n));
+        }
+    }
 
     fn tag(name: &str, color: TagColor) -> Tag {
         Tag::new(name, color)
