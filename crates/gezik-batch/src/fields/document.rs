@@ -43,7 +43,12 @@ fn tag(xml: &str, local: &str) -> Option<String> {
     let mut rest = xml;
     while let Some(i) = rest.find('<') {
         rest = rest.get(i + 1..)?;
-        let end = rest.find(|c: char| c == '>' || c == '/' || c.is_whitespace())?;
+        // Names are short: a long run without an end is no tag (and is not scanned again and
+        // again: 256 KB of `<` would take minutes).
+        let Some((end, _)) = rest.char_indices().take(128).find(|(_, c)| *c == '>' || *c == '/' || c.is_whitespace())
+        else {
+            continue;
+        };
         let name = rest.get(..end)?;
         if name.rsplit(':').next() == Some(local) {
             let open = rest.find('>')?;
@@ -80,7 +85,7 @@ fn unescape(text: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(rest.get(..i).unwrap_or_default());
         rest = rest.get(i..).unwrap_or_default();
-        let Some(end) = rest.find(';').filter(|e| *e <= 10) else {
+        let Some((end, _)) = rest.char_indices().take(11).find(|(_, c)| *c == ';') else {
             out.push('&');
             rest = rest.get(1..).unwrap_or_default();
             continue;
@@ -150,6 +155,18 @@ mod tests {
         assert_eq!(attr("<m a:page-count=\"7\"/>", "page-count").as_deref(), Some("7"));
         assert_eq!(attr("<m xpage-count=\"7\"/>", "page-count"), None);
         assert_eq!(unescape("a & b &#xFFFFFFFF;"), "a & b &#xFFFFFFFF;");
+    }
+
+    #[test]
+    fn long_runs_of_markup_are_quick() {
+        for run in ["<", "&", "<a"] {
+            let xml = run.repeat(256 * 1024 / run.len());
+            let start = std::time::Instant::now();
+            assert_eq!(tag(&xml, "title"), None);
+            let _ = unescape(&xml);
+            // Linear: milliseconds; the quadratic scan took minutes.
+            assert!(start.elapsed() < std::time::Duration::from_secs(2), "{run}: {:?}", start.elapsed());
+        }
     }
 
     #[test]
