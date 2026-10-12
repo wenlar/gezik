@@ -2913,6 +2913,25 @@ Screenshots: %TEMP%\gezik-gui-13\shots\13d\.
 | - | 0-byte .mp3, junk .mp4/.docx/.pdf: no crash, no rows | PASS (08-*) |
 | - | CPU after tests | PASS, 0 % over 5 s |
 
+### Yeniden test 2 (fix2 sonrası)
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d-fix2.exe. Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on), data =
+the `tests/data/fields` fixtures. Screenshots: %TEMP%\gezik-gui-13\shots\13dfix2\. Play never pressed.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1a | width 200, 1600×900, photo.jpg: all rows down to Location visible | PASS (01): the image now shrinks so the wrapped facts fit; nothing left to scroll, wheel is a no-op (02) |
+| 1b | width 200, 1600×650 (forces overflow): wheel scrolls to Location | PASS (03 → 04): Exposure..Location reached, content clips under the zoom buttons |
+| 1c | rows clip at the pane edge, label/value rows don't overlap | PASS (04z zoom): wrapped Date Taken/Camera/Lens/Location values stay in their rows, labels vertically centred |
+| 2a | width 420, 1000×450: wheel scrolls to Location | PASS (05 → 06) |
+| 2b | width 420, 1600×900 | PASS (07): all rows visible, single-line |
+| 3 | Right-click Lens value → Copy Value | PASS: clipboard = "iPhone 15 Pro back camera 6.86mm f/1.78", status "Copied the value"; clipboard restored |
+| 4 | width 200, id3v23/id3v24.mp3, tags.flac (Turkish title/artist/album artist) | PASS (09-*, 10): Çiğdem Öztürk / Öztürk Ailesi wrap to 2 lines, readable, no overlap; Media+Music down to Year fit |
+
+Note: the fixtures have no really long title/album (longest wraps to 2 lines at 200 px), so a 5+ line value was
+only exercised by photo.jpg's Lens.
+
 ## Failures
 
 1. AIFF codec "SSND". Repro: select `plain.aiff` (fixture) → Media › Audio Codec = "SSND" (ffprobe: pcm_s16be).
