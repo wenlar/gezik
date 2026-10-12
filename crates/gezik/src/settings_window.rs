@@ -431,7 +431,9 @@ fn bind(open: &Rc<Open>) {
                 return backup_chosen(&open, backup_row, &text);
             }
             // A shortcut's Replace? answered.
-            if let Some(key) = open.shown.borrow().key_of(row) {
+            // Bound first: the borrow must end before `pending` is taken below.
+            let key = open.shown.borrow().key_of(row);
+            if let Some(key) = key {
                 let pending = open.shown.borrow_mut().pending.take();
                 say(&open, "");
                 if let Some((_, changes)) = pending.filter(|(of, _)| *of == key && text == "Replace") {
@@ -660,7 +662,7 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
             // Off the UI thread; the config watcher's reload then shows it installed.
             std::thread::spawn(move || {
                 let written = std::fs::create_dir_all(&dir)
-                    .and_then(|()| gezik_config::paths::write_atomic(&dir.join(format!("{id}.toml")), &contents));
+                    .and_then(|()| gezik_config::paths::write_atomic(&themes::theme_path(&dir, &id), &contents));
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(open) = current() else { return };
                     match written {
@@ -690,11 +692,15 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                     _ => say_bad(open, &format!("Cannot open {address}")),
                 },
                 themes::DELETE => {
-                    let Some(path) = crate::windows::config().map(|s| s.dir().join(format!("themes/{id}.toml"))) else {
-                        return;
-                    };
-                    crate::windows::with_focused(|_| {
-                        crate::operations::with_current(|ops| ops.trash_paths(vec![path], false));
+                    let Some(dir) = crate::windows::config().map(|s| s.dir().join("themes")) else { return };
+                    // The real file name is read off the UI thread.
+                    std::thread::spawn(move || {
+                        let path = themes::theme_path(&dir, &id);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            crate::windows::with_focused(|_| {
+                                crate::operations::with_current(|ops| ops.trash_paths(vec![path], false));
+                            });
+                        });
                     });
                 }
                 _ => {}
