@@ -845,7 +845,10 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                     std::thread::spawn(move || {
                         let path = themes::theme_path(&dir, &id);
                         let _ = slint::invoke_from_event_loop(move || {
-                            crate::windows::with_focused(|_| {
+                            crate::windows::with_focused(|window| {
+                                // Its question (confirm trash) is the main window's: it comes in
+                                // front of Settings, not behind it (macOS checklist R46).
+                                crate::single_instance::raise(window);
                                 crate::operations::with_current(|ops| ops.trash_paths(vec![path], false));
                             });
                         });
