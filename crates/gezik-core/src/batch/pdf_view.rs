@@ -135,13 +135,27 @@ pub fn write_reply(out: &mut dyn Write, reply: &Reply) -> io::Result<()> {
             writeln!(out, "image\t{page}\t{width}\t{height}\t{page_w}\t{page_h}")?;
             out.write_all(rgba)?;
         }
-        Reply::Failed(message) => {
-            // A header stays short however long the message is.
-            let text: String = escape(message).chars().take(MAX_HEADER / 2).collect();
-            writeln!(out, "failed\t{text}")?;
-        }
+        Reply::Failed(message) => writeln!(out, "failed\t{}", short_field(message))?,
     }
     out.flush()
+}
+
+/// The longest failure message sent, in characters.
+const MAX_MESSAGE: usize = 200;
+
+/// `message` as an escaped field that keeps a header within [`MAX_HEADER`]: its first
+/// [`MAX_MESSAGE`] characters, escaped one by one so a cut never splits a character or an
+/// escape.
+fn short_field(message: &str) -> String {
+    let mut field = String::new();
+    for c in message.chars().take(MAX_MESSAGE) {
+        let piece = escape(c.encode_utf8(&mut [0; 4]));
+        if field.len() + piece.len() > MAX_HEADER - 16 {
+            break;
+        }
+        field.push_str(&piece);
+    }
+    field
 }
 
 fn bad(why: impl Into<String>) -> io::Error {
@@ -277,7 +291,7 @@ mod tests {
             assert_eq!(round(&reply), reply);
         }
         let long = round(&Reply::Failed("x".repeat(10_000)));
-        assert!(matches!(long, Reply::Failed(text) if text.len() == MAX_HEADER / 2), "a long message is cut");
+        assert!(matches!(long, Reply::Failed(text) if text.len() == MAX_MESSAGE), "a long message is cut");
     }
 
     #[test]
@@ -308,6 +322,28 @@ mod tests {
         assert!(!fits(&image(3, 10, 5), &asked), "another page");
         assert!(!fits(&image(2, 10, 5), &Command::Close));
         assert!(fits(&Reply::Pages(3), &asked));
+    }
+
+    #[test]
+    fn any_failure_message_goes_through_cut_whole() {
+        let mut seed = 0x1234_5678_9ABC_DEF1u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let alphabet = ['a', 'ğ', '😀', '\\', '\t', '\n', '\u{1}', '\u{7f}', '中', 'x'];
+        for _ in 0..5_000 {
+            let len = (next() % 400) as usize;
+            let message: String = (0..len).map(|_| alphabet[(next() % alphabet.len() as u64) as usize]).collect();
+            let mut bytes = Vec::new();
+            write_reply(&mut bytes, &Reply::Failed(message.clone())).unwrap();
+            assert!(bytes.len() <= MAX_HEADER, "{}", bytes.len());
+            let Reply::Failed(back) = read_reply(&mut &bytes[..]).unwrap() else { panic!() };
+            assert!(message.starts_with(&back), "a prefix of what was said");
+            assert!(back.chars().count() <= MAX_MESSAGE);
+        }
     }
 
     #[test]
