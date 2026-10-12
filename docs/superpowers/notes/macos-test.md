@@ -738,6 +738,16 @@ Numbers stay as they are when branches merge (see 10b). 12a uses 340–343 as th
 342. **Gezik reads Finder's tags.** In Finder, add the Green tag to `~/gezik-tag-probe.txt` (right-click ▸ Tags). Then `cargo test -p gezik-platform meta::tests::finder_wrote_green -- --ignored` passes. Write down what `xattr -px com.apple.metadata:_kMDItemUserTags ~/gezik-tag-probe.txt` prints.
 343. **exFAT stick.** With an exFAT (or FAT) USB stick mounted: `GEZIK_TEST_TAG_DIR=/Volumes/<STICK> cargo test -p gezik-platform meta::tests::a_copy_to_an_exfat_disk_keeps_its_tags -- --ignored` passes (macOS keeps the attributes in `._` files there; the test removes its copy).
 
+### 12b, tagging and tag dots
+
+Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dots on macOS from the start.
+
+344. **The picker.** Select three files in `/tmp/tags`, ⌃⌘L (and File ▸ Tags ▸ Tags…): `Tags for 3 items` over the window, the seven colours with ⌃1…⌃7 at the right. Return on Red: `✓`; Return again: none; give one file Orange in Finder first: Orange shows `–`, Return makes it `✓`. Type `Proj`, Return on `Create "Proj"`: it is added (settings.toml's `[tags] list` gains it, comments kept). Esc: one job; ⌘Z takes all of it back. VoiceOver reads a row as `Red, on all items`.
+345. **⌃1…⌃7, ⌃0.** With Mission Control's "Switch to Desktop" keys off: ⌃1 on the selection puts Red on all (`Red added to 3 items`), ⌃1 again takes it off; ⌃0 clears every tag (a rating written by 340's probe stays: `mdls -name kMDItemStarRating`). Each is one ⌘Z.
+346. **File ▸ Tags and the row menu.** File ▸ Tags lists the list's names with ⌃1…⌃7, Tags… (⌃⌘L) and Clear Tags (⌃0); a row's right-click has `Tags ▸` after Tools with the same items, `• Red` on a row that has it. Drives and the trash have no Tags.
+347. **Finder sees them.** Tags given in Gezik show in Finder's list and Get Info with the same colours; a tag given in Finder shows as a dot in Gezik after F5. Modified dates do not change.
+348. **Dots.** List, grid and columns: up to three overlapping dots after the name (under it in the grid), `+2` past three, a ring for a tag without colour; on a selected row each dot has a white edge. View ▸ Tag Dots off: no dots and settings.toml says `dots = false`.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

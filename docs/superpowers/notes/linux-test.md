@@ -670,6 +670,12 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 250. **Dolphin sees Gezik's tags.** `cargo test -p gezik-platform meta::tests::dolphin_probe -- --ignored`, then `getfattr -d ~/gezik-tag-probe.txt` shows `user.xdg.tags="Red,Öncelikli"`, `user.baloo.rating="8"` and `user.xdg.comment="Ready for review"`. In Dolphin (if installed), the file's Information panel shows the two tags, 4 stars and the comment. Tag it `Blue` and 3 stars in Dolphin, then `getfattr -d` shows `Red,Öncelikli,Blue` (or Dolphin's order) and `6`. The file's modification time did not change (`stat -c %y` before and after the probe).
 251. **vfat stick.** With a vfat USB stick mounted: `GEZIK_TEST_TAG_DIR=/media/$USER/<STICK> cargo test -p gezik-ops meta::tests::the_store_on_a_drive_without_records -- --ignored` passes: the tag goes to the store (vfat keeps no attributes), the store file is made and follows the rename. Write the stick's line of `lsblk -f` (the UUID is the store's key for it).
 
+### 12b, tagging and tag dots
+
+252. **The picker.** As macOS 344 with Ctrl+Shift+L: one job, one Ctrl+Z; `getfattr -n user.xdg.tags` on the files shows what the picker left. Before the first tag no dots show (`dots = "auto"`); after it they do, and `state.toml` has `[tags] used = true`.
+253. **Alt+Shift+1…7, Alt+Shift+0.** On GNOME and on KDE (X11 and Wayland): Alt+Shift+1 toggles Red on the selection (`Red added to 3 items`, then `Red removed from 3 items`), Alt+Shift+0 clears; write down any desktop that takes the keys itself (the picker's Ctrl+Shift+L still works).
+254. **Dots.** As macOS 348; a tag Dolphin gave (no colour in `user.xdg.tags`) shows gray unless your `[tags] list` names it; a vfat stick's tags (the store) show too.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
