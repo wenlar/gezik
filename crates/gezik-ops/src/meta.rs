@@ -326,7 +326,7 @@ impl MetaStore {
             &at,
             files,
             |i| if volume.holds { own::file_id(&folder.join(files[i].0)) } else { None },
-            |path| std::fs::symlink_metadata(root.join(path)).is_err(),
+            |path| is_gone(&root.join(path)) == Some(true),
         );
         if found.is_empty() {
             return 0;
@@ -362,7 +362,7 @@ impl MetaStore {
         records
             .into_iter()
             .filter_map(|(volume, record)| {
-                let path = mounted.get(&volume)?.join(&*record.path);
+                let path = mounted.get(&volume)?.as_ref()?.join(&*record.path);
                 let (size, mtime_ns) = facts(&path).ok()?;
                 let id = record.file_id.and_then(|_| own::file_id(&path));
                 record.fits(size, mtime_ns, id).then_some(path)
@@ -388,8 +388,9 @@ impl MetaStore {
     }
 
     /// The store's entries whose files are gone (spec 12 §7.4): on mounted volumes, those whose
-    /// path is no more; entries on volumes not mounted now are only counted (an unplugged stick
-    /// looks empty). Nothing is changed.
+    /// path is no more; entries on volumes not mounted now, on a volume mounted at more than one
+    /// place, or whose path cannot be looked at (no access, a stale share) are only counted:
+    /// an unplugged stick or a locked folder looks empty. Nothing is changed.
     pub fn orphans(&self) -> io::Result<Orphans> {
         let traces: Vec<(String, Box<str>)> = {
             let mut state = lock(&self.state);
@@ -403,10 +404,12 @@ impl MetaStore {
         let mut orphans = Orphans::default();
         for (volume, path) in traces {
             match mounted.get(&volume) {
-                Some(root) if std::fs::symlink_metadata(root.join(&*path)).is_err() => {
-                    orphans.gone.push((volume, path));
-                }
-                Some(_) => {}
+                Some(Some(root)) => match is_gone(&root.join(&*path)) {
+                    Some(true) => orphans.gone.push((volume, path)),
+                    Some(false) => {}
+                    None => orphans.unreachable += 1,
+                },
+                Some(None) => orphans.unreachable += 1,
                 None => orphans.unmounted += 1,
             }
         }
@@ -432,7 +435,7 @@ impl MetaStore {
         let mut removed = 0;
         for (volume, path) in gone {
             let still_gone =
-                mounted.get(volume).is_some_and(|root| std::fs::symlink_metadata(root.join(&**path)).is_err());
+                matches!(mounted.get(volume), Some(Some(root)) if is_gone(&root.join(&**path)) == Some(true));
             if still_gone && loaded.store.remove(volume, path) {
                 removed += 1;
             }
@@ -468,14 +471,50 @@ pub struct Orphans {
     pub gone: Vec<(String, Box<str>)>,
     /// Entries on volumes not mounted now: left alone.
     pub unmounted: usize,
+    /// Entries whose path cannot be looked at (no access, a stale share, a volume mounted at
+    /// more than one place): left alone.
+    pub unreachable: usize,
 }
 
-/// The volumes mounted now, by key, with their roots (each drive asked once).
-fn mounted() -> HashMap<String, PathBuf> {
-    gezik_platform::drives()
-        .into_iter()
-        .filter_map(|drive| own::volume(&drive.path).ok().map(|volume| (volume.key, drive.path)))
-        .collect()
+/// Whether `path` is gone: `Some(true)` only when the system says it is not there (not found,
+/// or a part of it is no folder), `Some(false)` when it is there, `None` when that cannot be
+/// told (no access, a share that does not answer): such a record is kept.
+fn is_gone(path: &Path) -> Option<bool> {
+    gone_by(&std::fs::symlink_metadata(path))
+}
+
+fn gone_by(found: &io::Result<std::fs::Metadata>) -> Option<bool> {
+    match found {
+        Ok(_) => Some(false),
+        Err(err) if matches!(err.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => Some(true),
+        Err(_) => None,
+    }
+}
+
+/// The volumes mounted now, by key, with their roots (each drive asked once); `None` for a key
+/// mounted at more than one place (Linux: btrfs subvolumes and bind mounts share a UUID), whose
+/// records cannot be told where they are.
+fn mounted() -> HashMap<String, Option<PathBuf>> {
+    roots_by_key(
+        gezik_platform::drives()
+            .into_iter()
+            .filter_map(|drive| own::volume(&drive.path).ok().map(|volume| (volume.key, drive.path))),
+    )
+}
+
+fn roots_by_key(found: impl IntoIterator<Item = (String, PathBuf)>) -> HashMap<String, Option<PathBuf>> {
+    let mut roots: HashMap<String, Option<PathBuf>> = HashMap::new();
+    for (key, root) in found {
+        roots
+            .entry(key)
+            .and_modify(|known| {
+                if known.as_ref() != Some(&root) {
+                    *known = None;
+                }
+            })
+            .or_insert(Some(root));
+    }
+    roots
 }
 
 fn broken_store(file: &Path, why: &str) -> Loaded {
@@ -636,10 +675,52 @@ mod tests {
         asked.push(("unplugged".to_owned(), "x.txt".into()));
         assert_eq!(tags.remove_orphans(&asked).unwrap(), 1);
         assert_eq!(tags.read(&live).unwrap(), red(), "a live entry is never removed");
-        assert_eq!(tags.orphans().unwrap(), Orphans { gone: Vec::new(), unmounted: 1 });
+        assert_eq!(tags.orphans().unwrap(), Orphans { gone: Vec::new(), unmounted: 1, unreachable: 0 });
         let backup = std::fs::read_to_string(dir.join("config/tags-store.tsv.bak")).unwrap();
         assert!(backup.contains("gone.txt") && backup.contains("unplugged"), "the copy is from before");
         assert_eq!(tags.find(|meta| meta.has_tag("red")), std::slice::from_ref(&live), "found where it is mounted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_path_the_system_says_is_not_there_is_gone() {
+        let err = |kind| Err(io::Error::from(kind));
+        assert_eq!(gone_by(&err(io::ErrorKind::NotFound)), Some(true));
+        assert_eq!(gone_by(&err(io::ErrorKind::NotADirectory)), Some(true));
+        for kept in [io::ErrorKind::PermissionDenied, io::ErrorKind::TimedOut, io::ErrorKind::Other] {
+            assert_eq!(gone_by(&err(kept)), None, "{kept:?}: kept, not gone");
+        }
+        assert_eq!(gone_by(&std::fs::symlink_metadata(std::env::temp_dir())), Some(false));
+    }
+
+    #[test]
+    fn a_volume_mounted_twice_keeps_its_records() {
+        let roots = roots_by_key([
+            ("uuid-a".to_owned(), PathBuf::from("/")),
+            ("uuid-a".to_owned(), PathBuf::from("/home")),
+            ("uuid-b".to_owned(), PathBuf::from("/media/stick")),
+            ("uuid-b".to_owned(), PathBuf::from("/media/stick")),
+        ]);
+        assert_eq!(roots["uuid-a"], None, "which root its paths are under cannot be told");
+        assert_eq!(roots["uuid-b"], Some(PathBuf::from("/media/stick")), "the same root twice is one");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_record_under_a_folder_without_access_is_not_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_dir("meta-locked");
+        let tags = MetaStore::new(Some(dir.join("config/tags-store.tsv")), true);
+        let a = file(&dir, "locked/a.txt", "x");
+        tags.write(&a, &red()).unwrap();
+        tags.flush().unwrap();
+        std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads through any mode: nothing to see then.
+        if std::fs::symlink_metadata(&a).is_err() {
+            let orphans = tags.orphans().unwrap();
+            assert!(orphans.gone.is_empty() && orphans.unreachable == 1, "{orphans:?}");
+        }
+        std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o755)).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

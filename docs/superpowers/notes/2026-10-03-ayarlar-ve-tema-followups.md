@@ -2716,6 +2716,7 @@ Gözlemler (hata değil):
 - Bırakma: etiket satırına bırakılan dosyalar `Action::Tag` (`Tag 3 items Red`), tek `TagsTask`, geri alınır; sanal öğeler reddedilir.
 - `clean-tag-store` (`Clean Up Tag Store…`, `Action::ALL` 124, tuş yok, palet ve macOS menüsü): takılı birimlerde yolu olmayanları sayar, sorar; `Remove` önce `tags-store.tsv.bak`, sonra yalnız hâlâ yolu olmayanları siler; takılı olmayan birimin kayıtları sayılır, dokunulmaz (test: canlı kayıt istense de silinmez).
 - Sürüm exe'si 27.674.624 B (taban `feat/tags-12d` c6ee7dc: 27.586.560 B, **+88.064 B**; bütçe 262.144; spec tahmini ≈ 90 KB). macOS clippy temiz. Kopya `%TEMP%\gezik-gui-12\bin\t12e.exe`. Not: sürüm derlemesi `-j 2` ile iki kez `rustc` erişim ihlaliyle (0xc0000005) düştü, `-j 1` ile geçti (koddan bağımsız).
+- Gözden geçirme düzeltmesi: temizlik ve yeniden bulma yalnız `NotFound`/`NotADirectory`'yi "gitmiş" sayar (`is_gone`); erişim reddi, zaman aşımı, bayat ağ bağlaması kaydı korur ve soruda "cannot look at" diye sayılır. Linux'ta aynı UUID'yi taşıyan birden çok kök (btrfs alt birimleri, bind bağlamaları) olabildiği için böyle bir birimin kayıtları ne bulunur ne silinir (`roots_by_key`).
 - Bekleyen: Windows ekran testi (TAGS bölümü, tık ve orta tık, satır menüsü ve settings.toml'un yorumları, sürükle-bırak ve Ctrl+Z, `tag:`/`rating:`/`comment:` sözcükleri ve Filters, Search and Retag…, Clean Up Tag Store… FAT USB ile), macOS 357–361, Linux 261–263.
 
 ## Windows ekran testleri: 12c
