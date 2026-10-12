@@ -23,8 +23,14 @@ const MAX_FAILURES_IN_ROW: u32 = 20;
 pub(crate) fn run_job(shared: &Shared, job: &Arc<Job>) {
     let mut ids = Vec::new();
     let mut kinds = Vec::new();
+    // Asked once a folder: 10,000 selected files would cost a drive query each (spec 12 §1).
+    // shortcut: an item that is itself a mount point counts as its folder's drive; ask per item if that matters.
+    let mut folders = HashSet::new();
     for task in &job.tasks {
         for path in task.resources().paths {
+            if !folders.insert(path.parent().map_or_else(|| path.clone(), Path::to_path_buf)) {
+                continue;
+            }
             if let Some(facts) = shared.drive(&path) {
                 ids.push(facts.id);
                 kinds.push(facts.kind);
