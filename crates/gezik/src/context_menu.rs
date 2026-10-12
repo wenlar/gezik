@@ -248,10 +248,42 @@ pub const SAVED_SEARCH_MAX: u32 = 30;
 pub const PREVIEW_HEX: u32 = 2600;
 pub const PREVIEW_TEXT: u32 = 2601;
 pub const PREVIEW_WRAP: u32 = 2602;
+// A PDF's pages and the zoom (13b): what the bar has, reachable in a narrow pane too.
+pub const PREVIEW_PREVIOUS_PAGE: u32 = 2603;
+pub const PREVIEW_NEXT_PAGE: u32 = 2604;
+pub const PREVIEW_GO_TO_PAGE: u32 = 2605;
+pub const PREVIEW_ZOOM_IN: u32 = 2606;
+pub const PREVIEW_ZOOM_OUT: u32 = 2607;
+pub const PREVIEW_FIT: u32 = 2608;
+pub const PREVIEW_ACTUAL_SIZE: u32 = 2609;
+/// The bar's link: "Download pdfium…" or "Enter Password…".
+pub const PREVIEW_LINK: u32 = 2610;
 
-/// Right-click on the preview: hex or back, and wrap for text.
-pub fn preview_items(hex: bool, file: bool, wrap: Option<bool>) -> Vec<(u32, String, bool)> {
+/// Right-click on the preview: a PDF's pages and the zoom (`surface` 4 a PDF, 5 a picture, and
+/// the bar's `link`), hex or back, and wrap for text.
+pub fn preview_items(
+    hex: bool,
+    file: bool,
+    wrap: Option<bool>,
+    (surface, link): (i32, &str),
+) -> Vec<(u32, String, bool)> {
     let mut items = Vec::new();
+    match link {
+        "" => {}
+        "Download" => items.push((PREVIEW_LINK, "Download pdfium…".to_owned(), true)),
+        link => items.push((PREVIEW_LINK, link.to_owned(), true)),
+    }
+    if surface == 4 {
+        items.push((PREVIEW_PREVIOUS_PAGE, "Previous Page".to_owned(), true));
+        items.push((PREVIEW_NEXT_PAGE, "Next Page".to_owned(), true));
+        items.push((PREVIEW_GO_TO_PAGE, "Go to Page…".to_owned(), true));
+    }
+    if surface >= 4 {
+        items.push((PREVIEW_ZOOM_IN, "Zoom In".to_owned(), true));
+        items.push((PREVIEW_ZOOM_OUT, "Zoom Out".to_owned(), true));
+        items.push((PREVIEW_FIT, "Fit".to_owned(), true));
+        items.push((PREVIEW_ACTUAL_SIZE, "Actual Size".to_owned(), true));
+    }
     if hex {
         items.push((PREVIEW_TEXT, "Show as Text".to_owned(), true));
     } else if file {
@@ -1865,7 +1897,8 @@ impl Menus {
     pub fn preview_menu(&self, at: Anchor) {
         let (hex, file, wrap) = self.preview.viewer_state();
         *self.subject.borrow_mut() = Some(Subject::Preview);
-        self.open_slint_entries(&preview_items(hex, file, wrap), Vec::new(), at);
+        let surface = self.preview.surface_state();
+        self.open_slint_entries(&preview_items(hex, file, wrap, surface), Vec::new(), at);
     }
 
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
@@ -2071,6 +2104,7 @@ impl Menus {
             (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
             (PREVIEW_HEX | PREVIEW_TEXT, Subject::Preview) => _ = self.preview.toggle_hex(),
             (PREVIEW_WRAP, Subject::Preview) => self.preview.toggle_wrap(),
+            (PREVIEW_PREVIOUS_PAGE..=PREVIEW_LINK, Subject::Preview) => self.preview.surface_menu(id),
             (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -3635,10 +3669,29 @@ mod tests {
     #[test]
     fn the_preview_menu_offers_hex_or_text_and_wrap() {
         let ids = |items: Vec<(u32, String, bool)>| items.iter().map(|i| i.0).collect::<Vec<_>>();
-        assert_eq!(ids(preview_items(false, true, Some(true))), [PREVIEW_HEX, PREVIEW_WRAP]);
-        assert_eq!(ids(preview_items(true, true, None)), [PREVIEW_TEXT]);
-        assert!(preview_items(false, false, None).is_empty(), "a folder");
-        assert!(preview_items(false, true, Some(true))[1].1.starts_with("• "));
+        assert_eq!(ids(preview_items(false, true, Some(true), (0, ""))), [PREVIEW_HEX, PREVIEW_WRAP]);
+        assert_eq!(ids(preview_items(true, true, None, (0, ""))), [PREVIEW_TEXT]);
+        assert!(preview_items(false, false, None, (0, "")).is_empty(), "a folder");
+        assert!(preview_items(false, true, Some(true), (0, ""))[1].1.starts_with("• "));
+        // A PDF in a narrow pane: everything its bar has, the link first.
+        let pdf = preview_items(false, true, None, (4, "Enter Password…"));
+        assert_eq!(
+            ids(pdf.clone()),
+            [
+                PREVIEW_LINK,
+                PREVIEW_PREVIOUS_PAGE,
+                PREVIEW_NEXT_PAGE,
+                PREVIEW_GO_TO_PAGE,
+                PREVIEW_ZOOM_IN,
+                PREVIEW_ZOOM_OUT,
+                PREVIEW_FIT,
+                PREVIEW_ACTUAL_SIZE,
+                PREVIEW_HEX
+            ]
+        );
+        assert_eq!(pdf[0].1, "Enter Password…");
+        assert_eq!(preview_items(false, true, None, (4, "Download"))[0].1, "Download pdfium…");
+        assert_eq!(ids(preview_items(false, true, None, (5, ""))).len(), 5, "a picture: zoom and Hex");
         for id in [PREVIEW_HEX, PREVIEW_TEXT, PREVIEW_WRAP] {
             assert!((2600..2620).contains(&id), "spec 13 §10.3");
         }

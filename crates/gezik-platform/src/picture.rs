@@ -38,6 +38,14 @@ pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
     Ok(Decoded { image: Rgba { width: rgba.width(), height: rgba.height(), pixels: rgba.into_raw() }, width, height })
 }
 
+/// A picture's own size from its header, without decoding it (one Gezik will not decode, over
+/// its limits, still says how large it is).
+// shortcut: the EXIF orientation is not read, so a turned photo says width and height swapped;
+// read it as `decode_oriented` does if the figure matters.
+pub fn picture_size(path: &Path) -> Option<(u32, u32)> {
+    image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.into_dimensions().ok()
+}
+
 /// Decodes a picture at its own size straight into a buffer `make` gives for its width and
 /// height (`bytes`: that buffer's RGBA bytes, `width * height * 4`): only the decoded picture
 /// and the buffer exist at once (the preview's zoom, spec 13 §5.3). Limits as `decode_image`.

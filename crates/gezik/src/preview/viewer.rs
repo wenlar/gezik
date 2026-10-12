@@ -32,20 +32,33 @@ pub struct PictureView {
     pub zoom: ZoomView,
     /// Made into an `Image` once: every redraw (a drag) shows the same one.
     pub full: Option<Image>,
-    /// Its megapixels, when too large to decode whole.
-    pub too_large: Option<u64>,
+    /// Why it is not decoded whole (too large), for the bar.
+    pub too_large: Option<String>,
     pub scale_factor: f32,
 }
 
 impl PictureView {
     pub fn new(size: (u32, u32), scale_factor: f32, view: (f32, f32)) -> PictureView {
-        let pixels = u64::from(size.0) * u64::from(size.1);
         PictureView {
             zoom: ZoomView::new((size.0 as f32, size.1 as f32), 1.0, view),
             full: None,
-            too_large: (pixels > MAX_ZOOM_PIXELS).then(|| pixels.div_ceil(1_000_000)),
+            too_large: too_large(size),
             scale_factor,
         }
+    }
+}
+
+/// Why a `w` × `h` picture is zoomed from its preview only: Gezik decodes at most 8192 px a
+/// side, and at most 48 MP at its own size.
+pub fn too_large((w, h): (u32, u32)) -> Option<String> {
+    let side = gezik_platform::MAX_DECODE_SIDE;
+    let pixels = u64::from(w) * u64::from(h);
+    if w > side || h > side {
+        Some(format!("Too large to zoom ({w} × {h}, over {side} px a side)"))
+    } else if pixels > MAX_ZOOM_PIXELS {
+        Some(format!("Too large to zoom ({} MP)", pixels.div_ceil(1_000_000)))
+    } else {
+        None
     }
 }
 
@@ -74,11 +87,14 @@ pub type Room = (usize, usize);
 pub type Place = (Option<((u64, usize), bool)>, Option<u64>);
 
 impl Viewer {
-    /// Puts the rows and the bar into `info`.
-    pub fn fill(&self, info: &mut PreviewInfo, (cols, page): Room) {
+    /// Puts the rows and the bar into `info`; the zoom surface only when `surface` (not in
+    /// the pane behind quick look).
+    pub fn fill(&self, info: &mut PreviewInfo, (cols, page): Room, surface: bool) {
+        let pdf = self.pdf.as_ref().filter(|_| surface);
+        let picture = self.picture.as_ref().filter(|_| surface);
         let (bar, rows, text, note, gutter, (pos, size)) = if let Some(hex) = &self.hex {
-            (2, hex.rows(page + 1, cols), hex.status(), "", hex.gutter(), hex.scroll_bar(page, cols))
-        } else if let Some(pdf) = &self.pdf {
+            (2, hex.rows(page + 1, cols), hex.status(), String::new(), hex.gutter(), hex.scroll_bar(page, cols))
+        } else if let Some(pdf) = pdf {
             info.page = i32::try_from(pdf.page).unwrap_or(i32::MAX);
             info.pages = i32::try_from(pdf.pages).unwrap_or(i32::MAX);
             info.zoom_text = zoom_text(&pdf.zoom).into();
@@ -90,8 +106,8 @@ impl Viewer {
                 info.has_picture = true;
                 place(info, &pdf.zoom, pdf.scale_factor, shown.scale, shown.region);
             }
-            (4, Vec::new(), String::new(), note, 0, (0.0, 0.0))
-        } else if let Some(picture) = &self.picture {
+            (4, Vec::new(), String::new(), note.to_owned(), 0, (0.0, 0.0))
+        } else if let Some(picture) = picture {
             info.zoom_text = zoom_text(&picture.zoom).into();
             if let Some(full) = &picture.full {
                 info.picture = full.clone();
@@ -99,14 +115,13 @@ impl Viewer {
             let size = info.picture.size();
             let scale = size.width as f32 / picture.zoom.content().0;
             place(info, &picture.zoom, picture.scale_factor, scale, (0, 0, size.width, size.height));
-            let text = picture.too_large.map_or_else(String::new, |mp| format!("Too large to zoom ({mp} MP)"));
-            (5, Vec::new(), text, "", 0, (0.0, 0.0))
+            (5, Vec::new(), String::new(), picture.too_large.clone().unwrap_or_default(), 0, (0.0, 0.0))
         } else if let Some(view) = &self.text {
             (
                 1,
                 view.rows(page + 1, cols),
                 view.status(cols, page),
-                view.note(),
+                view.note().to_owned(),
                 view.gutter(),
                 view.scroll_bar(cols, page),
             )
@@ -123,7 +138,7 @@ impl Viewer {
             if bar >= 4 {
                 info.zoom_text = "Fit".into();
             }
-            (bar, Vec::new(), String::new(), "", 0, (0.0, 0.0))
+            (bar, Vec::new(), String::new(), String::new(), 0, (0.0, 0.0))
         };
         info.bar = bar;
         info.max_cols = rows

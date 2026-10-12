@@ -184,6 +184,7 @@ pub enum State {
 /// A page picture: drawn at `scale` (physical pixels per point), `region` of the scaled page.
 /// Made into an `Image` once: every redraw (a drag) shows the same one.
 pub struct Shown {
+    pub page: u32,
     pub image: Image,
     pub scale: f32,
     pub region: (u32, u32, u32, u32),
@@ -250,6 +251,9 @@ impl PdfView {
     /// Moves `step` pages (the last page's number unknown while opening), the view at the
     /// new page's top (or its bottom when not `top`: the wheel going back); whether it moved.
     pub fn step(&mut self, step: i64, top: bool) -> bool {
+        if self.stuck() {
+            return false;
+        }
         let last = if self.pages == 0 { i64::from(u32::MAX) } else { i64::from(self.pages) };
         let page = (i64::from(self.page) + step).clamp(1, last.max(1)) as u32;
         if page == self.page {
@@ -263,6 +267,18 @@ impl PdfView {
             self.zoom.go_top();
         }
         true
+    }
+
+    /// It cannot go on (no pdfium, a broken one, a failed file): pages do not turn.
+    fn stuck(&self) -> bool {
+        matches!(self.state, State::NoPdfium(_) | State::BrokenPdfium | State::Failed)
+    }
+
+    /// It cannot go on: the bar counts the page shown (a step made while opening never
+    /// came).
+    pub fn set_stuck(&mut self, state: State) {
+        self.state = state;
+        self.page = self.shown.as_ref().map_or(1, |shown| shown.page);
     }
 
     /// The shown page is `size` points: the zoom takes it, then goes to its top or bottom.
@@ -281,7 +297,7 @@ impl PdfView {
             self.size_page(page_size);
         }
         let region = (x, y, picture.width(), picture.height());
-        self.shown = Some(Shown { image: Image::from_rgba8(picture), scale, region });
+        self.shown = Some(Shown { page: self.page, image: Image::from_rgba8(picture), scale, region });
         self.page_failed = false;
     }
 
@@ -289,7 +305,7 @@ impl PdfView {
     /// is opened again with a new worker (whether to look for pdfium again).
     pub fn worker_died(&mut self, opened: Option<&Path>) -> bool {
         if opened == Some(self.path.as_path()) {
-            self.state = State::Failed;
+            self.set_stuck(State::Failed);
             return false;
         }
         self.state = State::Finding;
@@ -441,6 +457,16 @@ mod tests {
         assert_eq!(pdf.note(), ("More pages need pdfium", "Download"));
         pdf.state = State::BrokenPdfium;
         assert_eq!(pdf.note(), ("pdfium could not be loaded", "Download"));
+    }
+
+    #[test]
+    fn without_pdfium_the_count_says_the_page_shown_and_pages_do_not_turn() {
+        let mut pdf = PdfView::new("a.pdf".into(), 1.0, (400.0, 400.0));
+        assert!(pdf.step(1, true), "page 2 asked while pdfium is looked for");
+        pdf.set_stuck(State::NoPdfium(None));
+        assert_eq!(pdf.page, 1, "the first look is page 1");
+        assert!(!pdf.step(1, true));
+        assert_eq!(pdf.page, 1);
     }
 
     #[test]

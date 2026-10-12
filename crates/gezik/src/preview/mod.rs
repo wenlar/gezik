@@ -30,6 +30,8 @@ use zoom::{Fit, ZoomView};
 
 /// How long a drag or a zoom must rest before the PDF's new region is drawn (spec 13 §5.2).
 const SETTLE: Duration = Duration::from_millis(150);
+/// A preview narrower than this (logical px) drops the bar's zoom figure and Hex.
+const NARROW: f32 = 300.0;
 /// The wheel turns at most one PDF page in this time (a trackpad sends many events).
 const TURN_GAP: Duration = Duration::from_millis(300);
 
@@ -126,17 +128,27 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     // Reading a file only in iCloud would download it: its icon only.
     let local = !gezik_platform::only_in_cloud(path);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
-    if local
-        && gezik_platform::can_decode(&ext)
-        && let Ok(decoded) = gezik_platform::decode_image(path, px)
-        && let Some(picture) = buffer(decoded.image)
-    {
-        return Body::Picture(picture, Some((decoded.width, decoded.height)));
+    // A picture Gezik does not decode (over its limits) still says its own size: the zoom bar
+    // tells why it does not zoom (spec 13 §5.3).
+    let mut own_size = None;
+    if local && gezik_platform::can_decode(&ext) {
+        match gezik_platform::decode_image(path, px) {
+            Ok(decoded) => {
+                if let Some(picture) = buffer(decoded.image) {
+                    return Body::Picture(picture, Some((decoded.width, decoded.height)));
+                }
+            }
+            Err(_) => own_size = gezik_platform::picture_size(path),
+        }
     }
     if !wanted() {
         return Body::None;
     }
-    if local && let Some(text) = read_text(path) {
+    // A PDF is never shown as text (an uncompressed one is all ASCII): its pages are.
+    if local
+        && ext != "pdf"
+        && let Some(text) = read_text(path).filter(|text| !text.starts_with("%PDF-"))
+    {
         return Body::Text(text);
     }
     if !wanted() {
@@ -149,7 +161,7 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
         picture = gezik_platform::icon(&target, px);
     }
     match picture.and_then(buffer) {
-        Some(picture) => Body::Picture(picture, None),
+        Some(picture) => Body::Picture(picture, own_size),
         None => Body::None,
     }
 }
@@ -590,9 +602,28 @@ impl Preview {
         // Kept without the viewer's part: the next fill starts from the file's own preview
         // (a zoomed picture's large copy is not held here once it is back to fit).
         let mut shown = info.clone();
-        self.0.viewer.borrow().fill(&mut shown, self.room());
+        let quick = self.quick_look_open();
+        let narrow = |cell: &Cell<(f32, f32)>| cell.get().0 < NARROW;
+        shown.narrow = narrow(if quick { &self.0.surface_quick } else { &self.0.surface });
+        self.0.viewer.borrow().fill(&mut shown, self.room(), true);
+        // A picture over Gezik's limits says so before any zoom.
+        if shown.bar == 5
+            && shown.bar_note.is_empty()
+            && let Some(why) = self.0.picture_size.get().and_then(viewer::too_large)
+        {
+            shown.bar_note = why.into();
+        }
         if main && let Some(window) = self.0.window.upgrade() {
-            window.set_preview(shown.clone());
+            if quick {
+                // Behind quick look the pane keeps the file's own look: the zoom placed for
+                // quick look's size would show stretched there.
+                let mut pane = info.clone();
+                self.0.viewer.borrow().fill(&mut pane, self.room(), false);
+                pane.narrow = narrow(&self.0.surface);
+                window.set_preview(pane);
+            } else {
+                window.set_preview(shown.clone());
+            }
         }
         if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
             quick_look.set_info(shown);
@@ -905,6 +936,16 @@ impl Preview {
         (viewer.hex.is_some(), file, wrap)
     }
 
+    /// For the preview's menu: the zoom surface shown (4 a PDF, 5 a picture, 0 none) and the
+    /// bar's link ("Download", "Enter Password…"; "" none).
+    pub fn surface_state(&self) -> (i32, &'static str) {
+        if !self.surface_target() {
+            return (0, "");
+        }
+        let link = self.0.viewer.borrow().pdf.as_ref().map_or("", |pdf| pdf.note().1);
+        (if pdf_path(&self.0.viewer_target.borrow()).is_some() { 4 } else { 5 }, link)
+    }
+
     /// The viewer's own keys (spec 13 §3.2): Page Up/Down, Home/End, H, W; in the pane also
     /// the arrows, and Esc gives the keyboard back to the list.
     fn viewer_key(&self, text: &str, (ctrl, alt, shift, meta): (bool, bool, bool, bool), pane: bool) -> bool {
@@ -962,27 +1003,60 @@ type WithPreview = Rc<dyn Fn(&dyn Fn(&Preview))>;
 
 /// The zoom surface's events (spec 13 §5), from this window's pane or from quick look.
 fn connect_surface(actions: &PreviewActions, quick: bool, run: WithPreview) {
-    let r = run.clone();
-    actions.on_surface(move |w, h| r(&|p| p.surface_resized(quick, w, h)));
-    let r = run.clone();
-    actions.on_page_step(move |step| r(&|p| _ = p.pdf_step(i64::from(step), true)));
-    let r = run.clone();
-    actions.on_go_to_page(move |text| r(&|p| p.pdf_go_to(&text)));
-    let r = run.clone();
-    actions.on_zoom_step(move |steps, x, y| r(&|p| _ = p.zoom_step(steps, (x >= 0.0).then_some((x, y)))));
-    let r = run.clone();
-    actions.on_fit(move || r(&Preview::fit));
-    let r = run.clone();
-    actions.on_actual(move |x, y| r(&|p| _ = p.zoom_actual(Some((x, y)))));
-    let r = run.clone();
-    actions.on_panned(move |dx, dy| r(&|p| p.pan(dx, dy)));
-    let r = run.clone();
-    actions.on_wheel(move |dx, dy, zoom, x, y| r(&|p| p.wheel((dx, dy), zoom, (x, y))));
-    actions.on_link(move || run(&Preview::bar_link));
+    actions.on_surface(move |what, x, y, dx, dy| run(&|p| p.surface_event(quick, what, (x, y), (dx, dy))));
 }
 
 /// The PDF pages and the zoom surface (spec 13 §5).
 impl Preview {
+    /// One of the zoom surface's events (`PreviewActions.surface` says what each is).
+    fn surface_event(&self, quick: bool, what: i32, (x, y): (f32, f32), (dx, dy): (f32, f32)) {
+        let steps = if dx < 0.0 { -1 } else { 1 };
+        match what {
+            0 => self.surface_resized(quick, x, y),
+            1 => _ = self.pdf_step(i64::from(steps), true),
+            2 => self.ask_page(),
+            3 => _ = self.zoom_step(steps, (x >= 0.0).then_some((x, y))),
+            4 => self.fit(),
+            5 => _ = self.zoom_actual(Some((x, y))),
+            6 => self.pan(dx, dy),
+            7 | 8 => self.wheel((dx, dy), what == 8, (x, y)),
+            9 => self.bar_link(),
+            _ => {}
+        }
+    }
+
+    /// The preview's menu: a PDF's page and the zoom (ids 2603–2610, `context_menu.rs`).
+    pub fn surface_menu(&self, id: u32) {
+        match id {
+            crate::context_menu::PREVIEW_PREVIOUS_PAGE => _ = self.pdf_step(-1, true),
+            crate::context_menu::PREVIEW_NEXT_PAGE => _ = self.pdf_step(1, true),
+            crate::context_menu::PREVIEW_GO_TO_PAGE => self.ask_page(),
+            crate::context_menu::PREVIEW_ZOOM_IN => _ = self.zoom_step(1, None),
+            crate::context_menu::PREVIEW_ZOOM_OUT => _ = self.zoom_step(-1, None),
+            crate::context_menu::PREVIEW_FIT => self.fit(),
+            crate::context_menu::PREVIEW_ACTUAL_SIZE => _ = self.zoom_actual(None),
+            crate::context_menu::PREVIEW_LINK => self.bar_link(),
+            _ => {}
+        }
+    }
+
+    /// "Go to Page…": asks for a page of the shown PDF (the window's question; no text field
+    /// of the preview's own takes keys from the list).
+    fn ask_page(&self) {
+        if !self.pdf_ready() {
+            return;
+        }
+        let (page, pages) = self.0.viewer.borrow().pdf.as_ref().map_or((1, 0), |pdf| (pdf.page, pdf.pages));
+        let message = if pages > 0 { format!("Page (1 to {pages}):") } else { "Page:".to_owned() };
+        crate::operations::with_current(|ops| {
+            ops.dialogs().ask_text("Go to Page", message, page.to_string(), &["Go", "Cancel"], |text| {
+                if let Some(text) = text {
+                    with_current(|p| p.pdf_go_to(&text));
+                }
+            });
+        });
+    }
+
     /// Lets go of the shown file's viewer; a PDF's worker waits 10 s for the next PDF.
     fn drop_viewer(&self) {
         let old = std::mem::take(&mut *self.0.viewer.borrow_mut());
@@ -1037,8 +1111,15 @@ impl Preview {
 
     fn surface_resized(&self, quick: bool, w: f32, h: f32) {
         let cell = if quick { &self.0.surface_quick } else { &self.0.surface };
-        if cell.replace((w, h)) != (w, h) && quick == self.quick_look_open() {
+        let old = cell.replace((w, h));
+        if old == (w, h) {
+            return;
+        }
+        if quick == self.quick_look_open() && self.0.viewer.borrow().shown() {
             self.sync_view();
+        } else if (old.0 < NARROW) != (w < NARROW) {
+            // The bar narrows or widens.
+            self.redraw();
         }
     }
 
@@ -1130,7 +1211,7 @@ impl Preview {
                     Some(Command::Open { library, pdf: path.to_path_buf() })
                 }
                 None => {
-                    pdf.state = State::NoPdfium(hint);
+                    pdf.set_stuck(State::NoPdfium(hint));
                     None
                 }
             }
@@ -1160,7 +1241,7 @@ impl Preview {
         if let Some(pdf) = self.0.viewer.borrow_mut().pdf.as_mut() {
             match id {
                 Some(id) => pdf.wanted = id,
-                None => pdf.state = State::Failed,
+                None => pdf.set_stuck(State::Failed),
             }
         }
     }
@@ -1215,13 +1296,13 @@ impl Preview {
                     eprintln!("gezik: the PDF could not be shown: {why}");
                     if crate::pdf::says_pdfium_failed(&why) {
                         // A broken library: ended, so a new download can replace its file.
-                        pdf.state = State::BrokenPdfium;
+                        pdf.set_stuck(State::BrokenPdfium);
                         *self.0.pdf_worker.borrow_mut() = None;
                     } else if pdf.state == State::Ready {
                         // One page (a damaged one, a scale out of range): the rest still shows.
                         pdf.page_failed = true;
                     } else {
-                        pdf.state = State::Failed;
+                        pdf.set_stuck(State::Failed);
                     }
                 }
                 pdf::Event::Picture { page_size, picture } => {
@@ -1707,7 +1788,7 @@ Some folders could not be read"
     fn the_viewer_fills_the_bar_and_rows_and_leaves_an_unused_preview_alone() {
         use slint::Model;
         let mut info = PreviewInfo::default();
-        Viewer::default().fill(&mut info, (80, 40));
+        Viewer::default().fill(&mut info, (80, 40), true);
         let d = PreviewInfo::default();
         assert!(
             info.rows == d.rows && info.bar == 0 && info.scroll_size == d.scroll_size,
@@ -1715,12 +1796,12 @@ Some folders could not be read"
         );
         let file = entry(PathBuf::from("/x/a.rs"), false);
         let mut info = describe(&file, Some(Body::Picture(SharedPixelBuffer::new(2, 2), None)));
-        Viewer::default().fill(&mut info, (80, 40));
+        Viewer::default().fill(&mut info, (80, 40), true);
         assert_eq!(info.bar, 3, "a file offers Hex");
         let text = text::TextView::from_head(Path::new("/x/a.rs"), 9, "fn x\ny\n".into(), (true, false));
         let viewer = Viewer { text: Some(text), ..Viewer::default() };
         let mut info = describe(&file, Some(Body::Text(String::new())));
-        viewer.fill(&mut info, (80, 40));
+        viewer.fill(&mut info, (80, 40), true);
         assert_eq!((info.bar, info.gutter, info.bar_text.as_str(), info.wrap), (1, 1, "2 lines", false));
         assert_eq!(info.rows.row_count(), 2);
         let first = info.rows.row_data(0).unwrap();
@@ -1736,22 +1817,56 @@ Some folders could not be read"
         viewer.scroll(2, (80, 2));
         viewer.set_place(place);
         let mut info = PreviewInfo::default();
-        viewer.fill(&mut info, (80, 2));
+        viewer.fill(&mut info, (80, 2), true);
         assert_eq!(info.rows.row_data(0).unwrap().number.as_str(), "1", "back at the top");
         assert_eq!(info.max_cols, 4, "bbbb");
+    }
+
+    #[test]
+    fn the_preview_has_no_text_field_of_its_own() {
+        // The window's key router gives a field its editing keys (Ctrl+A, Ctrl+C, arrows…) only
+        // for the fields it knows (path box, search, filter, dialogs): a text field in the
+        // preview would lose Ctrl+A to "select all files". The page is asked by a question.
+        let pane = include_str!("../../ui/widgets/preview-pane.slint");
+        for field in ["TextField", "TextInput", "LineEdit", "TextEdit"] {
+            assert!(!pane.contains(field), "{field} in the preview pane");
+        }
+    }
+
+    #[test]
+    fn a_picture_over_the_decode_limit_says_its_size_and_a_pdf_is_never_text() {
+        let dir = temp("limits");
+        let wide = dir.join("wide.png");
+        image::GrayImage::new(gezik_platform::MAX_DECODE_SIDE + 8, 4).save(&wide).unwrap();
+        if let Body::Picture(_, size) = load(&entry(wide, false), 64) {
+            assert_eq!(size, Some((gezik_platform::MAX_DECODE_SIDE + 8, 4)), "its own size, from its header");
+        }
+        let pdf = dir.join("plain.pdf");
+        std::fs::write(
+            &pdf,
+            "%PDF-1.4
+1 0 obj << /Type /Catalog >> endobj
+",
+        )
+        .unwrap();
+        assert!(!matches!(load(&entry(pdf.clone(), false), 64), Body::Text(_)));
+        let renamed = dir.join("plain.txt");
+        std::fs::rename(&pdf, &renamed).unwrap();
+        assert!(!matches!(load(&entry(renamed, false), 64), Body::Text(_)), "%PDF- however it is named");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn a_pdf_offers_its_pages_and_a_picture_its_zoom_and_fit_lets_the_large_copy_go() {
         let pdf = entry(PathBuf::from("/x/a.PDF"), false);
         let mut info = describe(&pdf, Some(Body::Picture(SharedPixelBuffer::new(2, 2), None)));
-        Viewer::default().fill(&mut info, (80, 40));
+        Viewer::default().fill(&mut info, (80, 40), true);
         assert_eq!((info.bar, info.page, info.zoom_text.as_str(), info.zoomed), (4, 1, "Fit", false));
         // A 4000 × 3000 photo shown from its 1024 px preview.
         let photo = entry(PathBuf::from("/x/p.jpg"), false);
         let base = describe(&photo, Some(Body::Picture(SharedPixelBuffer::new(1024, 768), Some((4000, 3000)))));
         let mut info = base.clone();
-        Viewer::default().fill(&mut info, (80, 40));
+        Viewer::default().fill(&mut info, (80, 40), true);
         assert_eq!((info.bar, info.page), (5, 0));
         let mut view = PictureView::new((4000, 3000), 1.0, (400.0, 300.0));
         assert_eq!(view.too_large, None);
@@ -1759,15 +1874,20 @@ Some folders could not be read"
         view.zoom.fit_to(Fit::Zoom(1.0));
         let viewer = Viewer { picture: Some(view), ..Viewer::default() };
         let mut info = base.clone();
-        viewer.fill(&mut info, (80, 40));
+        viewer.fill(&mut info, (80, 40), true);
         assert!(info.zoomed && info.zoom_text == "100%" && info.picture.size().width == 4000);
         assert_eq!((info.pic_w, info.pic_h), (4000.0, 3000.0), "one picture pixel a physical pixel");
         // Back to fit: filled from the file's own preview again, the large copy is not held.
         let mut info = base;
-        Viewer::default().fill(&mut info, (80, 40));
+        Viewer::default().fill(&mut info, (80, 40), true);
         assert!(!info.zoomed && info.picture.size().width == 1024);
         // Past 48 MP only the preview is zoomed.
-        assert_eq!(PictureView::new((9000, 6000), 1.0, (400.0, 300.0)).too_large, Some(54));
-        assert_eq!(PictureView::new((8000, 6000), 1.0, (400.0, 300.0)).too_large, None);
+        assert_eq!(viewer::too_large((8000, 6100)).as_deref(), Some("Too large to zoom (49 MP)"));
+        assert_eq!(viewer::too_large((8000, 6000)), None);
+        assert_eq!(
+            viewer::too_large((8200, 6200)).as_deref(),
+            Some("Too large to zoom (8200 × 6200, over 8192 px a side)"),
+            "Gezik does not decode it at all"
+        );
     }
 }
