@@ -930,9 +930,13 @@ mod tests {
             file("r1", 0, None),
         ];
         let (desc, _) = by_rating(GroupBy::None, SortKey::Rating, SortDir::Desc, &rows);
-        assert_eq!(desc, ["r5", "r3b", "r3a", "r1", "ub", "ua", "pz"], "most stars first, unread last");
+        assert_eq!(
+            desc,
+            ["r5", "r3b", "r3a", "r1", "ua", "ub", "pz"],
+            "most stars first; not rated, then unread, by name"
+        );
         let (asc, _) = by_rating(GroupBy::None, SortKey::Rating, SortDir::Asc, &rows);
-        assert_eq!(asc, ["ua", "ub", "r1", "r3a", "r3b", "r5", "pz"], "by number: not rated is 0; unread still last");
+        assert_eq!(asc, ["r1", "r3a", "r3b", "r5", "ua", "ub", "pz"], "not rated and unread last either way");
         let (names, headers) = by_rating(GroupBy::Rating, SortKey::Name, SortDir::Asc, &rows);
         assert_eq!(names, ["r5", "r3a", "r3b", "r1", "ua", "ub", "pz"]);
         assert_eq!(headers, ["★★★★★ (1)", "★★★ (2)", "★ (1)", "Not Rated (2)", "Reading tags… (1)"]);

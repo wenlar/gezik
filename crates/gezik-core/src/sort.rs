@@ -429,16 +429,21 @@ pub fn sort_rows_grouped<'e, 'a>(
         (start, buf.len() as u32)
     };
     // Folders whose size is on their way go last in either direction (spec 6.3); so do rows
-    // whose tags or rating are (spec 12 §3.4).
+    // whose tags or rating are (spec 12 §3.4). In a rating sort the rows not rated go last too,
+    // before those not read, both by name whatever the direction (12d screen test).
     let tags = group.and_then(|g| g.tags).filter(|_| spec.key == SortKey::Tags);
     let ratings = group.and_then(|g| g.rating).filter(|_| spec.key == SortKey::Rating);
-    let last = |e: &Entry, key: Option<&TagKey>, stars: Option<Option<u8>>| {
-        (spec.key == SortKey::Size && e.size_pending()) || key == Some(&TagKey::Pending) || stars == Some(None)
+    let last = |e: &Entry, key: Option<&TagKey>, stars: Option<Option<u8>>| -> u8 {
+        match stars {
+            Some(None) => 2,
+            Some(Some(0)) => 1,
+            _ => u8::from((spec.key == SortKey::Size && e.size_pending()) || key == Some(&TagKey::Pending)),
+        }
     };
     let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder);
     // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
     // column's value when it is not the row's text.
-    let mut kinds: Vec<(bool, bool)> = Vec::with_capacity(len);
+    let mut kinds: Vec<(bool, u8)> = Vec::with_capacity(len);
     let mut keys: Vec<Primary> = Vec::with_capacity(if keyed { len } else { 0 });
     for i in 0..len {
         let e = entry(i);
@@ -485,7 +490,8 @@ pub fn sort_rows_grouped<'e, 'a>(
                 .then_with(|| name(i).cmp(name(j)))
                 .then_with(|| folder(i).cmp(folder(j)))
                 .then_with(|| i.cmp(&j));
-            if spec.dir == SortDir::Desc { order.reverse() } else { order }
+            let by_name = spec.key == SortKey::Rating && a_last > 0;
+            if spec.dir == SortDir::Desc && !by_name { order.reverse() } else { order }
         })
     };
     // Two sorts so the plain one keeps its comparison as it was.

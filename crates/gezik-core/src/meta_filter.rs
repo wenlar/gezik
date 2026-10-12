@@ -22,9 +22,13 @@ pub enum TagTerm {
     Rated,
 }
 
-/// The term a `rating:` word's value makes; `None` for one half typed or out of range.
+/// The term a `rating:` word's value makes; `None` for one half typed or out of range, and for
+/// `>=0` (every file passes).
 fn rating_term(value: &str) -> Option<TagTerm> {
-    match value.trim_start_matches(">=") {
+    if let Some(at_least) = value.strip_prefix(">=") {
+        return at_least.parse::<u8>().ok().filter(|n| (1..=5).contains(n)).map(TagTerm::MinRating);
+    }
+    match value {
         v if v.eq_ignore_ascii_case("none") || v == "0" => Some(TagTerm::Unrated),
         v if v.eq_ignore_ascii_case("any") => Some(TagTerm::Rated),
         v => v.parse::<u8>().ok().filter(|n| (1..=5).contains(n)).map(TagTerm::MinRating),
@@ -179,6 +183,8 @@ mod tests {
         assert_eq!(split("rating:any tag:Red").1, [TagTerm::Rated, named("Red")]);
         assert_eq!(split("rating:7 rating:x rating:>="), ("  ".to_owned(), vec![]), "out of range or half typed");
         assert_eq!(split("\"rating:x\""), ("rating:x".to_owned(), vec![]), "a quoted word is a name");
+        assert_eq!(split("rating:>=0").1, [], "at least none: every file");
+        assert_eq!(split("rating:>=none rating:>=any").1, [], "only stars after >=");
         let three = tagged(&[], 3);
         assert!(matches(&split("rating:>=3").1, &three) && !matches(&split("rating:4").1, &three));
         assert!(matches(&[TagTerm::Rated], &three) && !matches(&[TagTerm::Unrated], &three));
