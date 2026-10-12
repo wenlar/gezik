@@ -19,6 +19,7 @@ pub mod history;
 pub mod kind;
 pub mod layout;
 pub mod meta;
+pub mod meta_store;
 pub mod nav;
 pub mod ops;
 pub mod palette;
