@@ -345,6 +345,7 @@ fn perform(
         | Action::CleanTagStore
         | Action::Settings
         | Action::EditShortcuts
+        | Action::InstallTheme
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow

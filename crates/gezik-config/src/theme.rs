@@ -863,4 +863,37 @@ accent = \"#ff00ff\"
         assert_eq!(theme.metrics.inset, 0.0);
         assert_eq!(theme.colors.focus_ring, hex("#ff8f57"));
     }
+
+    /// Spec 14 §6.2: a theme is data only. Every value a theme file can give is listed here: a
+    /// new one breaks this test, and must be data too (no path, address or command), since
+    /// themes are installed from the internet.
+    #[test]
+    fn a_theme_holds_data_only() {
+        let text = "name = \"../../x\"
+base = \"C:/Windows/evil.toml\"
+run = \"calc.exe\"
+            [colors]
+accent = \"#88c0d0\"
+[metrics]
+font-family = \"/tmp/font.ttf\"
+radius = 4
+";
+        let (theme, _) = parse(text);
+        // No `..`: a field added to PartialTheme fails to compile here.
+        let PartialTheme { display_name, base, colors, font_family, numbers } = theme.unwrap();
+        // Shown as text only.
+        assert_eq!(display_name.as_deref(), Some("../../x"));
+        // Only a key of the themes in memory (`lookup`): no file is opened by it.
+        assert_eq!(base.as_deref(), Some("C:/Windows/evil.toml"));
+        let themes = user(&[("x", text)]);
+        let resolved = resolve_theme("x", &themes, &mut Vec::new()).unwrap();
+        assert_eq!(resolved.colors.get("background"), builtin_dark().colors.get("background"), "unknown base: dark");
+        // Colors are colors, numbers are numbers in a range.
+        assert_eq!(colors, [("accent", hex("#88c0d0"))]);
+        assert_eq!(numbers, [("radius", 4.0)]);
+        // A font is asked for by its family name; the system finds it, never a file of the theme.
+        assert_eq!(font_family.as_deref(), Some("/tmp/font.ttf"));
+        let keys: Vec<&str> = METRIC_RANGES.iter().map(|(key, _, _)| *key).collect();
+        assert_eq!(keys, ["font-size", "row-height", "icon-size", "radius", "spacing", "inset"]);
+    }
 }

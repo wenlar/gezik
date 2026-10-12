@@ -517,6 +517,8 @@ actions! {
     Settings,
     /// The settings window at its Keyboard page, with the shortcuts (spec 14 §5).
     EditShortcuts,
+    /// The settings window's Appearance page, where a theme is got from GitHub (spec 14 §6).
+    InstallTheme,
 }
 
 impl Action {
@@ -651,6 +653,7 @@ impl Action {
             Action::MoreColumns => "more-columns",
             Action::Settings => "settings",
             Action::EditShortcuts => "edit-shortcuts",
+            Action::InstallTheme => "install-theme",
         }
     }
 
@@ -798,6 +801,7 @@ impl Action {
             Action::MoreColumns => "More Columns…",
             Action::Settings => "Settings…",
             Action::EditShortcuts => "Keyboard Shortcuts…",
+            Action::InstallTheme => "Get Theme…",
         }
     }
 
@@ -2357,6 +2361,7 @@ copy-path = \"ctrl+k\"
         assert_eq!(s.taken_by(none, KeyOwner::Command(0), chord("ctrl+alt+k"), Platform::Other), []);
         assert_eq!(s.chords_for(Action::Refresh), [chord("f5"), chord("ctrl+r")]);
         assert_eq!(Action::from_name("edit-shortcuts"), Some(Action::EditShortcuts));
+        assert_eq!(Action::from_name("install-theme"), Some(Action::InstallTheme));
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! The window is made when it opens and let go when it closes: nothing of it stays.
 
 mod shortcuts;
+mod themes;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -56,6 +57,9 @@ struct Shown {
     text: String,
     /// The changes a shortcut's Replace? writes, for that key row.
     pending: Option<(usize, Vec<SettingsChange>)>,
+    /// Themes from GitHub, and those of their rows shown (after the key rows).
+    got: themes::Themes,
+    theme_rows: Vec<themes::Row>,
 }
 
 impl Shown {
@@ -78,6 +82,7 @@ impl Shown {
             files.themes.keys().filter(|id| !BUILTIN_THEMES.contains(&id.as_str())).cloned().collect();
         themes.sort();
         self.themes = themes;
+        self.got.read(&files.themes);
     }
 
     /// The fields shown: the page's, or with a search every page's that it finds.
@@ -98,6 +103,15 @@ impl Shown {
             "" if page != Page::Keyboard => Vec::new(),
             _ => (0..self.keys.len()).filter(|&k| shortcuts::matches(&self.keys[k], query)).collect(),
         };
+        self.theme_rows = match query {
+            "" if page != Page::Appearance => Vec::new(),
+            _ => self.got.rows(query),
+        };
+    }
+
+    /// The theme row of window row `row` (they come after the key rows).
+    fn theme_of(&self, row: usize) -> Option<themes::Row> {
+        self.theme_rows.get(row.checked_sub(self.rows.len() + self.key_rows.len())?).copied()
     }
 
     /// The key row of window row `row` (they come after the fields), as an index in `keys`.
@@ -144,7 +158,7 @@ impl Shown {
         if let Some(broken) = &self.broken {
             return (format!("{broken} — fix it in settings.toml; until then these are read-only"), true);
         }
-        if self.rows.is_empty() && self.key_rows.is_empty() {
+        if self.rows.is_empty() && self.key_rows.is_empty() && self.theme_rows.is_empty() {
             return ("No setting matches".to_owned(), false);
         }
         let advanced = Page::ALL[self.page.min(Page::ALL.len() - 1)] == Page::Advanced && self.query.trim().is_empty();
@@ -259,11 +273,23 @@ pub fn open() {
 
 /// Opens the window at its Keyboard page (`edit-shortcuts`).
 pub fn open_shortcuts() {
+    open_at(Page::Keyboard);
+}
+
+/// Opens the window at its Appearance page, where Get Theme is (`install-theme`).
+pub fn open_themes() {
+    if let Some(open) = open_at(Page::Appearance) {
+        say(&open, "Paste the address in Get Theme, after the settings of this page");
+    }
+}
+
+fn open_at(page: Page) -> Option<Rc<Open>> {
     open();
-    let Some(open) = current() else { return };
-    open.shown.borrow_mut().page = Page::ALL.iter().position(|p| *p == Page::Keyboard).unwrap_or(0);
+    let open = current()?;
+    open.shown.borrow_mut().page = Page::ALL.iter().position(|p| *p == page).unwrap_or(0);
     open.shown.borrow_mut().pick_rows();
     show_rows(&open, true);
+    Some(open)
 }
 
 /// `f` with the settings in effect (their shortcuts and commands).
@@ -278,6 +304,7 @@ fn with_settings<R>(f: impl FnOnce(&Settings) -> R) -> R {
 pub fn close() {
     let Some(open) = OPEN.with(|o| o.borrow_mut().take()) else { return };
     let _ = open.window.hide();
+    themes::stop();
     end_preview_now();
 }
 
@@ -300,7 +327,8 @@ pub fn retheme(theme: &ResolvedTheme) {
 fn show_rows(open: &Open, new: bool) {
     let shown = open.shown.borrow();
     let keys = shown.key_rows.iter().map(|&k| shortcuts::item(&shown.keys[k], Platform::current()));
-    let items: Vec<SettingItem> = shown.rows.iter().map(|&i| shown.item(i)).chain(keys).collect();
+    let found = shown.theme_rows.iter().map(|&row| shown.got.item(row));
+    let items: Vec<SettingItem> = shown.rows.iter().map(|&i| shown.item(i)).chain(keys).chain(found).collect();
     if new || items.len() != open.rows.row_count() {
         open.rows.set_vec(items);
     } else {
@@ -352,6 +380,10 @@ fn bind(open: &Rc<Open>) {
         move |row, text| {
             let Some(open) = weak.upgrade() else { return };
             let row = usize::try_from(row).unwrap_or(usize::MAX);
+            let theme_row = open.shown.borrow().theme_of(row);
+            if let Some(theme_row) = theme_row {
+                return theme_chosen(&open, theme_row, &text);
+            }
             // A shortcut's Replace? answered.
             // Bound first: the borrow must end before `pending` is taken below.
             let key = open.shown.borrow().key_of(row);
@@ -429,6 +461,15 @@ fn bind(open: &Rc<Open>) {
             if field_of(&open, row).is_some_and(|i| FIELDS[i].kind == Kind::Theme) {
                 drop(open);
                 preview(&option);
+                return;
+            }
+            let theme_row = open.shown.borrow().theme_of(usize::try_from(row).unwrap_or(usize::MAX));
+            let shown = theme_row.and_then(|row| open.shown.borrow().got.preview(row));
+            drop(open);
+            match shown {
+                Some((id, text)) if !option.is_empty() => preview_theme(&id, text.as_deref()),
+                Some(_) => preview(""),
+                None => {}
             }
         }
     });
@@ -451,6 +492,18 @@ fn bind(open: &Rc<Open>) {
         let weak = weak.clone();
         move |row, id| {
             let Some(open) = weak.upgrade() else { return };
+            let theme_row = open.shown.borrow().theme_of(usize::try_from(row).unwrap_or(usize::MAX));
+            if let Some(theme_row) = theme_row {
+                let key = open.shown.borrow().got.item(theme_row).key;
+                match id {
+                    COPY_KEY if gezik_platform::clipboard::write_text(&key).is_err() => {
+                        say(&open, "Cannot use the clipboard");
+                    }
+                    EDIT_FILE => edit_file(),
+                    _ => {}
+                }
+                return;
+            }
             let key = open.shown.borrow().key_of(usize::try_from(row).unwrap_or(usize::MAX));
             if let Some(key) = key {
                 let shown = open.shown.borrow();
@@ -544,9 +597,121 @@ fn edit_file() {
     }
 }
 
+/// A theme row's choice: Get Theme's address, a theme found's Install, Replace or Keep Both, an
+/// installed theme's Use Now, Check for Updates, Open Source Page or Delete Theme.
+fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
+    match row {
+        themes::Row::Get => fetch(open, text.trim()),
+        themes::Row::Found(i) => {
+            let date = gezik_platform::local_date_parts(std::time::SystemTime::now())
+                .map(|p| format!("{:04}-{:02}-{:02}", p.year, p.month, p.day))
+                .unwrap_or_default();
+            let shown = open.shown.borrow();
+            let Some((id, contents)) = shown.got.install(i, text == themes::KEEP_BOTH, &date) else { return };
+            let name = shown.got.found[i].name.clone();
+            drop(shown);
+            let Some(dir) = crate::windows::config().map(|store| store.dir().join("themes")) else { return };
+            say(open, &format!("Installing {name}…"));
+            // Off the UI thread; the config watcher's reload then shows it installed.
+            std::thread::spawn(move || {
+                let written = std::fs::create_dir_all(&dir)
+                    .and_then(|()| gezik_config::paths::write_atomic(&themes::theme_path(&dir, &id), &contents));
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(open) = current() else { return };
+                    match written {
+                        Ok(()) => say(&open, &format!("Installed {name} as themes/{id}.toml: Use Now is in its row")),
+                        Err(err) => say_bad(
+                            &open,
+                            &format!("Cannot write themes/{id}.toml: {}", gezik_platform::fs::describe(&err)),
+                        ),
+                    }
+                });
+            });
+        }
+        themes::Row::Installed(i) => {
+            let shown = open.shown.borrow();
+            let Some(theme) = shown.got.installed.get(i) else { return };
+            let (id, address) = (theme.id.clone(), theme.address.clone());
+            drop(shown);
+            match text {
+                themes::USE_NOW => write(SettingsChange::Value {
+                    table: None,
+                    key: "theme".to_owned(),
+                    value: schema::literal(Kind::Theme, &id),
+                }),
+                themes::CHECK => fetch(open, &address),
+                themes::SOURCE_PAGE => match themes::source_page(&address) {
+                    Some(url) if open::that_detached(&url).is_ok() => {}
+                    _ => say_bad(open, &format!("Cannot open {address}")),
+                },
+                themes::DELETE => {
+                    let Some(dir) = crate::windows::config().map(|s| s.dir().join("themes")) else { return };
+                    // The real file name is read off the UI thread.
+                    std::thread::spawn(move || {
+                        let path = themes::theme_path(&dir, &id);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            crate::windows::with_focused(|_| {
+                                crate::operations::with_current(|ops| ops.trash_paths(vec![path], false));
+                            });
+                        });
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Downloads `address` and lists its themes ("": stops the download and clears the list).
+fn fetch(open: &Open, address: &str) {
+    let fetch = match address {
+        "" => None,
+        address => match gezik_config::theme_source::resolve(address) {
+            Ok(fetch) => Some(fetch),
+            Err(why) => return say_bad(open, why),
+        },
+    };
+    themes::stop();
+    {
+        let mut shown = open.shown.borrow_mut();
+        shown.got.address = address.to_owned();
+        shown.got.found.clear();
+        shown.pick_rows();
+    }
+    show_rows(open, true);
+    let Some(fetch) = fetch else { return };
+    say(open, &format!("Downloading {}…", fetch.url));
+    themes::start(
+        fetch,
+        |bytes| {
+            if let Some(open) = current() {
+                say(&open, &format!("Downloading… {} KB", bytes >> 10));
+            }
+        },
+        |result| {
+            let Some(open) = current() else { return };
+            match result {
+                Ok(found) => {
+                    let count = found.len();
+                    open.shown.borrow_mut().got.found = found;
+                    open.shown.borrow_mut().pick_rows();
+                    show_rows(&open, true);
+                    say(&open, &format!("{count} found: point at a choice in a row to preview the theme"));
+                }
+                Err(why) => say_bad(&open, &why),
+            }
+        },
+    );
+}
+
 /// Shows theme `id` in every window without writing it ("" or "auto": back to the theme in
 /// effect, a moment later so that moving from one choice to the next does not flash).
 fn preview(id: &str) {
+    preview_theme(id, None);
+}
+
+/// `preview`, with `text` (a theme not installed) as theme `id`'s file.
+fn preview_theme(id: &str, text: Option<&str>) {
     let Some(open) = current() else { return };
     let turn = open.previews.get() + 1;
     open.previews.set(turn);
@@ -559,7 +724,16 @@ fn preview(id: &str) {
         return;
     }
     let Some(files) = crate::windows::files() else { return };
-    let resolved = gezik_config::theme::resolve_theme(id, &gezik_config::lock(&files).themes, &mut Vec::new());
+    let files = gezik_config::lock(&files);
+    let resolved = match text {
+        Some(text) => {
+            let mut themes = files.themes.clone();
+            themes.insert(id.to_owned(), text.to_owned());
+            gezik_config::theme::resolve_theme(id, &themes, &mut Vec::new())
+        }
+        None => gezik_config::theme::resolve_theme(id, &files.themes, &mut Vec::new()),
+    };
+    drop(files);
     let Ok(mut theme) = resolved else { return };
     let compact =
         crate::windows::loaded().is_some_and(|l| l.settings.density == gezik_config::settings::Density::Compact);

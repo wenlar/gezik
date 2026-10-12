@@ -73,6 +73,8 @@ base = "dark"
 accent = "#ff8a3d"
 ```
 
+Themes from GitHub install from Settings ▸ Appearance ▸ Get Theme: paste a repository or `.toml` address, preview, install. A theme is data only (colors, sizes, a font name); nothing in it runs. [More](docs/themes.md#installing-from-github)
+
 → [Configuration](docs/configuration.md) · [Writing a theme](docs/themes.md) · [Keyboard shortcuts](docs/shortcuts.md)
 
 ## Build
