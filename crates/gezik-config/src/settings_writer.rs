@@ -20,7 +20,7 @@ use crate::pins::PinEntry;
 use crate::settings::{RenamePreset, SavedFilter, SavedSearch, TabSet, ViewOption};
 use crate::settings_edit::{
     with_filters, with_panes_confirm, with_pinned, with_rename_presets, with_searches, with_sync_profiles, with_system,
-    with_tab_sets, with_tags, with_view_defaults, with_view_option,
+    with_tab_sets, with_tag_added, with_tags, with_view_defaults, with_view_option,
 };
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
@@ -51,7 +51,8 @@ pub enum SettingsChange {
     /// `[panes] confirm` (the F5/F6 question's Don't Ask Again).
     PanesConfirm(bool),
     /// `[tags] list` (the tag picker's Create "…").
-    TagList(Vec<gezik_core::meta::Tag>),
+    /// The tag added at the end; the whole list in effect, written only when the file has none.
+    TagAdded(gezik_core::meta::Tag, Vec<gezik_core::meta::Tag>),
     /// `[tags] dots` (View ▸ Tag dots).
     TagDots(crate::tags::Dots),
 }
@@ -78,7 +79,7 @@ impl SettingsChange {
             SettingsChange::System(SystemValue::Tray(on)) => with_system(text, "tray", (*on).into()),
             SettingsChange::System(SystemValue::Hotkey(chord)) => with_system(text, "hotkey", chord.as_str().into()),
             SettingsChange::PanesConfirm(on) => with_panes_confirm(text, *on),
-            SettingsChange::TagList(list) => with_tags(text, "list", crate::tags::list_value(list)),
+            SettingsChange::TagAdded(tag, list) => with_tag_added(text, tag, list),
             SettingsChange::TagDots(dots) => with_tags(text, "dots", crate::tags::dots_value(*dots)),
         }
     }
