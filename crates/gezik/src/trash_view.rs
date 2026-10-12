@@ -252,6 +252,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::SystemIntegration
         | Action::CleanTagStore
         | Action::Settings
+        | Action::EditShortcuts
         | Action::ConnectToServer
         | Action::GroupNone
         | Action::GroupType

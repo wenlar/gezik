@@ -26,40 +26,50 @@ pub enum Key {
     Space,
 }
 
+/// The keys settings.toml names by a word (the keypad's `num+` is parsed apart).
+const KEY_NAMES: [(&str, Key); 18] = [
+    ("left", Key::Left),
+    ("right", Key::Right),
+    ("up", Key::Up),
+    ("down", Key::Down),
+    ("enter", Key::Enter),
+    ("tab", Key::Tab),
+    ("backspace", Key::Backspace),
+    ("delete", Key::Delete),
+    ("home", Key::Home),
+    ("end", Key::End),
+    ("pageup", Key::PageUp),
+    ("pagedown", Key::PageDown),
+    ("escape", Key::Escape),
+    ("space", Key::Space),
+    ("num-", Key::Num('-')),
+    ("num*", Key::Num('*')),
+    ("num/", Key::Num('/')),
+    ("comma", Key::Char(',')),
+];
+
 impl Key {
     fn parse(name: &str) -> Option<Key> {
-        Some(match name {
-            "left" => Key::Left,
-            "right" => Key::Right,
-            "up" => Key::Up,
-            "down" => Key::Down,
-            "enter" => Key::Enter,
-            "tab" => Key::Tab,
-            "backspace" => Key::Backspace,
-            "delete" => Key::Delete,
-            "home" => Key::Home,
-            "end" => Key::End,
-            "pageup" => Key::PageUp,
-            "pagedown" => Key::PageDown,
-            "escape" => Key::Escape,
-            "space" => Key::Space,
-            "num-" => Key::Num('-'),
-            "num*" => Key::Num('*'),
-            "num/" => Key::Num('/'),
-            "comma" => Key::Char(','),
-            _ => {
-                if let Some(n) = name.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
-                    return (1..=12).contains(&n).then_some(Key::F(n));
-                }
-                let mut chars = name.chars();
-                let (Some(c), None) = (chars.next(), chars.next()) else { return None };
-                if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | ',' | '=' | '-') {
-                    Key::Char(c.to_ascii_lowercase())
-                } else {
-                    return None;
-                }
-            }
-        })
+        if let Some((_, key)) = KEY_NAMES.iter().find(|(n, _)| *n == name) {
+            return Some(*key);
+        }
+        if let Some(n) = name.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
+            return (1..=12).contains(&n).then_some(Key::F(n));
+        }
+        let mut chars = name.chars();
+        let (Some(c), None) = (chars.next(), chars.next()) else { return None };
+        (c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | ',' | '=' | '-'))
+            .then(|| Key::Char(c.to_ascii_lowercase()))
+    }
+
+    /// How settings.toml writes the key (`parse` reads it back).
+    fn text(self) -> String {
+        match self {
+            Key::Char(c) => c.to_string(),
+            Key::F(n) => format!("f{n}"),
+            Key::Num('+') => "num+".to_owned(),
+            key => KEY_NAMES.iter().find(|(_, k)| *k == key).map(|(n, _)| (*n).to_owned()).unwrap_or_default(),
+        }
     }
 }
 
@@ -159,6 +169,46 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
     }
     Ok(Some(chord))
 }
+
+/// How settings.toml writes `chord` on `platform` (`parse_chord` reads it back): `mod` for the
+/// primary modifier, so the key is ⌘ on a Mac and Ctrl elsewhere. `None` off macOS for the
+/// Windows/Super key, which the table cannot name.
+pub fn chord_text(chord: &Chord, platform: Platform) -> Option<String> {
+    let (primary, ctrl) = match platform {
+        Platform::Mac => (chord.meta, chord.ctrl),
+        Platform::Other if chord.meta => return None,
+        Platform::Other => (chord.ctrl, false),
+    };
+    let held = [(primary, "mod+"), (ctrl, "ctrl+"), (chord.alt, "alt+"), (chord.shift, "shift+")];
+    let mut text: String = held.iter().filter(|(on, _)| *on).map(|(_, name)| *name).collect();
+    text.push_str(&chord.key.text());
+    Some(text)
+}
+
+/// Why `chord` cannot be set in the settings window (spec 14 §5), for an action or (`command`)
+/// a `[[commands]]` entry, if it cannot.
+pub fn refused(chord: &Chord, command: bool, platform: Platform) -> Option<String> {
+    if let Some(owner) = fixed_owner(chord, platform) {
+        return Some(format!("That key belongs to {owner}"));
+    }
+    if chord_text(chord, platform).is_none() {
+        return Some("The Windows (Super) key is the system's: use Ctrl, Alt or Shift".to_owned());
+    }
+    let types = command || matches!(chord.key, Key::Char(_) | Key::Num(_));
+    if types && !chord.leaves_typing_alone() {
+        return Some(if command {
+            "A command's key needs Ctrl, Alt or Cmd, or an F key".to_owned()
+        } else {
+            "That key types in the file list: add Ctrl, Alt or Cmd".to_owned()
+        });
+    }
+    None
+}
+
+/// The macOS menu bar's own keys (`fixed_owner`), shown in the settings window as rows that
+/// cannot change.
+pub const MENU_BAR_KEYS: [(&str, &str); 4] =
+    [("Quit Gezik", "mod+q"), ("Hide Gezik", "mod+h"), ("Hide Others", "mod+alt+h"), ("Minimize", "mod+m")];
 
 /// `[system] hotkey` (spec 9 §9.2, §13.1): the chord syntax plus `win`, `super`, `cmd` and
 /// `meta` for the logo key (`meta`), `option` for Alt; `mod` is Cmd on macOS, Ctrl elsewhere.
@@ -444,10 +494,12 @@ pub enum Action {
     CleanTagStore,
     /// The settings window (spec 14 §4).
     Settings,
+    /// The settings window at its Keyboard page, with the shortcuts (spec 14 §5).
+    EditShortcuts,
 }
 
 impl Action {
-    pub const ALL: [Action; 125] = [
+    pub const ALL: [Action; 126] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -573,6 +625,7 @@ impl Action {
         Action::EditComment,
         Action::CleanTagStore,
         Action::Settings,
+        Action::EditShortcuts,
     ];
 
     pub fn name(self) -> &'static str {
@@ -702,6 +755,7 @@ impl Action {
             Action::EditComment => "edit-comment",
             Action::CleanTagStore => "clean-tag-store",
             Action::Settings => "settings",
+            Action::EditShortcuts => "edit-shortcuts",
         }
     }
 
@@ -845,6 +899,7 @@ impl Action {
             Action::EditComment => "Comment…",
             Action::CleanTagStore => "Clean Up Tag Store…",
             Action::Settings => "Settings…",
+            Action::EditShortcuts => "Keyboard Shortcuts…",
         }
     }
 
@@ -915,7 +970,7 @@ impl Action {
     }
 
     /// The default chords on `platform` (none, one or several).
-    fn default_texts(self, platform: Platform) -> &'static [&'static str] {
+    pub fn default_texts(self, platform: Platform) -> &'static [&'static str] {
         match (self, platform) {
             (Action::NewTab, _) => &["mod+t"],
             (Action::NewWindow, _) => &["mod+n"],
@@ -1068,7 +1123,8 @@ impl Action {
                 | Action::SplitFile
                 | Action::JoinFiles
                 | Action::EditComment
-                | Action::CleanTagStore,
+                | Action::CleanTagStore
+                | Action::EditShortcuts,
                 _,
             ) => &[],
             // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
@@ -1299,6 +1355,56 @@ impl Shortcuts {
     /// The key of command `index`, if it has one.
     pub fn command_chord(&self, index: usize) -> Option<Chord> {
         self.commands.iter().find(|(_, i)| *i == index).map(|(c, _)| *c)
+    }
+
+    /// Every key of `action`, in order.
+    pub fn chords_for(&self, action: Action) -> Vec<Chord> {
+        self.bindings.iter().filter(|(_, a)| *a == action).map(|(c, _)| *c).collect()
+    }
+
+    /// Who loses `chord` when the settings window gives it to `to` alone (spec 14 §5), with the
+    /// keys each keeps; `settings` is settings.toml's text. An action's key is read as the
+    /// table would read it with `to` written there (a pane action and another may share one);
+    /// a command never shares one.
+    pub fn taken_by(
+        &self,
+        settings: &str,
+        to: KeyOwner,
+        chord: Chord,
+        platform: Platform,
+    ) -> Vec<(KeyOwner, Vec<Chord>)> {
+        let after = match to {
+            KeyOwner::Action(action) => {
+                let file = settings.parse::<toml::Table>().ok();
+                let table = file.as_ref().and_then(|f| f.get("shortcuts")).and_then(toml::Value::as_table);
+                let mut with = table.cloned().unwrap_or_default();
+                let text = chord_text(&chord, platform).unwrap_or_default();
+                with.insert(action.name().to_owned(), toml::Value::String(text));
+                Some((action, Shortcuts::from_table(Some(&with), platform, "", &mut Vec::new())))
+            }
+            KeyOwner::Command(_) => None,
+        };
+        let loses = |other: Action| match &after {
+            Some((action, after)) => {
+                let got = after.chords_for(*action).contains(&chord);
+                let blocks = !got && other.needs_dual_pane() == action.needs_dual_pane();
+                !after.chords_for(other).contains(&chord) || blocks
+            }
+            None => true,
+        };
+        let mut lost: Vec<(KeyOwner, Vec<Chord>)> = Action::ALL
+            .into_iter()
+            .filter(|other| KeyOwner::Action(*other) != to && self.chords_for(*other).contains(&chord))
+            .filter(|other| loses(*other))
+            .map(|other| {
+                (KeyOwner::Action(other), self.chords_for(other).into_iter().filter(|c| *c != chord).collect())
+            })
+            .collect();
+        // Commands get their keys after the actions: an action's key is never a command's.
+        if let Some(index) = self.command_for(&chord).filter(|i| KeyOwner::Command(*i) != to) {
+            lost.push((KeyOwner::Command(index), Vec::new()));
+        }
+        lost
     }
 }
 
@@ -2297,5 +2403,108 @@ refresh = [\"f5\", \"ctrl+r\"]
             assert_eq!(shortcuts.action_for(&key), Some(Action::Settings), "no other action has it");
             assert_eq!(fixed_owner(&key, platform), None);
         }
+    }
+
+    #[test]
+    fn chord_text_reads_back() {
+        let mut keys: Vec<Key> = KEY_NAMES.iter().map(|(_, k)| *k).collect();
+        keys.extend((1..=12).map(Key::F));
+        keys.extend(['a', '0', '[', ']', '.', ',', '=', '-'].map(Key::Char));
+        keys.push(Key::Num('+'));
+        for platform in [Platform::Mac, Platform::Other] {
+            for key in &keys {
+                for held in 0..16u8 {
+                    let chord = Chord {
+                        ctrl: held & 1 != 0,
+                        alt: held & 2 != 0,
+                        shift: held & 4 != 0,
+                        meta: held & 8 != 0,
+                        key: *key,
+                    };
+                    match chord_text(&chord, platform) {
+                        Some(text) => assert_eq!(parse_chord(&text, platform), Ok(Some(chord)), "{text}"),
+                        None => assert!(platform == Platform::Other && chord.meta),
+                    }
+                }
+            }
+        }
+        assert_eq!(chord_text(&chord("ctrl+shift+c"), Platform::Other).as_deref(), Some("mod+shift+c"));
+        let mac = parse_chord("ctrl+mod+,", Platform::Mac).unwrap().unwrap();
+        assert_eq!(chord_text(&mac, Platform::Mac).as_deref(), Some("mod+ctrl+,"));
+    }
+
+    #[test]
+    fn keys_the_window_refuses() {
+        let mac = |text| parse_chord(text, Platform::Mac).unwrap().unwrap();
+        assert!(refused(&mac("mod+q"), false, Platform::Mac).is_some_and(|r| r.contains("macOS menu bar")));
+        assert!(refused(&chord("ctrl+down"), false, Platform::Other).is_some_and(|r| r.contains("file list")));
+        let win = Chord { meta: true, ..chord("e") };
+        assert!(refused(&win, false, Platform::Other).is_some());
+        assert_eq!(refused(&win, false, Platform::Mac), None, "⌘E on a Mac");
+        for typing in ["a", "shift+a", "num-", "shift+1"] {
+            assert!(refused(&chord(typing), false, Platform::Other).is_some(), "{typing}");
+        }
+        for fine in ["f2", "delete", "shift+delete", "space", "alt+a", "ctrl+,"] {
+            assert_eq!(refused(&chord(fine), false, Platform::Other), None, "{fine}");
+        }
+        assert!(refused(&chord("delete"), true, Platform::Other).is_some(), "a command's key leaves typing alone");
+        assert_eq!(refused(&chord("f9"), true, Platform::Other), None);
+        for (_, text) in MENU_BAR_KEYS {
+            assert!(fixed_owner(&mac(text), Platform::Mac).is_some(), "{text}");
+        }
+    }
+
+    /// The table after the window's writes: each loser's keys, then `to`'s.
+    fn written(table: &toml::Table, lost: &[(KeyOwner, Vec<Chord>)], to: Action, key: Chord) -> Shortcuts {
+        let mut table = table.clone();
+        let text = |c: &Chord| toml::Value::String(chord_text(c, Platform::Other).unwrap());
+        for (owner, keeps) in lost {
+            if let KeyOwner::Action(action) = owner {
+                table.insert(action.name().to_owned(), toml::Value::Array(keeps.iter().map(text).collect()));
+            }
+        }
+        table.insert(to.name().to_owned(), text(&key));
+        Shortcuts::from_table(Some(&table), Platform::Other, "", &mut Vec::new())
+    }
+
+    #[test]
+    fn taking_a_key_says_who_loses_it() {
+        let none = "";
+        let s = Shortcuts::defaults(Platform::Other);
+        let take = |s: &Shortcuts, text: &str, to: Action, key: &str| {
+            let lost = s.taken_by(text, KeyOwner::Action(to), chord(key), Platform::Other);
+            let table = text.parse::<toml::Table>().unwrap();
+            let table = table.get("shortcuts").and_then(toml::Value::as_table).cloned().unwrap_or_default();
+            let after = written(&table, &lost, to, chord(key));
+            assert_eq!(after.chords_for(to), [chord(key)], "{} gets {key}", to.name());
+            lost
+        };
+        assert_eq!(take(&s, none, Action::NewTab, "ctrl+w"), [(KeyOwner::Action(Action::CloseTab), vec![])]);
+        assert_eq!(take(&s, none, Action::Refresh, "f5"), [], "F5 copies with two panes and refreshes with one");
+        assert_eq!(
+            take(&s, none, Action::NewTab, "f5"),
+            [
+                (KeyOwner::Action(Action::Refresh), vec![chord("ctrl+r")]),
+                (KeyOwner::Action(Action::CopyToOtherPane), vec![])
+            ],
+            "a key written for another is not a pane action's to share"
+        );
+        // Written earlier in the file, copy-path would keep the key: it is asked about.
+        let text = "[shortcuts]
+copy-path = \"ctrl+k\"
+";
+        let table: toml::Table = toml::from_str("copy-path = \"ctrl+k\"").unwrap();
+        let s = Shortcuts::from_table(Some(&table), Platform::Other, "", &mut Vec::new());
+        assert_eq!(take(&s, text, Action::NewTab, "ctrl+k"), [(KeyOwner::Action(Action::CopyPath), vec![])]);
+        // Commands: an action takes a command's key; a command takes an action's or another's.
+        let mut s = Shortcuts::defaults(Platform::Other);
+        s.bind_command(0, chord("ctrl+alt+k")).unwrap();
+        assert_eq!(take(&s, none, Action::NewTab, "ctrl+alt+k"), [(KeyOwner::Command(0), vec![])]);
+        let to_command = |key| s.taken_by(none, KeyOwner::Command(1), chord(key), Platform::Other);
+        assert_eq!(to_command("ctrl+t"), [(KeyOwner::Action(Action::NewTab), vec![])]);
+        assert_eq!(to_command("ctrl+alt+k"), [(KeyOwner::Command(0), vec![])]);
+        assert_eq!(s.taken_by(none, KeyOwner::Command(0), chord("ctrl+alt+k"), Platform::Other), []);
+        assert_eq!(s.chords_for(Action::Refresh), [chord("f5"), chord("ctrl+r")]);
+        assert_eq!(Action::from_name("edit-shortcuts"), Some(Action::EditShortcuts));
     }
 }

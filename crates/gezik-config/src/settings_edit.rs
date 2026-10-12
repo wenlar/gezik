@@ -367,14 +367,32 @@ fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) ->
     }
     let Some(table) = doc[name].as_table_like_mut() else { return Err(format!("{name} must be a table")) };
     for (key, value) in entries {
-        if let Some(old) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
-            let decor = old.decor().clone();
-            *old = value;
-            *old.decor_mut() = decor;
-        } else {
-            table.insert(key, toml_edit::Item::Value(value));
-        }
+        set_keeping_decor(table, key, value);
     }
+    Ok(doc.to_string())
+}
+
+/// Sets `key` in `table`; an old value's decor (its inline comment) stays.
+fn set_keeping_decor(table: &mut dyn toml_edit::TableLike, key: &str, value: toml_edit::Value) {
+    if let Some(old) = table.get_mut(key).and_then(|item| item.as_value_mut()) {
+        let decor = old.decor().clone();
+        *old = value;
+        *old.decor_mut() = decor;
+    } else {
+        table.insert(key, toml_edit::Item::Value(value));
+    }
+}
+
+/// Returns `text` with the `shortcut` of the `[[commands]]` entry named `name` set (the settings
+/// window, spec 14 §5); `""` is no key. Nothing else changes.
+pub fn with_command_shortcut(text: &str, name: &str, shortcut: &str) -> Result<String, String> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+    let command = doc
+        .get_mut("commands")
+        .and_then(|item| item.as_array_of_tables_mut())
+        .and_then(|commands| commands.iter_mut().find(|c| c.get("name").and_then(|n| n.as_str()) == Some(name)));
+    let Some(command) = command else { return Err(format!("settings.toml has no [[commands]] named \"{name}\"")) };
+    set_keeping_decor(command, "shortcut", shortcut.into());
     Ok(doc.to_string())
 }
 
@@ -1259,5 +1277,48 @@ pattern = \"y\"
         assert_eq!(with_value("[view]\n", Some("tags"), "dots", None).unwrap(), "[view]\n", "nothing to take out");
         assert!(with_value("[view\n", Some("view"), "mode", Some("\"grid\"")).is_err());
         assert!(with_value("[view]\n", Some("view"), "mode", Some("grid")).is_err(), "not a TOML value");
+    }
+
+    #[test]
+    fn a_commands_shortcut_is_set_in_its_own_entry() {
+        let text = "# mine
+[[commands]]
+name = \"A\"
+run = [\"a\"]
+shortcut = \"ctrl+k\"  # mine too
+
+[[commands]]
+name = \"B\"
+run = [\"b\"]
+";
+        let a = with_command_shortcut(text, "A", "").unwrap();
+        assert_eq!(a, text.replace("\"ctrl+k\"  #", "\"\"  #"), "the comment stays");
+        let b = with_command_shortcut(text, "B", "ctrl+alt+b").unwrap();
+        assert_eq!(
+            b,
+            format!(
+                "{text}shortcut = \"ctrl+alt+b\"
+"
+            )
+        );
+        assert!(with_command_shortcut(text, "C", "f9").is_err());
+        assert!(
+            with_command_shortcut(
+                "[x
+", "A", "f9"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_shortcut_is_one_line_in_the_template() {
+        let template = crate::store::SETTINGS_TEMPLATE;
+        let edited = with_value(template, Some("shortcuts"), "copy-path", Some("\"mod+alt+c\"")).unwrap();
+        let mut lines: Vec<&str> = edited.lines().collect();
+        let at = lines.iter().position(|l| *l == "copy-path = \"mod+alt+c\"").expect("written");
+        assert_eq!(lines[at - 1], "[shortcuts]");
+        lines.remove(at);
+        assert_eq!(lines, template.lines().collect::<Vec<_>>(), "nothing else changes");
     }
 }

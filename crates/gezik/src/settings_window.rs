@@ -4,18 +4,30 @@
 //! the settings writer's queue; the reload that follows updates every window and this one.
 //! The window is made when it opens and let go when it closes: nothing of it stays.
 
+mod shortcuts;
+
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
 use gezik_config::schema::{self, Described, FIELDS, Field, Kind, Page};
+use gezik_config::settings::Settings;
 use gezik_config::settings_writer::SettingsChange;
+use gezik_config::shortcuts::Platform;
 use gezik_config::store::ConfigFiles;
 use gezik_config::theme::{BUILTIN_THEMES, ResolvedTheme};
 use gezik_core::nav::Location;
+use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::{SettingItem, SettingsWindow, Theme};
+use shortcuts::Pressed;
+
+/// Slint's modifier keys: pressed alone, a shortcut waits for the rest.
+const MODIFIERS: [slint::platform::Key; 9] = {
+    use slint::platform::Key as K;
+    [K::Shift, K::ShiftR, K::Control, K::ControlR, K::Alt, K::AltGr, K::Meta, K::MetaR, K::CapsLock]
+};
 
 /// The row menu's items (spec 14 §10.3).
 const RESET: i32 = 2810;
@@ -37,11 +49,20 @@ struct Shown {
     query: String,
     /// The fields of the rows, in order.
     rows: Vec<usize>,
+    /// The Keyboard page's shortcuts (`shortcuts::rows`), and those shown after the fields.
+    keys: Vec<shortcuts::KeyRow>,
+    key_rows: Vec<usize>,
+    /// settings.toml's text (the shortcut conflicts read `[shortcuts]` from it).
+    text: String,
+    /// The changes a shortcut's Replace? writes, for that key row.
+    pending: Option<(usize, Vec<SettingsChange>)>,
 }
 
 impl Shown {
-    fn read(&mut self, files: &ConfigFiles) {
+    fn read(&mut self, files: &ConfigFiles, settings: &Settings) {
         let text = files.settings.as_deref().unwrap_or(gezik_config::store::SETTINGS_TEMPLATE);
+        text.clone_into(&mut self.text);
+        self.keys = shortcuts::rows(settings, Platform::current());
         match schema::values(text) {
             Ok(values) => (self.values, self.broken) = (values, None),
             Err(warning) => (self.values, self.broken) = (vec![None; FIELDS.len()], Some(warning.to_string())),
@@ -66,6 +87,16 @@ impl Shown {
             })
             .map(|(i, _)| i)
             .collect();
+        // No search: the Keyboard page's (an empty query matches every row).
+        self.key_rows = match query {
+            "" if page != Page::Keyboard => Vec::new(),
+            _ => (0..self.keys.len()).filter(|&k| shortcuts::matches(&self.keys[k], query)).collect(),
+        };
+    }
+
+    /// The key row of window row `row` (they come after the fields), as an index in `keys`.
+    fn key_of(&self, row: usize) -> Option<usize> {
+        self.key_rows.get(row.checked_sub(self.rows.len())?).copied()
     }
 
     fn item(&self, i: usize) -> SettingItem {
@@ -107,7 +138,7 @@ impl Shown {
         if let Some(broken) = &self.broken {
             return (format!("{broken} — fix it in settings.toml; until then these are read-only"), true);
         }
-        if self.rows.is_empty() {
+        if self.rows.is_empty() && self.key_rows.is_empty() {
             return ("No setting matches".to_owned(), false);
         }
         let advanced = Page::ALL[self.page.min(Page::ALL.len() - 1)] == Page::Advanced && self.query.trim().is_empty();
@@ -175,12 +206,20 @@ pub fn open() {
     if let Some(theme) = crate::theme_bridge::current() {
         crate::theme_bridge::apply_global(&window.global::<Theme>(), &theme);
     }
+    // Where the shortcuts get the key being pressed (keys.rs `Press`), as the main windows do.
+    window.window().on_winit_window_event(|_, event| {
+        match event {
+            winit::event::WindowEvent::KeyboardInput { event, .. } => crate::keys::note_key(event),
+            winit::event::WindowEvent::Focused(false) => crate::keys::forget_altgr(),
+            _ => {}
+        }
+        EventResult::Propagate
+    });
     let mut shown = Shown { described: schema::describe(gezik_config::store::SETTINGS_TEMPLATE), ..Shown::default() };
-    if let Some(files) = crate::windows::files() {
-        shown.read(&gezik_config::lock(&files));
-    } else {
-        shown.read(&ConfigFiles::default());
-    }
+    with_settings(|settings| match crate::windows::files() {
+        Some(files) => shown.read(&gezik_config::lock(&files), settings),
+        None => shown.read(&ConfigFiles::default(), settings),
+    });
     shown.pick_rows();
     let links = ["Open settings.toml", "Open Config Folder"];
     let pages: Vec<SharedString> = Page::ALL.iter().map(|p| p.title()).chain(links).map(Into::into).collect();
@@ -201,6 +240,23 @@ pub fn open() {
     }
 }
 
+/// Opens the window at its Keyboard page (`edit-shortcuts`).
+pub fn open_shortcuts() {
+    open();
+    let Some(open) = current() else { return };
+    open.shown.borrow_mut().page = Page::ALL.iter().position(|p| *p == Page::Keyboard).unwrap_or(0);
+    open.shown.borrow_mut().pick_rows();
+    show_rows(&open, true);
+}
+
+/// `f` with the settings in effect (their shortcuts and commands).
+fn with_settings<R>(f: impl FnOnce(&Settings) -> R) -> R {
+    match crate::windows::loaded() {
+        Some(loaded) => f(&loaded.settings),
+        None => f(&Settings::default()),
+    }
+}
+
 /// Lets the window go (its close button, the end of main).
 pub fn close() {
     let Some(open) = OPEN.with(|o| o.borrow_mut().take()) else { return };
@@ -211,7 +267,7 @@ pub fn close() {
 /// The config files were read again (settings.toml or a theme changed): the rows follow.
 pub fn refresh(files: &ConfigFiles) {
     let Some(open) = current() else { return };
-    open.shown.borrow_mut().read(files);
+    with_settings(|settings| open.shown.borrow_mut().read(files, settings));
     show_rows(&open, false);
 }
 
@@ -226,7 +282,8 @@ pub fn retheme(theme: &ResolvedTheme) {
 /// typed in keeps its text.
 fn show_rows(open: &Open, new: bool) {
     let shown = open.shown.borrow();
-    let items: Vec<SettingItem> = shown.rows.iter().map(|&i| shown.item(i)).collect();
+    let keys = shown.key_rows.iter().map(|&k| shortcuts::item(&shown.keys[k], Platform::current()));
+    let items: Vec<SettingItem> = shown.rows.iter().map(|&i| shown.item(i)).chain(keys).collect();
     if new || items.len() != open.rows.row_count() {
         open.rows.set_vec(items);
     } else {
@@ -278,6 +335,15 @@ fn bind(open: &Rc<Open>) {
         move |row, text| {
             let Some(open) = weak.upgrade() else { return };
             let row = usize::try_from(row).unwrap_or(usize::MAX);
+            // A shortcut's Replace? answered.
+            if let Some(key) = open.shown.borrow().key_of(row) {
+                let pending = open.shown.borrow_mut().pending.take();
+                say(&open, "");
+                if let Some((_, changes)) = pending.filter(|(of, _)| *of == key && text == "Replace") {
+                    changes.into_iter().for_each(write);
+                }
+                return;
+            }
             let change = open.shown.borrow().change(row, &text);
             match change {
                 Ok(Some(change)) => {
@@ -288,6 +354,51 @@ fn bind(open: &Rc<Open>) {
                 Err(why) => {
                     let title = open.shown.borrow().rows.get(row).map(|&i| FIELDS[i].title()).unwrap_or_default();
                     say_bad(&open, &format!("{title}: {why} — not written"));
+                }
+            }
+        }
+    });
+    window.on_key({
+        let weak = weak.clone();
+        move |row, text, control, alt, shift, meta| {
+            let Some(open) = weak.upgrade() else { return 1 };
+            let key = open.shown.borrow().key_of(usize::try_from(row).unwrap_or(usize::MAX));
+            let Some(key) = key else { return 1 };
+            if open.shown.borrow().broken.is_some() {
+                say_bad(&open, "Fix settings.toml first");
+                return 1;
+            }
+            // As the main windows read a key (windows.rs `on_key_event`).
+            let press = crate::keys::take_pressed();
+            let (control, alt) = press.modifiers(control, alt);
+            let text = crate::keys::shortcut_text(&text, control);
+            let platform = Platform::current();
+            let chord = crate::keys::chord_from_press(&text, press.physical, control, alt, shift, meta, platform);
+            let modifier = MODIFIERS.iter().any(|m| text.chars().eq([char::from(*m)]));
+            let outcome = with_settings(|settings| {
+                let shown = open.shown.borrow();
+                shortcuts::pressed(&shown.keys[key], chord, modifier, settings, &shown.text, platform)
+            });
+            match outcome {
+                Pressed::Wait(why) => {
+                    if !why.is_empty() {
+                        say_bad(&open, &why);
+                    }
+                    0
+                }
+                Pressed::Done(word) => {
+                    say(&open, &word);
+                    1
+                }
+                Pressed::Write(changes) => {
+                    say(&open, "");
+                    changes.into_iter().for_each(write);
+                    1
+                }
+                Pressed::Ask(question, changes) => {
+                    open.shown.borrow_mut().pending = Some((key, changes));
+                    say(&open, &question);
+                    2
                 }
             }
         }
@@ -321,6 +432,24 @@ fn bind(open: &Rc<Open>) {
         let weak = weak.clone();
         move |row, id| {
             let Some(open) = weak.upgrade() else { return };
+            let key = open.shown.borrow().key_of(usize::try_from(row).unwrap_or(usize::MAX));
+            if let Some(key) = key {
+                let shown = open.shown.borrow();
+                let key = &shown.keys[key];
+                match id {
+                    RESET if shown.broken.is_some() => say(&open, "Fix settings.toml first"),
+                    RESET => match shortcuts::reset(key, Platform::current()) {
+                        Ok(change) => write(change),
+                        Err(why) => say(&open, why),
+                    },
+                    COPY_KEY if gezik_platform::clipboard::write_text(&key.path).is_err() => {
+                        say(&open, "Cannot use the clipboard");
+                    }
+                    EDIT_FILE => edit_file(),
+                    _ => {}
+                }
+                return;
+            }
             let Some(i) = field_of(&open, row) else { return };
             let field = &FIELDS[i];
             match id {
@@ -440,7 +569,7 @@ mod tests {
         let mut files = ConfigFiles { settings: Some(text.to_owned()), ..ConfigFiles::default() };
         files.themes.insert("nord".to_owned(), String::new());
         files.themes.insert("dark".to_owned(), String::new());
-        shown.read(&files);
+        shown.read(&files, &Settings::default());
         shown.pick_rows();
         shown
     }
@@ -527,5 +656,22 @@ mod tests {
         s.pick_rows();
         assert!(s.status().0.starts_with("1 key Gezik does not know"), "{:?}", s.status());
         assert!(s.rows.iter().all(|&i| FIELDS[i].kind == Kind::List));
+    }
+
+    #[test]
+    fn the_keyboard_page_and_a_search_show_the_shortcuts_after_the_fields() {
+        let mut s = shown("");
+        assert!(s.key_rows.is_empty(), "General has none");
+        s.page = Page::ALL.iter().position(|p| *p == Page::Keyboard).unwrap();
+        s.pick_rows();
+        assert_eq!(s.key_rows.len(), s.keys.len());
+        assert_eq!((s.key_of(s.rows.len() - 1), s.key_of(s.rows.len())), (None, Some(s.key_rows[0])));
+        s.query = "new-tab".to_owned();
+        s.pick_rows();
+        let titles: Vec<&str> = s.key_rows.iter().map(|&k| s.keys[k].title.as_str()).collect();
+        assert_eq!(titles, ["New Tab"]);
+        s.query = "no such thing".to_owned();
+        s.pick_rows();
+        assert_eq!(s.status().0, "No setting matches");
     }
 }

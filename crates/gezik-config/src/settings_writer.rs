@@ -19,8 +19,9 @@ use crate::paths::write_atomic;
 use crate::pins::PinEntry;
 use crate::settings::{RenamePreset, SavedFilter, SavedSearch, TabSet, ViewOption};
 use crate::settings_edit::{
-    with_filters, with_panes_confirm, with_pinned, with_rename_presets, with_searches, with_sync_profiles, with_system,
-    with_tab_sets, with_tag_added, with_tag_list_edit, with_tags, with_value, with_view_defaults, with_view_option,
+    with_command_shortcut, with_filters, with_panes_confirm, with_pinned, with_rename_presets, with_searches,
+    with_sync_profiles, with_system, with_tab_sets, with_tag_added, with_tag_list_edit, with_tags, with_value,
+    with_view_defaults, with_view_option,
 };
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
@@ -61,6 +62,9 @@ pub enum SettingsChange {
     /// One value from the settings window (spec 14 §3.2): `key` in `[table]` (`None`: at the
     /// top), as TOML text; `None` takes the key out.
     Value { table: Option<String>, key: String, value: Option<String> },
+    /// The key of the `[[commands]]` entry named `name` (the settings window, spec 14 §5);
+    /// `""` is none.
+    CommandShortcut { name: String, shortcut: String },
 }
 
 /// A `[system]` value System Integration writes (9b9).
@@ -89,6 +93,7 @@ impl SettingsChange {
             SettingsChange::TagDots(dots) => with_tags(text, "dots", crate::tags::dots_value(*dots)),
             SettingsChange::TagList(edit, list) => with_tag_list_edit(text, edit, list),
             SettingsChange::Value { table, key, value } => with_value(text, table.as_deref(), key, value.as_deref()),
+            SettingsChange::CommandShortcut { name, shortcut } => with_command_shortcut(text, name, shortcut),
         }?;
         // toml_edit writes every line break as \n: a file written with \r\n (Notepad) keeps
         // them, so only the changed lines change.
