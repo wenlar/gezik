@@ -117,7 +117,8 @@ fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
         }
         MediaKey::PathIcon { path, px } => picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px)),
         MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
-        MediaKey::Tags { path } => Outcome::Tags(crate::tags::read_for_rows(path)),
+        MediaKey::Tags { path } if wanted() => Outcome::Tags(crate::tags::read_for_rows(path)),
+        MediaKey::Tags { .. } => Outcome::Nothing,
     }
 }
 
@@ -212,6 +213,9 @@ impl<K: Eq + Hash + Clone, V: Clone> ByteLru<K, V> {
     }
 }
 
+/// A row's tags and the generation they were read in.
+type ReadTags = (u64, Box<[Tag]>);
+
 type ReadyListener = Rc<dyn Fn(&[usize], Ready)>;
 
 struct Inner {
@@ -227,8 +231,10 @@ struct Inner {
     paths: RefCell<ByteLru<MediaKey, Option<Image>>>,
     thumbnails: RefCell<ByteLru<MediaKey, Option<Image>>>,
     plain_folders: RefCell<HashSet<PathBuf>>,
-    /// Each row's tags once read (empty: none), by path; dropped after a tag job and on F5.
-    tags: RefCell<HashMap<PathBuf, Box<[Tag]>>>,
+    /// Each row's tags once read (empty: none), by path, with the generation they were read in:
+    /// an older one is still drawn (no flicker) but read again.
+    tags: RefCell<HashMap<PathBuf, ReadTags>>,
+    tags_generation: Cell<u64>,
     /// The keys queued or loading, each with its job's flag.
     pending: RefCell<HashMap<MediaKey, Wanted>>,
     clients: RefCell<Vec<Weak<Client>>>,
@@ -281,6 +287,7 @@ impl Media {
                 thumbnails: RefCell::new(ByteLru::new(THUMBNAIL_BUDGET, usize::MAX)),
                 plain_folders: RefCell::default(),
                 tags: RefCell::default(),
+                tags_generation: Cell::new(0),
                 pending: RefCell::default(),
                 clients: RefCell::default(),
             }),
@@ -383,22 +390,33 @@ impl Media {
 
     /// `path`'s tags, if read; otherwise they are asked for and entry `entry` is redrawn when
     /// they arrive.
+    /// `path`'s tags read before the last [`forget_tags`] are drawn until the new ones land.
     pub fn tags(&self, path: PathBuf, entry: usize) -> Option<Box<[Tag]>> {
-        if let Some(tags) = self.shared.tags.borrow().get(&path) {
-            return Some(tags.clone());
+        let found = self.shared.tags.borrow().get(&path).cloned();
+        match found {
+            Some((generation, tags)) if generation == self.shared.tags_generation.get() => Some(tags),
+            Some((_, old)) => {
+                self.request(MediaKey::Tags { path }, Some(entry));
+                Some(old)
+            }
+            None => {
+                self.request(MediaKey::Tags { path }, Some(entry));
+                None
+            }
         }
-        self.request(MediaKey::Tags { path }, Some(entry));
-        None
     }
 
     /// Only what is already known; asks for nothing (menus).
     pub fn known_tags(&self, path: &std::path::Path) -> Option<Box<[Tag]>> {
-        self.shared.tags.borrow().get(path).cloned()
+        self.shared.tags.borrow().get(path).map(|(_, tags)| tags.clone())
     }
 
-    /// Every row's tags read again when next drawn (a tag job ended, F5).
+    /// Every row's tags read again when next drawn (a listing shown, a tag job ended, F5);
+    /// those already old once are dropped, so the cache holds two listings' at most.
     pub fn forget_tags(&self) {
-        self.shared.tags.borrow_mut().clear();
+        let generation = self.shared.tags_generation.get();
+        self.shared.tags.borrow_mut().retain(|_, (g, _)| *g == generation);
+        self.shared.tags_generation.set(generation + 1);
     }
 
     /// How many requests are queued or loading (tests).
@@ -501,7 +519,7 @@ impl Media {
                 if known.len() >= MAX_TAGGED {
                     known.clear();
                 }
-                known.insert(path.clone(), tags);
+                known.insert(path.clone(), (self.shared.tags_generation.get(), tags));
                 Ready::Picture
             }
             (MediaKey::FolderIcon { path, .. }, Outcome::PlainFolder) => {

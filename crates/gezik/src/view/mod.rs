@@ -478,6 +478,9 @@ impl View {
     /// `place`: where it is, for the view rules (spec 10 §8).
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>, place: Place) {
         let results = matches!(listing, Listing::Results(_));
+        // Files may have changed (a reload, a job, another program): rows read their tags again,
+        // drawing the old ones until then (spec 12 §3.4).
+        self.0.media.forget_tags();
         let folder = match &listing {
             Listing::Results(set) => Some(if set.is_trash() { TRASH_KEY } else { RESULTS_KEY }.to_owned()),
             _ => listing.folder().map(|p| p.display().to_string()),
