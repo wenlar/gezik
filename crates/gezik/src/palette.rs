@@ -67,6 +67,8 @@ pub enum Target {
     SyncProfile(String),
     /// A System Integration command (spec 3.2).
     System(crate::integration::Command),
+    /// A listed tag on the selection, or off it (spec 12 §5.3), by name.
+    ToggleTag(String),
 }
 
 struct Inner {
@@ -150,7 +152,9 @@ impl Palette {
             targets.push(target);
         };
         for action in Action::ALL {
+            // `tag-1…7` are the `Toggle Tag: <name>` items below, which name the tag.
             let skip = matches!(action, Action::CommandPalette | Action::QuickOpen)
+                || action.tag_number().is_some()
                 || (action == Action::OpenTerminalAdmin && !cfg!(windows))
                 || (matches!(action, Action::MakeAlias | Action::ShowPackageContents | Action::Share)
                     && !cfg!(target_os = "macos"))
@@ -168,6 +172,11 @@ impl Palette {
         }
         for name in crate::convert::command_names() {
             add(Kind::Command, name.clone(), name.clone(), String::new(), Target::Command(name));
+        }
+        // Actions like `tag-1…7` (remembered as `action:toggle-tag:Red`), named by the tag.
+        for tag in crate::tags::list() {
+            let (id, title) = (format!("toggle-tag:{}", tag.name), format!("Toggle Tag: {}", tag.name));
+            add(Kind::Action, id, title, String::new(), Target::ToggleTag(tag.name.into()));
         }
         let resident = crate::resident::status();
         for command in crate::integration::Command::ALL.into_iter().filter(|c| c.applies(&resident)) {
@@ -338,6 +347,7 @@ impl Palette {
             Target::SavedSearch(name) => crate::saved_searches::with_current(|s| s.run(&name, new_tab)),
             Target::SyncProfile(name) => crate::compare::open_profile(&name),
             Target::System(command) => crate::integration::run(command),
+            Target::ToggleTag(name) => crate::tags::toggle_named(&name, &crate::panes::active_view()),
         }
     }
 
@@ -368,6 +378,8 @@ impl Palette {
                         Target::Action(action) => crate::keys::chord_for(*action)
                             .map(|chord| crate::keys::chord_label(&chord, Platform::current()))
                             .unwrap_or_default(),
+                        // The first seven tags' keys are `tag-1…7`'s.
+                        Target::ToggleTag(name) => crate::tags::key_label(&crate::tags::list(), name),
                         _ => String::new(),
                     };
                     PickRow {
@@ -376,6 +388,8 @@ impl Palette {
                         tag: item.kind.tag().into(),
                         keys: keys.into(),
                         bold: false,
+                        dot: slint::Color::default(),
+                        check: -1,
                     }
                 }
                 Line::SearchFor(text) => {
@@ -392,6 +406,8 @@ impl Palette {
                         tag: "Search".into(),
                         keys: "".into(),
                         bold: false,
+                        dot: slint::Color::default(),
+                        check: -1,
                     }
                 }
             })

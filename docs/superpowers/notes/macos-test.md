@@ -746,6 +746,16 @@ Numbers stay as they are when branches merge. 13a uses 366–368 (step 12 has 34
 367. **A 3 GB log.** Make one (`yes "$(date) a line of a log file" | head -c 3000000000 > /tmp/big.log`), select it with the preview pane open (⌥P): the first lines show at once. Click into the text and press End: the last line shows within a moment, the bar says `2.8 GB · 100%`; drag the scroll bar to the middle: lines from there (`… · 50%`). Activity Monitor's memory for Gezik: within +5 MB of before the file was selected; select another file: it goes back.
 368. **Hex.** Select a `.dylib` (e.g. `/usr/lib/libz.dylib` or any in an app's `Contents/Frameworks`): the preview shows its icon and a `Hex` button. Press Space, then `H`: hex rows `00000000  CF FA ED FE …  ....` with the offset in the bar; End goes to the last row; `H` goes back to the icon. Right-click in a text preview of the pane: `Show as Hex` and `Wrap Lines`; View ▸ Show Preview as Hex in the menu bar does the same for the selection.
 
+### 12b, tagging and tag dots
+
+Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dots on macOS from the start.
+
+344. **The picker.** Select three files in `/tmp/tags`, ⌃⌘L (and File ▸ Tags ▸ Tags…): `Tags for 3 items` over the window, the seven colours with ⌃1…⌃7 at the right. Return on Red: `✓`; Return again: none; give one file Orange in Finder first: Orange shows `–`, Return makes it `✓`. Type `Proj`, Return on `Create "Proj"`: it is added (settings.toml's `[tags] list` gains it, comments kept). Esc: one job; ⌘Z takes all of it back. VoiceOver reads a row as `Red, on all items`.
+345. **⌃1…⌃7, ⌃0.** With Mission Control's "Switch to Desktop" keys off: ⌃1 on the selection puts Red on all (`Red added to 3 items`), ⌃1 again takes it off; ⌃0 clears every tag (a rating written by 340's probe stays: `mdls -name kMDItemStarRating`). Each is one ⌘Z.
+346. **File ▸ Tags and the row menu.** File ▸ Tags lists the list's names with ⌃1…⌃7, Tags… (⌃⌘L) and Clear Tags (⌃0); a row's right-click has the same items at the end of `Tools ▸` under a greyed `Tags`, `• Red` on a row that has it. Drives and the trash have no Tags.
+347. **Finder sees them.** Tags given in Gezik show in Finder's list and Get Info with the same colours; a tag given in Finder shows as a dot in Gezik after F5. Modified dates do not change.
+348. **Dots.** List, grid and columns: up to three overlapping dots after the name (under it in the grid), `+2` past three, a ring for a tag without colour; on a selected row each dot has a white edge. View ▸ Tag Dots off: no dots and settings.toml says `dots = false`.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

@@ -109,6 +109,28 @@ mod tests {
         Tag::new("Red", TagColor::Red)
     }
 
+    /// Spec 12 §1: 10,000 files tagged in one job within 3 s on Windows NTFS, 1 s elsewhere (SSD).
+    #[test]
+    #[ignore = "timing: run on a quiet machine (cargo test -p gezik-ops ten_thousand -- --ignored --nocapture)"]
+    fn ten_thousand_files_are_tagged_in_time() {
+        let dir = test_dir("tags-10k");
+        let paths: Vec<_> = (0..10_000).map(|i| dir.join(format!("f{i}.txt"))).collect();
+        for path in &paths {
+            std::fs::write(path, "").unwrap();
+        }
+        let engine = engine(&dir);
+        let started = std::time::Instant::now();
+        let job = engine.submit(Box::new(TagsTask::new(paths.clone(), vec![MetaEdit::AddTags(vec![red()])])));
+        let (report, _) = finish(&engine, job, |_| Vec::new());
+        let took = started.elapsed();
+        eprintln!("10,000 files tagged in {took:?}");
+        assert!(report.failures.is_empty(), "{:?}", report.failures.first());
+        assert!(engine.meta().read(&paths[9_999]).unwrap().has_tag("Red"));
+        let limit = if cfg!(windows) { 3.0 } else { 1.0 };
+        assert!(took.as_secs_f64() <= limit, "{took:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn tags_change_as_one_job_and_come_back_with_undo() {
         let dir = test_dir("tags-undo");
@@ -122,8 +144,10 @@ mod tests {
             vec![a.clone(), b.clone()],
             vec![MetaEdit::AddTags(vec![red(), Tag::new("Project X", TagColor::None)]), MetaEdit::Rating(3)],
         )));
-        let (report, _) = finish(&engine, job, |_| Vec::new());
+        let (report, events) = finish(&engine, job, |_| Vec::new());
         assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(report.changed_dirs.is_empty(), "no folder to read again: {:?}", report.changed_dirs);
+        assert!(!events.iter().any(|e| matches!(e, crate::Event::Changed { .. })), "{events:?}");
         assert_eq!(engine.undo_label().as_deref(), Some("Change tags of 2 items"));
         assert_eq!(store.read(&a).unwrap().tags.len(), 2);
         assert_eq!(store.read(&b).unwrap().rating, 3);

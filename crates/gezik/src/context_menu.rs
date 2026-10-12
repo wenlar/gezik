@@ -561,6 +561,18 @@ pub const TOOLS_COPY_TO: u32 = 2207;
 pub const TOOLS_MOVE_TO: u32 = 2208;
 pub const TOOLS_SPLIT: u32 = 2209;
 pub const TOOLS_JOIN: u32 = 2210;
+// Step 12 (spec 12 §12.3): 2400–2599. Tags ▸ 2400–2409 (Tags… 2400, Clear tags 2401; Comment…
+// and New Tag… later), the list's tags 2410–2469, ratings 2470–2475, the sidebar's tag menu
+// 2480–2489, colours 2490–2497, View items 2500–2509 (Tag dots 2500).
+/// Tags ▸ Tags… and Clear tags (12b), on rows.
+pub const TAGS_PICKER: u32 = 2400;
+pub const TAGS_CLEAR: u32 = 2401;
+/// Tags ▸ the list's tags, one id each in the list's order (at most `TAGS_TAG_MAX`).
+pub const TAGS_TAG_FIRST: u32 = 2410;
+pub const TAGS_TAG_MAX: u32 = gezik_config::tags::TAGS_MAX as u32;
+const TAGS_TAG_LAST: u32 = TAGS_TAG_FIRST + TAGS_TAG_MAX - 1;
+/// The View menu's Tag dots (12b).
+pub const TAG_DOTS: u32 = 2500;
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
 /// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
@@ -592,6 +604,20 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
     Submenu { title: "Tools".to_owned(), at, items }
 }
 
+/// `Tags ▸` for `paths` right after `Tools ▸` (which drives and the trash have not: no tags
+/// there). Gezik's own menus have `MAX_SUBMENUS` places: there the tags go at the end of Tools ▸,
+/// under a greyed "Tags" (plan 12b sapma 11).
+fn add_tags(subs: &mut Vec<Submenu>, paths: &[PathBuf], native: bool) {
+    let Some(tools) = subs.iter_mut().find(|sub| sub.title == "Tools") else { return };
+    let tags = crate::tags::menu_sub(paths, tools.at);
+    if native {
+        subs.push(tags);
+    } else {
+        tools.items.push((HEADING, "Tags".to_owned(), false));
+        tools.items.extend(tags.items);
+    }
+}
+
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
 pub fn trash_row_items() -> [(u32, &'static str); 2] {
@@ -611,7 +637,7 @@ pub const GEZIK_IDS_END: u32 = 4096;
 #[cfg(windows)]
 const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
 /// Most submenus a menu shows: app.slint and popup-menu.slint have this many places (a macOS
-/// row: Open With, Copy path as, Commands, Tools, Quick Actions).
+/// row: Open With, Copy path as, Commands, Tools, Quick Actions; Tags go inside Tools there).
 pub const MAX_SUBMENUS: usize = 5;
 
 /// A submenu among a menu's items ("Commands ▸"): its title, its place among the items (0:
@@ -1259,6 +1285,7 @@ impl Menus {
             let services = self.add_finder_extras(&list, &mut subs, &rows);
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
+            add_tags(&mut subs, &paths, native);
             list.extend(self.file_extras(false, false, native));
             let in_cloud = paths.iter().all(|p| crate::cloud::root_of(p).is_some());
             list.extend(cloud_items(in_cloud, native, cfg!(target_os = "macos")));
@@ -1297,6 +1324,7 @@ impl Menus {
         let services = self.add_finder_extras(&list, &mut subs, &[(path.clone(), is_dir)]);
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
+        add_tags(&mut subs, std::slice::from_ref(&path), native);
         list.extend(self.file_extras(true, is_dir, native));
         list.extend(cloud_items(crate::cloud::root_of(&path).is_some(), native, cfg!(target_os = "macos")));
         // Not asked on Windows: Explorer's menu has Eject, and asking a fixed drive's bus costs a query.
@@ -1673,6 +1701,9 @@ impl Menus {
             0
         };
         rule_items(&mut entries, crate::panes::active_view().rule_state());
+        // Last, so the submenus' places above stay (spec 12 §5.4; plan 12b sapma 8).
+        let dots = crate::tags::dots_on();
+        entries.push((TAG_DOTS, format!("{}Tag dots", if dots { "• " } else { "    " }), true));
         let mut subs = format_subs(options, place + 2 + shift);
         subs.push(group_by_sub(crate::panes::active_view().view_settings().group, at_group));
         self.open_slint_entries(&entries, subs, at);
@@ -2098,6 +2129,12 @@ impl Menus {
             {
                 crate::search::select_duplicates(&crate::panes::active_view(), id);
             }
+            (TAGS_PICKER..=TAGS_TAG_LAST, Subject::Row(path)) => {
+                crate::tags::menu_chosen(id, vec![path]);
+            }
+            (TAGS_PICKER..=TAGS_TAG_LAST, Subject::Rows(paths)) => {
+                crate::tags::menu_chosen(id, paths);
+            }
             (TOOLS_COPY_TO..=TOOLS_JOIN, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
                 let mut paths: Vec<PathBuf> = rows.into_iter().map(|(path, _)| path).collect();
@@ -2253,6 +2290,7 @@ impl Menus {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
             (REVEAL_IN_TREE, _) => self.sidebar.reveal_current(),
+            (TAG_DOTS, _) => crate::tags::toggle_dots(),
             (TOOLS_EXPORT_LIST, _) => crate::export::ask(&crate::panes::active_nav(), &crate::panes::active_view()),
             (CALC_FOLDER_SIZES, _) => {
                 crate::panes::with_active(|p| p.folder_sizes.calculate());
@@ -2513,6 +2551,7 @@ fn from_submenu(id: u32) -> bool {
         || id == TOOLS_CHECKSUMS
         || id == TOOLS_VERIFY
         || (TOOLS_COPY_TO..=TOOLS_JOIN).contains(&id)
+        || (TAGS_PICKER..=TAGS_TAG_LAST).contains(&id)
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER

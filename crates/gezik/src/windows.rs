@@ -84,6 +84,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::stack::CURRENT.with(|s| s.forget(id)),
     |id| crate::tab_sets::CURRENT.with(|s| s.forget(id)),
     |id| crate::tab_tools::CURRENT.with(|s| s.forget(id)),
+    |id| crate::tags::CURRENT.with(|s| s.forget(id)),
     |id| crate::window_state::PENDING.with(|s| s.forget(id)),
     |id| crate::window_state::RECT.with(|s| s.forget(id)),
 ];
@@ -927,6 +928,8 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let _saved_searches = saved_searches::SavedSearches::new(dialogs.clone(), config.clone());
     let _tab_tools = tab_tools::TabTools::new(&window);
     let _integration = integration::Integration::new(&window);
+    let _tags = crate::tags::TagPicker::new(&window);
+    window.set_view_tag_dots(crate::tags::dots_on());
     let _select_tools =
         select_tools::SelectTools::new(dialogs.clone(), config.clone(), state.selection.last_pattern.clone());
     let ops = process.ops.clone();

@@ -677,6 +677,12 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 266. **Colors and the end of a big log.** As macOS 366 and 367 with Alt+P, Space and `ps -o rss= -p $(pgrep -x gezik)` (a `.rs` or `.py` file colored and numbered; a 3 GB log's End shows its last line within a moment and memory stays within +5 MB). Then `H` on `/usr/lib/x86_64-linux-gnu/libc.so.6` shows hex rows (`7F 45 4C 46` first).
 267. **Japanese text wraps in line.** A text file with long Japanese lines (`日本語のテキスト` repeated, mixed with Latin words): with Wrap on, every row ends at the same column width (a wide character takes two columns); the characters come from a fallback font and do not overlap. Write the font you see if they do not line up (GNOME and KDE).
 
+### 12b, tagging and tag dots
+
+252. **The picker.** As macOS 344 with Ctrl+Shift+L: one job, one Ctrl+Z; `getfattr -n user.xdg.tags` on the files shows what the picker left. Before the first tag no dots show (`dots = "auto"`); after it they do, and `state.toml` has `[tags] used = true`.
+253. **Alt+Shift+1…7, Alt+Shift+0.** On GNOME and on KDE (X11 and Wayland): Alt+Shift+1 toggles Red on the selection (`Red added to 3 items`, then `Red removed from 3 items`), Alt+Shift+0 clears; write down any desktop that takes the keys itself (the picker's Ctrl+Shift+L still works).
+254. **Dots.** As macOS 348; a tag Dolphin gave (no colour in `user.xdg.tags`) shows gray unless your `[tags] list` names it; a vfat stick's tags (the store) show too.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

@@ -91,12 +91,67 @@ pub fn with_panes_confirm(text: &str, on: bool) -> Result<String, String> {
     edit_table(text, "panes", vec![("confirm", on.into())])
 }
 
+/// Adds an empty `[name]` at the end. Comments after the file's last value are the document's
+/// trailing part, which toml_edit writes after every table: they go before the new table, so
+/// they stay where they were.
+fn add_table(doc: &mut toml_edit::DocumentMut, name: &str) {
+    let trailing = doc.trailing().as_str().unwrap_or_default().to_owned();
+    doc.set_trailing("");
+    let mut table = toml_edit::Table::new();
+    table.decor_mut().set_prefix(trailing);
+    doc[name] = toml_edit::Item::Table(table);
+}
+
+/// Returns `text` with `[tags] key` set (the list, the dots).
+pub fn with_tags(text: &str, key: &str, value: toml_edit::Value) -> Result<String, String> {
+    edit_table(text, "tags", vec![(key, value)])
+}
+
+/// Returns `text` with `tag` at the end of `[tags] list`: only that entry is added, so the
+/// list's comments and the entries Gezik left out stay. With no `list` there, `list` (the one in
+/// effect, the defaults and the new tag) is written.
+pub fn with_tag_added(
+    text: &str,
+    tag: &gezik_core::meta::Tag,
+    list: &[gezik_core::meta::Tag],
+) -> Result<String, String> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+    if doc.get("tags").is_none() {
+        add_table(&mut doc, "tags");
+    }
+    let Some(table) = doc["tags"].as_table_like_mut() else { return Err("tags must be a table".to_owned()) };
+    match table.get_mut("list").and_then(|item| item.as_value_mut()) {
+        Some(toml_edit::Value::Array(array)) => {
+            let toml_edit::Value::Array(one) = crate::tags::list_value(std::slice::from_ref(tag)) else {
+                unreachable!("a list is an array")
+            };
+            // A list one tag a line: the old last line's comment (the array's trailing part)
+            // stays on that line, the new tag goes on its own. An inline list stays inline.
+            let trailing = array.trailing().as_str().unwrap_or_default().to_owned();
+            let one_a_line = trailing.contains('\n');
+            array.set_trailing_comma(true);
+            array.extend(one);
+            if let Some(last) = array.iter_mut().last() {
+                last.decor_mut().set_prefix(if one_a_line { format!("{trailing}  ") } else { " ".to_owned() });
+            }
+            if one_a_line {
+                array.set_trailing("\n");
+            }
+        }
+        Some(_) => return Err("tags.list must be a list".to_owned()),
+        None => {
+            table.insert("list", toml_edit::Item::Value(crate::tags::list_value(list)));
+        }
+    }
+    Ok(doc.to_string())
+}
+
 /// Sets `entries` in `[name]` (adding the table and the missing keys), keeping each old value's
 /// decor so inline comments (`# list | grid`) survive.
 fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     if doc.get(name).is_none() {
-        doc[name] = toml_edit::table();
+        add_table(&mut doc, name);
     }
     let Some(table) = doc[name].as_table_like_mut() else { return Err(format!("{name} must be a table")) };
     for (key, value) in entries {
@@ -810,6 +865,50 @@ pattern = \"y\"
         let fresh = with_system("pinned = []\n", "tray", true.into()).unwrap();
         assert!(fresh.contains("[system]\ntray = true"), "{fresh}");
         assert!(with_system("system = 3\n", "tray", true.into()).is_err());
+    }
+
+    #[test]
+    fn the_tag_list_and_dots_are_written_into_tags() {
+        let text = "[tags]\n# yours\ndots = \"auto\"   # auto, true or false\n";
+        let list = vec![gezik_core::meta::Tag::new("Work", gezik_core::meta::TagColor::Blue)];
+        let written = with_tag_added(text, &list[0], &list).unwrap();
+        let off = with_tags(&written, "dots", crate::tags::dots_value(crate::tags::Dots::Off)).unwrap();
+        assert!(off.contains("# yours\ndots = false   # auto, true or false\n"), "{off}");
+        let mut warnings = Vec::new();
+        let settings = crate::settings::Settings::parse("settings.toml", &off, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}\n{off}");
+        assert_eq!(settings.tags.list, list);
+        assert_eq!(settings.tags.dots, crate::tags::Dots::Off);
+    }
+
+    #[test]
+    fn a_new_tags_table_goes_after_the_files_last_comment() {
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "[panes]\nconfirm = true\n\n# my notes at the end\n";
+        let list = [Tag::new("Proj", TagColor::None)];
+        let added = with_tag_added(text, &list[0], &list).unwrap();
+        let comment = added.find("# my notes at the end").unwrap();
+        let table = added.find("[tags]").unwrap();
+        assert!(comment < table, "{added}");
+        assert!(added.contains("[panes]\nconfirm = true\n"), "{added}");
+        let dots = with_tags(text, "dots", crate::tags::dots_value(crate::tags::Dots::On)).unwrap();
+        assert!(dots.find("# my notes").unwrap() < dots.find("[tags]").unwrap(), "{dots}");
+    }
+
+    #[test]
+    fn a_new_tag_is_added_and_the_rest_of_the_list_stays_as_written() {
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "[tags]\nlist = [\n  # mine first\n  { name = \"Work\", color = \"blue\" },\n  { name = \"a,b\" },   # broken, left out\n]\n";
+        let added = with_tag_added(text, &Tag::new("Proj", TagColor::None), &[]).unwrap();
+        assert!(added.contains("  # mine first\n  { name = \"Work\", color = \"blue\" },\n"), "{added}");
+        assert!(added.contains("{ name = \"a,b\" },   # broken, left out"), "{added}");
+        assert!(added.contains("{ name = \"Proj\", color = \"none\" }"), "{added}");
+        let mut warnings = Vec::new();
+        let settings = crate::settings::Settings::parse("settings.toml", &added, &mut warnings);
+        let names: Vec<&str> = settings.tags.list.iter().map(|t| &*t.name).collect();
+        assert_eq!(names, ["Work", "Proj"]);
+        assert_eq!(warnings.len(), 1, "the broken entry is still there: {warnings:?}");
+        assert!(with_tag_added("[tags]\nlist = 3\n", &Tag::new("X", TagColor::None), &[]).is_err());
     }
 
     #[test]

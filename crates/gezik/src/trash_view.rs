@@ -307,6 +307,15 @@ pub fn allowed(action: Action) -> bool {
         | Action::MoveTo
         | Action::SplitFile
         | Action::JoinFiles
+        | Action::Tags
+        | Action::Tag1
+        | Action::Tag2
+        | Action::Tag3
+        | Action::Tag4
+        | Action::Tag5
+        | Action::Tag6
+        | Action::Tag7
+        | Action::ClearTags
         | Action::CopyToOtherPane => false,
     }
 }

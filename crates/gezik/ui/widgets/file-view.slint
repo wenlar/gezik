@@ -30,6 +30,63 @@ export struct FileRow {
     // A search result's folder under the scope, and a content search's line ("12: …").
     folder: string,
     found: string,
+    // Tag dots (spec 12 §5.4), only while they show: up to three colours (transparent: a tag
+    // without colour, drawn as a ring), how many of them, how many more, and the names for
+    // screen readers.
+    dot1: color,
+    dot2: color,
+    dot3: color,
+    dots: int,
+    more: int,
+    tag-names: string,
+}
+
+// A row's tag dots: up to three 8 px dots overlapping as in Finder, then "+2" for more. On a
+// selected row each has a 1 px edge in the selection's text colour.
+export component TagDots inherits Rectangle {
+    in property <FileRow> file;
+    property <color> edge: root.file.selected ? Theme.selection-foreground : Theme.foreground-muted;
+    // Drawn from its left edge: in a row it takes the room after the name (spec 12 §5.4).
+    preferred-width: root.file.dots == 0 ? 0px : 8px + (root.file.dots - 1) * 5px + (root.file.more > 0 ? more.preferred-width + 2px : 0px);
+    min-width: self.preferred-width;
+    min-height: 8px;
+    Rectangle {
+        x: 0;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.file.dot1;
+        border-width: root.file.dot1 == transparent || root.file.selected ? 1px : 0px;
+        border-color: root.edge;
+    }
+    Rectangle {
+        x: 5px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        visible: root.file.dots > 1;
+        background: root.file.dot2;
+        border-width: root.file.dot2 == transparent || root.file.selected ? 1px : 0px;
+        border-color: root.edge;
+    }
+    Rectangle {
+        x: 10px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        visible: root.file.dots > 2;
+        background: root.file.dot3;
+        border-width: root.file.dot3 == transparent || root.file.selected ? 1px : 0px;
+        border-color: root.edge;
+    }
+    more := Text {
+        x: 10px + (root.file.dots - 1) * 5px;
+        visible: root.file.more > 0;
+        text: "+" + root.file.more;
+        vertical-alignment: center;
+        font-size: Theme.font-size * 0.8;
+        color: root.edge;
+    }
 }
 
 // One line of the view: one entry in the list, a row of cells in the grid, or a group's
@@ -546,7 +603,7 @@ export component FileView inherits Rectangle {
                 border-width: root.drop-entry == self.index ? 1px : 0px;
                 border-color: Theme.accent;
                 accessible-role: list-item;
-                accessible-label: self.file.name;
+                accessible-label: self.file.name + (self.file.tag-names != "" ? ", tags " + self.file.tag-names : "");
                 accessible-item-selectable: true;
                 accessible-item-selected: self.file.selected;
                 accessible-item-index: self.index;
@@ -636,9 +693,14 @@ export component FileView inherits Rectangle {
                             text: entry.file.name;
                             opacity: entry.file.cut ? 0.5 : 1;
                             vertical-alignment: center;
-                            horizontal-stretch: 1;
+                            // With dots, the name is as wide as it is and the dots follow it.
+                            horizontal-stretch: entry.file.dots > 0 ? 0 : 1;
                             overflow: elide;
                             color: entry.text-color;
+                        }
+                        if entry.index != root.renaming-index && entry.file.dots > 0: TagDots {
+                            horizontal-stretch: 1;
+                            file: entry.file;
                         }
                         if entry.index == root.renaming-index: RenameField {
                             horizontal-stretch: 1;
@@ -744,7 +806,7 @@ export component FileView inherits Rectangle {
                         width: root.cell-width;
                         height: root.cell-height;
                         accessible-role: list-item;
-                        accessible-label: tile.cell.name;
+                        accessible-label: tile.cell.name + (tile.cell.tag-names != "" ? ", tags " + tile.cell.tag-names : "");
                         accessible-item-selectable: true;
                         accessible-item-selected: tile.cell.selected;
                         accessible-item-index: self.index;
@@ -778,7 +840,8 @@ export component FileView inherits Rectangle {
                             x: 8px;
                             y: 14px + root.picture-size;
                             width: parent.width - 16px;
-                            height: parent.height - self.y - 8px;
+                            // Room for the tag dots under the name when it has any.
+                            height: parent.height - self.y - 8px - (tile.cell.dots > 0 ? 12px : 0px);
                             text: tile.cell.name;
                             opacity: tile.cell.cut ? 0.5 : 1;
                             wrap: word-wrap;
@@ -786,6 +849,13 @@ export component FileView inherits Rectangle {
                             horizontal-alignment: center;
                             vertical-alignment: top;
                             color: tile.cell.selected ? Theme.selection-foreground : Theme.foreground;
+                        }
+                        if tile.index != root.renaming-index && tile.cell.dots > 0: TagDots {
+                            width: self.preferred-width;
+                            x: (parent.width - self.width) / 2;
+                            y: parent.height - 18px;
+                            height: 10px;
+                            file: tile.cell;
                         }
                         if tile.index == root.renaming-index: RenameField {
                             x: 8px;

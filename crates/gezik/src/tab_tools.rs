@@ -89,13 +89,15 @@ impl TabTools {
             current: Cell::new(0),
             model,
         }));
-        // The palette shares the box (palette.rs).
+        // The palette and the tag picker share the box (palette.rs, tags.rs).
         window.on_tp_edited(|query| {
             if crate::integration::is_open() {
                 return;
             }
             if crate::palette::is_open() {
                 crate::palette::with_current(|p| p.edited(&query));
+            } else if crate::tags::is_open() {
+                crate::tags::with_current(|p| p.edited(&query));
             } else {
                 with_current(|t| t.edited(&query));
             }
@@ -107,6 +109,9 @@ impl TabTools {
             }
             if crate::palette::is_open() {
                 return crate::palette::with_current(|p| p.chosen(row));
+            }
+            if crate::tags::is_open() {
+                return crate::tags::with_current(|p| p.chosen(row));
             }
             with_current(|t| {
                 t.0.current.set(row);
@@ -201,7 +206,15 @@ impl TabTools {
             .iter()
             .map(|&i| {
                 let (title, path) = &tabs[i];
-                PickRow { title: title.into(), detail: path.into(), tag: "".into(), keys: "".into(), bold: i == active }
+                PickRow {
+                    title: title.into(),
+                    detail: path.into(),
+                    tag: "".into(),
+                    keys: "".into(),
+                    bold: i == active,
+                    dot: slint::Color::default(),
+                    check: -1,
+                }
             })
             .collect();
         self.0.model.set_vec(rows);

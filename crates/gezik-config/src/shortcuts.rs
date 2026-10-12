@@ -423,12 +423,25 @@ pub enum Action {
     SplitFile,
     /// The parts of the selected `.001` (or `.crc`) into one file, checked by CRC (no key).
     JoinFiles,
+    /// The tag picker for the selection (12b).
+    Tags,
+    /// Puts the list's first tag on every selected item, or takes it off all when all have it;
+    /// `Tag2` … `Tag7` the next ones.
+    Tag1,
+    Tag2,
+    Tag3,
+    Tag4,
+    Tag5,
+    Tag6,
+    Tag7,
+    /// Takes every tag off the selection (the rating and the comment stay).
+    ClearTags,
     /// The preview of the selected file as hex, or back (spec 13 §4.4; no key).
     PreviewHex,
 }
 
 impl Action {
-    pub const ALL: [Action; 114] = [
+    pub const ALL: [Action; 123] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -542,6 +555,15 @@ impl Action {
         Action::MoveTo,
         Action::SplitFile,
         Action::JoinFiles,
+        Action::Tags,
+        Action::Tag1,
+        Action::Tag2,
+        Action::Tag3,
+        Action::Tag4,
+        Action::Tag5,
+        Action::Tag6,
+        Action::Tag7,
+        Action::ClearTags,
         Action::PreviewHex,
     ];
 
@@ -660,6 +682,15 @@ impl Action {
             Action::MoveTo => "move-to",
             Action::SplitFile => "split-file",
             Action::JoinFiles => "join-files",
+            Action::Tags => "tags",
+            Action::Tag1 => "tag-1",
+            Action::Tag2 => "tag-2",
+            Action::Tag3 => "tag-3",
+            Action::Tag4 => "tag-4",
+            Action::Tag5 => "tag-5",
+            Action::Tag6 => "tag-6",
+            Action::Tag7 => "tag-7",
+            Action::ClearTags => "clear-tags",
             Action::PreviewHex => "preview-hex",
         }
     }
@@ -792,6 +823,15 @@ impl Action {
             Action::MoveTo => "Move To…",
             Action::SplitFile => "Split File…",
             Action::JoinFiles => "Join Files",
+            Action::Tags => "Tags…",
+            Action::Tag1 => "Toggle Tag 1",
+            Action::Tag2 => "Toggle Tag 2",
+            Action::Tag3 => "Toggle Tag 3",
+            Action::Tag4 => "Toggle Tag 4",
+            Action::Tag5 => "Toggle Tag 5",
+            Action::Tag6 => "Toggle Tag 6",
+            Action::Tag7 => "Toggle Tag 7",
+            Action::ClearTags => "Clear Tags",
             Action::PreviewHex => "Show Preview as Hex",
         }
     }
@@ -828,6 +868,25 @@ impl Action {
             Action::Tab6 => 6,
             Action::Tab7 => 7,
             Action::Tab8 => 8,
+            _ => return None,
+        })
+    }
+
+    /// `tags`, `tag-1…7` and `clear-tags`: they act on the selection's tags.
+    pub fn is_tag_action(self) -> bool {
+        matches!(self, Action::Tags | Action::ClearTags) || self.tag_number().is_some()
+    }
+
+    /// The place in `[tags] list` a `tag-N` action toggles (1-based): `Tag1` → 1 … `Tag7` → 7.
+    pub fn tag_number(self) -> Option<usize> {
+        Some(match self {
+            Action::Tag1 => 1,
+            Action::Tag2 => 2,
+            Action::Tag3 => 3,
+            Action::Tag4 => 4,
+            Action::Tag5 => 5,
+            Action::Tag6 => 6,
+            Action::Tag7 => 7,
             _ => return None,
         })
     }
@@ -999,6 +1058,26 @@ impl Action {
                 | Action::PreviewHex,
                 _,
             ) => &[],
+            // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
+            // Ctrl+Alt+digit types with AltGr: Alt+Shift+digit is free (spec 12 §5.2, decision 13).
+            (Action::Tags, Platform::Mac) => &["mod+ctrl+l"],
+            (Action::Tags, Platform::Other) => &["ctrl+shift+l"],
+            (Action::Tag1, Platform::Mac) => &["ctrl+1"],
+            (Action::Tag1, Platform::Other) => &["alt+shift+1"],
+            (Action::Tag2, Platform::Mac) => &["ctrl+2"],
+            (Action::Tag2, Platform::Other) => &["alt+shift+2"],
+            (Action::Tag3, Platform::Mac) => &["ctrl+3"],
+            (Action::Tag3, Platform::Other) => &["alt+shift+3"],
+            (Action::Tag4, Platform::Mac) => &["ctrl+4"],
+            (Action::Tag4, Platform::Other) => &["alt+shift+4"],
+            (Action::Tag5, Platform::Mac) => &["ctrl+5"],
+            (Action::Tag5, Platform::Other) => &["alt+shift+5"],
+            (Action::Tag6, Platform::Mac) => &["ctrl+6"],
+            (Action::Tag6, Platform::Other) => &["alt+shift+6"],
+            (Action::Tag7, Platform::Mac) => &["ctrl+7"],
+            (Action::Tag7, Platform::Other) => &["alt+shift+7"],
+            (Action::ClearTags, Platform::Mac) => &["ctrl+0"],
+            (Action::ClearTags, Platform::Other) => &["alt+shift+0"],
             // TC's compare key; ⌃⌘C goes on 10b's ⌃⌘ row (spec 11 §3.3).
             (Action::Compare, Platform::Mac) => &["mod+ctrl+c"],
             (Action::Compare, Platform::Other) => &["shift+f2"],
@@ -2133,6 +2212,38 @@ refresh = [\"f5\", \"ctrl+r\"]
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
         }
+    }
+
+    #[test]
+    fn the_tag_actions_have_free_keys() {
+        let mac_chord = |t: &str| parse_chord(t, Platform::Mac).unwrap().unwrap();
+        let other = Shortcuts::defaults(Platform::Other);
+        let mac = Shortcuts::defaults(Platform::Mac);
+        let mut keys = vec![
+            (Action::Tags, chord("ctrl+shift+l"), mac_chord("mod+ctrl+l")),
+            (Action::ClearTags, chord("alt+shift+0"), mac_chord("ctrl+0")),
+        ];
+        for n in 1..=7 {
+            let action = Action::ALL.into_iter().find(|a| a.tag_number() == Some(n)).unwrap();
+            assert_eq!(action.name(), format!("tag-{n}"));
+            assert_eq!(Action::from_name(&format!("tag-{n}")), Some(action));
+            keys.push((action, chord(&format!("alt+shift+{n}")), mac_chord(&format!("ctrl+{n}"))));
+        }
+        for (action, key, mac_key) in keys {
+            assert_eq!(other.chord_for(action), Some(key), "{}", action.name());
+            assert_eq!(other.action_for(&key), Some(action), "no other action has it");
+            assert_eq!(fixed_owner(&key, Platform::Other), None);
+            assert_eq!(mac.chord_for(action), Some(mac_key), "{}", action.name());
+            assert_eq!(mac.action_for(&mac_key), Some(action));
+            assert_eq!(fixed_owner(&mac_key, Platform::Mac), None);
+        }
+        // The keys they sit beside keep theirs.
+        assert_eq!(other.action_for(&chord("alt+1")), Some(Action::Pin1));
+        assert_eq!(other.action_for(&chord("ctrl+shift+1")), Some(Action::ViewList));
+        assert_eq!(mac.action_for(&mac_chord("mod+1")), Some(Action::Tab1));
+        assert_eq!(Action::Tags.title(), "Tags…");
+        assert_eq!(Action::ClearTags.title(), "Clear Tags");
+        assert_eq!(Action::Tags.tag_number(), None);
     }
 
     #[test]

@@ -478,6 +478,9 @@ impl View {
     /// `place`: where it is, for the view rules (spec 10 §8).
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>, place: Place) {
         let results = matches!(listing, Listing::Results(_));
+        // Files may have changed (a reload, a job, another program): rows read their tags again,
+        // drawing the old ones until then (spec 12 §3.4).
+        self.0.media.forget_tags();
         let folder = match &listing {
             Listing::Results(set) => Some(if set.is_trash() { TRASH_KEY } else { RESULTS_KEY }.to_owned()),
             _ => listing.folder().map(|p| p.display().to_string()),
@@ -1070,6 +1073,14 @@ impl View {
     /// release opens it with single-click-open. Forgotten once asked.
     pub fn take_plain_press(&self, index: usize) -> bool {
         self.0.plain_press.take() == Some(index)
+    }
+
+    /// Draws every row again, keeping the scroll (tag dots came, went or changed).
+    pub fn redraw(&self) {
+        let scroll = self.list_scroll();
+        self.0.model.notify.reset();
+        self.keep_scroll_after_reset(scroll);
+        self.columns_relist();
     }
 
     /// `[view]`'s options (view_options.rs). Returns whether the folder must be read again

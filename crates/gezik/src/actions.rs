@@ -147,6 +147,13 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::MoveTo => crate::copy_to::copy_to(view, true),
         Action::SplitFile => crate::copy_to::split(view),
         Action::JoinFiles => crate::copy_to::join(view),
+        Action::Tags => crate::tags::open_picker(view),
+        Action::Tag1 | Action::Tag2 | Action::Tag3 | Action::Tag4 | Action::Tag5 | Action::Tag6 | Action::Tag7 => {
+            if let Some(n) = action.tag_number() {
+                crate::tags::toggle_nth(n, view);
+            }
+        }
+        Action::ClearTags => crate::tags::clear(view),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

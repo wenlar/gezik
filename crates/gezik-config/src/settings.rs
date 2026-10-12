@@ -390,6 +390,8 @@ pub struct Settings {
     pub commands: Vec<CommandSpec>,
     /// View rules (`[[view-rules]]`, spec 10 §8); invalid ones are left out.
     pub view_rules: Vec<gezik_core::view_rules::RuleSpec>,
+    /// `[tags]` (spec 12 §4.5).
+    pub tags: crate::tags::TagsSettings,
 }
 
 /// Allowed `max-fps` values besides 0 (no limit).
@@ -430,6 +432,7 @@ impl Default for Settings {
             convert: ConvertSettings::default(),
             commands: Vec::new(),
             view_rules: Vec::new(),
+            tags: crate::tags::TagsSettings::default(),
         }
     }
 }
@@ -674,6 +677,13 @@ impl Settings {
                     }
                 }
                 None => warnings.push(Warning::new(file, format!("panes: expected a table, got {value}"))),
+            },
+        }
+        match table.get("tags") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(tags) => settings.tags = crate::tags::parse(tags, file, warnings),
+                None => warnings.push(Warning::new(file, format!("tags: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -1666,6 +1676,8 @@ pub struct State {
     pub operations_collapsed: bool,
     /// The first close with the tray icon on said once that Gezik keeps running (9b9).
     pub tray_told: bool,
+    /// A tag was written once (`[tags] used`): `[tags] dots = "auto"` shows dots then (spec 12 §5.4).
+    pub tags_used: bool,
     /// The rename layer's last rules.
     pub batch_rename: Option<BatchRenameState>,
     pub archive: ArchiveState,
@@ -1951,6 +1963,12 @@ impl State {
             preview_wrap,
             operations_collapsed,
             tray_told,
+            tags_used: table
+                .get("tags")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("used"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             batch_rename,
             archive,
             convert,
@@ -2030,6 +2048,11 @@ impl State {
             let mut tray = toml::Table::new();
             tray.insert("told".into(), toml::Value::Boolean(true));
             root.insert("tray".into(), toml::Value::Table(tray));
+        }
+        if self.tags_used {
+            let mut tags = toml::Table::new();
+            tags.insert("used".into(), toml::Value::Boolean(true));
+            root.insert("tags".into(), toml::Value::Table(tags));
         }
         if let Some(batch) = &self.batch_rename {
             let mut table = toml::Table::new();
@@ -3132,8 +3155,11 @@ last-pattern = \"\"
         assert!(warnings.is_empty(), "{warnings:?}");
         let defaults = Shortcuts::defaults(Platform::Other);
         for action in crate::shortcuts::Action::ALL {
-            if action.tab_number().is_some_and(|n| n > 1) || action.pin_number().is_some_and(|n| n > 1) {
-                continue; // "tab-2 … tab-8 and pin-2 … pin-9 likewise"
+            if action.tab_number().is_some_and(|n| n > 1)
+                || action.pin_number().is_some_and(|n| n > 1)
+                || action.tag_number().is_some_and(|n| n > 1)
+            {
+                continue; // "tab-2 … tab-8, pin-2 … pin-9 and tag-2 … tag-7 likewise"
             }
             assert_eq!(shortcuts.chord_for(action), defaults.chord_for(action), "{}", action.name());
         }
@@ -4004,6 +4030,25 @@ split = 0.2
             warnings[0].message,
             "system.start-at-login: start at login is a system change; turn it on or off in System Integration (this key is ignored)"
         );
+    }
+
+    #[test]
+    fn a_written_tag_is_remembered() {
+        let used = State { tags_used: true, ..State::default() };
+        let text = used.to_toml();
+        assert!(text.contains("[tags]\nused = true"), "{text}");
+        assert!(State::parse(&text).tags_used);
+        assert!(!State::default().to_toml().contains("[tags]"), "nothing written while false");
+    }
+
+    #[test]
+    fn tags_settings_read_from_settings_toml() {
+        let (settings, warnings) = parse("[tags]\ndots = false\nlist = [{ name = \"Work\", color = \"blue\" }]\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.tags.dots, crate::tags::Dots::Off);
+        assert_eq!(&*settings.tags.list[0].name, "Work");
+        let (_, warnings) = parse("tags = 3\n");
+        assert_eq!(warnings[0].message, "tags: expected a table, got 3");
     }
 
     #[test]

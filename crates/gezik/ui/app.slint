@@ -73,6 +73,11 @@ export component AppWindow inherits Window {
     in property <[MenuEntry]> bar-tab-sets;
     // The Window menu's list of the open windows (10g): choosing one brings it forward.
     in property <[MenuEntry]> bar-windows;
+    // File ▸ Tags (spec 12 §5.3): the tags of `[tags] list` (id: the place in the list; the
+    // first seven's keys ⌃1…⌃7 in the title: the window takes them).
+    in property <[MenuEntry]> bar-tags;
+    // View ▸ Tag Dots' mark.
+    in-out property <bool> view-tag-dots;
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
@@ -94,6 +99,16 @@ export component AppWindow inherits Window {
             MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
             MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
             MenuItem { title: "Eject"; shortcut: root.menu-keys ? @keys(Control + E) : @keys(); activated => { root.menu-command("eject"); } }
+            Menu {
+                title: "Tags";
+                for entry in root.bar-tags: MenuItem {
+                    title: entry.title;
+                    activated => { root.menu-command("tag:" + entry.id); }
+                }
+                MenuSeparator { }
+                MenuItem { title: "Tags…"; shortcut: root.menu-keys ? @keys(Control + Meta + L) : @keys(); activated => { root.menu-command("tags"); } }
+                MenuItem { title: "Clear Tags"; shortcut: root.menu-keys ? @keys(Meta + "0") : @keys(); activated => { root.menu-command("clear-tags"); } }
+            }
             MenuSeparator { }
             MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
             MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? @keys(Control + Shift + Backspace) : @keys(); activated => { root.menu-command("empty-trash"); } }
@@ -151,6 +166,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
             MenuItem { title: "Calculate Folder Sizes"; activated => { root.menu-command("calculate-folder-sizes"); } }
             MenuItem { title: "Show in Sidebar Tree"; activated => { root.menu-command("reveal-in-tree"); } }
+            MenuItem { title: "Tag Dots"; checkable: true; checked <=> root.view-tag-dots; activated => { root.menu-command("tag-dots"); } }
             MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? @keys(Control + Shift + ".") : @keys(); activated => { root.menu-command("toggle-hidden"); } }
             MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
             MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
