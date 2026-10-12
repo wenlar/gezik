@@ -1103,6 +1103,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let files = files.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    settings_window::keep_last_good(&current);
                     *current = fresh;
                     let (_, plan) = apply_config_and_start(&mut current, &[], false, None);
                     settings_window::refresh(&current);

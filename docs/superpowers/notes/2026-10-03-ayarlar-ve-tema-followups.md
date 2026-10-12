@@ -2942,3 +2942,35 @@ Düzeltmeler (aynı gün, 14a düzeltme turu):
 - N4: `docs/configuration.md`'ye not: sistem genelinde Ctrl+, alan uygulamalar (1Password) varken View menüsü, palet ya da `[shortcuts] settings`.
 - Gözden geçirme (veri kaybı): `with_value`'nun anahtar çıkarması (`show-hidden`'ın Reset'i) üstteki yorum satırlarını da siliyordu (toml_edit onları anahtarın süsünde tutar); artık tablodaki sonraki anahtarın üstüne, son anahtarsa sonraki tablonun üstüne ya da dosya sonuna taşınır (testli: üstte yorum, tablonun son anahtarı, son tablo, üst düzey).
 - Exe 27.989.504 B: tabana göre +284.160 B, bütçeyi **22.016 B aşıyor** (erişilebilirlik bütçe için kesilmez; koordinatör kabulü). Kopya `%TEMP%\gezik-gui-14\bin\t14a-fix.exe`.
+
+### Yeniden deneme (düzeltme turundan sonra)
+
+2026-10-12, Windows 11, `%TEMP%\gezik-gui-14\bin\t14a-fix.exe`. Config: `GEZIK_CONFIG_DIR=%TEMP%\gezik-gui-14\cfg\14a` (template, `confirm-trash = true`, `theme = "light"`, plus `density = "compact"` and `verify = true` so there are changed rows). The settings window was opened only with View ▸ Settings… (never `Ctrl+,`). Before each key, a UIA check confirmed that the focus was in my PID and that the foreground window was the settings window. The clipboard was not used. Screenshots are in `%TEMP%\gezik-gui-14\shots\14a\f*.png`.
+
+| # | Check | Result |
+|---|---|---|
+| 1a | Density by keyboard | PASS. Tab from search goes Theme → Theme light → Theme dark → Sidebar → Density. Enter opens the list (focus moves to the List). Down/Up move the highlight, which stops at the ends (open: no highlight; Down → compact; Up stays on compact; Down → comfortable). Esc closes the list, the file is byte-identical, and focus goes back to `Density` Button. Space also opens the list. Enter writes only L29 (`density = "compact"` → `"comfortable"`) and focus goes back to the row button. |
+| 1b | Theme by keyboard | PASS. Items are auto, light, dark, classic-light, classic-dark. Down/Up preview them live in the main window (bg FFFFFF → dark 1B1C20 → FFFFFF). Esc brings back FFFFFF, the file is byte-identical, and focus goes back to `Theme` Button. |
+| 2 | Esc with no list open | PASS: the settings window closes, the main window is in the foreground, and the process keeps running. |
+| 3 | Page list by keyboard | PASS. Shift+Tab from search goes to the page list (UIA `Tab`), and Tab from the last row (Show system) also gets there. Up/Down change the page. Ctrl+PageDown/PageUp and Ctrl+Tab/Ctrl+Shift+Tab change the page too, and focus stays on the list. Note: the TabItems do not report SelectionItem.IsSelected. |
+| 4 | Bring to front | PASS. Clicking the main title bar puts Settings behind it (WindowFromPoint at Settings' center = main window). After View ▸ Settings…, Settings is in the foreground and on top, and there is still one window. |
+| 5 | Reset to Default keeps the comment | PASS. Row right-click ▸ Reset to Default on Verify (true): the diff is only L60 `verify = true` → `verify = false`, and the two comment lines above it are unchanged. |
+| 6a | Changed row name | PASS: `Verify, true, default false`, `Confirm trash, true, default false`, `Density, compact, default comfortable`. Unchanged rows also carry `default …`. `Max speed, ` (empty default) has no default part. |
+| 6b | Inner Edit name | PASS: the inner Edit now has the same name as the outer one (`Max fps, 120, default 120`, so the title is included), where before it was empty. |
+| 6c | Search after UIA SetValue | PASS on the inner Edit: `trash` → only `Confirm trash`. **Note:** SetValue on the *outer* `Search settings` Edit (there are two with this name) does nothing, and Value stays empty. Screen readers type into the focused (inner) one, so this is probably harmless. |
+| 7a | `[layout` broken file | PASS: all CheckBoxes, the choice Button (Copy threads) and the inner Edits report IsEnabled=false. The status says `settings.toml line 25: unclosed table…`. Fixing the file makes them enabled again. |
+| 7b | `...` in descriptions | PASS: Verify and Max speed say "in its ... menu" (no blank glyph). |
+
+#### Notes
+
+- **N-a:** While the file is broken, every row shows its built-in default value, not what the file says (Confirm trash shows **false** although the file has true). The default part of the name/description is empty (`Restore, true, default`, `files.verify  ·  default  —`). The settings window also turns dark (theme auto). The main window stayed light (FFFFFF), so it seems to keep its last good config. This is cosmetic in the settings window, but showing confirm-trash = false could mislead a user.
+- **N-b:** On this machine, the UIA scan of the whole desktop for MenuItem (`MenuClick`) hung twice, so I clicked the item at a pixel position read from a screenshot of the menu. This is a tooling issue, not a Gezik bug.
+
+Cleanup: Gezik was closed with WM_CLOSE and `data\14a` and `cfg\14a` were deleted. `%APPDATA%\gezik` was never touched.
+
+Düzeltme (N-a): dosya bozukken satırlar artık son okunabilen metnin değerlerini gösterir (ana pencerenin
+o ana kadar çalıştığı ayarlar); varsayılan metni ("default …") yerinde kalır. Son okunabilen metin
+yalnız yeniden yüklemede, yenisi yerine geçmeden önce okunur (`settings_window::keep_last_good`; boşta
+hiçbir şey yok). Gezik açılırken dosya zaten bozuksa önceki metin yoktur: varsayılanlar görünür (ana
+pencere de onlarla çalışır). Exe 27.990.528 B: tabana göre +285.184 B, bütçeyi 23.040 B aşıyor (kabul).
+Kopya `%TEMP%\gezik-gui-14\bin\t14a-fix2.exe`.
