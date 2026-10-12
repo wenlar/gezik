@@ -2213,6 +2213,7 @@ mod tests {
                 .map(|i| Failure { path: format!("/f{i}").into(), message: "x".into(), denied: false })
                 .collect(),
             skipped: Vec::new(),
+            notes: Vec::new(),
             skipped_changed: 0,
             no_trash: Vec::new(),
             unchecked: Vec::new(),

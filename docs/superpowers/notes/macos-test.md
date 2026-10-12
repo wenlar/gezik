@@ -729,6 +729,15 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 324–331 as it
 330. **Rows and panes.** ↓↓, → / ← open and close `sub`, a second click on a folder row does too, Return on `new` opens the file compare over it (⌘R there, Esc back to the folder compare with the keyboard), ⌘C copies the selected rows' paths. Show Right: two panes open, the right goes to `/tmp/R` with `new` selected, the compare hides and the status bar says `Compare: L (2 ≠)`; click it: the compare is back as it was; Hide then ✕ on the chip: gone. Copy a file in a pane while it is hidden, then click the chip: `Files may have changed: Compare Again (F5)`.
 331. **Select Differences and memory.** Two panes on `/tmp/L` and `/tmp/R`, Tools ▸ Select Differences: the left pane selects `only`, the right `new` (what the other side lacks or has older), the status bar `Selected N on the left, M on the right`. Activity Monitor's memory before comparing a big folder (≈ 100,000 files) with its copy, with it open, and after Close: the last within 0.3 MB of the first (write the three numbers).
 
+### 12a, tag storage (no interface yet)
+
+Numbers stay as they are when branches merge (see 10b). 12a uses 340–343 as the step 12 spec decided. Gezik shows no tags yet: these checks run the tests and look in Finder. Results go to `macos-test-results.md`.
+
+340. **Tests first.** `cargo test -p gezik-core meta`, `cargo test -p gezik-platform meta`, `cargo test -p gezik-ops meta`, `cargo test -p gezik-ops tags`; paste the output. Then `cargo test -p gezik-platform meta::tests::finder_probe -- --ignored`.
+341. **Finder sees Gezik's tags.** After the probe of 340, `~/gezik-tag-probe.txt` in Finder: a red dot, and Get Info ▸ Tags lists `Gezik Probe` and `Red`; the sidebar's Red tag (or Finder's search `tag:Red`) finds it. `xattr -px com.apple.FinderInfo ~/gezik-tag-probe.txt`: its tenth byte (offset 9) is `0C`, red; `mdls -name kMDItemStarRating -name kMDItemFinderComment ~/gezik-tag-probe.txt` shows `3` and `Written by Gezik` (the comment may not show in Get Info; spec §17). Its Modified date did not change after the probe wrote the tags (`ls -l` before and after a second run).
+342. **Gezik reads Finder's tags.** In Finder, add the Green tag to `~/gezik-tag-probe.txt` (right-click ▸ Tags). Then `cargo test -p gezik-platform meta::tests::finder_wrote_green -- --ignored` passes. Write down what `xattr -px com.apple.metadata:_kMDItemUserTags ~/gezik-tag-probe.txt` prints.
+343. **exFAT stick.** With an exFAT (or FAT) USB stick mounted: `GEZIK_TEST_TAG_DIR=/Volumes/<STICK> cargo test -p gezik-platform meta::tests::a_copy_to_an_exfat_disk_keeps_its_tags -- --ignored` passes (macOS keeps the attributes in `._` files there; the test removes its copy).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.
