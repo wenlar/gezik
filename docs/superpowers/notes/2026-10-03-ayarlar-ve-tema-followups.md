@@ -2888,3 +2888,40 @@ Test data and `cfg\13c` removed; `cfg\q1` kept.
 - Boyut: ilk ölçümde +572.928 B (bütçe aşımı). Nedeni genel kodun yeni okuyucu türleriyle ikinci kez derlenmesiydi: `image` sandığının bütün çözücüleri `Cursor` ve `&mut BufReader` için, `zip` okuması `&mut BufReader` için. Düzeltme: resim başlığı `ImageReader::open` ile (önizlemeyle aynı tür), ZIP `BufReader<File>` ile (arşivlerle aynı), kapak yalnız PNG/JPEG çözücüsüyle, okuyucular tek tür (`BufReader<File>`).
 - Sürüm exe'si **27.782.144 B** (taban 13c f225669, 27.596.288 B, **+185.856 B**; bütçe 262.144, spec tahmini ≈ 200 KB). Boşta yeni zamanlayıcı/iş parçacığı yok: alanlar önizleme işçisinde, yalnız önizleme açıkken ve dosya seçiliyken okunur.
 - Windows ekran testleri, macOS 379–381 ve Linux 276–277 bekliyor.
+
+## Windows ekran testleri: 13d
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d.exe. Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on), data = the
+`tests/data/fields` fixtures + empty.mp3 + random-junk junk.mp4/.docx/.pdf + 30 copies in `many\`.
+Screenshots: %TEMP%\gezik-gui-13\shots\13d\.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | JPEG (GPS, orientation 6): Photo group date, camera, lens, exposure, aperture, ISO, focal length, location; 24 × 32 upright | PASS (01-photo) |
+| 2 | MP3 with cover: poster = cover, Media (duration, codec, bitrate, rate, channels) + Music rows; bar shows 0:02 before play | PASS (02-id3v24_mp3); id3v23/id3v1 also right, Turkish text right |
+| 3 | M4A, FLAC, Opus (+ OGG, WAV): same rows | PASS |
+| 3b | AIFF codec row | FAIL (minor): shows "SSND" |
+| 4 | MP4, MKV, AVI: Dimensions 64 × 48, video/audio codec, 10 fps, duration | PASS |
+| 5 | DOCX (Title, Author, Subject, Pages, Words), PDF (Title, Author with escapes, Subject, Pages), ODT | PASS |
+| 6 | Right-click row → Copy Value: clipboard = value, status "Copied the value" | PASS (Camera, Location; clipboard saved and restored) |
+| 7a | Quick Look (Space): same rows (photo, mp3, mkv, docx) | PASS (07-ql-*) |
+| 7b | Pane at 200 px: no horizontal overflow (values wrap) | PASS |
+| 7c | Pane at 200 px: vertical | FAIL: the rows past the pane bottom are cut off, the last visible row draws over the pane's bottom border, no scroll |
+| 8a | `[preview] properties = false` (settings.toml): no rows, also in Quick Look | PASS (10-noprops-*); bar shows --:-- before play then |
+| 8b | Fast arrows over 30 files (60 ms steps, 15 ms bursts): rows always match the file name in the pane | PASS (no stale rows) |
+| - | 0-byte .mp3, junk .mp4/.docx/.pdf: no crash, no rows | PASS (08-*) |
+| - | CPU after tests | PASS, 0 % over 5 s |
+
+## Failures
+
+1. AIFF codec "SSND". Repro: select `plain.aiff` (fixture) → Media › Audio Codec = "SSND" (ffprobe: pcm_s16be).
+   Cause: `aiff()` in `crates/gezik-batch/src/fields/audio.rs` reads 22 bytes of `COMM`, but a plain AIFF `COMM`
+   is 18 bytes, so bytes 18..22 are the next chunk's id. Read the compression type only when the chunk size is
+   at least 22 (AIFC), else PCM.
+2. Rows cut off in a narrow pane. Repro: state.toml `[preview] width = 200`, window 1600×900, select `photo.jpg`.
+   The values wrap to 2-4 lines; Exposure is drawn half over the pane's bottom border, Aperture/ISO/Focal
+   Length/Location can't be seen; mouse wheel over the rows does nothing (09-w200-photo-wheel-crop.png,
+   09-w200-bottom-zoom.png). Same at 420 px when the window is short. Needs a clip and/or a scroll for the info area.
+
+- Gözden geçirme ve ekran testi düzeltmeleri: HEIF EXIF okumasından önce `ftyp`/`meta` kutularının boyutu denetlenir (dosya sonuna uzanan `meta` büyük dosyayı belleğe almaz; kamadak-exif onları bütün okur); belge etiket bulucusu ad için en çok 128, varlık için 11 karakter bakar (256 KB `<`/`&` doğrusal); düz AIFF `COMM` 18 bayt okunur (kodek artık `SSND` değil `PCM`); önizlemede başlık, bilgi ve özellikler kayan, bölme kenarında kesilen bir alanda (dar bölmede ve kısa pencerede teker çalışır). Sürüm exe'si **27.790.336 B** (taban 27.596.288 B, **+194.048 B**). Yapı `t13d-fix.exe`; ekranda yeniden denenmedi.
