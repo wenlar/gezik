@@ -172,11 +172,12 @@ export component ColumnView inherits Rectangle {
                                 text: row.file.name;
                                 opacity: row.file.cut ? 0.5 : 1;
                                 vertical-alignment: center;
-                                horizontal-stretch: 1;
+                                horizontal-stretch: row.file.dots > 0 ? 0 : 1;
                                 overflow: elide;
                                 color: row.file.selected ? Theme.selection-foreground : Theme.foreground;
                             }
                             if row.file.dots > 0: TagDots {
+                                horizontal-stretch: 1;
                                 file: row.file;
                             }
                             if row.file.is-dir: VerticalLayout {

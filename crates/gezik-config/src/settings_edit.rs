@@ -91,6 +91,17 @@ pub fn with_panes_confirm(text: &str, on: bool) -> Result<String, String> {
     edit_table(text, "panes", vec![("confirm", on.into())])
 }
 
+/// Adds an empty `[name]` at the end. Comments after the file's last value are the document's
+/// trailing part, which toml_edit writes after every table: they go before the new table, so
+/// they stay where they were.
+fn add_table(doc: &mut toml_edit::DocumentMut, name: &str) {
+    let trailing = doc.trailing().as_str().unwrap_or_default().to_owned();
+    doc.set_trailing("");
+    let mut table = toml_edit::Table::new();
+    table.decor_mut().set_prefix(trailing);
+    doc[name] = toml_edit::Item::Table(table);
+}
+
 /// Returns `text` with `[tags] key` set (the list, the dots).
 pub fn with_tags(text: &str, key: &str, value: toml_edit::Value) -> Result<String, String> {
     edit_table(text, "tags", vec![(key, value)])
@@ -106,7 +117,7 @@ pub fn with_tag_added(
 ) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     if doc.get("tags").is_none() {
-        doc["tags"] = toml_edit::table();
+        add_table(&mut doc, "tags");
     }
     let Some(table) = doc["tags"].as_table_like_mut() else { return Err("tags must be a table".to_owned()) };
     match table.get_mut("list").and_then(|item| item.as_value_mut()) {
@@ -140,7 +151,7 @@ pub fn with_tag_added(
 fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     if doc.get(name).is_none() {
-        doc[name] = toml_edit::table();
+        add_table(&mut doc, name);
     }
     let Some(table) = doc[name].as_table_like_mut() else { return Err(format!("{name} must be a table")) };
     for (key, value) in entries {
@@ -868,6 +879,20 @@ pattern = \"y\"
         assert!(warnings.is_empty(), "{warnings:?}\n{off}");
         assert_eq!(settings.tags.list, list);
         assert_eq!(settings.tags.dots, crate::tags::Dots::Off);
+    }
+
+    #[test]
+    fn a_new_tags_table_goes_after_the_files_last_comment() {
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "[panes]\nconfirm = true\n\n# my notes at the end\n";
+        let list = [Tag::new("Proj", TagColor::None)];
+        let added = with_tag_added(text, &list[0], &list).unwrap();
+        let comment = added.find("# my notes at the end").unwrap();
+        let table = added.find("[tags]").unwrap();
+        assert!(comment < table, "{added}");
+        assert!(added.contains("[panes]\nconfirm = true\n"), "{added}");
+        let dots = with_tags(text, "dots", crate::tags::dots_value(crate::tags::Dots::On)).unwrap();
+        assert!(dots.find("# my notes").unwrap() < dots.find("[tags]").unwrap(), "{dots}");
     }
 
     #[test]
