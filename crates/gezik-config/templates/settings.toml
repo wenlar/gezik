@@ -140,6 +140,11 @@ tree-follow = false
 # F5/F6 ask before copying or moving to the other pane (its folder can be changed there).
 confirm = true
 
+[preview]
+# The preview pane and Quick Look show a file's properties under its facts (camera, artist,
+# length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read.
+properties = true
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E.

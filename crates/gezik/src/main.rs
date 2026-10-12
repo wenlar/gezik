@@ -130,6 +130,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
         p.nav.set_session_restore(loaded.settings.session.restore);
     }
     dual::set_confirm(loaded.settings.panes_confirm);
+    preview::fields::set_properties(loaded.settings.preview_properties);
     // The shortcuts first: the pins' tips name their keys.
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     // 9b9: the tray and the shortcut follow [system] (the tray menu follows the sidebar's pins).

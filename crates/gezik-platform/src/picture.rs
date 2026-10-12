@@ -30,7 +30,17 @@ pub fn can_decode(ext: &str) -> bool {
 /// Decodes a picture (the first frame of a GIF), shrunk to fit `max_px`. Refuses files
 /// over [`MAX_DECODE_BYTES`] and pictures over [`MAX_DECODE_SIDE`]; never panics on bad data.
 pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
-    let picture = decode_oriented(path)?;
+    fit(decode_oriented(path)?, max_px)
+}
+
+/// [`decode_image`] of a picture in memory (a sound file's embedded cover, spec 13 §6.1).
+pub fn decode_image_bytes(bytes: &[u8], max_px: u32) -> Result<Decoded, String> {
+    let reader =
+        image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
+    fit(decode_limited(reader)?, max_px)
+}
+
+fn fit(picture: image::DynamicImage, max_px: u32) -> Result<Decoded, String> {
     let (width, height) = (picture.width(), picture.height());
     let max_px = max_px.max(1);
     let picture = if width > max_px || height > max_px { picture.thumbnail(max_px, max_px) } else { picture };
@@ -81,8 +91,15 @@ fn decode_oriented(path: &Path) -> Result<image::DynamicImage, String> {
     if size > MAX_DECODE_BYTES {
         return Err(format!("{size} bytes is too big to preview"));
     }
-    let mut reader =
+    let reader =
         image::ImageReader::open(path).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?;
+    decode_limited(reader)
+}
+
+/// Decodes within the limits, turned as its EXIF orientation says.
+fn decode_limited<R: std::io::BufRead + std::io::Seek>(
+    mut reader: image::ImageReader<R>,
+) -> Result<image::DynamicImage, String> {
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODE_SIDE);
     limits.max_image_height = Some(MAX_DECODE_SIDE);

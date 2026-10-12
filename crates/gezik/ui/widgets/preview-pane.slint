@@ -27,6 +27,13 @@ export struct PreviewTool {
     step: int,
 }
 
+// A metadata row (13d): `group` is the heading over its group's first row, else "".
+export struct PropRow {
+    group: string,
+    label: string,
+    value: string,
+}
+
 // What the preview shows; built by Rust (preview/mod.rs, preview/viewer.rs).
 export struct PreviewInfo {
     // 0 nothing selected, 1 a picture, 2 text, 3 another file (its thumbnail or icon),
@@ -78,6 +85,8 @@ export struct PreviewInfo {
     volume: float,
     muted: bool,
     playing: bool,
+    // The file's metadata (13d; `[preview] properties`).
+    properties: [PropRow],
 }
 
 // The viewer's events, for Rust (one connection per window, not one per pane).
@@ -94,6 +103,8 @@ export global PreviewActions {
     callback key(KeyEvent) -> bool;
     // A right-click, at this window position.
     callback context-menu(length, length);
+    // A right-click on a property row (its value), at this window position.
+    callback value-menu(string, length, length);
     // Bumped by Rust: the viewer says its room again (a window whose events were connected late).
     in property <int> ask;
     // The zoom surface (spec 13 §5), one callback for all: what (0 its size x × y, 1 dx pages,
@@ -139,6 +150,43 @@ component Track inherits TouchArea {
         height: 4px;
         border-radius: 2px;
         background: Theme.accent;
+    }
+}
+
+// The metadata rows under their group headings, labels in one column (preview and Info).
+export component PropRows inherits VerticalLayout {
+    in property <[PropRow]> rows;
+    callback menu(string, length, length);
+    spacing: Theme.spacing;
+    for row in root.rows: VerticalLayout {
+        spacing: Theme.spacing;
+        if row.group != "": Text {
+            text: row.group;
+            font-weight: 600;
+            color: Theme.foreground;
+        }
+        TouchArea {
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                    root.menu(row.value, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.spacing * 2;
+                Text {
+                    width: 96px;
+                    text: row.label;
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+                Text {
+                    text: row.value;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                    color: Theme.foreground;
+                }
+            }
+        }
     }
 }
 
@@ -489,6 +537,13 @@ export component PreviewPane inherits Rectangle {
             text: root.info.details;
             wrap: word-wrap;
             color: Theme.foreground-muted;
+        }
+
+        PropRows {
+            rows: root.info.properties;
+            menu(value, x, y) => {
+                PreviewActions.value-menu(value, x, y);
+            }
         }
     }
 }

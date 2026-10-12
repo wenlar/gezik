@@ -1317,6 +1317,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         let menus = menus.clone();
         move |x, y| menus.preview_menu(popup::Anchor::point(x, y))
     });
+    window.global::<crate::PreviewActions>().on_value_menu({
+        let menus = menus.clone();
+        move |value, x, y| menus.preview_value_menu(value.into(), popup::Anchor::point(x, y))
+    });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu({
         let menus = menus.clone();

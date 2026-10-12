@@ -373,6 +373,8 @@ pub struct Settings {
     pub sidebar_tree_follow: bool,
     /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
     pub panes_confirm: bool,
+    /// `[preview] properties`: the preview reads and shows the file's metadata (spec 13 §7.4).
+    pub preview_properties: bool,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -419,6 +421,7 @@ impl Default for Settings {
             sidebar_cloud: true,
             sidebar_tree_follow: false,
             panes_confirm: true,
+            preview_properties: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -674,6 +677,23 @@ impl Settings {
                     }
                 }
                 None => warnings.push(Warning::new(file, format!("panes: expected a table, got {value}"))),
+            },
+        }
+        match table.get("preview") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(preview) => {
+                    if let Some(value) = preview.get("properties") {
+                        match value.as_bool() {
+                            Some(on) => settings.preview_properties = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                format!("preview.properties: expected true or false, got {value}"),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, format!("preview: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -3554,6 +3574,25 @@ content = true
         // Closed, the right tabs are still kept.
         let closed = State { dual: false, active_pane: 0, sync: false, pane_split: None, ..state };
         assert_eq!(State::parse(&closed.to_toml()), closed);
+    }
+
+    #[test]
+    fn the_preview_shows_properties_unless_told_not_to() {
+        assert!(Settings::default().preview_properties, "spec 13 decision 29");
+        let (settings, warnings) = parse(
+            "[preview]
+properties = false
+",
+        );
+        assert!(!settings.preview_properties && warnings.is_empty());
+        let (settings, warnings) = parse(
+            "[preview]
+properties = 1
+",
+        );
+        assert!(settings.preview_properties, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "preview.properties: expected true or false, got 1");
+        assert!(parse(include_str!("../templates/settings.toml")).0.preview_properties);
     }
 
     #[test]
