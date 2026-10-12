@@ -385,7 +385,9 @@ fn bind(open: &Rc<Open>) {
                 return theme_chosen(&open, theme_row, &text);
             }
             // A shortcut's Replace? answered.
-            if let Some(key) = open.shown.borrow().key_of(row) {
+            // Bound first: the borrow must end before `pending` is taken below.
+            let key = open.shown.borrow().key_of(row);
+            if let Some(key) = key {
                 let pending = open.shown.borrow_mut().pending.take();
                 say(&open, "");
                 if let Some((_, changes)) = pending.filter(|(of, _)| *of == key && text == "Replace") {
