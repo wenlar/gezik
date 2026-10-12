@@ -20,7 +20,7 @@ use crate::pins::PinEntry;
 use crate::settings::{RenamePreset, SavedFilter, SavedSearch, TabSet, ViewOption};
 use crate::settings_edit::{
     with_filters, with_panes_confirm, with_pinned, with_rename_presets, with_searches, with_sync_profiles, with_system,
-    with_tab_sets, with_tag_added, with_tag_list_edit, with_tags, with_view_defaults, with_view_option,
+    with_tab_sets, with_tag_added, with_tag_list_edit, with_tags, with_value, with_view_defaults, with_view_option,
 };
 use crate::store::{SETTINGS_TEMPLATE, read_text};
 
@@ -58,6 +58,9 @@ pub enum SettingsChange {
     /// `[tags] list` edited from the sidebar (spec 12 §7.3), and the list in effect before it
     /// (written whole when the file has none).
     TagList(crate::tags::TagListEdit, Vec<gezik_core::meta::Tag>),
+    /// One value from the settings window (spec 14 §3.2): `key` in `[table]` (`None`: at the
+    /// top), as TOML text; `None` takes the key out.
+    Value { table: Option<String>, key: String, value: Option<String> },
 }
 
 /// A `[system]` value System Integration writes (9b9).
@@ -70,7 +73,7 @@ pub enum SystemValue {
 
 impl SettingsChange {
     fn apply(&self, text: &str) -> Result<String, String> {
-        match self {
+        let edited = match self {
             SettingsChange::Pinned(pinned) => with_pinned(text, pinned),
             SettingsChange::ViewDefaults(view) => with_view_defaults(text, view),
             SettingsChange::ViewOption(option) => with_view_option(text, *option),
@@ -85,7 +88,11 @@ impl SettingsChange {
             SettingsChange::TagAdded(tag, list) => with_tag_added(text, tag, list),
             SettingsChange::TagDots(dots) => with_tags(text, "dots", crate::tags::dots_value(*dots)),
             SettingsChange::TagList(edit, list) => with_tag_list_edit(text, edit, list),
-        }
+            SettingsChange::Value { table, key, value } => with_value(text, table.as_deref(), key, value.as_deref()),
+        }?;
+        // toml_edit writes every line break as \n: a file written with \r\n (Notepad) keeps
+        // them, so only the changed lines change.
+        Ok(if text.contains("\r\n") { edited.replace("\r\n", "\n").replace('\n', "\r\n") } else { edited })
     }
 }
 
@@ -214,6 +221,20 @@ mod tests {
         let off = SettingsChange::System(SystemValue::Hotkey(String::new())).apply(&on).unwrap();
         let settings = Settings::parse("settings.toml", &off, &mut warnings);
         assert!(warnings.is_empty() && settings.system.hotkey.is_none() && settings.system.tray, "{off}");
+    }
+
+    #[test]
+    fn a_file_with_crlf_line_breaks_keeps_them() {
+        let text = "theme = \"auto\"\r\n\r\n[layout]\r\ndensity = \"comfortable\" # c\r\n# the end\r\n";
+        let change = SettingsChange::Value {
+            table: Some("layout".into()),
+            key: "density".into(),
+            value: Some("\"compact\"".into()),
+        };
+        let out = change.apply(text).unwrap();
+        assert_eq!(out, "theme = \"auto\"\r\n\r\n[layout]\r\ndensity = \"compact\" # c\r\n# the end\r\n");
+        let lf = change.apply("[layout]\ndensity = \"comfortable\"\n").unwrap();
+        assert_eq!(lf, "[layout]\ndensity = \"compact\"\n");
     }
 
     #[test]

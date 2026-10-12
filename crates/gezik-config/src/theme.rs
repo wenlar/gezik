@@ -22,6 +22,9 @@ const LIGHT: &str = include_str!("../themes/light.toml");
 const CLASSIC_DARK: &str = include_str!("../themes/classic-dark.toml");
 const CLASSIC_LIGHT: &str = include_str!("../themes/classic-light.toml");
 
+/// The built-in themes' ids (the settings window lists them before the theme files).
+pub const BUILTIN_THEMES: [&str; 4] = ["light", "dark", "classic-light", "classic-dark"];
+
 pub(crate) fn builtin_source(id: &str) -> Option<&'static str> {
     match id {
         "dark" => Some(DARK),

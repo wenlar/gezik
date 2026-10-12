@@ -5,7 +5,7 @@ use crate::Warning;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
-    /// Lowercase ASCII letter or digit, `[`, `]`, `.`, `=` or `-`.
+    /// Lowercase ASCII letter or digit, `[`, `]`, `.`, `,`, `=` or `-`.
     Char(char),
     /// A key of the numeric keypad: '+', '-', '*' or '/'.
     Num(char),
@@ -46,13 +46,14 @@ impl Key {
             "num-" => Key::Num('-'),
             "num*" => Key::Num('*'),
             "num/" => Key::Num('/'),
+            "comma" => Key::Char(','),
             _ => {
                 if let Some(n) = name.strip_prefix('f').and_then(|n| n.parse::<u8>().ok()) {
                     return (1..=12).contains(&n).then_some(Key::F(n));
                 }
                 let mut chars = name.chars();
                 let (Some(c), None) = (chars.next(), chars.next()) else { return None };
-                if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | '=' | '-') {
+                if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | ',' | '=' | '-') {
                     Key::Char(c.to_ascii_lowercase())
                 } else {
                     return None;
@@ -447,10 +448,12 @@ pub enum Action {
     PreviewPlay,
     /// The metadata fields to show as columns (spec 13 §8.1; no key).
     MoreColumns,
+    /// The settings window (spec 14 §4).
+    Settings,
 }
 
 impl Action {
-    pub const ALL: [Action; 127] = [
+    pub const ALL: [Action; 128] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -578,6 +581,7 @@ impl Action {
         Action::PreviewHex,
         Action::PreviewPlay,
         Action::MoreColumns,
+        Action::Settings,
     ];
 
     pub fn name(self) -> &'static str {
@@ -709,6 +713,7 @@ impl Action {
             Action::PreviewHex => "preview-hex",
             Action::PreviewPlay => "preview-play",
             Action::MoreColumns => "more-columns",
+            Action::Settings => "settings",
         }
     }
 
@@ -854,6 +859,7 @@ impl Action {
             Action::PreviewHex => "Show Preview as Hex",
             Action::PreviewPlay => "Play/Pause Preview",
             Action::MoreColumns => "More Columns…",
+            Action::Settings => "Settings…",
         }
     }
 
@@ -1114,6 +1120,8 @@ impl Action {
             // fn+F5 / fn+F6 on a Mac laptop's keyboard.
             (Action::CopyToOtherPane, _) => &["f5"],
             (Action::MoveToOtherPane, _) => &["f6"],
+            // Every app's settings key (⌘, on macOS, VS Code's Ctrl+, elsewhere; spec 14 §10.2).
+            (Action::Settings, _) => &["mod+,"],
         }
     }
 }
@@ -2289,6 +2297,23 @@ refresh = [\"f5\", \"ctrl+r\"]
             for platform in [Platform::Other, Platform::Mac] {
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
+        }
+    }
+
+    #[test]
+    fn settings_is_mod_comma_and_takes_no_other_key() {
+        let comma = Chord { ctrl: true, alt: false, shift: false, meta: false, key: Key::Char(',') };
+        assert_eq!(chord("ctrl+,"), comma);
+        assert_eq!(chord("Ctrl + comma"), comma);
+        assert_eq!(parse_chord("mod+,", Platform::Mac).unwrap().unwrap(), Chord { ctrl: false, meta: true, ..comma });
+        assert_eq!(Action::from_name("settings"), Some(Action::Settings));
+        assert_eq!(Action::Settings.title(), "Settings…");
+        for platform in [Platform::Other, Platform::Mac] {
+            let shortcuts = Shortcuts::defaults(platform);
+            let key = shortcuts.chord_for(Action::Settings).unwrap();
+            assert_eq!(key.key, Key::Char(','));
+            assert_eq!(shortcuts.action_for(&key), Some(Action::Settings), "no other action has it");
+            assert_eq!(fixed_owner(&key, platform), None);
         }
     }
 

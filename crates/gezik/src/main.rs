@@ -49,6 +49,7 @@ mod resident;
 mod saved_searches;
 mod search;
 mod select_tools;
+mod settings_window;
 mod sidebar;
 mod sidebar_model;
 mod single_instance;
@@ -342,6 +343,7 @@ fn perform(
         | Action::EmptyTrash
         | Action::SystemIntegration
         | Action::CleanTagStore
+        | Action::Settings
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow
@@ -1112,8 +1114,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 let files = files.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    settings_window::keep_last_good(&current);
                     *current = fresh;
                     let (_, plan) = apply_config_and_start(&mut current, &[], false, None);
+                    settings_window::refresh(&current);
                     for p in panes::everywhere() {
                         p.nav.set_start(plan.start.clone());
                     }

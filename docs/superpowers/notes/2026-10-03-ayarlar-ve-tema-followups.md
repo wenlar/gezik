@@ -3253,3 +3253,118 @@ Data regenerated: 24 MP3s (artists Ahmet Kaya, Cem Karaca, Çiğdem Talu, Ilgaz,
 - Sapmalar (plan 1–5): vurgulama kuralında `where` yok (12f bu dalda yok; denetim listesi 387/281 "12'yi bekler"); arama çubuğunda ayrı Properties alanı yok (Filters'taki soru kutusu); `Fields ▾` imlece değil sona ekler; arama menü kimliği 2621; kopya aramasında da alan ölçütü işler.
 - 13e fix (7814d08, 33dec37) birleştirildi. Sürüm exe'si **27.941.888 B** (taban 13e fix 33dec37, 27.911.168 B, **+30.720 B**; bütçe 262.144, spec tahmini ≈ 70 KB). Boşta yeni zamanlayıcı/iş parçacığı yok: alanlar yalnız aramada ölçüt varken ve toplu ad değiştirmede şablon alan isteyince okunur. Yapı `t13f.exe`; Windows ekran testleri, macOS 385–386 ve Linux 280 bekliyor (387/281 12'yi bekler).
 - 12 ile birleşme (13f, 13e'deki 12 + 13a–13e): aramada 12'nin etiket/puan/yorum ölçütleri (`passes_meta`) ve 13f'nin alan ölçütü (`passes_fields`) yan yana; ikisi de ucuz ölçütlerden sonra, yalnız istenince okur. Alan ölçütü artık ad önbelleğinde (`cache::select`), Spotlight'ta ve etiket deposunun dosyalarında da denetlenir (önbellek alan ölçütünde de kullanılır; yazarken arama yine Enter ister). `[[searches]]`/oturum: `tags`, `untagged`, `min-rating`, `comment`, `where` birlikte. Menü: 12'nin Tags…/Comment… (2404–2405, Rating ▸) ve 13f'nin Properties… (2621) yan yana. **Vurgulama kuralında `where` hâlâ bağlı değil:** 12f birleşti ama bağlamak satır alanı okumasını (13e'nin `MediaKey::Fields` önbelleği) vurgulama yoluna ve `RowMeta` beklemesine taşımayı istiyor, küçük değil; ayrı iş (denetim 387/281 atlanır).
+
+## Adım 14, alt parça 14a sonrası
+
+- `settings` (`Settings…`, `Action::ALL` 125, Windows/Linux `Ctrl+,`, macOS `⌘,`): ayrı `SettingsWindow` (`ui/widgets/settings.slint`, `src/settings_window.rs`), açılınca kurulur, kapanınca bırakılır. Sekiz sayfa, bütün sayfalarda arama, tek satır bileşeni (aç/kapa, seçim, yazılan değer, liste, sistem); seçimler ve sağ tık menüsü satırın altında açılır (`PopupWindow` yok), uyarılar durum satırında. Menü: View düğmesi ve klasör arka plan menüsü (`SETTINGS` 2800), satır menüsü 2810–2812; macOS View menüsü.
+- Şema `gezik-config/src/schema.rs`: 63 ayar (49 tekil, 14 liste) ayar; açıklama/varsayılan gömülü şablondan, değer son okunan `settings.toml` metninden; doğrulama `Settings::parse`'la. Testler şablon ↔ şema ↔ ayrıştırıcıyı bağlar: şablona eklenen her yeni ayar şemaya yazılana kadar test kırılır.
+- Yazma `SettingsChange::Value` (aynı kuyruk); `\r\n`'li dosyalar artık bütün yazmalarda satır sonlarını korur (önceden her yazma bütün dosyayı `\n`'ye çeviriyordu).
+- `Key::parse` `,` ve `comma`'yı tanır.
+- Açık kalanlar: yol satırında klasör seçici yok; macOS'ta öğe uygulama menüsünde değil View'da; pencere aç/kapa bellek ölçümü ve Windows ekran testi yapılmadı (GUI çalıştırılmadı); Esc seçim listesini kapatmaz, seçim listesi klavyeyle gezilmez (ekran okuyucu eylemiyle seçilir). Exe 27.961.344 B (+256.000 B; ilk sürüm +371.200 B'ydi, Slint'in `if`'leri ve satır içi bileşen kopyaları sadeleştirildi; plan sapma 9). Kopya `%TEMP%\gezik-gui-14\bin\t14a.exe`.
+
+## Windows ekran testleri: 14a
+
+2026-10-12, Windows 11, `%TEMP%\gezik-gui-14\bin\t14a.exe` (27,961,344 B). Config is a test folder only: `GEZIK_CONFIG_DIR=%TEMP%\gezik-gui-14\cfg\14a`, with `confirm-trash = true` and `theme = "light"`. Data is under `%TEMP%\gezik-gui-14\data\14a`. Screenshots are in `%TEMP%\gezik-gui-14\shots\14a\`. Scripts are in `scratchpad\m14g\14a\h.ps1`. Every key press was preceded by a UIA focus check on my PID and window. `%APPDATA%\gezik` was never touched.
+
+### Results
+
+| # | Check | Result |
+|---|---|---|
+| 1a | `Ctrl+,` opens the window | **Not testable on this machine.** 1Password (pid 14884) takes `Ctrl+,` as a global hotkey: the press went to 1Password, which brought up its "1Password is trying to unlock" prompt. Gezik never got the key. The palette lists the chord correctly as `Ctrl+,`. |
+| 1b | Opening a second time does not make a second window | PASS (count stays at 1) / **FAIL: the open window does not come forward** (see F1) |
+| 1c | View ▸ Settings… | PASS |
+| 1d | Folder background menu ▸ Settings… | PASS (it sits above the shell items) |
+| 1e | Palette `>settings` + Enter | PASS (opens and takes the foreground) |
+| 2 | Appearance ▸ Density ▸ compact | PASS: the main window's rows went from 26 to 20 px at once. Only L29 changed in the file (`density = "comfortable"` → `"compact"`). `fc /b` is no use here because the bytes shift, so I compared line by line. |
+| 3 | Max fps `5` + Enter / `60` + Enter | PASS: red status `Max fps: max-fps: expected 0 (no limit) or a number from 10 to 1000, got 5 — not written`, file unchanged. `60` wrote only L16 and the status line cleared. |
+| 4 | CRLF file | PASS: 432 CRLF and 0 bare LF in the file. Toggling Verify changed only L60 (`verify = true\r\n`), and the file still has 432 CRLF and 0 bare LF. |
+| 5 | Theme list hover / leave / click | PASS: hovering dark turned the main window background from FFFFFF to 1B1C20, and classic-light gave FAFAFA. Leaving the list brought back FFFFFF and wrote nothing. Clicking dark wrote only L6 (`theme = "dark"`), and the settings window turned dark too. |
+| 6a | Row right-click ▸ Reset to Default | PASS (Verify true → `verify = false`, single line). The menu opens inline inside the row, as ListItems. |
+| 6b | Copy Key | PASS: clipboard held `max-fps`. The clipboard was saved before and restored after (text only, compared equal). |
+| 6c | Edit in settings.toml | PASS for the path: it opened the user's `.toml` editor (Antigravity) with `"…\gezik-gui-14\cfg\14a\settings.toml"`, the TEST path. It does not jump to the line, because it is a plain shell open with no line argument. **I could not close that window** (permission refused), so the user should close it: "Antigravity - settings.toml". |
+| 7 | Write `[layout` | PASS: status `settings.toml line 25: unclosed table, expected `]` — fix it in settings.toml; until then these are read-only`. Clicking a checkbox did not change the file, the choice list did not open, and the Edit fields show IsEnabled=false. Fixing the file brought the rows back to editable, and the status cleared. |
+| 8 | Memory after close (10×) | PASS (with a note): see the table below. Private bytes do not drop right after a close, but after idling they come back near the pre-open value. A control run (opening and closing the View menu with no settings window) shows the same growth. |
+| + | Keyboard in the choice list | **Not working (known gap):** after the click, focus is the bare Window and no row element. Down, Down, Enter and Esc do nothing: nothing is highlighted, nothing is written, and Esc does not close the list. Only a mouse click picks a value or closes the list. |
+| + | Tab order (General) | search → Start folder → Max fps → Restore → Remember → Confirm trash → Copy threads (button) → Verify → Max speed → back to search. Shift+Tab goes backwards. The page tabs on the left (General…) are not in the Tab order. |
+| + | UIA names | Outer elements are named `"<title>, <value>"`: `Max fps, 60`, `Restore, true`, `Copy threads, auto`, `Max speed, ` (empty). The default value is **not** in the name. Exception: during the broken-file state Verify read `Verify, false, default`. HelpText is empty, and the description (key + text) is only in a separate Text. The inner Edit that actually takes focus has an **empty name** (the outer Edit carries the label), so a screen reader would probably read a field with no name. |
+| + | Open Config Folder | PASS: opens a new Gezik tab on the TEST cfg folder (themes, settings.toml, state.toml). |
+| + | Search | Typed `trash` → only `Confirm trash` shows. PASS. Setting the text with UIA `ValuePattern.SetValue` does **not** filter (the edited callback does not fire), but a real keyboard does. |
+| – | Open settings.toml (left menu) | Not tested: it opens the same external editor as 6c and I could not close it. |
+
+### Memory (private bytes, MB)
+
+Fresh start 8.04 → after the first open 9.61 (+0.8). Before the 10× run (closed) the value was 12.39:
+
+| # | open | closed |
+|---|---|---|
+| 1 | 12.86 | 12.52 |
+| 2 | 13.08 | 12.71 |
+| 3 | 13.25 | 12.68 |
+| 4 | 13.30 | 12.96 |
+| 5 | 13.61 | 13.29 |
+| 6 | 14.00 | 13.53 |
+| 7 | 14.20 | 13.68 |
+| 8 | 14.40 | 13.96 |
+| 9 | 14.70 | 14.21 |
+| 10 | 14.91 | 14.42 |
+
+Control run, View menu opened and closed 10× with no settings window: 12.51 → 14.30 (the same rise of about 0.2 MB per cycle). Then 10 more settings cycles: 14.60 → 16.98. **After 30 s idle: 13.02** (WS-private 9.78), against the 12.39 before the cycles: **+0.6 MB after 20 settings cycles and 10 menu cycles.** I see no leak. The short-term rise is the allocator/menu, not the settings window.
+
+### Failures and notes
+
+**F1 (bug): a second open does not bring the window forward.** Repro: View ▸ Settings… opens it. Click the main window's title bar, and Settings goes behind it. View ▸ Settings… again: no second window, but Settings stays behind the main window and the foreground stays on the main window (`03-second-open.png`). Cause: `settings_window.rs:162-165` `open()` only calls `show()` + `set_minimized(false)` on an existing window, and `show()` does not raise a window that is already visible. Same for the palette and `Ctrl+,`.
+
+**N1:** The `⋯` glyph in the Verify and Max speed descriptions is drawn as blank ("in its    menu") (`02-settings.png`). The font has no such glyph.
+
+**N2:** The Hide extensions description joins two texts: "…changes these here too. show names without their extension" (lower-case start, odd order) (`12-theme-dark-set.png`).
+
+**N3 (a11y):** The inner Edit that takes focus has no name. In read-only mode the CheckBox and choice Button still report IsEnabled=true (clicks are ignored).
+
+**N4:** `Ctrl+,` collides with 1Password's global hotkey on this machine. That is not a Gezik bug, but users with 1Password may never see `Ctrl+,` work. Worth a note in the docs or an alternative chord.
+
+### Cleanup
+
+Gezik is closed and `data\14a` and `cfg\14a` are deleted (only the empty `cfg`/`data` parents remain). The clipboard was restored. Left open: the Antigravity "settings.toml" window (its file is deleted now) and the 1Password unlock prompt. I typed nothing into either.
+
+Düzeltmeler (aynı gün, 14a düzeltme turu):
+- F1: ikinci açılış pencereyi öne getirir (`single_instance::raise_native`, tek örnek etkinleştirmesiyle aynı yol).
+- Klavye: açık seçim listesi/satır menüsü odağı alır (Yukarı/Aşağı, Enter yazar, Esc kapatır, odak satırın denetimine döner); pencerede Esc açık listeyi yoksa pencereyi kapatır; sayfa listesi bir Tab durağı (Yukarı/Aşağı sayfa seçer, Enter iki bağlantıyı açar); Ctrl+PageDown/PageUp ve Ctrl+Tab/Ctrl+Shift+Tab sayfa değiştirir.
+- N1: şablondaki `⋯` yerine `...` (yazı tipinde yok); test bütün açıklamalarda `⋯` olmadığını denetler.
+- N2: satır sonu yorumu açıklamanın başına, büyük harfle ve cümle olarak ("Show names without their extension. The same in every folder; …").
+- N3: bozuk dosyada onay kutusu ve seçim düğmesi `accessible-enabled: false`; iç Edit'in adı alanın adı (`TextField`'in iç `TextInput`'u dış etiketi alır, bütün metin alanları için).
+- UIA adı varsayılanı da söyler ("Max fps, 60, default 120"); arama kutusu `changed text` ile süzer (ValuePattern.SetValue da).
+- N4: `docs/configuration.md`'ye not: sistem genelinde Ctrl+, alan uygulamalar (1Password) varken View menüsü, palet ya da `[shortcuts] settings`.
+- Gözden geçirme (veri kaybı): `with_value`'nun anahtar çıkarması (`show-hidden`'ın Reset'i) üstteki yorum satırlarını da siliyordu (toml_edit onları anahtarın süsünde tutar); artık tablodaki sonraki anahtarın üstüne, son anahtarsa sonraki tablonun üstüne ya da dosya sonuna taşınır (testli: üstte yorum, tablonun son anahtarı, son tablo, üst düzey).
+- Exe 27.989.504 B: tabana göre +284.160 B, bütçeyi **22.016 B aşıyor** (erişilebilirlik bütçe için kesilmez; koordinatör kabulü). Kopya `%TEMP%\gezik-gui-14\bin\t14a-fix.exe`.
+
+### Yeniden deneme (düzeltme turundan sonra)
+
+2026-10-12, Windows 11, `%TEMP%\gezik-gui-14\bin\t14a-fix.exe`. Config: `GEZIK_CONFIG_DIR=%TEMP%\gezik-gui-14\cfg\14a` (template, `confirm-trash = true`, `theme = "light"`, plus `density = "compact"` and `verify = true` so there are changed rows). The settings window was opened only with View ▸ Settings… (never `Ctrl+,`). Before each key, a UIA check confirmed that the focus was in my PID and that the foreground window was the settings window. The clipboard was not used. Screenshots are in `%TEMP%\gezik-gui-14\shots\14a\f*.png`.
+
+| # | Check | Result |
+|---|---|---|
+| 1a | Density by keyboard | PASS. Tab from search goes Theme → Theme light → Theme dark → Sidebar → Density. Enter opens the list (focus moves to the List). Down/Up move the highlight, which stops at the ends (open: no highlight; Down → compact; Up stays on compact; Down → comfortable). Esc closes the list, the file is byte-identical, and focus goes back to `Density` Button. Space also opens the list. Enter writes only L29 (`density = "compact"` → `"comfortable"`) and focus goes back to the row button. |
+| 1b | Theme by keyboard | PASS. Items are auto, light, dark, classic-light, classic-dark. Down/Up preview them live in the main window (bg FFFFFF → dark 1B1C20 → FFFFFF). Esc brings back FFFFFF, the file is byte-identical, and focus goes back to `Theme` Button. |
+| 2 | Esc with no list open | PASS: the settings window closes, the main window is in the foreground, and the process keeps running. |
+| 3 | Page list by keyboard | PASS. Shift+Tab from search goes to the page list (UIA `Tab`), and Tab from the last row (Show system) also gets there. Up/Down change the page. Ctrl+PageDown/PageUp and Ctrl+Tab/Ctrl+Shift+Tab change the page too, and focus stays on the list. Note: the TabItems do not report SelectionItem.IsSelected. |
+| 4 | Bring to front | PASS. Clicking the main title bar puts Settings behind it (WindowFromPoint at Settings' center = main window). After View ▸ Settings…, Settings is in the foreground and on top, and there is still one window. |
+| 5 | Reset to Default keeps the comment | PASS. Row right-click ▸ Reset to Default on Verify (true): the diff is only L60 `verify = true` → `verify = false`, and the two comment lines above it are unchanged. |
+| 6a | Changed row name | PASS: `Verify, true, default false`, `Confirm trash, true, default false`, `Density, compact, default comfortable`. Unchanged rows also carry `default …`. `Max speed, ` (empty default) has no default part. |
+| 6b | Inner Edit name | PASS: the inner Edit now has the same name as the outer one (`Max fps, 120, default 120`, so the title is included), where before it was empty. |
+| 6c | Search after UIA SetValue | PASS on the inner Edit: `trash` → only `Confirm trash`. **Note:** SetValue on the *outer* `Search settings` Edit (there are two with this name) does nothing, and Value stays empty. Screen readers type into the focused (inner) one, so this is probably harmless. |
+| 7a | `[layout` broken file | PASS: all CheckBoxes, the choice Button (Copy threads) and the inner Edits report IsEnabled=false. The status says `settings.toml line 25: unclosed table…`. Fixing the file makes them enabled again. |
+| 7b | `...` in descriptions | PASS: Verify and Max speed say "in its ... menu" (no blank glyph). |
+
+#### Notes
+
+- **N-a:** While the file is broken, every row shows its built-in default value, not what the file says (Confirm trash shows **false** although the file has true). The default part of the name/description is empty (`Restore, true, default`, `files.verify  ·  default  —`). The settings window also turns dark (theme auto). The main window stayed light (FFFFFF), so it seems to keep its last good config. This is cosmetic in the settings window, but showing confirm-trash = false could mislead a user.
+- **N-b:** On this machine, the UIA scan of the whole desktop for MenuItem (`MenuClick`) hung twice, so I clicked the item at a pixel position read from a screenshot of the menu. This is a tooling issue, not a Gezik bug.
+
+Cleanup: Gezik was closed with WM_CLOSE and `data\14a` and `cfg\14a` were deleted. `%APPDATA%\gezik` was never touched.
+
+Düzeltme (N-a): dosya bozukken satırlar artık son okunabilen metnin değerlerini gösterir (ana pencerenin
+o ana kadar çalıştığı ayarlar); varsayılan metni ("default …") yerinde kalır. Son okunabilen metin
+yalnız yeniden yüklemede, yenisi yerine geçmeden önce okunur (`settings_window::keep_last_good`; boşta
+hiçbir şey yok). Gezik açılırken dosya zaten bozuksa önceki metin yoktur: varsayılanlar görünür (ana
+pencere de onlarla çalışır). Exe 27.990.528 B: tabana göre +285.184 B, bütçeyi 23.040 B aşıyor (kabul).
+Kopya `%TEMP%\gezik-gui-14\bin\t14a-fix2.exe`.

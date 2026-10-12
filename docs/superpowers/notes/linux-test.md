@@ -740,6 +740,11 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 280. **Search and template.** As macOS 385 with Ctrl+Shift+F (Filters ▸ Properties…, `artist:` with a Turkish name in another case finds it) and 386 (Fields ▾, `{track:02} {artist} - {title}`; a tag `a:b` gives `a_b` here too although ext4 allows `:`).
 281. **Highlight rule `where`.** Not bound yet (follow-up after the 12 merge): skip.
 
+### 14a, the settings window
+
+266. **Ctrl+, and one line.** As macOS 365–367 with Ctrl+, (and the View button's Settings…), `~/.config/gezik/settings.toml` and `diff`; on Wayland and on X11 the theme list and the right-click menu open under the row and a second click closes them.
+267. **Orca.** As macOS 368 with Orca on GNOME: a row's control reads its title and value.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

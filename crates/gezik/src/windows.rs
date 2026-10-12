@@ -201,6 +201,7 @@ pub fn release_all() {
     // The process's parts first, as main's own went before its window did.
     let process = PROCESS.with(|p| p.borrow_mut().take());
     drop(process);
+    crate::settings_window::close();
     for id in focus_order() {
         forget(id);
     }
@@ -325,6 +326,11 @@ pub fn set_process(process: Rc<Process>) {
 
 fn process() -> Option<Rc<Process>> {
     PROCESS.with(|p| p.borrow().clone())
+}
+
+/// The config files last read (the settings window shows settings.toml's text from here).
+pub fn files() -> Option<Arc<Mutex<ConfigFiles>>> {
+    process().map(|p| p.files.clone())
 }
 
 /// Where the config files and state.toml are (none: nothing is saved).

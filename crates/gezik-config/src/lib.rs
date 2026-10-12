@@ -5,6 +5,7 @@ pub mod batch_toml;
 mod highlight_rules;
 pub mod paths;
 pub mod pins;
+pub mod schema;
 pub mod settings;
 pub mod settings_edit;
 pub mod settings_writer;

@@ -23,10 +23,11 @@ import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
 import { ColumnItem } from "widgets/column-view.slint";
+import { SettingsWindow, SettingItem } from "widgets/settings.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, FieldColumn, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
+export { Theme, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, FieldColumn, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem, SettingsWindow, SettingItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -205,6 +206,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Refresh"; shortcut: root.menu-keys ? @keys(Control + R) : @keys(); activated => { root.menu-command("refresh"); } }
             MenuItem { title: "System Integration…"; activated => { root.menu-command("system-integration"); } }
+            MenuItem { title: "Settings…"; shortcut: root.menu-keys ? @keys(Control + ",") : @keys(); activated => { root.menu-command("settings"); } }
         }
         Menu {
             title: "Go";

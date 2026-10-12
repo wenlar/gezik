@@ -4,8 +4,8 @@
 # "auto" follows the system light/dark mode. Or name a theme: "light", "dark",
 # or the file name of a theme in the themes folder (themes/nord.toml -> "nord").
 theme = "auto"
-theme-light = "light"
-theme-dark = "dark"
+theme-light = "light"   # the light mode's theme with "auto"
+theme-dark = "dark"     # the dark mode's theme with "auto"
 
 # Where new tabs open: "{home}", "drives" (This PC), or any folder.
 # Tokens like {home}, {documents}, {downloads} work on every OS.
@@ -56,10 +56,10 @@ confirm-trash = false
 # Files copied or deleted at once: "auto" (SSD 6, spinning disk 1, network 4) or 1-16.
 copy-threads = "auto"
 # Read each copied file back and compare it with the original (copies take about twice as
-# long); a file that differs is copied once more. Each job can change it in its ⋯ menu.
+# long); a file that differs is copied once more. Each job can change it in its ... menu.
 verify = false
 # The most a copy or move may take, as "20 MB/s", "500 KB/s" or "1.5 GB/s" (1 MB = 1,000,000
-# bytes); empty = no limit. Each job can change it in its ⋯ menu.
+# bytes); empty = no limit. Each job can change it in its ... menu.
 max-speed = ""
 
 [archives]
@@ -272,6 +272,7 @@ properties = true
 # clean-tag-store = ""     # Clean Up Tag Store…: removes, when you say so, entries of files that are gone
 # preview-hex = ""  # Show Preview as Hex: the selected file's bytes in the preview, or back to its text or picture
 # preview-play = ""  # Play/Pause Preview: the selected video or sound file plays in the preview, or pauses
+# settings = "mod+,"      # Settings…: this file in a window (macOS: ⌘,)
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

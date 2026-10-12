@@ -740,6 +740,9 @@ pub const TAG_FILTER: u32 = 2482;
 pub const TAG_RENAME: u32 = 2483;
 pub const TAG_UP: u32 = 2484;
 pub const TAG_DOWN: u32 = 2485;
+// Step 14 (spec 14 §10.3): 2800–2999.
+/// Settings… in the View menu and at the end of a folder's background menu (14a).
+pub const SETTINGS: u32 = 2800;
 pub const TAG_REMOVE: u32 = 2486;
 /// Color ▸: 2490 + Finder's colour number.
 pub const TAG_COLOR_FIRST: u32 = 2490;
@@ -1154,6 +1157,7 @@ pub fn view_items(
     out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
     out.push((RESET_FOLDER, "Reset this folder".to_owned()));
     out.push((SYSTEM_INTEGRATION, "    System Integration…".to_owned()));
+    out.push((SETTINGS, "    Settings…".to_owned()));
     out.push((REVEAL_IN_TREE, "    Show in sidebar tree".to_owned()));
     out
 }
@@ -1757,6 +1761,7 @@ impl Menus {
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
         subs.push(tools_sub(list.len(), crate::diff::offered(), &[], true));
+        list.push((SETTINGS, "Settings…".to_owned()));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
@@ -2587,6 +2592,7 @@ impl Menus {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
             (REVEAL_IN_TREE, _) => self.sidebar.reveal_current(),
+            (SETTINGS, _) => crate::settings_window::open(),
             (TAG_DOTS, _) => crate::tags::toggle_dots(),
             (TOOLS_EXPORT_LIST, _) => crate::export::ask(&crate::panes::active_nav(), &crate::panes::active_view()),
             (CALC_FOLDER_SIZES, _) => {
@@ -3018,6 +3024,7 @@ mod tests {
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
+            SETTINGS,
             REVEAL_IN_TREE,
             MOVE_TAB_OTHER,
             MOVE_TAB_WINDOW,
@@ -3288,6 +3295,7 @@ mod tests {
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
+            SETTINGS,
             REVEAL_IN_TREE,
             TOOLS_EXPORT_LIST,
             UNDO,
@@ -3889,6 +3897,7 @@ mod tests {
                 APPLY_TO_ALL,
                 RESET_FOLDER,
                 SYSTEM_INTEGRATION,
+                SETTINGS,
                 REVEAL_IN_TREE
             ]
         );
@@ -3965,6 +3974,7 @@ mod tests {
                 APPLY_TO_ALL,
                 RESET_FOLDER,
                 SYSTEM_INTEGRATION,
+                SETTINGS,
                 REVEAL_IN_TREE
             ]
         );

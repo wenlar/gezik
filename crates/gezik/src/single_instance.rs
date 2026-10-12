@@ -215,30 +215,36 @@ pub fn file_manager1_taken() -> bool {
     FM1_TAKEN.get()
 }
 
-/// Restores and raises the window (spec 5.2): on Windows with the leave the caller gave; on
-/// macOS and X11 through winit. Wayland: see `Cli::request`'s shortcut.
-pub fn raise(window: &AppWindow) {
+/// Restores `window` and puts it in front (any of Gezik's windows: the settings window too).
+pub fn raise_native(window: &slint::Window) {
     #[cfg(windows)]
-    gezik_platform::instance::bring_to_front(&window.window().window_handle());
+    gezik_platform::instance::bring_to_front(&window.window_handle());
     #[cfg(not(windows))]
     {
         use slint::winit_030::WinitWindowAccessor;
-        window.window().with_winit_window(|native| {
+        window.with_winit_window(|native| {
             native.set_minimized(false);
             native.focus_window();
         });
-        // macOS: a window coming back from the Dock takes a moment; focusing it before that is
-        // ignored and the app stays behind the one in front. Again once it is back.
-        #[cfg(target_os = "macos")]
-        {
-            let weak = window.as_weak();
-            slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
-                if let Some(window) = weak.upgrade() {
-                    window.window().with_winit_window(|native| native.focus_window());
-                }
-                gezik_platform::app::activate();
-            });
-        }
+    }
+}
+
+/// Restores and raises the window (spec 5.2): on Windows with the leave the caller gave; on
+/// macOS and X11 through winit. Wayland: see `Cli::request`'s shortcut.
+pub fn raise(window: &AppWindow) {
+    raise_native(window.window());
+    // macOS: a window coming back from the Dock takes a moment; focusing it before that is
+    // ignored and the app stays behind the one in front. Again once it is back.
+    #[cfg(target_os = "macos")]
+    {
+        use slint::winit_030::WinitWindowAccessor;
+        let weak = window.as_weak();
+        slint::Timer::single_shot(std::time::Duration::from_millis(400), move || {
+            if let Some(window) = weak.upgrade() {
+                window.window().with_winit_window(|native| native.focus_window());
+            }
+            gezik_platform::app::activate();
+        });
     }
 }
 
