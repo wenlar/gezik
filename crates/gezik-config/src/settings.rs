@@ -2593,7 +2593,8 @@ width = 900
         assert!(messages[0].starts_with("view.mode:") && messages[0].contains("\"tiles\""));
         assert!(messages[1].starts_with("view.sort-dir:"));
         assert!(
-            messages[2].starts_with("view.group: expected \"none\", \"type\", \"date\", \"size\" or \"tag\""),
+            messages[2]
+                .starts_with("view.group: expected \"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\""),
             "{messages:?}"
         );
         assert!(messages[3].starts_with("view.thumbnails:"));

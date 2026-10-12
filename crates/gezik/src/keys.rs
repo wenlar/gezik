@@ -908,7 +908,8 @@ mod tests {
                 | Action::CopyTo
                 | Action::MoveTo
                 | Action::SplitFile
-                | Action::JoinFiles => continue,
+                | Action::JoinFiles
+                | Action::EditComment => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

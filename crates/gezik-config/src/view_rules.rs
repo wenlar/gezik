@@ -121,7 +121,11 @@ fn mode_of(text: &str) -> Result<ViewMode, String> {
 
 /// `columns = ["modified", "size"]`: which columns show; `name` always does.
 fn columns_of(value: &toml::Value) -> Result<Columns, String> {
-    let bad = || format!("columns: expected a list of modified, created, type, size, folder or match, got {value}");
+    let bad = || {
+        format!(
+            "columns: expected a list of modified, created, type, size, folder, match, tags, rating or comment, got {value}"
+        )
+    };
     let items = value.as_array().ok_or_else(bad)?;
     let mut keys = Vec::new();
     for item in items {

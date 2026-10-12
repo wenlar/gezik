@@ -436,10 +436,12 @@ pub enum Action {
     Tag7,
     /// Takes every tag off the selection (the rating and the comment stay).
     ClearTags,
+    /// Asks for the selection's comment (spec 12 §8.1).
+    EditComment,
 }
 
 impl Action {
-    pub const ALL: [Action; 122] = [
+    pub const ALL: [Action; 123] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -562,6 +564,7 @@ impl Action {
         Action::Tag6,
         Action::Tag7,
         Action::ClearTags,
+        Action::EditComment,
     ];
 
     pub fn name(self) -> &'static str {
@@ -688,6 +691,7 @@ impl Action {
             Action::Tag6 => "tag-6",
             Action::Tag7 => "tag-7",
             Action::ClearTags => "clear-tags",
+            Action::EditComment => "edit-comment",
         }
     }
 
@@ -828,6 +832,7 @@ impl Action {
             Action::Tag6 => "Toggle Tag 6",
             Action::Tag7 => "Toggle Tag 7",
             Action::ClearTags => "Clear Tags",
+            Action::EditComment => "Comment…",
         }
     }
 
@@ -867,9 +872,9 @@ impl Action {
         })
     }
 
-    /// `tags`, `tag-1…7` and `clear-tags`: they act on the selection's tags.
+    /// `tags`, `tag-1…7`, `clear-tags` and `edit-comment`: they act on the selection's meta.
     pub fn is_tag_action(self) -> bool {
-        matches!(self, Action::Tags | Action::ClearTags) || self.tag_number().is_some()
+        matches!(self, Action::Tags | Action::ClearTags | Action::EditComment) || self.tag_number().is_some()
     }
 
     /// The place in `[tags] list` a `tag-N` action toggles (1-based): `Tag1` → 1 … `Tag7` → 7.
@@ -1049,7 +1054,8 @@ impl Action {
                 | Action::CopyTo
                 | Action::MoveTo
                 | Action::SplitFile
-                | Action::JoinFiles,
+                | Action::JoinFiles
+                | Action::EditComment,
                 _,
             ) => &[],
             // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
@@ -2237,6 +2243,8 @@ refresh = [\"f5\", \"ctrl+r\"]
         assert_eq!(mac.action_for(&mac_chord("mod+1")), Some(Action::Tab1));
         assert_eq!(Action::Tags.title(), "Tags…");
         assert_eq!(Action::ClearTags.title(), "Clear Tags");
+        assert_eq!(Action::from_name("edit-comment"), Some(Action::EditComment));
+        assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::EditComment), None, "no key");
         assert_eq!(Action::Tags.tag_number(), None);
     }
 

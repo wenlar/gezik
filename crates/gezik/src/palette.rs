@@ -390,6 +390,7 @@ impl Palette {
                         bold: false,
                         dot: slint::Color::default(),
                         check: -1,
+                        stars: -1,
                     }
                 }
                 Line::SearchFor(text) => {
@@ -408,6 +409,7 @@ impl Palette {
                         bold: false,
                         dot: slint::Color::default(),
                         check: -1,
+                        stars: -1,
                     }
                 }
             })

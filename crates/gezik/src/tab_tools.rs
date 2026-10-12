@@ -102,6 +102,8 @@ impl TabTools {
                 with_current(|t| t.edited(&query));
             }
         });
+        // The tag picker's stars (12d).
+        window.on_tp_starred(|n| crate::tags::with_current(|p| p.starred(u8::try_from(n).unwrap_or(0))));
         window.on_tp_chosen(|row| {
             let Ok(row) = usize::try_from(row) else { return };
             if crate::integration::is_open() {
@@ -214,6 +216,7 @@ impl TabTools {
                     bold: i == active,
                     dot: slint::Color::default(),
                     check: -1,
+                    stars: -1,
                 }
             })
             .collect();

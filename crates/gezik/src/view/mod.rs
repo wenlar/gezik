@@ -67,7 +67,10 @@ pub const TRASH_KEY: &str = "<trash>";
 pub fn header_sort(column: i32) -> Option<SortKey> {
     match column {
         0 => Some(SortKey::Name),
-        i => ColumnKey::RESULTS.into_iter().find(|k| k.index() == i && *k != ColumnKey::Match).map(ColumnKey::sort_key),
+        i => ColumnKey::RESULTS
+            .into_iter()
+            .find(|k| k.index() == i && !matches!(k, ColumnKey::Match | ColumnKey::Comment))
+            .map(ColumnKey::sort_key),
     }
 }
 
@@ -1043,7 +1046,9 @@ impl View {
                     Column::Shown(ColumnKey::Modified) => date(entry.as_deref().and_then(|e| e.modified)),
                     Column::Shown(ColumnKey::Created) => date(entry.as_deref().and_then(|e| e.created)),
                     Column::Shown(ColumnKey::Type) => model::type_name_for(&data, i),
-                    Column::Shown(ColumnKey::Tags) => model::known_tag_names(&data, i),
+                    Column::Shown(key @ (ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment)) => {
+                        model::known_meta_cell(&data, i, *key)
+                    }
                 };
             }
             each(&cells)
@@ -1943,7 +1948,8 @@ impl View {
                 |e: &Entry| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir));
             let dup_key = |i: usize| full.dup_key(i);
             let row: Option<&dyn Fn(usize) -> Option<GroupKey>> = full.is_duplicates().then_some(&dup_key);
-            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row, tags: None };
+            let grouping =
+                Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row, tags: None, rating: None };
             let order = full.sort_order(spec, folders_first, plain, (by != GroupBy::None).then_some(&grouping));
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
@@ -2272,7 +2278,12 @@ impl View {
     pub fn header_clicked(&self, column: i32) {
         let Some(key) = header_sort(column) else { return };
         let current = self.sort();
-        let dir = if current.key == key { current.dir.flipped() } else { SortDir::Asc };
+        // Rating starts descending: most stars on top (spec 12 §8.2).
+        let dir = match key {
+            _ if current.key == key => current.dir.flipped(),
+            SortKey::Rating => SortDir::Desc,
+            _ => SortDir::Asc,
+        };
         self.set_sort(SortSpec { key, dir });
     }
 
@@ -2314,6 +2325,8 @@ impl View {
                 ColumnKey::Folder => window.get_col_folder(),
                 ColumnKey::Match => window.get_col_match(),
                 ColumnKey::Tags => window.get_col_tags(),
+                ColumnKey::Rating => window.get_col_rating(),
+                ColumnKey::Comment => window.get_col_comment(),
             };
             column.width = (width.round().max(0.0) as u32).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
         }
@@ -2366,12 +2379,20 @@ impl View {
         window.set_col_size(width(ColumnKey::Size));
         window.set_col_folder(width(ColumnKey::Folder));
         window.set_col_match(width(ColumnKey::Match));
-        let tags = width(ColumnKey::Tags);
+        let (tags, rating, comment) = (width(ColumnKey::Tags), width(ColumnKey::Rating), width(ColumnKey::Comment));
         window.set_col_tags(tags);
+        window.set_col_rating(rating);
+        window.set_col_comment(comment);
         drop(columns);
-        // Rows read their tags while the column shows (spec 12 §6.1); shown now, they ask.
-        let was = std::mem::replace(&mut self.0.data.borrow_mut().tags_column, tags > 0.0);
-        if !was && tags > 0.0 {
+        // Rows read their meta while a meta column shows (spec 12 §6.1, §8.2); shown now, they ask.
+        let shown = (tags > 0.0, rating > 0.0, comment > 0.0);
+        let was = {
+            let mut data = self.0.data.borrow_mut();
+            let was = (data.tags_column, data.rating_column, data.comment_column);
+            (data.tags_column, data.rating_column, data.comment_column) = shown;
+            was
+        };
+        if (shown.0 && !was.0) || (shown.1 && !was.1) || (shown.2 && !was.2) {
             self.redraw_visible();
         }
         let trash = self.shows_trash();
@@ -2388,6 +2409,7 @@ impl View {
             SortKey::Size => ColumnKey::Size.index(),
             SortKey::Folder => ColumnKey::Folder.index(),
             SortKey::Tags => ColumnKey::Tags.index(),
+            SortKey::Rating => ColumnKey::Rating.index(),
         };
         crate::panes::edit(self.0.id, |d| {
             d.sort_column = column;
@@ -2422,13 +2444,15 @@ impl View {
         let folders_first = self.0.options.get().folders_first;
         let mut entries = Rc::unwrap_or_clone(entries);
         let type_name = |e: &Entry| self.type_name_of(e);
-        // A sort by tags that is not grouped goes through a grouping by nothing (its keys).
-        let by_tags = view.sort.key == SortKey::Tags || by == GroupBy::Tag;
+        // A sort by tags or rating that is not grouped goes through a grouping by nothing (its
+        // keys).
+        let by_tags =
+            matches!(view.sort.key, SortKey::Tags | SortKey::Rating) || matches!(by, GroupBy::Tag | GroupBy::Rating);
         let order = if by == GroupBy::None && !by_tags {
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, None)
         } else {
             let dates = self.fresh_dates();
-            let tags = self.tag_keys(dir);
+            let (tags, rating) = (self.tag_keys(dir), self.rating_keys(dir));
             let grouping = Grouping {
                 by,
                 spec: view.sort,
@@ -2437,6 +2461,7 @@ impl View {
                 type_name: &type_name,
                 row: None,
                 tags: Some(&tags),
+                rating: Some(&rating),
             };
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, Some(&grouping))
         };
@@ -2547,6 +2572,10 @@ impl View {
                     Listing::Files(dir, _) if by == GroupBy::Tag => Some(self.tag_keys(dir)),
                     _ => None,
                 };
+                let rating = match &data.listing {
+                    Listing::Files(dir, _) if by == GroupBy::Rating => Some(self.rating_keys(dir)),
+                    _ => None,
+                };
                 let grouping = Grouping {
                     by,
                     spec: self.sort(),
@@ -2555,6 +2584,7 @@ impl View {
                     type_name,
                     row: dups.is_some().then_some(&dup_key as &dyn Fn(usize) -> Option<GroupKey>),
                     tags: tags.as_ref().map(|t| t as &dyn Fn(&Entry) -> gezik_core::meta_filter::TagKey),
+                    rating: rating.as_ref().map(|r| r as &gezik_core::group::RatingKey),
                 };
                 let collapsed = self.0.collapsed.borrow();
                 let listing = &data.listing;

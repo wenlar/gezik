@@ -108,6 +108,17 @@ export component AppWindow inherits Window {
                 MenuSeparator { }
                 MenuItem { title: "Tags…"; shortcut: root.menu-keys ? @keys(Control + Meta + L) : @keys(); activated => { root.menu-command("tags"); } }
                 MenuItem { title: "Clear Tags"; shortcut: root.menu-keys ? @keys(Meta + "0") : @keys(); activated => { root.menu-command("clear-tags"); } }
+                MenuSeparator { }
+                Menu {
+                    title: "Rating";
+                    MenuItem { title: "None"; activated => { root.menu-command("rating:0"); } }
+                    MenuItem { title: "★"; activated => { root.menu-command("rating:1"); } }
+                    MenuItem { title: "★★"; activated => { root.menu-command("rating:2"); } }
+                    MenuItem { title: "★★★"; activated => { root.menu-command("rating:3"); } }
+                    MenuItem { title: "★★★★"; activated => { root.menu-command("rating:4"); } }
+                    MenuItem { title: "★★★★★"; activated => { root.menu-command("rating:5"); } }
+                }
+                MenuItem { title: "Comment…"; activated => { root.menu-command("edit-comment"); } }
             }
             MenuSeparator { }
             MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
@@ -152,6 +163,7 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Date"; activated => { root.menu-command("group-date"); } }
                 MenuItem { title: "Size"; activated => { root.menu-command("group-size"); } }
                 MenuItem { title: "Tag"; activated => { root.menu-command("group-tag"); } }
+                MenuItem { title: "Rating"; activated => { root.menu-command("group-rating"); } }
             }
             MenuItem { title: "Collapse All Groups"; activated => { root.menu-command("collapse-groups"); } }
             MenuItem { title: "Expand All Groups"; activated => { root.menu-command("expand-groups"); } }
@@ -461,6 +473,8 @@ export component AppWindow inherits Window {
     in-out property <length> col-folder;
     in-out property <length> col-match;
     in-out property <length> col-tags;
+    in-out property <length> col-rating;
+    in-out property <length> col-comment;
     callback header-clicked(int, int);
     // Right-click on the column header, at a window position.
     callback header-menu(int, length, length);
@@ -743,6 +757,8 @@ export component AppWindow inherits Window {
     in property <int> tp-current;
     callback tp-edited(string);
     callback tp-chosen(int);
+    // A star of the tag picker's Rating line (12d).
+    callback tp-starred(int);
 
     // A question over the window (dialog.rs); `dialog-chosen` gets the button's index.
     in property <bool> dialog-open;
@@ -1039,6 +1055,8 @@ export component AppWindow inherits Window {
                             col-folder <=> root.col-folder;
                             col-match <=> root.col-match;
                             col-tags <=> root.col-tags;
+                            col-rating <=> root.col-rating;
+                            col-comment <=> root.col-comment;
                             sheet-x: sheet-place.x;
                             sheet-y: sheet-place.y;
                             sheet-width: sheet-place.width;
@@ -1638,6 +1656,7 @@ export component AppWindow inherits Window {
             current: root.tp-current;
             edited(text) => { root.tp-edited(text); }
             chosen(i) => { root.tp-chosen(i); }
+            starred(n) => { root.tp-starred(n); }
         }
         if root.info-open: InfoLayer {
             x: 0;

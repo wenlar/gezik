@@ -516,6 +516,7 @@ impl Integration {
                     bold: false,
                     dot: slint::Color::default(),
                     check: -1,
+                    stars: -1,
                 })
                 .collect::<Vec<_>>(),
         );

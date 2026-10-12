@@ -166,6 +166,8 @@ export component PaneView inherits Rectangle {
     in-out property <length> col-folder;
     in-out property <length> col-match;
     in-out property <length> col-tags;
+    in-out property <length> col-rating;
+    in-out property <length> col-comment;
     // Where the bars and the sheet go in the row under the toolbar (a place the window keeps
     // for them between its sidebar and preview), and the room they need.
     in property <length> sheet-x;
@@ -721,6 +723,8 @@ export component PaneView inherits Rectangle {
                             col-folder <=> root.col-folder;
                             col-match <=> root.col-match;
                             col-tags <=> root.col-tags;
+                            col-rating <=> root.col-rating;
+                            col-comment <=> root.col-comment;
                             sort-column: root.sort-column;
                             sort-desc: root.sort-desc;
                             header-clicked(i) => { root.header-clicked(root.index, i); }

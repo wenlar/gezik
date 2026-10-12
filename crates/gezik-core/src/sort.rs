@@ -20,12 +20,21 @@ pub enum SortKey {
     Folder,
     /// Each row's front tag (spec 12 §6.2): from `Grouping::tags`, none without it.
     Tags,
+    /// Each row's stars (spec 12 §8.2): from `Grouping::rating`, none without it.
+    Rating,
 }
 
 impl SortKey {
     /// A folder's sort keys; `Folder` is the search results' own.
-    pub const ALL: [SortKey; 6] =
-        [SortKey::Name, SortKey::Modified, SortKey::Created, SortKey::Type, SortKey::Size, SortKey::Tags];
+    pub const ALL: [SortKey; 7] = [
+        SortKey::Name,
+        SortKey::Modified,
+        SortKey::Created,
+        SortKey::Type,
+        SortKey::Size,
+        SortKey::Tags,
+        SortKey::Rating,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -36,6 +45,7 @@ impl SortKey {
             SortKey::Size => "size",
             SortKey::Folder => "folder",
             SortKey::Tags => "tags",
+            SortKey::Rating => "rating",
         }
     }
 
@@ -312,6 +322,8 @@ enum Primary {
     // The front tag: its place (listed tags first, then unlisted by name, then untagged), and
     // an unlisted one's name key.
     Tag(u32, (u32, u32)),
+    // Stars; 0: not rated.
+    Rating(u8),
 }
 
 /// Sorts `entries` by `spec` (see [`sort_order`]). Returns where each entry came from: entry
@@ -417,10 +429,11 @@ pub fn sort_rows_grouped<'e, 'a>(
         (start, buf.len() as u32)
     };
     // Folders whose size is on their way go last in either direction (spec 6.3); so do rows
-    // whose tags are (spec 12 §3.4).
+    // whose tags or rating are (spec 12 §3.4).
     let tags = group.and_then(|g| g.tags).filter(|_| spec.key == SortKey::Tags);
-    let last = |e: &Entry, key: Option<&TagKey>| {
-        (spec.key == SortKey::Size && e.size_pending()) || key == Some(&TagKey::Pending)
+    let ratings = group.and_then(|g| g.rating).filter(|_| spec.key == SortKey::Rating);
+    let last = |e: &Entry, key: Option<&TagKey>, stars: Option<Option<u8>>| {
+        (spec.key == SortKey::Size && e.size_pending()) || key == Some(&TagKey::Pending) || stars == Some(None)
     };
     let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder);
     // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
@@ -430,7 +443,8 @@ pub fn sort_rows_grouped<'e, 'a>(
     for i in 0..len {
         let e = entry(i);
         let tag = tags.map(|key| key(&e));
-        kinds.push((e.is_dir, last(&e, tag.as_ref())));
+        let stars = ratings.map(|key| key(&e));
+        kinds.push((e.is_dir, last(&e, tag.as_ref(), stars)));
         keys.extend(match spec.key {
             SortKey::Name | SortKey::Folder => None,
             SortKey::Modified => Some(Primary::Time(e.modified)),
@@ -445,6 +459,7 @@ pub fn sort_rows_grouped<'e, 'a>(
                 TagKey::Unlisted(name) => Primary::Tag(u32::MAX - 1, push(&name, false)),
                 TagKey::Untagged | TagKey::Pending => Primary::Tag(u32::MAX, (0, 0)),
             }),
+            SortKey::Rating => Some(Primary::Rating(stars.flatten().unwrap_or(0))),
         });
     }
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];

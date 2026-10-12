@@ -56,6 +56,9 @@ pub struct ViewData {
     pub folder_tags: Option<Rc<super::FolderTags>>,
     /// The Tags column shows: rows on screen read their tags.
     pub tags_column: bool,
+    /// The Rating and Comment columns show (spec 12 §8.2): rows on screen read their meta.
+    pub rating_column: bool,
+    pub comment_column: bool,
 }
 
 pub struct ItemsModel {
@@ -221,7 +224,8 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let finder = (cfg!(target_os = "macos") && is_dir && entries)
         .then(|| listing.path_at(i).and_then(|(path, _)| gezik_platform::finder::finder_name(&path)))
         .flatten();
-    let ([dot1, dot2, dot3], dots, more, tag_names) = row_tags(data, i);
+    let RowCells { dots: [dot1, dot2, dot3], count: dots, more, tag_names, rating, rating_faint, comment } =
+        row_meta(data, i);
     let (folder, found) = match listing {
         Listing::Results(set) => (
             set.shown_folder(i).unwrap_or_default().into(),
@@ -255,18 +259,28 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         dots,
         more,
         tag_names: tag_names.into(),
+        rating: rating.into(),
+        rating_faint,
+        comment: comment.into(),
     }
 }
 
-/// Entry `i`'s tags' names as far as they are known (an export: nothing is read for it).
-pub fn known_tag_names(data: &ViewData, i: usize) -> String {
-    let tags = match (&data.listing, &data.folder_tags) {
-        (Listing::Files(dir, entries), Some(f)) if f.dir == *dir => {
-            entries.get(i).and_then(|e| f.of(&e.name)).map(<Box<[gezik_core::meta::Tag]>>::from)
-        }
-        _ => data.listing.path_at(i).and_then(|(path, _)| data.media.known_tags(&path)),
+/// Entry `i`'s Tags, Rating or Comment cell (`key`) as far as its meta is known (an export:
+/// nothing is read for it).
+pub fn known_meta_cell(data: &ViewData, i: usize, key: gezik_core::view::ColumnKey) -> String {
+    use gezik_core::view::ColumnKey;
+    let cell = |meta: &gezik_core::meta::Meta| match key {
+        ColumnKey::Tags => meta.tags.iter().map(|t| &*t.name).collect::<Vec<_>>().join(", "),
+        ColumnKey::Rating => gezik_core::meta::stars_text(meta.rating),
+        _ => meta.comment.to_string(),
     };
-    tags.map(|tags| tags.iter().map(|t| &*t.name).collect::<Vec<_>>().join(", ")).unwrap_or_default()
+    match (&data.listing, &data.folder_tags) {
+        (Listing::Files(dir, entries), Some(f)) if f.dir == *dir => {
+            entries.get(i).and_then(|e| f.of(&e.name)).map(cell)
+        }
+        _ => data.listing.path_at(i).and_then(|(path, _)| data.media.known_tags(&path)).map(|row| cell(&row.meta)),
+    }
+    .unwrap_or_default()
 }
 
 /// Whether a `tag:` filter waits for the folder's tags: the rows it lets through meanwhile are
@@ -275,43 +289,74 @@ fn waiting(data: &ViewData) -> bool {
     data.folder_tags.as_ref().is_some_and(|f| f.faint && !f.complete)
 }
 
-/// Entry `i`'s tag dots while dots show (spec 12 §5.4), and its tags' names while they or the
-/// Tags column show (§6.1): asked for only here, so only for rows on screen; until they are read,
-/// none. A folder read whole answers without asking. Cloud folders are read only with
-/// `dots = true`.
-fn row_tags(data: &ViewData, i: usize) -> ([slint::Color; 3], i32, i32, String) {
+/// What a row shows of its meta: up to three dots, how many, how many more, the tags' names,
+/// the stars (faint: Explorer's), the comment.
+#[derive(Default)]
+struct RowCells {
+    dots: [slint::Color; 3],
+    count: i32,
+    more: i32,
+    tag_names: String,
+    rating: String,
+    rating_faint: bool,
+    comment: String,
+}
+
+/// Entry `i`'s tag dots while dots show (spec 12 §5.4), its tags' names while they or the Tags
+/// column show (§6.1), its stars and comment while their columns show (§8.2): asked for only
+/// here, so only for rows on screen; until read, none. A folder read whole answers without
+/// asking. Cloud folders are read only with `dots = true`. On Windows, with the Tags or Rating
+/// column, Explorer's Tags and stars of the kinds that keep them, in files not only in the
+/// cloud (§8.3): after Gezik's tags in brackets, and faint stars when Gezik has none.
+fn row_meta(data: &ViewData, i: usize) -> RowCells {
     let dots_on = crate::tags::dots_on();
-    if matches!(data.listing, Listing::Drives(_)) || !(dots_on || data.tags_column) {
-        return Default::default();
+    let columns = data.tags_column || data.rating_column || data.comment_column;
+    if matches!(data.listing, Listing::Drives(_)) || !(dots_on || columns) {
+        return RowCells::default();
     }
-    let known = match (&data.listing, &data.folder_tags) {
-        (Listing::Files(dir, entries), Some(f)) if f.dir == *dir => {
-            entries.get(i).and_then(|e| f.of(&e.name)).map(<Box<[gezik_core::meta::Tag]>>::from)
-        }
+    let entry = data.listing.entry(i);
+    let explorer = cfg!(windows)
+        && (data.tags_column || data.rating_column)
+        && entry
+            .as_deref()
+            .is_some_and(|e| !e.is_dir && e.flags & Entry::CLOUD_ONLY == 0 && gezik_core::meta::explorer_kind(&e.name));
+    let whole = match (&data.listing, &data.folder_tags) {
+        (Listing::Files(dir, _), Some(f)) if f.dir == *dir => entry.as_deref().and_then(|e| f.of(&e.name)),
         _ => None,
     };
-    let tags = match known {
-        Some(tags) => Some(tags),
-        None => {
-            let Some((path, _)) = data.listing.path_at(i) else { return Default::default() };
-            if !crate::tags::dots_forced() && crate::cloud::root_of(&path).is_some() {
-                return Default::default();
-            }
-            data.media.tags(path, i)
+    let row = if whole.is_none() || explorer {
+        let Some((path, _)) = data.listing.path_at(i) else { return RowCells::default() };
+        if !crate::tags::dots_forced() && crate::cloud::root_of(&path).is_some() {
+            return RowCells::default();
         }
+        data.media.tags(path, i, explorer)
+    } else {
+        None
     };
-    match tags {
-        Some(tags) if !tags.is_empty() => {
-            let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&tags, list));
-            if !dots_on {
-                return ([slint::Color::default(); 3], 0, 0, names);
-            }
-            let mut dots = [slint::Color::default(); 3];
-            dots.iter_mut().zip(&colors).for_each(|(dot, color)| *dot = *color);
-            (dots, i32::try_from(colors.len()).unwrap_or(3), more, names)
+    let Some(meta) = whole.or(row.as_deref().map(|r| &r.meta)) else { return RowCells::default() };
+    let windows = row.as_deref().and_then(|r| r.explorer.as_ref()).filter(|_| explorer);
+    let mut cells = RowCells::default();
+    if !meta.tags.is_empty() {
+        let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&meta.tags, list));
+        if dots_on {
+            cells.dots.iter_mut().zip(&colors).for_each(|(dot, color)| *dot = *color);
+            (cells.count, cells.more) = (i32::try_from(colors.len()).unwrap_or(3), more);
         }
-        _ => Default::default(),
+        cells.tag_names = names;
     }
+    if let Some(keywords) = windows.map(|w| &w.keywords).filter(|k| data.tags_column && !k.is_empty()) {
+        let gap = if cells.tag_names.is_empty() { "" } else { " " };
+        cells.tag_names = format!("{}{gap}({keywords})", cells.tag_names);
+    }
+    if data.rating_column {
+        let explorers = windows.map_or(0, |w| w.stars);
+        cells.rating_faint = meta.rating == 0 && explorers > 0;
+        cells.rating = gezik_core::meta::stars_text(if meta.rating > 0 { meta.rating } else { explorers });
+    }
+    if data.comment_column {
+        cells.comment = meta.comment.to_string();
+    }
+    cells
 }
 
 /// The cloud state of entry `i` when its folder is under a cloud root (spec 9 §7.3): from the
@@ -738,9 +783,14 @@ mod tests {
         assert!(data.media.pending() <= crate::media::MAX_QUEUED + others, "{}", data.media.pending());
         // Once read, a row draws its dots; no colour is a ring.
         let red = Tag::new("Red", TagColor::None);
-        let key = crate::media::MediaKey::Tags { path: dir.join("f0.txt") };
-        let tags = vec![red, Tag::new("Mine", TagColor::None)].into_boxed_slice();
-        data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Tags(tags));
+        let key = crate::media::MediaKey::Tags { path: dir.join("f0.txt"), explorer: false };
+        let meta = gezik_core::meta::Meta { tags: vec![red, Tag::new("Mine", TagColor::None)], ..Default::default() };
+        let row = crate::tags::RowMeta { meta, explorer: None };
+        data.media.finish(
+            &std::sync::atomic::AtomicBool::new(true),
+            key,
+            crate::media::Outcome::Tags(std::sync::Arc::new(row)),
+        );
         let row = file_row(&data, 0);
         assert_eq!(row.dots, 2);
         assert_eq!(row.dot1, crate::tags::color_of(TagColor::Red), "the list's colour");
@@ -754,6 +804,45 @@ mod tests {
         assert_eq!(data.media.pending(), before + 1, "asked again");
         crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
         assert_eq!(file_row(&data, 0).dots, 0, "dots off: none drawn");
+    }
+
+    #[test]
+    fn the_rating_and_comment_columns_show_the_stars_and_the_comment() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::Meta;
+        let entries: Vec<Entry> = ["a.jpg", "b.txt"]
+            .iter()
+            .map(|n| Entry { name: (*n).into(), is_dir: false, flags: 0, size: 1, modified: None, created: None })
+            .collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\r" } else { "/r" });
+        let mut data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        drop(file_row(&data, 1));
+        let others = data.media.pending();
+        data.comment_column = true;
+        drop(file_row(&data, 1));
+        assert_eq!(data.media.pending(), others + 1, "the comment column asks");
+        let meta = Meta { rating: 0, comment: "Ready".into(), ..Meta::default() };
+        let explorer = Some(crate::tags::Explorer { keywords: "beach".into(), stars: 4 });
+        let key = crate::media::MediaKey::Tags { path: dir.join("a.jpg"), explorer: cfg!(windows) };
+        let row = std::sync::Arc::new(crate::tags::RowMeta { meta, explorer });
+        data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Tags(row));
+        data.rating_column = true;
+        data.tags_column = true;
+        let row = file_row(&data, 0);
+        assert_eq!(row.comment.as_str(), "Ready");
+        if cfg!(windows) {
+            assert_eq!((row.rating.as_str(), row.rating_faint), ("★★★★☆", true), "Explorer's stars, faint");
+            assert_eq!(row.tag_names.as_str(), "(beach)", "Explorer's Tags in brackets");
+        } else {
+            assert_eq!(row.rating.as_str(), "", "no Explorer off Windows");
+        }
+        data.rating_column = false;
+        assert_eq!(file_row(&data, 0).rating.as_str(), "", "column hidden: no stars");
     }
 
     #[test]
@@ -784,8 +873,8 @@ mod tests {
         (0..20).for_each(|i| drop(file_row(&data, i)));
         assert_eq!(data.media.pending(), others + 20, "the rows on screen");
         // Read whole: answered from it, names without dots (they are off), nothing asked.
-        let tags =
-            std::collections::HashMap::from([(Box::from("f30.txt"), vec![Tag::new("Red", TagColor::Red)].into())]);
+        let red = gezik_core::meta::Meta { tags: vec![Tag::new("Red", TagColor::Red)], ..Default::default() };
+        let tags = std::collections::HashMap::from([(Box::from("f30.txt"), red)]);
         data.folder_tags = Some(Rc::new(super::super::FolderTags { dir, tags, complete: true, faint: false }));
         let pending = data.media.pending();
         let row = file_row(&data, 30);
