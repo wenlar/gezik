@@ -866,7 +866,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     window.set_column_width(state.column_width.unwrap_or(crate::COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(settings.folder_sizes, settings.search.everything);
-    let preview = preview::Preview::new(&window);
+    let preview = preview::Preview::new(&window, state.preview_wrap.unwrap_or((true, false)));
     let StartPlan { session, select, start, .. } = opening.plan;
     let nav = navigation::Navigator::new(pane_id, window.as_weak(), view.clone(), session, select, start);
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
@@ -1308,6 +1308,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             crate::size_map::with_current(|m| items = m.menu_items(x, y));
             menus.size_map_menu(items, popup::Anchor::point(wx, wy));
         }
+    });
+    window.global::<crate::PreviewActions>().on_context_menu({
+        let menus = menus.clone();
+        move |x, y| menus.preview_menu(popup::Anchor::point(x, y))
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu({

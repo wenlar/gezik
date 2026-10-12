@@ -670,6 +670,13 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 250. **Dolphin sees Gezik's tags.** `cargo test -p gezik-platform meta::tests::dolphin_probe -- --ignored`, then `getfattr -d ~/gezik-tag-probe.txt` shows `user.xdg.tags="Red,Öncelikli"`, `user.baloo.rating="8"` and `user.xdg.comment="Ready for review"`. In Dolphin (if installed), the file's Information panel shows the two tags, 4 stars and the comment. Tag it `Blue` and 3 stars in Dolphin, then `getfattr -d` shows `Red,Öncelikli,Blue` (or Dolphin's order) and `6`. The file's modification time did not change (`stat -c %y` before and after the probe).
 251. **vfat stick.** With a vfat USB stick mounted: `GEZIK_TEST_TAG_DIR=/media/$USER/<STICK> cargo test -p gezik-ops meta::tests::the_store_on_a_drive_without_records -- --ignored` passes: the tag goes to the store (vfat keeps no attributes), the store file is made and follows the rename. Write the stick's line of `lsblk -f` (the UUID is the store's key for it).
 
+### 13a, text, code and hex viewer
+
+Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 249–265).
+
+266. **Colors and the end of a big log.** As macOS 366 and 367 with Alt+P, Space and `ps -o rss= -p $(pgrep -x gezik)` (a `.rs` or `.py` file colored and numbered; a 3 GB log's End shows its last line within a moment and memory stays within +5 MB). Then `H` on `/usr/lib/x86_64-linux-gnu/libc.so.6` shows hex rows (`7F 45 4C 46` first).
+267. **Japanese text wraps in line.** A text file with long Japanese lines (`日本語のテキスト` repeated, mixed with Latin words): with Wrap on, every row ends at the same column width (a wide character takes two columns); the characters come from a fallback font and do not overlap. Write the font you see if they do not line up (GNOME and KDE).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

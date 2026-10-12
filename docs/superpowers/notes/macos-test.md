@@ -738,6 +738,14 @@ Numbers stay as they are when branches merge (see 10b). 12a uses 340–343 as th
 342. **Gezik reads Finder's tags.** In Finder, add the Green tag to `~/gezik-tag-probe.txt` (right-click ▸ Tags). Then `cargo test -p gezik-platform meta::tests::finder_wrote_green -- --ignored` passes. Write down what `xattr -px com.apple.metadata:_kMDItemUserTags ~/gezik-tag-probe.txt` prints.
 343. **exFAT stick.** With an exFAT (or FAT) USB stick mounted: `GEZIK_TEST_TAG_DIR=/Volumes/<STICK> cargo test -p gezik-platform meta::tests::a_copy_to_an_exfat_disk_keeps_its_tags -- --ignored` passes (macOS keeps the attributes in `._` files there; the test removes its copy).
 
+### 13a, text, code and hex viewer
+
+Numbers stay as they are when branches merge. 13a uses 366–368 (step 12 has 340–364). Results go to `macos-test-results.md`. First `cargo test -p gezik-core syntax`, `cargo test -p gezik preview::`; paste the output.
+
+366. **Code in Gezik's own Quick Look.** `[system] quick-look = "gezik"` (the system panel shows its own preview). Select a `.rs` file of a few thousand lines and press Space: it is colored (keywords, strings, comments in their theme colors), line numbers on the left, and the characters line up on the Retina screen (a column of `|` stays straight). Page Down, End (the last line shows whole, at the bottom), Home, the wheel and the scroll bar move it. `W` wraps (the numbers stay on the first row of a line), `W` again unwraps; quit and start: the choice is kept (`state.toml [preview] wrap-code`). Switch to the light and dark theme: the colors are readable on both.
+367. **A 3 GB log.** Make one (`yes "$(date) a line of a log file" | head -c 3000000000 > /tmp/big.log`), select it with the preview pane open (⌥P): the first lines show at once. Click into the text and press End: the last line shows within a moment, the bar says `2.8 GB · 100%`; drag the scroll bar to the middle: lines from there (`… · 50%`). Activity Monitor's memory for Gezik: within +5 MB of before the file was selected; select another file: it goes back.
+368. **Hex.** Select a `.dylib` (e.g. `/usr/lib/libz.dylib` or any in an app's `Contents/Frameworks`): the preview shows its icon and a `Hex` button. Press Space, then `H`: hex rows `00000000  CF FA ED FE …  ....` with the offset in the bar; End goes to the last row; `H` goes back to the icon. Right-click in a text preview of the pane: `Show as Hex` and `Wrap Lines`; View ▸ Show Preview as Hex in the menu bar does the same for the selection.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.
