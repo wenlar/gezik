@@ -325,7 +325,8 @@ impl Grouping<'_> {
 
     /// Whether the groups go against their canonical order (sapma 1): a grouping sorted by its
     /// own column follows that column's direction, any other sort turns them round when
-    /// descending.
+    /// descending. A field's groups are in ascending order, so sorted by the same field they are
+    /// like any other sort's (`No Artist` and the rows on their way last when ascending).
     fn reversed(&self) -> bool {
         // Duplicates: the most bytes to free first, whatever the sort.
         if self.by == GroupBy::Duplicates {
@@ -334,7 +335,7 @@ impl Grouping<'_> {
         let own = matches!(
             (self.by, self.spec.key),
             (GroupBy::Date, SortKey::Modified | SortKey::Created) | (GroupBy::Size, SortKey::Size)
-        ) || matches!((self.by, self.spec.key), (GroupBy::Field(a), SortKey::Field(b)) if a == b);
+        );
         if own { self.spec.dir == SortDir::Asc } else { self.spec.dir == SortDir::Desc }
     }
 
@@ -838,6 +839,12 @@ mod tests {
         let (names, groups) = order(GroupBy::Field(ARTIST), SortKey::Name, SortDir::Asc);
         assert_eq!(groups, ["Sezen Aksu", "Tarkan", "tarkan", "No Artist", "Reading properties…"]);
         assert_eq!(names, ["b.mp3", "c.mp3", "a.mp3", "d.txt", "e.mp3"]);
+        // Sorted by the field it groups by: the groups keep their ascending order.
+        let (names, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Asc);
+        assert_eq!(groups, ["Sezen Aksu", "Tarkan", "tarkan", "No Artist", "Reading properties…"]);
+        assert_eq!(names, ["b.mp3", "c.mp3", "a.mp3", "d.txt", "e.mp3"]);
+        let (_, groups) = order(GroupBy::Field(ARTIST), SortKey::Field(ARTIST), SortDir::Desc);
+        assert_eq!(groups, ["Reading properties…", "No Artist", "tarkan", "Tarkan", "Sezen Aksu"], "as any sort");
         assert_eq!(GroupBy::parse("artist"), Some(GroupBy::Field(ARTIST)));
         assert_eq!(GroupBy::parse("taken"), Some(GroupBy::Field(TAKEN)));
         assert_eq!(GroupBy::parse("duration"), None, "numbers do not group (decision 25)");
@@ -847,5 +854,48 @@ mod tests {
         assert_eq!(SortKey::Field(TRACK).as_str(), "track");
         let taken = Value::Date(DateParts { year: 2023, month: 5, day: 1, ..DateParts::default() });
         assert_eq!(crate::fields::group_text(TAKEN, &taken), "2023", "a date groups by its year");
+    }
+
+    #[test]
+    fn text_fields_sort_in_the_names_turkish_order() {
+        use crate::fields::{ARTIST, Value};
+        let names = ["z.mp3", "s.mp3", "c.mp3", "i.mp3", "u.mp3"];
+        let rows: Vec<Entry> = names.iter().map(|n| file(n, 1, None)).collect();
+        let look = |e: &Entry, _: crate::fields::FieldId| -> Option<Option<Value>> {
+            let artist = match e.name.as_str() {
+                "z.mp3" => "Zeki Müren",
+                "s.mp3" => "Şebnem Ferah",
+                "c.mp3" => "çiğdem",
+                "i.mp3" => "İbrahim",
+                _ => "Ümit Besen",
+            };
+            Some(Some(Value::Text(artist.into())))
+        };
+        let dates = DateBounds::default();
+        let type_name = |_: &Entry| String::new();
+        let spec = SortSpec { key: SortKey::Field(ARTIST), dir: SortDir::Asc };
+        let grouping = Grouping {
+            by: GroupBy::None,
+            spec,
+            folders_first: true,
+            dates: &dates,
+            type_name: &type_name,
+            row: None,
+            field: Some(&look),
+        };
+        let order = crate::sort::sort_rows_grouped(
+            rows.len(),
+            &|i| Cow::Borrowed(&rows[i]),
+            &|i| &rows[i].name,
+            spec,
+            true,
+            type_name,
+            &|_| "",
+            Some(&grouping),
+        );
+        let sorted: Vec<&str> = order.iter().map(|&i| rows[i].name.as_str()).collect();
+        assert_eq!(sorted, ["c.mp3", "i.mp3", "s.mp3", "u.mp3", "z.mp3"], "Ç, İ, Ş, Ü before Z");
+        let (a, b) = (Value::Text("Şebnem".into()), Value::Text("zeki".into()));
+        assert_eq!(crate::fields::compare(Some(&a), Some(&b)), std::cmp::Ordering::Less);
     }
 }

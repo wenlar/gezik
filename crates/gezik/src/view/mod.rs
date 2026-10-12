@@ -188,9 +188,10 @@ impl FilterState {
     /// `text` compiled; a text with an error keeps `before`'s pattern (the list does not
     /// jump while a part is half typed).
     fn new(text: &str, before: Option<&FilterState>) -> FilterState {
-        match gezik_core::field_filter::split(text).and_then(|(names, fields)| Ok((Pattern::compile(&names)?, fields)))
-        {
-            Ok((pattern, fields)) => FilterState { text: text.to_owned(), pattern, fields, error: None },
+        // A property word whose value does not read is said and left out; the others filter.
+        let (names, fields, field_error) = gezik_core::field_filter::split_lenient(text);
+        match Pattern::compile(&names) {
+            Ok(pattern) => FilterState { text: text.to_owned(), pattern, fields, error: field_error },
             Err(error) => FilterState {
                 text: text.to_owned(),
                 pattern: before.map(|b| b.pattern.clone()).unwrap_or_default(),

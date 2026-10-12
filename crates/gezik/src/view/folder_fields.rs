@@ -386,6 +386,16 @@ mod tests {
     }
 
     #[test]
+    fn a_broken_word_is_said_and_left_out() {
+        let state = super::super::FilterState::new("*.mp3 duration>3x artist:tarkan", None);
+        assert!(state.error.as_deref().is_some_and(|e| e.starts_with("duration>3x:")));
+        assert_eq!(state.fields, [gezik_core::field_filter::FieldTerm::Has(ARTIST, "tarkan".into())]);
+        assert!(state.pattern.matches("a.mp3") && !state.pattern.matches("a.txt"), "the name part filters");
+        let alone = super::super::FilterState::new("duration>3x", None);
+        assert!(alone.error.is_some() && alone.fields.is_empty() && alone.pattern.is_empty(), "all show");
+    }
+
+    #[test]
     fn closing_a_view_stops_its_read() {
         let view = view_of(&["a.mp3"]);
         view.0.current.set(gezik_core::view::ViewSettings { group: GroupBy::Field(ARTIST), ..view.0.current.get() });

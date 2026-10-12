@@ -216,14 +216,32 @@ impl Counts {
     }
 }
 
-/// The columns a rule shows (`columns = [...]`): which, not in what order (the list's order is
-/// fixed) nor how wide (the list's widths).
+/// The columns a rule shows (`columns = [...]`): which, and the field columns' order (the other
+/// columns' order is fixed); not how wide (the list's widths).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Columns(u128);
+pub struct Columns(u128, [Option<crate::fields::FieldId>; crate::view::MAX_FIELD_COLUMNS]);
 
 impl Columns {
+    /// At most [`crate::view::MAX_FIELD_COLUMNS`] field columns, the first ones named.
     pub fn of(keys: &[ColumnKey]) -> Columns {
-        Columns(keys.iter().fold(0, |bits, key| bits | 1u128 << key.index()))
+        let mut kept = Vec::new();
+        for key in keys {
+            if let ColumnKey::Field(id) = key
+                && !kept.contains(id)
+                && kept.len() < crate::view::MAX_FIELD_COLUMNS
+            {
+                kept.push(*id);
+            }
+        }
+        let mut fields = [None; crate::view::MAX_FIELD_COLUMNS];
+        for (slot, id) in fields.iter_mut().zip(&kept) {
+            *slot = Some(*id);
+        }
+        let bits = keys
+            .iter()
+            .filter(|k| !matches!(k, ColumnKey::Field(id) if !kept.contains(id)))
+            .fold(0, |bits, key| bits | 1u128 << key.index());
+        Columns(bits, fields)
     }
 
     pub fn has(self, key: ColumnKey) -> bool {
@@ -232,17 +250,21 @@ impl Columns {
 }
 
 /// `columns` as shown: with a rule's `set`, its visibility (spec 10 §8.1, §17 decision 36);
-/// the rule's field columns the list lacks come last, at their default widths (spec 13 §8.2).
+/// the rule's field columns follow in the rule's order, the list's widths or their defaults
+/// (spec 13 §8.2), and the list's other field columns after them, hidden.
 pub fn shown_columns(columns: &[ColumnState], set: Option<Columns>) -> Vec<ColumnState> {
+    let Some(set) = set else { return columns.to_vec() };
+    let field = |c: &&ColumnState| matches!(c.key, ColumnKey::Field(_));
     let mut out: Vec<ColumnState> =
-        columns.iter().map(|c| ColumnState { visible: set.map_or(c.visible, |set| set.has(c.key)), ..*c }).collect();
-    if let Some(set) = set {
-        for id in crate::fields::all() {
-            if set.has(ColumnKey::Field(id)) {
-                crate::view::show_field(&mut out, id);
-            }
+        columns.iter().filter(|c| !field(c)).map(|c| ColumnState { visible: set.has(c.key), ..*c }).collect();
+    for id in set.1.iter().flatten() {
+        let key = ColumnKey::Field(*id);
+        match columns.iter().find(|c| c.key == key) {
+            Some(c) => out.push(ColumnState { visible: true, ..*c }),
+            None => _ = crate::view::show_field(&mut out, *id),
         }
     }
+    out.extend(columns.iter().filter(field).filter(|c| !set.has(c.key)).map(|c| ColumnState { visible: false, ..*c }));
     out
 }
 
@@ -646,6 +668,17 @@ mod tests {
         let music = shown_columns(&columns, Some(Columns::of(&[ColumnKey::Size, artist])));
         let visible: Vec<ColumnKey> = music.iter().filter(|c| c.visible).map(|c| c.key).collect();
         assert_eq!(visible, [ColumnKey::Size, artist], "a rule's field column comes last (spec 13 §8.2)");
+        // The rule's order, not the registry's, even over the list's own order.
+        use crate::fields::{ALBUM, ARTIST, DURATION, TRACK};
+        let order = [ARTIST, ALBUM, TRACK, DURATION].map(ColumnKey::Field);
+        let mut list = default_columns();
+        crate::view::show_field(&mut list, DURATION);
+        crate::view::show_field(&mut list, crate::fields::YEAR);
+        let shown = shown_columns(&list, Some(Columns::of(&order)));
+        let fields: Vec<ColumnKey> =
+            shown.iter().filter(|c| c.visible && matches!(c.key, ColumnKey::Field(_))).map(|c| c.key).collect();
+        assert_eq!(fields, order);
+        assert!(shown.iter().any(|c| c.key == ColumnKey::Field(crate::fields::YEAR) && !c.visible), "kept, hidden");
         assert_eq!(music.last().map(|c| c.width), Some(150));
     }
 

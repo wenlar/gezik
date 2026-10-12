@@ -329,14 +329,15 @@ pub fn name_text(id: FieldId, value: &Value, arg: Option<&str>) -> String {
     }
 }
 
-/// Sorting order of two values of a field; a missing value comes last, text ignores case.
+/// Sorting order of two values of a field; a missing value comes last, text in the names' order
+/// (natural, Turkish alphabet, case ignored).
 pub fn compare(a: Option<&Value>, b: Option<&Value>) -> Ordering {
     match (a, b) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => Ordering::Greater,
         (Some(_), None) => Ordering::Less,
         (Some(a), Some(b)) => match (a, b) {
-            (Value::Text(a), Value::Text(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+            (Value::Text(a), Value::Text(b)) => crate::sort::key_cmp(a, b),
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
             (Value::Real(a), Value::Real(b)) => a.total_cmp(b),
             (Value::Duration(a), Value::Duration(b)) => a.cmp(b),

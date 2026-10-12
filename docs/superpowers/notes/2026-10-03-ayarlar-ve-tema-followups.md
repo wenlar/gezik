@@ -2983,3 +2983,40 @@ Note: UIA focus reports the main Window (not the list) after a row click in this
 - Sıralama/gruplama/süzgeç: klasör yalnız gerekince bütün okunur (`view/folder_fields.rs`, 12c'nin deseni), `Reading properties… n of m`, bitince bir kez yeniden sıralama. Değersiz ve okunmamış satırlar iki yönde de sonda; gruplar yalnız metin alanları, yıl ve `taken` (yıla göre), `No Artist` sonda. Süzgeç sözcükleri `gezik-core/src/field_filter.rs`: `artist:tarkan`, `artist="Sezen Aksu"`, `duration>3m`, `taken>=2024-05`, `camera:any`, `album:none`; ad deseniyle birlikte; hatalı değer çubukta; okunana dek satırlar soluk. View ▸ `Sort by property…` (2700), Group by ▸ alanlar (2710+). Önizleme özellik satırında `Show Column` (2616).
 - Sapmalar (plan 1–6): 12'nin okuyucusu/`meta_filter` bu dalda yok (ayrı ama aynı desen; birleşmede `tag:` bağlanır); sütunlar `state.toml`'da (klasör başına değil); arama sonuçlarında alanla sıralama/gruplama/süzme yok; değersizler azalan sırada da sonda; Miller sütunlarında alan sütunu yok; macOS menü çubuğunda gruplama seçiciyle.
 - Sürüm exe'si **27.910.144 B** (13d 83b77ba birleştirildikten sonra; taban 13d e5a0e48, 27.790.336 B, **+119.808 B**; bütçe 262.144, spec tahmini ≈ 80 KB). Boşta yeni zamanlayıcı/iş parçacığı yok. Yapı `t13e.exe`; Windows ekran testleri, macOS 382–384 ve Linux 278–279 bekliyor.
+
+## Windows ekran testleri: 13e
+
+Build: %TEMP%\gezik-gui-13\bin\t13e.exe; baseline t13d-fix2.exe. Primary monitor, muted, own config/data (cleaned up).
+Data: 40 tagged MP3s (ffmpeg, 5 artists, some untagged), 5 .txt, the fields fixtures; 60 EXIF JPEGs (Apple/Canon/Nikon, 2021-2025); 10,000 16x16 EXIF JPEGs.
+Screenshots: %TEMP%\gezik-gui-13\shots\13e\
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Header menu > More Columns…, `art` > Artist, then Album, Duration | PASS: picker stays open (focus in its field, "Shown" marks), columns land after Size, values there at once (e1a–e1d) |
+| 2 | Duration sort, valueless rows last both ways | PASS: .txt/.pdf/.docx/.odt/.jpg last ascending and descending (e2a, e2b) |
+| 3 | Drag field column edge, width kept after restart | PASS (single pane): rows follow header; state.toml keeps artist=250, album=70; same after restart. Note: the handle at a column boundary resizes the column on its right (Name absorbs), so dragging the Artist/Album boundary right shrank Album. Dual pane not tried. |
+| 4 | `taken>=2024 camera:iphone`; `duration>3x` | PASS: photos folder 12/60 matches (correct set); error text `duration>3x: "3x" is not a duration (3m, 1:30)` next to the field (e4a, e4b). Faded rows / status progress NOT OBSERVED: 10,000 JPEGs read in <~300 ms (burst captures at 35 ms intervals already final). Note: with the invalid query the list shows 0 items. |
+| 5 | Group by > Artist | PASS: groups by artist, `No Artist (16)` last (e5d, e5e). `Reading properties…` group not observed (read too fast). |
+| 6 | Preview property row > Show Column; 9th field column | PASS: menu Copy Value / Show Column, Artist column added (e6b, e6c); 9th pick shows "At most 8 property columns: hide one first" in the status bar (e6e). |
+| 7 | [[view-rules]] path=music columns=[artist,album,track,duration] sort=track | PASS with note: those columns show and rows sort by Track (e7). Column order is the field registry's (Duration, Artist, Album, Track), not the rule's list order. |
+| 8 | 10k photos: scroll CPU with/without Date Taken, idle, leave mid-read | PASS on CPU (table below); idle 0% once read. Leave-mid-read NOT OBSERVABLE (whole read incl. sort by Date Taken finishes in ~0.2–0.4 s: CPU 31% in the first 200 ms, then 0). Sort by Date Taken correct (img00000, img00420, img00840 first). |
+| + | Retag MP3 on disk (ffmpeg -metadata artist) while column shown, F5 | PASS: new artist showed (already before F5, via the watcher) and after F5 (e9). |
+
+## Scroll CPU (150 wheel notches down, then up, ~10 s each; Gezik process CPU ms)
+
+| Build | Date Taken column | down | up | idle after |
+|---|---|---|---|---|
+| t13e | yes | 2812 | 2906 | 0% |
+| t13e | no | 2344 | 2219 | 0% |
+| t13d-fix2 | no | 2234 | 2188 | 0% |
+| t13e (repeat) | yes | 2781 | 2703 | 0% |
+
+Without the column t13e = t13d-fix2 (within noise). With the column about +20–25% CPU while scrolling (one more column drawn), no stalls. The very first scroll after a fresh start with the column cost 5016 ms (one-off; warm-up).
+
+## Notes for the implementer
+- (minor) View rule `columns` order not kept: shown in registry order (Duration before Artist).
+- (question) Invalid filter (`duration>3x`) empties the list (0 items) rather than keeping the unfiltered rows.
+- In the Duration descending sort, the valueless rows are also name-descending (notes4..notes0, fx-report..fx-info); fine if intended.
+- Harness: walking the UIA desktop tree while a native popup menu was open hung the test script twice (not a Gezik issue); stopping that task also ended its child Gezik.
+
+- Gözden geçirme ve ekran testi düzeltmeleri (13e fix): alanla gruplanıp aynı alanla sıralanınca gruplar artık ters dönmüyor (artan sırada `No Artist` ve okunmayanlar sonda); kısmi tarih (`2024`, `2024-05`) her işleçte o dönemi kapsar (`taken>2024` 2025'ten başlar, `taken<=2024-05` Mayıs'ı içerir); metin alanları adların sırasıyla (doğal, Türk alfabesi, harf duyarsız; `Şebnem` `Zeki`'den önce) ve satır başına bir anahtarla sıralanır (karşılaştırmada ayırma yok); `[[view-rules]] columns` alan sütunlarını kuralın sırasıyla gösterir; hatalı süzgeç sözcüğü (`duration>3x`) iletisini verir ama yalnız o sözcük atlanır, öbürleri ve ad deseni süzer (yalnızsa liste tam görünür). 100k ölçüm (sürüm, en iyi 7): ad 47 ms, boyut 19 ms, alan Artist 63 ms (değerler yapılırken dizeler dahil), Duration 23 ms. Klasör okumasının dosya başına yeniden kullanımı yapılmadı (isteğe bağlıydı).
