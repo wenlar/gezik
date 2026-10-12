@@ -150,10 +150,16 @@ system changes.
   copied there when the folder is set up. Without a sync folder the file is not read.
 - **Two computers at once**: Gezik writes a setting key by key; if `settings.toml` changed between
   its read and its write (another computer's change synced in), it makes the edit again on the
-  new text, up to three times, then keeps the change and writes it at the next reload. When a
+  new text, up to three times, then keeps the change and writes it at the next reload. A change
+  that waits (the folder away, the file changing) is made again on the file as it is when it is
+  written: lists take only the items you added, removed or moved, so another computer's new pins
+  stay; a key both computers changed keeps the other's value and yours goes to `settings (Gezik
+  conflicted copy).toml` for a Review. Waiting changes are kept in `pending-settings.toml` in this
+  computer's folder, so quitting meanwhile loses none. When a
   sync service still made a conflicting copy (Dropbox and Nextcloud `settings (… conflicted copy
   …).toml`, Google Drive `settings (1).toml`, OneDrive `settings-<COMPUTER>.toml`, Syncthing
-  `settings.sync-conflict-….toml`, iCloud `settings 2.toml`; also for themes), the status bar
+  `settings.sync-conflict-….toml`, iCloud `settings 2.toml`; for themes only the services'
+  marked names, so a theme of yours named `Dracula 2.toml` stays a theme), the status bar
   says so and the page lists it with **Review…**: a row per key the copies differ in (a list such
   as `[[commands]]` is one row), **This copy** or **Other copy** each, then **Merge** (the keys
   chosen are written, the copy goes to the trash) or **Cancel**. Nothing is merged on its own.
@@ -161,11 +167,12 @@ system changes.
   of two changes made at the same moment.
 - **Folder not available** (the drive not plugged in, Dropbox not running): Gezik starts from the
   last copy in `sync-cache/`, the status bar says "Settings folder not available — using the last
-  copy", and the settings window is read-only. Changes made meanwhile (a pin) stay in memory and
-  are written when the folder is back; they are lost if Gezik quits first. Gezik notices the
+  copy", and the settings window is read-only. Changes made meanwhile (a pin) are kept and
+  written when the folder is back, even after a restart. Gezik notices the
   folder coming back while its parent folder is there; otherwise **Check Again**. Nothing polls.
 - **Stop Keeping Settings There** copies the folder's files (or its last copy) back into this
-  computer's config folder after a backup, and removes `location.toml`; the folder is left as it
+  computer's config folder after a backup, with this computer's `settings.local.toml` values
+  written into it, and removes `location.toml`; the folder is left as it
   is. Export and Import (above) work with a sync folder too: the shared files come from the
   folder, `views.toml` and the backups from this computer.
 
