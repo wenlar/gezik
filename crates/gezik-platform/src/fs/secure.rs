@@ -288,8 +288,12 @@ mod tests {
         let dir = base("names");
         fs::create_dir(dir.join("sub")).unwrap();
         write(&dir.join("a.txt"), "a");
-        for name in ["", ".", "..", "../x", "sub/x", "sub\\x", "a\0b"] {
+        for name in ["", ".", "..", "../x", "sub/x", "a\0b"] {
             assert!(rename(&dir.join("a.txt"), name, &Guard::none()).is_err(), "{name:?}");
+        }
+        // A backslash is a separator on Windows only; elsewhere it is part of a name.
+        if cfg!(windows) {
+            assert!(rename(&dir.join("a.txt"), "sub\\x", &Guard::none()).is_err());
         }
         assert!(dir.join("a.txt").exists());
         let _ = fs::remove_dir_all(&dir);
