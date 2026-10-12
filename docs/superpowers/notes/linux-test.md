@@ -684,6 +684,13 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 274. **No sound server.** `systemctl --user stop pipewire-pulse.socket pipewire-pulse` (or `pulseaudio -k`), then play a video: it plays without sound at the right speed and the bar says `No sound: PulseAudio or PipeWire is not available`. Start the server again afterwards (`systemctl --user start pipewire-pulse`).
 275. **Processes go.** While a video plays select another file: within a second `pgrep -a ffmpeg` shows none.
 
+### 13d, file properties
+
+13d uses 276–277.
+
+276. **Photo and music.** As macOS 379 and 380 with Alt+P on ext4: the same photo (copy the HEIC or a JPEG from a phone) and MP3 show the same values as on macOS (camera, date, location, artist, album, length); the MP3's cover is its poster.
+277. **Info.** Get Info (Alt+Enter or the context menu) on that photo and MP3: a Properties part with the same groups and rows under the facts; on a folder or several items none.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

@@ -11,7 +11,7 @@ use super::Out;
 /// The most of one part read, unpacked.
 const PART_MAX: u64 = 256 * 1024;
 
-pub(super) fn read<R: Read + Seek>(r: &mut R, out: &mut Out) {
+pub(super) fn read<R: Read + Seek>(r: R, out: &mut Out) {
     let Ok(mut zip) = zip::ZipArchive::new(r) else { return };
     let mut part = |name: &str| {
         let file = zip.by_name(name).ok()?;
@@ -155,6 +155,6 @@ mod tests {
     #[test]
     fn hostile_documents_do_not_panic() {
         let seeds = [std::fs::read(fixture("report.docx")).unwrap(), std::fs::read(fixture("notes.odt")).unwrap()];
-        super::super::tests::fuzz(&seeds, 4, &|r, _| read(r, &mut Out::new(f::FieldSet::ALL)));
+        super::super::tests::fuzz(&seeds, 4, &|r, _| read(r.clone(), &mut Out::new(f::FieldSet::ALL)));
     }
 }

@@ -2,23 +2,25 @@
 //! orientation has width and height swapped. HEIF and AVIF from their `ispe` box.
 
 use std::io::{BufRead, Seek};
+use std::path::Path;
 
 use gezik_core::fields as f;
 
 use super::Out;
 
-pub(super) fn read<R: BufRead + Seek>(r: &mut R, ext: &str, out: &mut Out) {
-    let size = if matches!(ext, "heic" | "heif" | "avif") { ispe(r) } else { header_size(r) };
+pub(super) fn read<R: BufRead + Seek>(r: &mut R, path: &Path, ext: &str, out: &mut Out) {
+    let size = if matches!(ext, "heic" | "heif" | "avif") { ispe(r) } else { header_size(path) };
     if let Some((w, h)) = size {
         out.int(f::WIDTH, w.into());
         out.int(f::HEIGHT, h.into());
     }
 }
 
-fn header_size<R: BufRead + Seek>(r: &mut R) -> Option<(u32, u32)> {
+/// Through `ImageReader::open`, as the preview decodes: its decoders are in the exe once.
+fn header_size(path: &Path) -> Option<(u32, u32)> {
     use image::ImageDecoder;
     use image::metadata::Orientation;
-    let mut decoder = image::ImageReader::new(r).with_guessed_format().ok()?.into_decoder().ok()?;
+    let mut decoder = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.into_decoder().ok()?;
     let (w, h) = decoder.dimensions();
     let turned = matches!(
         decoder.orientation(),
@@ -86,7 +88,7 @@ mod tests {
     #[test]
     fn a_heic_says_its_largest_extent() {
         let mut out = Out::new(f::FieldSet::ALL);
-        read(&mut Cursor::new(heic()), "heic", &mut out);
+        read(&mut Cursor::new(heic()), Path::new("x.heic"), "heic", &mut out);
         let fields = out.finish(0);
         assert_eq!(fields.text(f::DIMENSIONS).as_deref(), Some("4032 × 3024"));
     }
@@ -109,9 +111,8 @@ mod tests {
 
     #[test]
     fn hostile_pictures_do_not_panic() {
-        let photo = std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/fields/photo.jpg"))
-            .unwrap();
-        super::super::tests::fuzz(&[heic()], 24, &|r, _| read(r, "heic", &mut Out::new(f::FieldSet::ALL)));
-        super::super::tests::fuzz(&[photo], 16, &|r, _| read(r, "jpg", &mut Out::new(f::FieldSet::ALL)));
+        // Other formats' headers are the `image` crate's (the preview decodes them the same way).
+        let run = |r: &mut Cursor<Vec<u8>>, _| read(r, Path::new("x.heic"), "heic", &mut Out::new(f::FieldSet::ALL));
+        super::super::tests::fuzz(&[heic()], 24, &run);
     }
 }

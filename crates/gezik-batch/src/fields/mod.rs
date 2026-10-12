@@ -13,7 +13,7 @@ mod mp4;
 mod pdf;
 mod video;
 
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use gezik_core::fields::{self as f, FieldId, FieldSet, Fields, Reader, Value};
@@ -37,7 +37,7 @@ pub fn read(path: &Path, want: FieldSet, stop: &dyn Fn() -> bool) -> Fields {
     let Ok(file) = std::fs::File::open(path) else { return Fields::default() };
     let len = file.metadata().map_or(0, |m| m.len());
     let mut out = Out::new(want);
-    read_from(&mut BufReader::new(file), len, &ext, &readers, &mut out, stop);
+    read_from(&mut BufReader::new(file), path, len, &ext, &readers, &mut out, stop);
     out.finish(len)
 }
 
@@ -57,8 +57,11 @@ fn extension(path: &Path) -> String {
     path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase()
 }
 
-fn read_from<R: BufRead + Seek>(
-    r: &mut R,
+// One reader type for all (`BufReader<File>`, as elsewhere in Gezik): each generic decoder is in
+// the exe once.
+fn read_from(
+    r: &mut BufReader<std::fs::File>,
+    path: &Path,
     len: u64,
     ext: &str,
     readers: &[Reader],
@@ -70,11 +73,15 @@ fn read_from<R: BufRead + Seek>(
             return;
         }
         match reader {
-            Reader::Image => image::read(r, ext, out),
+            Reader::Image => image::read(r, path, ext, out),
             Reader::Exif => exif::read(r, out),
             Reader::Audio => audio::read(r, len, ext, out, None),
             Reader::Video => video::read(r, len, ext, out),
-            Reader::Document => document::read(r, out),
+            Reader::Document => {
+                if let Ok(file) = std::fs::File::open(path) {
+                    document::read(BufReader::new(file), out);
+                }
+            }
             Reader::Pdf => pdf::read(r, len, out),
         }
     }

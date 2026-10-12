@@ -33,11 +33,29 @@ pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
     fit(decode_oriented(path)?, max_px)
 }
 
-/// [`decode_image`] of a picture in memory (a sound file's embedded cover, spec 13 §6.1).
+/// [`decode_image`] of a JPEG or PNG in memory (a sound file's embedded cover, spec 13 §6.1):
+/// only these two decoders (every decoder for another reader type is more exe).
 pub fn decode_image_bytes(bytes: &[u8], max_px: u32) -> Result<Decoded, String> {
-    let reader =
-        image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().map_err(|e| e.to_string())?;
-    fit(decode_limited(reader)?, max_px)
+    use image::ImageDecoder;
+    let reader = std::io::Cursor::new(bytes);
+    let picture = if bytes.starts_with(b"\x89PNG") {
+        let mut decoder = image::codecs::png::PngDecoder::new(reader).map_err(|e| e.to_string())?;
+        decoder.set_limits(limits()).map_err(|e| e.to_string())?;
+        image::DynamicImage::from_decoder(decoder)
+    } else {
+        let mut decoder = image::codecs::jpeg::JpegDecoder::new(reader).map_err(|e| e.to_string())?;
+        decoder.set_limits(limits()).map_err(|e| e.to_string())?;
+        image::DynamicImage::from_decoder(decoder)
+    };
+    fit(picture.map_err(|e| e.to_string())?, max_px)
+}
+
+fn limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_DECODE_SIDE);
+    limits.max_image_height = Some(MAX_DECODE_SIDE);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC);
+    limits
 }
 
 fn fit(picture: image::DynamicImage, max_px: u32) -> Result<Decoded, String> {
@@ -91,20 +109,9 @@ fn decode_oriented(path: &Path) -> Result<image::DynamicImage, String> {
     if size > MAX_DECODE_BYTES {
         return Err(format!("{size} bytes is too big to preview"));
     }
-    let reader =
+    let mut reader =
         image::ImageReader::open(path).map_err(|e| e.to_string())?.with_guessed_format().map_err(|e| e.to_string())?;
-    decode_limited(reader)
-}
-
-/// Decodes within the limits, turned as its EXIF orientation says.
-fn decode_limited<R: std::io::BufRead + std::io::Seek>(
-    mut reader: image::ImageReader<R>,
-) -> Result<image::DynamicImage, String> {
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_DECODE_SIDE);
-    limits.max_image_height = Some(MAX_DECODE_SIDE);
-    limits.max_alloc = Some(MAX_DECODE_ALLOC);
-    reader.limits(limits);
+    reader.limits(limits());
     // Turned as the EXIF orientation says, so a phone's portrait photo stands upright.
     let mut decoder = reader.into_decoder().map_err(|e| e.to_string())?;
     let orientation =
