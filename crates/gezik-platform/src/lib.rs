@@ -22,6 +22,7 @@ mod linux;
 mod locale;
 #[cfg(target_os = "macos")]
 mod mac;
+pub mod meta;
 pub mod network;
 pub mod open_with;
 mod picture;
