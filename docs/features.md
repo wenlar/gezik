@@ -79,7 +79,12 @@ rules on the left and a live preview on the right:
 - **Replace** (plain or regex), **Number**, **Case**, **Add text**, **Extension**,
   **Template** and **Trim / clean**, applied in order. Each can be turned off for a moment.
 - Template fields: `{name}`, `{ext}`, `{n:03}`, `{parent}`, `{date:%Y-%m-%d}`, `{taken:…}`
-  (the photo's EXIF date) and `{size}`.
+  (the photo's EXIF date) and `{size}`, and every file property: `{artist}`, `{track:02}`,
+  `{year}`, `{camera}`, `{width}x{height}`, `{duration}` (as `3m25s`). A number takes its
+  digits, a date its format, a decimal its places; `{artist|Unknown}` is used when a file has
+  none (without it the row is marked). **Fields ▾** next to the template lists them. Values
+  from files are made safe for names (`/ \ : * ? " < > |` become `_`): a tag cannot move a
+  file elsewhere.
 - Duplicate names are shown before anything changes; the whole rename is one Ctrl+Z.
 - **Presets ▾ › Save current rules as…** keeps a rule set in `settings.toml` (`[[rename-presets]]`).
 
@@ -267,11 +272,27 @@ sort-dir = "desc"
 group = "date"
 ```
 
+## Preview and properties
+
+- **Preview pane** (Alt+P) and **Quick Look** (Space): code in color with line numbers (about
+  25 languages), text of any size from end to end, **Show as Hex** for any file, PDF pages
+  with zoom (pdfium), pictures zoomed to their real size, video and audio with play, seek and
+  volume (ffmpeg); both tools download only when asked.
+- **Properties** under the preview and in Get Info: picture size, the photo's date, camera,
+  lens and place, length and codecs, music tags and cover, document title, author and pages,
+  read by Gezik itself from a bounded part of the file (`[preview] properties = false` hides
+  them).
+- The same properties as **list columns**, sorting, grouping and filter words (see Layouts and
+  Filter), a **search** criterion and **batch rename** fields. Nothing is read until one of
+  them asks; only the rows on screen, only the fields asked.
+
 ## Search
 
 - **Search** (Ctrl+Shift+F or Ctrl+E, ⌘⇧F on macOS) searches under the folder shown, with the
   filter's pattern language. **Content** finds text in files; **Filters ▾** adds size, date,
-  type, regex, match case and hidden items. Results fill a normal list: sort, filter,
+  type, regex, match case and hidden items, and **Properties…**: the filter's property words
+  (`artist:tarkan duration>3m`, `[[searches]] where = "…"`). Only files with a reader for a
+  property are read, after the cheaper criteria. Results fill a normal list: sort, filter,
   preview, copy, rename and batch rename work there. Back returns to the folder.
 - On Windows, names come from Everything (voidtools) when it runs.
 - **Show in folder** (Ctrl+Shift+E) opens a result's folder with it selected; **Copy with
