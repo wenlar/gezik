@@ -21,6 +21,15 @@ pub(crate) fn test_dir(name: &str) -> PathBuf {
     dir
 }
 
+/// `meta` as a file's own record gives it back: Linux keeps no colours (`user.xdg.tags`; spec 12
+/// takes them from the user's list), so a copy carried on from it has none either.
+pub(crate) fn as_kept(mut meta: gezik_core::meta::Meta) -> gezik_core::meta::Meta {
+    if cfg!(target_os = "linux") {
+        meta.tags.iter_mut().for_each(|tag| tag.color = gezik_core::meta::TagColor::None);
+    }
+    meta
+}
+
 /// Whether `dir` can hold a file named `name`: APFS and HFS+ (macOS) refuse names that are not
 /// UTF-8 (`EILSEQ`), so the tests about such names have nothing to try there.
 pub(crate) fn can_hold_name(dir: &Path, name: &std::ffi::OsStr) -> bool {

@@ -517,7 +517,11 @@ mod tests {
         let (report, _) = finish(&engine, engine.submit_chain(vec![Box::new(task)], None), no_conflicts);
         assert!(report.failures.is_empty() && report.notes.is_empty(), "{report:?}");
         assert_eq!(read(&r.join("both.txt")), "left, newer");
-        assert_eq!(engine.meta().read(&r.join("both.txt")).unwrap(), blue, "the new file's tags, not the old one's");
+        assert_eq!(
+            engine.meta().read(&r.join("both.txt")).unwrap(),
+            crate::testing::as_kept(blue),
+            "the new file's tags, not the old one's"
+        );
         let store = std::fs::read_to_string(dir.join("config/tags-store.tsv")).unwrap();
         assert_eq!(store.lines().count(), 2, "one entry, none under a temporary name: {store}");
         let _ = std::fs::remove_dir_all(&dir);

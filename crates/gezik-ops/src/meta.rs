@@ -916,11 +916,11 @@ mod tests {
         let on_fat = file(&dir, "fat/a.txt", "a");
         tags.carry(&a, &on_fat).unwrap();
         assert_eq!(tags.own_reads(), 1);
-        assert_eq!(tags.read(&on_fat).unwrap(), red());
+        assert_eq!(tags.read(&on_fat).unwrap(), crate::testing::as_kept(red()));
         // Store → a volume with records: into the copy's own record.
         let back = file(&dir, "back.txt", "a");
         tags.carry(&on_fat, &back).unwrap();
-        assert_eq!(gezik_platform::meta::read(&back).unwrap().meta, red());
+        assert_eq!(gezik_platform::meta::read(&back).unwrap().meta, crate::testing::as_kept(red()));
         // Between volumes alike, nothing is read: the system took the record along.
         let plain = file(&dir, "plain.txt", "p");
         tags.carry(&plain, &dir.join("back.txt")).unwrap();
