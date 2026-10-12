@@ -354,6 +354,34 @@ dots = "auto"
 # sort-dir = "desc"
 # group = "date"
 
+# Highlight rules: the first rule that matches a row colors its text and/or makes its name
+# bold (Total Commander's color rules); at most 64. Conditions, all of which must hold:
+# name (patterns as in a filtered copy: "*.tmp *.bak | keep*", "node_modules/" for folders),
+# kind (folder, file, pictures, videos, audio, documents, archives, code), newer-than and
+# older-than ("12h", "7d", "2w", "3m", "1y"; the modified time), min-size and max-size
+# ("100 MB"), hidden (true or false), tag (a name, "any" or "none"), rating (0: not rated;
+# n: at least n stars), comment ("any" or a text it holds). Looks: color (red, orange,
+# yellow, green, blue, purple, gray or "#rrggbb"), dark-color (the dark theme's), bold.
+# Tags, ratings and comments are read only while a rule asks for them.
+# [[highlight-rules]]
+# name = "*.tmp *.bak ~*"
+# color = "gray"
+#
+# [[highlight-rules]]
+# tag = "Red"
+# bold = true
+#
+# [[highlight-rules]]
+# kind = "folder"
+# newer-than = "1d"
+# color = "#2e7d32"
+# dark-color = "#81c784"
+#
+# [[highlight-rules]]
+# min-size = "1 GB"
+# rating = 0
+# color = "orange"
+
 # Your own commands, shown in the Convert layer under "Commands" and in the right-click
 # menu under "Commands >" (only for files that match "types"). No shell is used: "run" is a
 # program followed by its arguments, and placeholders are replaced inside each argument, so

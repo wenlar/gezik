@@ -15,6 +15,7 @@ pub mod elevated;
 pub mod export;
 pub mod file_filter;
 pub mod group;
+pub mod highlight;
 pub mod history;
 pub mod kind;
 pub mod layout;
