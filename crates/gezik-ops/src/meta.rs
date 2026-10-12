@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use gezik_core::meta::Meta;
 use gezik_core::meta_store::{Record, Store};
@@ -27,6 +27,9 @@ pub enum Where {
 
 /// Folders whose volume is known; past this the list starts over.
 const MAX_FOLDERS: usize = 1024;
+/// How long a folder's volume is trusted: a USB stick swapped for another under the same
+/// letter or mount point is asked about again.
+const VOLUME_FRESH: Duration = Duration::from_secs(5);
 
 pub struct MetaStore {
     /// `tags-store.tsv` in the config folder (`None`: no store; files only).
@@ -41,7 +44,7 @@ struct State {
     /// `None` until something needs it.
     store: Option<Loaded>,
     /// Each folder's volume, and where it is mounted.
-    volumes: HashMap<PathBuf, Arc<(Volume, PathBuf)>>,
+    volumes: HashMap<PathBuf, (Instant, Arc<(Volume, PathBuf)>)>,
     /// Volumes that refused a record this session.
     refused: HashSet<String>,
     /// Sources whose tags a copy could not carry: a move does not drop their entries.
@@ -94,7 +97,9 @@ impl MetaStore {
     /// The volume `path` is on, and its root.
     fn volume(&self, state: &mut State, path: &Path) -> io::Result<Arc<(Volume, PathBuf)>> {
         let folder = path.parent().unwrap_or(path);
-        if let Some(known) = state.volumes.get(folder) {
+        if let Some((when, known)) = state.volumes.get(folder)
+            && when.elapsed() < VOLUME_FRESH
+        {
             return Ok(known.clone());
         }
         let root = gezik_platform::fs::drive_root(path)
@@ -109,7 +114,7 @@ impl MetaStore {
             state.volumes.clear();
         }
         let known = Arc::new((volume, root));
-        state.volumes.insert(folder.to_path_buf(), known.clone());
+        state.volumes.insert(folder.to_path_buf(), (Instant::now(), known.clone()));
         Ok(known)
     }
 
@@ -133,9 +138,15 @@ impl MetaStore {
 
     /// `path`'s tags: its store entry if it has one, else its own record.
     pub fn read(&self, path: &Path) -> io::Result<Meta> {
-        let own = own::read(path)?;
+        let holds = self.volume(&mut lock(&self.state), path)?.0.holds;
+        // A volume without records (vfat, exFAT, NFS) has nothing of its own to read.
+        #[cfg(test)]
+        if holds {
+            lock(&self.state).own_reads += 1;
+        }
+        let own = if holds { own::read(path)?.meta } else { Meta::default() };
         let mut state = lock(&self.state);
-        Ok(self.stored(&mut state, path)?.unwrap_or(own.meta))
+        Ok(self.stored(&mut state, path)?.unwrap_or(own))
     }
 
     /// Writes `meta` for `path` (an empty one removes it): into the file's own record where it
@@ -152,7 +163,8 @@ impl MetaStore {
                     let mut state = lock(&self.state);
                     let loaded = self.load(&mut state);
                     if !loaded.store.is_empty() && loaded.broken.is_none() {
-                        let gone = loaded.store.remove_tree(&volume.key, &in_volume(path, &known.1)) > 0;
+                        // Its own entry only: a folder's files keep theirs.
+                        let gone = loaded.store.remove(&volume.key, &in_volume(path, &known.1));
                         loaded.dirty |= gone;
                     }
                     return Ok(Where::File);
@@ -210,6 +222,16 @@ impl MetaStore {
 
     fn carry_now(&self, from: &Path, to: &Path) -> io::Result<()> {
         let mut state = lock(&self.state);
+        // `to` is a new file (a copy, maybe over a file it replaced): an entry left at its path
+        // is another file's.
+        if !self.load(&mut state).store.is_empty() {
+            let known = self.volume(&mut state, to)?;
+            let at = in_volume(to, &known.1);
+            let loaded = self.load(&mut state);
+            if loaded.broken.is_none() && loaded.store.remove(&known.0.key, &at) {
+                loaded.dirty = true;
+            }
+        }
         if let Some(meta) = self.stored(&mut state, from)? {
             drop(state);
             return self.write(to, &meta).map(drop);
@@ -249,23 +271,37 @@ impl MetaStore {
         if loaded.store.is_empty() || loaded.broken.is_some() {
             return;
         }
+        // Renames are done together: in one job `a` <-> `b` or `1` -> `2`, `2` -> `3` name each
+        // file as it was before the job.
+        let mut moves: Vec<(String, String, String)> = Vec::new();
         for outcome in outcomes.iter().filter(relevant) {
-            let (from, to) = match outcome {
-                Outcome::Moved { from, to, .. } => (from, Some(to)),
-                Outcome::Created { from: Some(from), .. } if !state.kept.contains(from) => (from, None),
-                Outcome::Deleted { path } => (path, None),
+            let (from, to, tree) = match outcome {
+                Outcome::Moved { from, to, .. } => (from, Some(to), true),
+                // A move to another drive: each item says so itself, a folder only for itself
+                // (its files left behind by a cancel keep their entries).
+                Outcome::Created { from: Some(from), .. } if !state.kept.contains(from) => (from, None, false),
+                Outcome::Deleted { path } => (path, None, true),
                 _ => continue,
             };
             // The volume of a path that is gone is its folder's, or the place it went to.
             let Ok(source) = self.volume(&mut state, to.map_or(from.as_path(), |to| to.as_path())) else { continue };
             let at = in_volume(from, &source.1);
+            if let Some(to) = to {
+                moves.push((source.0.key.clone(), at, in_volume(to, &source.1)));
+                continue;
+            }
             let loaded = self.load(&mut state);
-            let changed = match to {
-                Some(to) => loaded.store.rename(&source.0.key, &at, &source.0.key, &in_volume(to, &source.1)),
-                None => loaded.store.remove_tree(&source.0.key, &at),
+            let changed = if tree {
+                loaded.store.remove_tree(&source.0.key, &at) > 0
+            } else {
+                loaded.store.remove(&source.0.key, &at)
             };
-            loaded.dirty |= changed > 0;
+            loaded.dirty |= changed;
         }
+        let moves: Vec<(&str, &str, &str, &str)> =
+            moves.iter().map(|(key, from, to)| (key.as_str(), from.as_str(), key.as_str(), to.as_str())).collect();
+        let loaded = self.load(&mut state);
+        loaded.dirty |= loaded.store.rename_all(&moves) > 0;
     }
 
     /// Writes the store if a job changed it: whole, to a temporary file, then renamed over
@@ -601,6 +637,89 @@ mod tests {
         assert!(std::fs::read_to_string(dir.join("config/tags-store.tsv")).unwrap().contains("gezik-tag-b.txt"));
         assert_eq!(store(&dir).read(&b).unwrap(), red());
         let _ = std::fs::remove_file(&b);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_drive_without_records_is_not_asked_for_them() {
+        let dir = test_dir("meta-no-ask");
+        let tags = store(&dir);
+        tags.fake_holds(fat);
+        let a = file(&dir, "fat/a.txt", "x");
+        assert_eq!(tags.read(&a).unwrap(), Meta::default());
+        tags.write(&a, &red()).unwrap();
+        assert_eq!(tags.read(&a).unwrap(), red());
+        assert_eq!(tags.own_reads(), 0, "vfat answers ENOTSUP: nothing is read there");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn swapped_names_keep_each_files_tags() {
+        let dir = test_dir("meta-swap");
+        let tags = store(&dir);
+        tags.fake_holds(fat);
+        let (a, b) = (file(&dir, "fat/a.txt", "a"), file(&dir, "fat/b.txt", "bb"));
+        tags.write(&a, &red()).unwrap();
+        tags.write(&b, &Meta { rating: 5, ..Meta::default() }).unwrap();
+        let t = dir.join("fat/t");
+        std::fs::rename(&a, &t).unwrap();
+        std::fs::rename(&b, &a).unwrap();
+        std::fs::rename(&t, &b).unwrap();
+        let facts = gezik_core::ops::conflict::Facts::default();
+        // As a rename job reports a swap: each item from its old name to its new one.
+        tags.follow(&[
+            &Outcome::Moved { from: a.clone(), to: b.clone(), facts },
+            &Outcome::Moved { from: b.clone(), to: a.clone(), facts },
+        ]);
+        assert_eq!(tags.read(&b).unwrap(), red());
+        assert_eq!(tags.read(&a).unwrap().rating, 5);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_moved_to_another_drive_drops_only_its_own_entry() {
+        let dir = test_dir("meta-cross");
+        let tags = store(&dir);
+        tags.fake_holds(fat);
+        let folder = dir.join("fat/box");
+        let left = file(&dir, "fat/box/left.txt", "x");
+        tags.write(&folder, &red()).unwrap();
+        tags.write(&left, &red()).unwrap();
+        // The folder was made on the other drive, then the move was cancelled: `left.txt` stays.
+        tags.follow(&[&Outcome::Created {
+            path: dir.join("other/box"),
+            facts: Default::default(),
+            from: Some(folder.clone()),
+        }]);
+        assert_eq!(tags.read(&left).unwrap(), red());
+        assert_eq!(tags.read(&folder).unwrap(), Meta::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folders_own_record_keeps_the_entries_inside_it() {
+        let dir = test_dir("meta-folder");
+        let tags = store(&dir);
+        tags.fake_holds(fat);
+        let folder = dir.join("box");
+        let inside = file(&dir, "box/fat.txt", "x");
+        assert!(matches!(tags.write(&inside, &red()).unwrap(), Where::Store(_)));
+        assert_eq!(tags.write(&folder, &red()).unwrap(), Where::File);
+        assert_eq!(tags.read(&inside).unwrap(), red());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_copy_over_a_file_drops_that_files_entry() {
+        let dir = test_dir("meta-over");
+        let tags = store(&dir);
+        tags.fake_holds(fat);
+        let (plain, old) = (file(&dir, "plain.txt", "p"), file(&dir, "fat/old.txt", "o"));
+        tags.write(&old, &red()).unwrap();
+        // `plain.txt` (no tags) copied over `old.txt`.
+        std::fs::copy(&plain, &old).unwrap();
+        tags.carry(&plain, &old).unwrap();
+        assert_eq!(tags.read(&old).unwrap(), Meta::default());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

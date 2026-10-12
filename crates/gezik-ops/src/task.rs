@@ -640,15 +640,23 @@ impl RunCx<'_> {
     /// is a note, the copy stands.
     pub fn copy_file(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
         self.copy_bytes(from, to, size)?;
+        self.carry_tags(from, to);
+        Ok(())
+    }
+
+    /// After `from` was copied to `to` (under its final name): its tags go along where the
+    /// system did not take them; a failure is a note.
+    pub(crate) fn carry_tags(&self, from: &Path, to: &Path) {
         if let Some(meta) = self.meta()
             && let Err(err) = meta.carry(from, to)
         {
             self.note(to, &format!("Tags could not be carried: {}", gezik_platform::fs::describe(&err)));
         }
-        Ok(())
     }
 
-    fn copy_bytes(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
+    /// [`copy_file`](Self::copy_file) without the tags, for a copy made under a temporary name
+    /// and renamed by its task: [`carry_tags`](Self::carry_tags) once it has its own name.
+    pub(crate) fn copy_bytes(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
         let verify = self.control.verify.load(Ordering::Relaxed)
             && !std::fs::symlink_metadata(from).is_ok_and(|meta| meta.file_type().is_symlink());
         let temp =
