@@ -219,15 +219,15 @@ impl Counts {
 /// The columns a rule shows (`columns = [...]`): which, not in what order (the list's order is
 /// fixed) nor how wide (the list's widths).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Columns(u8);
+pub struct Columns(u16);
 
 impl Columns {
     pub fn of(keys: &[ColumnKey]) -> Columns {
-        Columns(keys.iter().fold(0, |bits, key| bits | 1u8 << key.index()))
+        Columns(keys.iter().fold(0, |bits, key| bits | 1u16 << key.index()))
     }
 
     pub fn has(self, key: ColumnKey) -> bool {
-        self.0 & (1u8 << key.index()) != 0
+        self.0 & (1u16 << key.index()) != 0
     }
 }
 

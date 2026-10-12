@@ -315,8 +315,7 @@ fn copy_at(
                     ];
                     // SAFETY: two timespecs, as futimens wants.
                     let _ = unsafe { libc::futimens(out.as_raw_fd(), times.as_ptr()) };
-                    #[cfg(target_os = "macos")]
-                    xattrs(&from, &out);
+                    crate::meta::copy_xattrs(&from, &out);
                     Ok(())
                 })();
                 if filled.is_err() {
@@ -399,16 +398,6 @@ fn read_link_at(dir: RawFd, name: &CStr) -> io::Result<CString> {
     }
     buffer.truncate(len);
     CString::new(buffer).map_err(|_| refused(CHANGED))
-}
-
-#[cfg(target_os = "macos")]
-fn xattrs(from: &File, to: &File) {
-    unsafe extern "C" {
-        fn fcopyfile(from: libc::c_int, to: libc::c_int, state: *mut libc::c_void, flags: u32) -> libc::c_int;
-    }
-    const COPYFILE_XATTR: u32 = 1 << 2;
-    // SAFETY: two open descriptors, no state. Extended attributes only: the data is copied.
-    let _ = unsafe { fcopyfile(from.as_raw_fd(), to.as_raw_fd(), std::ptr::null_mut(), COPYFILE_XATTR) };
 }
 
 /// `path` itself opened for a permission, owner or flag change: a file or folder (never a link,

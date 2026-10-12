@@ -21,7 +21,7 @@ use std::time::SystemTime;
 pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]
-use unix::entry_id;
+pub(crate) use unix::entry_id;
 #[cfg(target_os = "linux")]
 pub(crate) use unix::home_trash;
 #[cfg(unix)]
@@ -31,7 +31,7 @@ pub use unix::{
     trash,
 };
 #[cfg(windows)]
-use windows::entry_id;
+pub(crate) use windows::entry_id;
 #[cfg(windows)]
 pub use windows::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
