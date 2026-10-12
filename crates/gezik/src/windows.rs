@@ -923,6 +923,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     sidebar.install();
     sidebar.set_pinned(settings.pinned.clone());
     sidebar.set_show_cloud(settings.sidebar_cloud);
+    sidebar.set_show_tags(settings.sidebar_tags);
     sidebar.set_tree_follow(settings.sidebar_tree_follow);
     let _tab_sets = tab_sets::TabSets::new(dialogs.clone(), config.clone());
     let _saved_searches = saved_searches::SavedSearches::new(dialogs.clone(), config.clone());
@@ -1018,6 +1019,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             if section == sidebar::SECTION_SEARCHES {
                 return crate::run_saved_search(index, false);
             }
+            if section == sidebar::SECTION_TAGS {
+                return crate::tags::sidebar_clicked(index, false);
+            }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().go(location);
             }
@@ -1028,6 +1032,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         move |section, index| {
             if section == sidebar::SECTION_SEARCHES {
                 return crate::run_saved_search(index, true);
+            }
+            if section == sidebar::SECTION_TAGS {
+                return crate::tags::sidebar_clicked(index, true);
             }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().open_tab(location, false);

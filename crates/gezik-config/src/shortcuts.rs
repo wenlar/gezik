@@ -438,10 +438,13 @@ pub enum Action {
     ClearTags,
     /// Asks for the selection's comment (spec 12 §8.1).
     EditComment,
+    /// Removes, when the user says so, the tag store's entries of files that are gone (spec 12
+    /// §7.4).
+    CleanTagStore,
 }
 
 impl Action {
-    pub const ALL: [Action; 123] = [
+    pub const ALL: [Action; 124] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -565,6 +568,7 @@ impl Action {
         Action::Tag7,
         Action::ClearTags,
         Action::EditComment,
+        Action::CleanTagStore,
     ];
 
     pub fn name(self) -> &'static str {
@@ -692,6 +696,7 @@ impl Action {
             Action::Tag7 => "tag-7",
             Action::ClearTags => "clear-tags",
             Action::EditComment => "edit-comment",
+            Action::CleanTagStore => "clean-tag-store",
         }
     }
 
@@ -833,6 +838,7 @@ impl Action {
             Action::Tag7 => "Toggle Tag 7",
             Action::ClearTags => "Clear Tags",
             Action::EditComment => "Comment…",
+            Action::CleanTagStore => "Clean Up Tag Store…",
         }
     }
 
@@ -1055,7 +1061,8 @@ impl Action {
                 | Action::MoveTo
                 | Action::SplitFile
                 | Action::JoinFiles
-                | Action::EditComment,
+                | Action::EditComment
+                | Action::CleanTagStore,
                 _,
             ) => &[],
             // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
@@ -2245,6 +2252,9 @@ refresh = [\"f5\", \"ctrl+r\"]
         assert_eq!(Action::ClearTags.title(), "Clear Tags");
         assert_eq!(Action::from_name("edit-comment"), Some(Action::EditComment));
         assert_eq!(Shortcuts::defaults(Platform::Other).chord_for(Action::EditComment), None, "no key");
+        assert_eq!(Action::from_name("clean-tag-store"), Some(Action::CleanTagStore));
+        assert_eq!(Shortcuts::defaults(Platform::Mac).chord_for(Action::CleanTagStore), None, "no key");
+        assert!(!Action::CleanTagStore.is_tag_action(), "not on the selection");
         assert_eq!(Action::Tags.tag_number(), None);
     }
 

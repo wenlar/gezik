@@ -119,6 +119,8 @@ export component AppWindow inherits Window {
                     MenuItem { title: "★★★★★"; activated => { root.menu-command("rating:5"); } }
                 }
                 MenuItem { title: "Comment…"; activated => { root.menu-command("edit-comment"); } }
+                MenuSeparator { }
+                MenuItem { title: "Clean Up Tag Store…"; activated => { root.menu-command("clean-tag-store"); } }
             }
             MenuSeparator { }
             MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }

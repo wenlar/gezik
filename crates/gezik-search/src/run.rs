@@ -140,6 +140,18 @@ pub fn start(walk: Walk, query: Query, sink: impl Fn(Event) + Send + 'static) ->
 
 /// [`start`] under `running`'s flag (Everything fell back to the walk on the same search).
 pub fn start_with(walk: Walk, query: Query, running: Running, sink: impl Fn(Event) + Send + 'static) {
+    start_adding(walk, query, running, Vec::new(), sink);
+}
+
+/// [`start_with`], with `extra` among the results first: whole paths an every-drive walk does
+/// not reach (the tag store's files on other drives, spec 12 §7.1), already checked.
+pub fn start_adding(
+    walk: Walk,
+    query: Query,
+    running: Running,
+    extra: Vec<(PathBuf, Entry)>,
+    sink: impl Fn(Event) + Send + 'static,
+) {
     let cancel = running.flag();
     let (sender, receiver) = mpsc::channel();
     let read = walk.read.clone();
@@ -147,6 +159,12 @@ pub fn start_with(walk: Walk, query: Query, running: Running, sink: impl Fn(Even
     let matcher = Arc::new(Matcher { query, sender: Mutex::new(sender.clone()), cancel: cancel.clone() });
     let walk_cancel = cancel.clone();
     let _ = std::thread::Builder::new().name("gezik-search-walk".into()).spawn(move || {
+        // Their folders are whole paths, as an every-drive walk's are.
+        for (path, entry) in extra.into_iter().filter(|_| walk.absolute) {
+            if let Some(folder) = crate::results::folder_text(Path::new(""), &path) {
+                let _ = sender.send(Msg::Found(folder, vec![(entry, None)]));
+            }
+        }
         let stats = crate::walk::run(walk, walk_cancel, matcher);
         let _ = sender.send(Msg::Done(stats));
     });

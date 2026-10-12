@@ -22,7 +22,7 @@ use slint::{ComponentHandle, Model, Timer, TimerMode};
 
 use crate::context_menu::Menus;
 use crate::operations::Operations;
-use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, SECTION_TREE_MORE, Sidebar};
+use crate::sidebar::{SECTION_GROUP, SECTION_PINNED, SECTION_TAGS, SECTION_TREE_MORE, Sidebar};
 use crate::tab_drag::{self, Spot, Tear};
 use crate::windows::WindowId;
 use crate::{AppWindow, SidebarRow, Theme};
@@ -877,6 +877,13 @@ impl Drags {
                 Some((path, true)) => (hit, Some(path)),
                 _ => (Hit::Column(p, c, None), pane.view.column_folder(c)),
             },
+            // A tag: the files get it (never what has no file behind it).
+            (Hit::Sidebar(row), _)
+                if window.get_sidebar_rows().row_data(row).is_some_and(|r| r.section == SECTION_TAGS && !r.header) =>
+            {
+                let action = (d.virtual_count == 0 && !d.sources.is_empty()).then_some(Action::Tag);
+                return Target { action, ..Target::none(hit) };
+            }
             (Hit::Sidebar(row), _) => {
                 let place = window.get_sidebar_rows().row_data(row);
                 (hit, place.and_then(|r| self.0.sidebar.location_of(r.section, r.index)).and_then(path_of))
@@ -926,6 +933,14 @@ impl Drags {
             .any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path))
     }
 
+    /// How many items the drag under way carries.
+    fn dragged_count(&self) -> usize {
+        match &*self.0.phase.borrow() {
+            Phase::Dragging(d) | Phase::Offer(d) => d.sources.len(),
+            _ => 0,
+        }
+    }
+
     /// Shows `target`: highlighted, and (with `ghost`) described next to the dragged items.
     fn show(&self, window: &AppWindow, x: f32, y: f32, target: &Target, ghost: bool) {
         let on = target.action.is_some();
@@ -957,6 +972,14 @@ impl Drags {
         let label = match (target.action, &target.dir) {
             (Some(Action::Pin), _) => drag::label(Action::Pin, Path::new("")),
             (Some(Action::AddToStack), _) => drag::label(Action::AddToStack, Path::new("")),
+            (Some(Action::Tag), _) => match target.hit {
+                Hit::Sidebar(row) => window
+                    .get_sidebar_rows()
+                    .row_data(row)
+                    .map(|r| crate::tags::drop_label(&r.label, self.dragged_count()))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            },
             (Some(Action::AddToArchive), _) => {
                 drag::label(Action::AddToArchive, target.archive.as_deref().unwrap_or(Path::new("")))
             }
@@ -1121,6 +1144,14 @@ impl Drags {
         if let (Hit::PinAt(row), Some(Action::Pin)) = (target.hit, target.action) {
             self.0.sidebar.pin_at_row(&d.sources, row);
             return None;
+        }
+        if let (Hit::Sidebar(row), Some(Action::Tag)) = (target.hit, target.action) {
+            let index = self.0.window.upgrade().and_then(|w| w.get_sidebar_rows().row_data(row)).map(|r| r.index);
+            if let Some(index) = index.and_then(|i| usize::try_from(i).ok()) {
+                crate::tags::drop_on_tag(index, d.sources);
+            }
+            // To a source program: nothing is moved, so it deletes nothing.
+            return Some(Effect::Copy);
         }
         if target.action == Some(Action::AddToStack) {
             let items = d.sources.into_iter().map(|path| (path, false)).collect();

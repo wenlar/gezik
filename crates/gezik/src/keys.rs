@@ -909,7 +909,8 @@ mod tests {
                 | Action::MoveTo
                 | Action::SplitFile
                 | Action::JoinFiles
-                | Action::EditComment => continue,
+                | Action::EditComment
+                | Action::CleanTagStore => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }
