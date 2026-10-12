@@ -30,6 +30,53 @@ pub fn can_decode(ext: &str) -> bool {
 /// Decodes a picture (the first frame of a GIF), shrunk to fit `max_px`. Refuses files
 /// over [`MAX_DECODE_BYTES`] and pictures over [`MAX_DECODE_SIDE`]; never panics on bad data.
 pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
+    let picture = decode_oriented(path)?;
+    let (width, height) = (picture.width(), picture.height());
+    let max_px = max_px.max(1);
+    let picture = if width > max_px || height > max_px { picture.thumbnail(max_px, max_px) } else { picture };
+    let rgba = picture.into_rgba8();
+    Ok(Decoded { image: Rgba { width: rgba.width(), height: rgba.height(), pixels: rgba.into_raw() }, width, height })
+}
+
+/// A picture's own size from its header, without decoding it (one Gezik will not decode, over
+/// its limits, still says how large it is).
+// shortcut: the EXIF orientation is not read, so a turned photo says width and height swapped;
+// read it as `decode_oriented` does if the figure matters.
+pub fn picture_size(path: &Path) -> Option<(u32, u32)> {
+    image::ImageReader::open(path).ok()?.with_guessed_format().ok()?.into_dimensions().ok()
+}
+
+/// Decodes a picture at its own size straight into a buffer `make` gives for its width and
+/// height (`bytes`: that buffer's RGBA bytes, `width * height * 4`): only the decoded picture
+/// and the buffer exist at once (the preview's zoom, spec 13 §5.3). Limits as `decode_image`.
+pub fn decode_image_into<B>(
+    path: &Path,
+    make: impl FnOnce(u32, u32) -> B,
+    bytes: impl Fn(&mut B) -> &mut [u8],
+) -> Result<B, String> {
+    let picture = decode_oriented(path)?;
+    let mut out = make(picture.width(), picture.height());
+    let dest = bytes(&mut out);
+    match &picture {
+        image::DynamicImage::ImageRgba8(rgba) if rgba.as_raw().len() == dest.len() => dest.copy_from_slice(rgba),
+        image::DynamicImage::ImageRgb8(rgb) if rgb.as_raw().len() / 3 * 4 == dest.len() => {
+            for (to, &[r, g, b]) in dest.as_chunks_mut::<4>().0.iter_mut().zip(rgb.as_raw().as_chunks::<3>().0) {
+                *to = [r, g, b, 255];
+            }
+        }
+        other => {
+            let rgba = other.to_rgba8();
+            if rgba.as_raw().len() != dest.len() {
+                return Err("the picture changed size while decoding".into());
+            }
+            dest.copy_from_slice(&rgba);
+        }
+    }
+    Ok(out)
+}
+
+/// The whole picture, turned as its EXIF orientation says, within the decode limits.
+fn decode_oriented(path: &Path) -> Result<image::DynamicImage, String> {
     let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
     if size > MAX_DECODE_BYTES {
         return Err(format!("{size} bytes is too big to preview"));
@@ -47,11 +94,7 @@ pub fn decode_image(path: &Path, max_px: u32) -> Result<Decoded, String> {
         image::ImageDecoder::orientation(&mut decoder).unwrap_or(image::metadata::Orientation::NoTransforms);
     let mut picture = image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?;
     picture.apply_orientation(orientation);
-    let (width, height) = (picture.width(), picture.height());
-    let max_px = max_px.max(1);
-    let picture = if width > max_px || height > max_px { picture.thumbnail(max_px, max_px) } else { picture };
-    let rgba = picture.into_rgba8();
-    Ok(Decoded { image: Rgba { width: rgba.width(), height: rgba.height(), pixels: rgba.into_raw() }, width, height })
+    Ok(picture)
 }
 
 /// A thumbnail at most `px` on its longer side: the system's (Windows; Linux's thumbnail
@@ -171,6 +214,24 @@ mod tests {
         use windows::Win32::UI::Shell::{SIIGBF_INCACHEONLY, SIIGBF_THUMBNAILONLY};
         assert_eq!(win::image_flags(true), SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY);
         assert_eq!(win::image_flags(false), SIIGBF_THUMBNAILONLY, "a local file may use the handler");
+    }
+
+    #[test]
+    fn a_picture_decodes_into_the_buffer_given() {
+        let dir = std::env::temp_dir().join(format!("gezik-decode-into-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let rgb = dir.join("rgb.png");
+        image::RgbImage::from_pixel(3, 2, image::Rgb([10, 20, 30])).save(&rgb).unwrap();
+        let gray = dir.join("gray.png");
+        image::GrayImage::from_pixel(2, 2, image::Luma([7])).save(&gray).unwrap();
+        let into = |path: &Path| decode_image_into(path, |w, h| (w, h, vec![0u8; (w * h * 4) as usize]), |b| &mut b.2);
+        let (w, h, bytes) = into(&rgb).unwrap();
+        assert_eq!((w, h), (3, 2));
+        assert!(bytes.chunks(4).all(|px| px == [10, 20, 30, 255]));
+        let (_, _, bytes) = into(&gray).unwrap();
+        assert!(bytes.chunks(4).all(|px| px == [7, 7, 7, 255]));
+        assert!(into(&dir.join("missing.png")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

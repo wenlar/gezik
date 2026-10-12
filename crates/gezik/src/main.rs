@@ -880,6 +880,11 @@ fn main() -> Result<(), slint::PlatformError> {
     if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_batch::pdf::client::WORKER_ARG) {
         std::process::exit(gezik_batch::pdf::worker::main());
     }
+    // The preview's PDF worker (`gezik --pdf-view`, spec 13 §5.1): the same, but it stays and
+    // draws pages until its input closes.
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_batch::pdf::view::VIEW_ARG) {
+        std::process::exit(gezik_batch::pdf::view::main());
+    }
     // The command line (spec 5.1), before Slint and the settings: --help and --version only print.
     let mut cli = cli::parse(std::env::args_os().skip(1), cfg!(windows));
     if cli.help || cli.version {

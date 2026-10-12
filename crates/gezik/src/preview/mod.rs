@@ -9,19 +9,48 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
+use gezik_core::batch::pdf_view::{Command, Reply};
 use gezik_platform::{IconTarget, Rgba};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::{AppWindow, PreviewActions, PreviewInfo};
 
 mod hex;
+mod pdf;
 mod scroller;
 mod text;
 mod viewer;
+mod zoom;
 
-use viewer::{Place, Room, Viewer};
+use pdf::{PdfView, State};
+use viewer::{PictureView, Place, Room, Viewer};
+use zoom::{Fit, ZoomView};
+
+/// How long a drag or a zoom must rest before the PDF's new region is drawn (spec 13 §5.2).
+const SETTLE: Duration = Duration::from_millis(150);
+/// A preview narrower than this (logical px) drops the bar's zoom figure and Hex.
+const NARROW: f32 = 300.0;
+/// The wheel turns at most one PDF page in this time (a trackpad sends many events).
+const TURN_GAP: Duration = Duration::from_millis(300);
+
+/// The PDF `target` is, if it is one.
+fn pdf_path(target: &Target) -> Option<PathBuf> {
+    match target {
+        Target::Entry { path, is_dir: false, .. }
+            if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")) =>
+        {
+            Some(path.clone())
+        }
+        _ => None,
+    }
+}
+
+/// Where downloaded tools are (as `archives.rs` says): next to settings.toml.
+fn data_dir() -> PathBuf {
+    crate::windows::config().map_or_else(|| std::env::temp_dir().join("gezik"), |store| store.dir().to_path_buf())
+}
 
 /// How much of a text file is shown.
 pub const TEXT_BYTES: usize = 64 * 1024;
@@ -99,17 +128,27 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     // Reading a file only in iCloud would download it: its icon only.
     let local = !gezik_platform::only_in_cloud(path);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_lowercase();
-    if local
-        && gezik_platform::can_decode(&ext)
-        && let Ok(decoded) = gezik_platform::decode_image(path, px)
-        && let Some(picture) = buffer(decoded.image)
-    {
-        return Body::Picture(picture, Some((decoded.width, decoded.height)));
+    // A picture Gezik does not decode (over its limits) still says its own size: the zoom bar
+    // tells why it does not zoom (spec 13 §5.3).
+    let mut own_size = None;
+    if local && gezik_platform::can_decode(&ext) {
+        match gezik_platform::decode_image(path, px) {
+            Ok(decoded) => {
+                if let Some(picture) = buffer(decoded.image) {
+                    return Body::Picture(picture, Some((decoded.width, decoded.height)));
+                }
+            }
+            Err(_) => own_size = gezik_platform::picture_size(path),
+        }
     }
     if !wanted() {
         return Body::None;
     }
-    if local && let Some(text) = read_text(path) {
+    // A PDF is never shown as text (an uncompressed one is all ASCII): its pages are.
+    if local
+        && ext != "pdf"
+        && let Some(text) = read_text(path).filter(|text| !text.starts_with("%PDF-"))
+    {
         return Body::Text(text);
     }
     if !wanted() {
@@ -122,7 +161,7 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
         picture = gezik_platform::icon(&target, px);
     }
     match picture.and_then(buffer) {
-        Some(picture) => Body::Picture(picture, None),
+        Some(picture) => Body::Picture(picture, own_size),
         None => Body::None,
     }
 }
@@ -270,6 +309,8 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                 title: name.as_str().into(),
                 item_kind: *kind,
                 loading: body.is_none(),
+                // A PDF offers its pages (spec 13 §5).
+                page: i32::from(pdf_path(target).is_some()),
                 ..PreviewInfo::default()
             };
             match body {
@@ -352,6 +393,22 @@ struct Inner {
     /// Where the pane's viewer was when quick look opened: it goes back there (quick look
     /// scrolls on its own).
     pane_place: RefCell<Option<(Target, Place)>>,
+    /// The zoom surface's size (logical) in this window and in quick look.
+    surface: Cell<(f32, f32)>,
+    surface_quick: Cell<(f32, f32)>,
+    /// The shown picture's own size, once loaded (what zooming it starts from).
+    picture_size: Cell<Option<(u32, u32)>>,
+    /// The PDF view worker, started with the first PDF page or zoom; it stays 10 s after the
+    /// preview leaves PDFs (`park_timer`).
+    pdf_worker: RefCell<Option<pdf::Worker>>,
+    park_timer: slint::Timer,
+    /// Draws the PDF's region once a drag or zoom rests.
+    settle_timer: slint::Timer,
+    /// When the wheel last turned a page.
+    turned: Cell<Option<Instant>>,
+    /// A picture is being decoded at its own size, and the one to decode after it.
+    decoding: Cell<bool>,
+    decode_next: RefCell<Option<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -373,6 +430,15 @@ impl Preview {
             room_quick: Cell::new((80, 40)),
             wrap: Cell::new(wrap),
             pane_place: RefCell::new(None),
+            surface: Cell::new((400.0, 400.0)),
+            surface_quick: Cell::new((400.0, 400.0)),
+            picture_size: Cell::new(None),
+            pdf_worker: RefCell::new(None),
+            park_timer: slint::Timer::default(),
+            settle_timer: slint::Timer::default(),
+            turned: Cell::new(None),
+            decoding: Cell::new(false),
+            decode_next: RefCell::new(None),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
         // Its own preview, not the current window's: a viewer made while a frame is drawn says
@@ -420,6 +486,17 @@ impl Preview {
                 })
             }
         });
+        let run = here.clone();
+        connect_surface(
+            &actions,
+            false,
+            Rc::new(move |f| {
+                _ = run(&|p| {
+                    f(p);
+                    true
+                })
+            }),
+        );
         actions.on_key(move |event| {
             let m = event.modifiers;
             here(&|p| p.viewer_key(&event.text, (m.control, m.alt, m.shift, m.meta), true))
@@ -489,7 +566,7 @@ impl Preview {
         // Another file: what its viewer holds goes (spec 13 §3.1). The same one keeps its place
         // (the pane was resized, the list refreshed, a log grew).
         if !same_item(&self.0.viewer_target.borrow(), &target) {
-            *self.0.viewer.borrow_mut() = Viewer::default();
+            self.drop_viewer();
         }
         *self.0.viewer_target.borrow_mut() = target.clone();
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -521,13 +598,36 @@ impl Preview {
     }
 
     /// Shows `info`, in this window too unless `main` is false (quick look scrolled).
-    fn publish_to(&self, mut info: PreviewInfo, main: bool) {
-        self.0.viewer.borrow().fill(&mut info, self.room());
+    fn publish_to(&self, info: PreviewInfo, main: bool) {
+        // Kept without the viewer's part: the next fill starts from the file's own preview
+        // (a zoomed picture's large copy is not held here once it is back to fit).
+        let mut shown = info.clone();
+        let quick = self.quick_look_open();
+        let narrow = |cell: &Cell<(f32, f32)>| cell.get().0 < NARROW;
+        let tools = |info: &PreviewInfo, cell| viewer::bar_tools(info, narrow(cell));
+        self.0.viewer.borrow().fill(&mut shown, self.room(), true);
+        shown.tools = tools(&shown, if quick { &self.0.surface_quick } else { &self.0.surface });
+        // A picture over Gezik's limits says so before any zoom.
+        if shown.bar == 5
+            && shown.bar_note.is_empty()
+            && let Some(why) = self.0.picture_size.get().and_then(viewer::too_large)
+        {
+            shown.bar_note = why.into();
+        }
         if main && let Some(window) = self.0.window.upgrade() {
-            window.set_preview(info.clone());
+            if quick {
+                // Behind quick look the pane keeps the file's own look: the zoom placed for
+                // quick look's size would show stretched there.
+                let mut pane = info.clone();
+                self.0.viewer.borrow().fill(&mut pane, self.room(), false);
+                pane.tools = tools(&pane, &self.0.surface);
+                window.set_preview(pane);
+            } else {
+                window.set_preview(shown.clone());
+            }
         }
         if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
-            quick_look.set_info(info.clone());
+            quick_look.set_info(shown);
         }
         *self.0.info.borrow_mut() = info;
     }
@@ -635,6 +735,7 @@ impl Preview {
                 actions.on_jumped(move |fraction| here(&|p| p.jump_viewer(fraction)));
                 actions.on_toggle_hex(move || here(&|p| _ = p.toggle_hex()));
                 actions.on_toggle_wrap(move || here(&Preview::toggle_wrap));
+                connect_surface(&actions, true, Rc::new(here));
                 actions.on_key(move |event| {
                     let m = event.modifiers;
                     crate::windows::with_window(id, |_| {
@@ -647,6 +748,7 @@ impl Preview {
                 actions.set_ask(actions.get_ask() + 1);
                 *self.0.quick_look.borrow_mut() = Some(quick_look);
                 self.refresh();
+                self.sync_view();
             }
             Err(err) => window.set_status(format!("Cannot open quick look: {err}").into()),
         }
@@ -667,6 +769,7 @@ impl Preview {
             self.release();
         } else if self.0.viewer.borrow().shown() {
             // Back to this window's room.
+            self.sync_view();
             self.redraw();
         }
     }
@@ -720,7 +823,7 @@ impl Preview {
     fn release(&self) {
         self.0.timer.stop();
         self.0.generation.fetch_add(1, Ordering::SeqCst);
-        *self.0.viewer.borrow_mut() = Viewer::default();
+        self.drop_viewer();
         *self.0.viewer_target.borrow_mut() = Target::Nothing;
         self.publish(PreviewInfo::default());
     }
@@ -734,6 +837,11 @@ impl Preview {
             let size = size.unwrap_or(head.len() as u64);
             let view = text::TextView::from_head(path, size, std::mem::take(head), self.0.wrap.get());
             self.0.viewer.borrow_mut().text = Some(view);
+        }
+        if let Body::Picture(_, Some(size)) = &body
+            && same_item(&self.0.viewer_target.borrow(), &target)
+        {
+            self.0.picture_size.set(Some(*size));
         }
         self.publish(describe(&target, Some(body)));
     }
@@ -829,6 +937,16 @@ impl Preview {
         (viewer.hex.is_some(), file, wrap)
     }
 
+    /// For the preview's menu: the zoom surface shown (4 a PDF, 5 a picture, 0 none) and the
+    /// bar's link ("Download", "Enter Password…"; "" none).
+    pub fn surface_state(&self) -> (i32, &'static str) {
+        if !self.surface_target() {
+            return (0, "");
+        }
+        let link = self.0.viewer.borrow().pdf.as_ref().map_or("", |pdf| pdf.note().1);
+        (if pdf_path(&self.0.viewer_target.borrow()).is_some() { 4 } else { 5 }, link)
+    }
+
     /// The viewer's own keys (spec 13 §3.2): Page Up/Down, Home/End, H, W; in the pane also
     /// the arrows, and Esc gives the keyboard back to the list.
     fn viewer_key(&self, text: &str, (ctrl, alt, shift, meta): (bool, bool, bool, bool), pane: bool) -> bool {
@@ -836,10 +954,25 @@ impl Preview {
         let Some(chord) = crate::keys::chord_from_slint(text, ctrl, alt, shift, meta, Platform::current()) else {
             return false;
         };
+        // The zoom keys by what they type (`+` is a shifted key on many layouts).
+        if !(chord.ctrl || chord.alt || chord.meta) && self.surface_target() {
+            match text {
+                "+" | "=" => return self.zoom_step(1, None),
+                "-" | "_" => return self.zoom_step(-1, None),
+                "0" => return self.fit_page(),
+                "1" => return self.zoom_actual(None),
+                _ => {}
+            }
+        }
         if chord.ctrl || chord.alt || chord.meta || chord.shift {
             return false;
         }
+        let pdf = self.0.viewer.borrow().hex.is_none() && pdf_path(&self.0.viewer_target.borrow()).is_some();
         match chord.key {
+            Key::PageDown if pdf => self.pdf_step(1, true),
+            Key::PageUp if pdf => self.pdf_step(-1, true),
+            Key::Home if pdf => self.pdf_step(-PAGE_ENDS, true),
+            Key::End if pdf => self.pdf_step(PAGE_ENDS, true),
             Key::Char('h') => self.toggle_hex(),
             Key::Char('w') if self.viewer_state().2.is_some() => {
                 self.toggle_wrap();
@@ -859,6 +992,579 @@ impl Preview {
                 }
                 used
             }
+        }
+    }
+}
+
+/// A step past either end of any document (Home, End).
+const PAGE_ENDS: i64 = 1 << 40;
+
+/// Runs its argument with this window's preview.
+type WithPreview = Rc<dyn Fn(&dyn Fn(&Preview))>;
+
+/// The zoom surface's events (spec 13 §5), from this window's pane or from quick look.
+fn connect_surface(actions: &PreviewActions, quick: bool, run: WithPreview) {
+    actions.on_surface(move |what, x, y, dx, dy| run(&|p| p.surface_event(quick, what, (x, y), (dx, dy))));
+}
+
+/// The PDF pages and the zoom surface (spec 13 §5).
+impl Preview {
+    /// One of the zoom surface's events (`PreviewActions.surface` says what each is).
+    fn surface_event(&self, quick: bool, what: i32, (x, y): (f32, f32), (dx, dy): (f32, f32)) {
+        let steps = if dx < 0.0 { -1 } else { 1 };
+        match what {
+            0 => self.surface_resized(quick, x, y),
+            1 => _ = self.pdf_step(i64::from(steps), true),
+            2 => self.ask_page(),
+            3 => _ = self.zoom_step(steps, (x >= 0.0).then_some((x, y))),
+            4 => self.fit(),
+            5 => _ = self.zoom_actual((x >= 0.0).then_some((x, y))),
+            6 => self.pan(dx, dy),
+            7 | 8 => self.wheel((dx, dy), what == 8, (x, y)),
+            9 => self.bar_link(),
+            _ => {}
+        }
+    }
+
+    /// The preview's menu: a PDF's page and the zoom (ids 2603–2610, `context_menu.rs`).
+    pub fn surface_menu(&self, id: u32) {
+        match id {
+            crate::context_menu::PREVIEW_PREVIOUS_PAGE => _ = self.pdf_step(-1, true),
+            crate::context_menu::PREVIEW_NEXT_PAGE => _ = self.pdf_step(1, true),
+            crate::context_menu::PREVIEW_GO_TO_PAGE => self.ask_page(),
+            crate::context_menu::PREVIEW_ZOOM_IN => _ = self.zoom_step(1, None),
+            crate::context_menu::PREVIEW_ZOOM_OUT => _ = self.zoom_step(-1, None),
+            crate::context_menu::PREVIEW_FIT => self.fit(),
+            crate::context_menu::PREVIEW_ACTUAL_SIZE => _ = self.zoom_actual(None),
+            crate::context_menu::PREVIEW_LINK => self.bar_link(),
+            _ => {}
+        }
+    }
+
+    /// "Go to Page…": asks for a page of the shown PDF (the window's question; no text field
+    /// of the preview's own takes keys from the list).
+    fn ask_page(&self) {
+        if !self.pdf_ready() {
+            return;
+        }
+        let (page, pages) = self.0.viewer.borrow().pdf.as_ref().map_or((1, 0), |pdf| (pdf.page, pdf.pages));
+        let message = if pages > 0 { format!("Page (1 to {pages}):") } else { "Page:".to_owned() };
+        crate::operations::with_current(|ops| {
+            ops.dialogs().ask_text("Go to Page", message, page.to_string(), &["Go", "Cancel"], |text| {
+                if let Some(text) = text {
+                    with_current(|p| p.pdf_go_to(&text));
+                }
+            });
+        });
+    }
+
+    /// Lets go of the shown file's viewer; a PDF's worker waits 10 s for the next PDF.
+    fn drop_viewer(&self) {
+        let old = std::mem::take(&mut *self.0.viewer.borrow_mut());
+        self.0.picture_size.set(None);
+        self.0.settle_timer.stop();
+        if old.pdf.is_some() {
+            self.park_pdf();
+        }
+    }
+
+    fn park_pdf(&self) {
+        {
+            let mut worker = self.0.pdf_worker.borrow_mut();
+            let Some(worker) = worker.as_mut() else { return };
+            if worker.parked.is_none() {
+                // Its document's memory goes now; the process when the time is up.
+                worker.send(Command::Close);
+                worker.parked = Some(Instant::now());
+            }
+        }
+        // A little past the time: a timer that fires a moment early still finds it over.
+        self.0.park_timer.start(
+            slint::TimerMode::SingleShot,
+            pdf::PARK + Duration::from_millis(50),
+            crate::windows::bind_mut(|| {
+                with_current(Preview::park_check);
+            }),
+        );
+    }
+
+    fn park_check(&self) {
+        let parked = self.0.pdf_worker.borrow().as_ref().and_then(|w| w.parked);
+        if self.0.viewer.borrow().pdf.is_none() && pdf::park_over(parked, Instant::now()) {
+            *self.0.pdf_worker.borrow_mut() = None;
+        }
+    }
+
+    /// Physical pixels per logical one where the preview is seen.
+    fn scale_factor(&self) -> f32 {
+        if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            return quick_look.scale_factor();
+        }
+        self.0.window.upgrade().map_or(1.0, |w| w.window().scale_factor())
+    }
+
+    /// The zoom surface's size in physical pixels where it is seen.
+    fn surface_px(&self) -> (f32, f32) {
+        let (w, h) = if self.quick_look_open() { self.0.surface_quick.get() } else { self.0.surface.get() };
+        let sf = self.scale_factor();
+        (w * sf, h * sf)
+    }
+
+    fn surface_resized(&self, quick: bool, w: f32, h: f32) {
+        let cell = if quick { &self.0.surface_quick } else { &self.0.surface };
+        let old = cell.replace((w, h));
+        if old == (w, h) {
+            return;
+        }
+        if quick == self.quick_look_open() && self.0.viewer.borrow().shown() {
+            self.sync_view();
+        } else if (old.0 < NARROW) != (w < NARROW) {
+            // The bar narrows or widens.
+            self.redraw();
+        }
+    }
+
+    /// The PDF or picture follows the surface's size where it is seen now.
+    // shortcut: a PDF's 100% keeps the scale it was made at; a quick look on a screen of
+    // another scale shows it larger or smaller (remake the view's unit if that matters).
+    fn sync_view(&self) {
+        let (view, sf) = (self.surface_px(), self.scale_factor());
+        {
+            let mut v = self.0.viewer.borrow_mut();
+            let v = &mut *v;
+            if let Some(pdf) = v.pdf.as_mut() {
+                pdf.zoom.set_view(view);
+                pdf.scale_factor = sf;
+            } else if let Some(picture) = v.picture.as_mut() {
+                picture.zoom.set_view(view);
+                picture.scale_factor = sf;
+            } else {
+                return;
+            }
+        }
+        self.redraw();
+        self.settle();
+    }
+
+    /// Draws the PDF's region once things rest.
+    fn settle(&self) {
+        if self.0.viewer.borrow().pdf.is_some() {
+            self.0.settle_timer.start(
+                slint::TimerMode::SingleShot,
+                SETTLE,
+                crate::windows::bind_mut(|| {
+                    with_current(Preview::pdf_render);
+                }),
+            );
+        }
+    }
+
+    /// The shown item is a PDF or a picture, with nothing else (text, hex) over it.
+    fn surface_target(&self) -> bool {
+        let v = self.0.viewer.borrow();
+        v.hex.is_none()
+            && v.text.is_none()
+            && (pdf_path(&self.0.viewer_target.borrow()).is_some() || self.0.picture_size.get().is_some())
+    }
+
+    /// The shown PDF's viewer, made on its first use; false when the shown item is no PDF.
+    fn pdf_ready(&self) -> bool {
+        if self.0.viewer.borrow().pdf.is_some() {
+            return true;
+        }
+        let Some(path) = pdf_path(&self.0.viewer_target.borrow()) else { return false };
+        if self.0.viewer.borrow().hex.is_some() {
+            return false;
+        }
+        if gezik_platform::only_in_cloud(&path) {
+            // Reading it would download it.
+            if let Some(window) = self.0.window.upgrade() {
+                window.set_status("This file is only in the cloud: it is not read".into());
+            }
+            return false;
+        }
+        let view = PdfView::new(path.clone(), self.scale_factor(), self.surface_px());
+        self.0.viewer.borrow_mut().pdf = Some(view);
+        self.find_pdfium(path);
+        true
+    }
+
+    /// Looks for pdfium off the UI thread (a file system look; the hint runs programs).
+    fn find_pdfium(&self, path: PathBuf) {
+        let data = data_dir();
+        let window_id = crate::windows::current();
+        std::thread::spawn(move || {
+            let library = gezik_batch::tools::find(gezik_core::batch::tools::Tool::Pdfium, &data, None);
+            let hint = if library.is_none() { gezik_platform::http::tool_missing_hint() } else { None };
+            crate::windows::post(window_id, move || {
+                with_current(|p| p.pdfium_found(&path, library, hint));
+            });
+        });
+    }
+
+    fn pdfium_found(&self, path: &Path, library: Option<PathBuf>, hint: Option<String>) {
+        let open = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(pdf) = v.pdf.as_mut().filter(|pdf| pdf.path == path) else { return };
+            match library {
+                Some(library) => {
+                    pdf.state = State::Opening;
+                    Some(Command::Open { library, pdf: path.to_path_buf() })
+                }
+                None => {
+                    pdf.set_stuck(State::NoPdfium(hint));
+                    None
+                }
+            }
+        };
+        if let Some(open) = open {
+            self.pdf_send(open);
+        }
+        self.redraw();
+    }
+
+    /// Sends `command` for the shown PDF, starting the worker if there is none.
+    fn pdf_send(&self, command: Command) {
+        self.0.park_timer.stop();
+        let id = {
+            let mut worker = self.0.pdf_worker.borrow_mut();
+            if worker.is_none() {
+                *worker = self.start_pdf_worker();
+            }
+            worker.as_mut().and_then(|w| {
+                w.parked = None;
+                w.send(command)
+            })
+        };
+        if id.is_none() {
+            *self.0.pdf_worker.borrow_mut() = None;
+        }
+        if let Some(pdf) = self.0.viewer.borrow_mut().pdf.as_mut() {
+            match id {
+                Some(id) => pdf.wanted = id,
+                None => pdf.set_stuck(State::Failed),
+            }
+        }
+    }
+
+    fn start_pdf_worker(&self) -> Option<pdf::Worker> {
+        let window_id = crate::windows::current();
+        let deliver = move |id, event| {
+            crate::windows::post(window_id, move || {
+                with_current(|p| p.pdf_event(id, event));
+            });
+        };
+        let started = std::env::current_exe()
+            .and_then(|exe| pdf::Worker::start(&exe, &[gezik_batch::pdf::view::VIEW_ARG], pdf::LIMIT, deliver));
+        started.map_err(|err| eprintln!("gezik: cannot start the PDF view worker: {err}")).ok()
+    }
+
+    /// What the worker said: for the newest command of the shown PDF, or that it stopped.
+    fn pdf_event(&self, id: u64, event: pdf::Event) {
+        let mut render = false;
+        if let pdf::Event::Died(why) = &event {
+            eprintln!("gezik: the PDF view worker stopped: {why}");
+            // Only the one that stopped (a new one may have started since): the PDF it had
+            // open failed; another shown PDF opens again with a new worker.
+            let dead = self.0.pdf_worker.borrow().as_ref().filter(|w| w.ended()).map(|w| w.opened.clone());
+            let Some(opened) = dead else { return };
+            *self.0.pdf_worker.borrow_mut() = None;
+            let again = self.0.viewer.borrow_mut().pdf.as_mut().and_then(|pdf| {
+                let again = pdf.worker_died(opened.as_deref());
+                again.then(|| pdf.path.clone())
+            });
+            if let Some(path) = again {
+                self.find_pdfium(path);
+            }
+            return self.redraw();
+        }
+        {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(pdf) = v.pdf.as_mut().filter(|pdf| pdf.wanted == id) else {
+                drop(v);
+                return self.redraw();
+            };
+            match event {
+                pdf::Event::Reply(Reply::Pages(pages)) => {
+                    pdf.pages = pages;
+                    pdf.page = pdf.page.min(pages);
+                    pdf.state = State::Ready;
+                    render = true;
+                }
+                pdf::Event::Reply(Reply::NeedsPassword) => pdf.state = State::Password { wrong: false },
+                pdf::Event::Reply(Reply::WrongPassword) => pdf.state = State::Password { wrong: true },
+                pdf::Event::Reply(Reply::Failed(why)) => {
+                    eprintln!("gezik: the PDF could not be shown: {why}");
+                    if crate::pdf::says_pdfium_failed(&why) {
+                        // A broken library: ended, so a new download can replace its file.
+                        pdf.set_stuck(State::BrokenPdfium);
+                        *self.0.pdf_worker.borrow_mut() = None;
+                    } else if pdf.state == State::Ready {
+                        // One page (a damaged one, a scale out of range): the rest still shows.
+                        pdf.page_failed = true;
+                    } else {
+                        pdf.set_stuck(State::Failed);
+                    }
+                }
+                pdf::Event::Picture { page_size, picture } => {
+                    let first = pdf.sized != pdf.page;
+                    pdf.take_picture(page_size, picture);
+                    // The page's size is known now: its region at the zoom asked.
+                    render = first && pdf.zoom.fit != Fit::Page;
+                }
+                pdf::Event::Reply(Reply::Image { .. }) | pdf::Event::Died(_) => {}
+            }
+        }
+        if render {
+            self.pdf_render();
+        }
+        self.redraw();
+    }
+
+    /// Asks for the shown page's visible region (or the whole page, while its size is not
+    /// known).
+    fn pdf_render(&self) {
+        let command = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(pdf) = v.pdf.as_mut().filter(|pdf| pdf.state == State::Ready) else { return };
+            let command = pdf.next_render();
+            if let Command::Render { scale, x, y, w, h, .. } = command {
+                pdf.asked = (scale, (x, y, w, h));
+            }
+            command
+        };
+        self.pdf_send(command);
+    }
+
+    /// `step` pages on (the view at the page's top, or its bottom going back with the wheel);
+    /// whether the shown item is a PDF.
+    fn pdf_step(&self, step: i64, top: bool) -> bool {
+        if !self.pdf_ready() {
+            return false;
+        }
+        let moved = self.0.viewer.borrow_mut().pdf.as_mut().is_some_and(|pdf| pdf.step(step, top));
+        if moved {
+            self.0.settle_timer.stop();
+            self.pdf_render();
+            self.redraw();
+        }
+        true
+    }
+
+    /// The page typed in the bar's field.
+    fn pdf_go_to(&self, text: &str) {
+        let Ok(page) = text.trim().parse::<u32>() else { return self.redraw() };
+        let now = self.0.viewer.borrow().pdf.as_ref().map_or(1, |pdf| pdf.page);
+        if !self.pdf_step(i64::from(page) - i64::from(now), true) || page == now {
+            self.redraw();
+        }
+    }
+
+    /// The shown picture's zoom view, made on first use (its own size decoded on a thread
+    /// when not too large); false when the shown item is no loaded picture.
+    fn picture_ready(&self) -> bool {
+        if self.0.viewer.borrow().picture.is_some() {
+            return true;
+        }
+        let Some(size) = self.0.picture_size.get() else { return false };
+        let Target::Entry { path, .. } = self.0.viewer_target.borrow().clone() else { return false };
+        let view = PictureView::new(size, self.scale_factor(), self.surface_px());
+        let decode = view.too_large.is_none();
+        self.0.viewer.borrow_mut().picture = Some(view);
+        if decode {
+            self.decode_full(path);
+        }
+        true
+    }
+
+    /// Decodes `path` at its own size on a thread, one at a time: while one runs, only the
+    /// newest picture waits (older ones are skipped).
+    fn decode_full(&self, path: PathBuf) {
+        if self.0.decoding.replace(true) {
+            *self.0.decode_next.borrow_mut() = Some(path);
+            return;
+        }
+        let window_id = crate::windows::current();
+        std::thread::spawn(move || {
+            // Straight into the picture's buffer: no third copy.
+            let full =
+                gezik_platform::decode_image_into(&path, SharedPixelBuffer::<Rgba8Pixel>::new, |b| b.make_mut_bytes());
+            crate::windows::post(window_id, move || {
+                with_current(|p| p.picture_decoded(&path, full.ok()));
+            });
+        });
+    }
+
+    fn picture_decoded(&self, path: &Path, full: Option<SharedPixelBuffer<Rgba8Pixel>>) {
+        self.0.decoding.set(false);
+        let shown = |path: &Path| matches!(&*self.0.viewer_target.borrow(), Target::Entry { path: p, .. } if p == path);
+        let shown_now = shown(path);
+        if let (Some(picture), Some(full)) = (self.0.viewer.borrow_mut().picture.as_mut().filter(|_| shown_now), full) {
+            picture.full = Some(Image::from_rgba8(full));
+        }
+        let next = self.0.decode_next.take();
+        let waiting = self.0.viewer.borrow().picture.as_ref().is_some_and(|p| p.full.is_none());
+        if let Some(next) = next.filter(|next| waiting && shown(next)) {
+            self.decode_full(next);
+        }
+        self.redraw();
+    }
+
+    /// Runs `f` on the shown PDF's or picture's zoom (making its viewer first), then shows it;
+    /// whether there is one.
+    fn with_zoom(&self, f: impl FnOnce(&mut ZoomView)) -> bool {
+        if !(self.surface_target() && (self.pdf_ready() || self.picture_ready())) {
+            return false;
+        }
+        {
+            let mut v = self.0.viewer.borrow_mut();
+            let v = &mut *v;
+            let zoom = match (v.pdf.as_mut(), v.picture.as_mut()) {
+                (Some(pdf), _) => &mut pdf.zoom,
+                (_, Some(picture)) => &mut picture.zoom,
+                _ => return true,
+            };
+            f(zoom);
+        }
+        self.redraw();
+        self.settle();
+        true
+    }
+
+    fn zoom_step(&self, steps: i32, at: Option<(f32, f32)>) -> bool {
+        let sf = self.scale_factor();
+        self.with_zoom(|zoom| {
+            let anchor = at.map_or_else(|| zoom.middle(), |(x, y)| (x * sf, y * sf));
+            zoom.zoom(steps, anchor);
+        })
+    }
+
+    /// 100% around `at` (a double click) or the middle.
+    fn zoom_actual(&self, at: Option<(f32, f32)>) -> bool {
+        let sf = self.scale_factor();
+        self.with_zoom(|zoom| {
+            let anchor = at.map_or_else(|| zoom.middle(), |(x, y)| (x * sf, y * sf));
+            zoom.fit_at(Fit::Zoom(1.0), anchor);
+        })
+    }
+
+    /// `0`: the whole page; a picture back to its fitted preview (its large copy goes).
+    fn fit_page(&self) -> bool {
+        if self.0.viewer.borrow_mut().picture.take().is_some() {
+            self.redraw();
+            return true;
+        }
+        // Asked first: the borrow must be gone before `with_zoom` borrows it mutably.
+        let pdf = self.0.viewer.borrow().pdf.is_some();
+        pdf && self.with_zoom(|zoom| zoom.fit_to(Fit::Page))
+    }
+
+    /// The bar's Fit: a PDF goes between the whole page and its width; a picture back to fit.
+    fn fit(&self) {
+        let pdf_fit = self.0.viewer.borrow().pdf.as_ref().map(|pdf| pdf.zoom.fit);
+        match pdf_fit {
+            Some(Fit::Page) => _ = self.with_zoom(|zoom| zoom.fit_to(Fit::Width)),
+            Some(_) => _ = self.with_zoom(|zoom| zoom.fit_to(Fit::Page)),
+            None => _ = self.fit_page(),
+        }
+    }
+
+    /// A drag moved the surface by `dx`, `dy` logical pixels.
+    fn pan(&self, dx: f32, dy: f32) {
+        let sf = self.scale_factor();
+        let moved = {
+            let mut v = self.0.viewer.borrow_mut();
+            let v = &mut *v;
+            match (v.pdf.as_mut(), v.picture.as_mut()) {
+                (Some(pdf), _) => pdf.zoom.pan(dx * sf, dy * sf),
+                (_, Some(picture)) => picture.zoom.pan(dx * sf, dy * sf),
+                _ => false,
+            }
+        };
+        if moved {
+            self.redraw();
+            self.settle();
+        }
+    }
+
+    /// The wheel over the surface: with Ctrl (⌘) it zooms around the pointer; on a PDF it
+    /// scrolls the page and at its end turns it; on a zoomed picture it scrolls.
+    fn wheel(&self, (dx, dy): (f32, f32), zoom: bool, at: (f32, f32)) {
+        if zoom {
+            if dy != 0.0 {
+                self.zoom_step(if dy > 0.0 { 1 } else { -1 }, Some(at));
+            }
+            return;
+        }
+        let pdf_scrolls = self.0.viewer.borrow().pdf.as_ref().map(|pdf| pdf.zoom.can_scroll(dy));
+        let is_pdf = pdf_path(&self.0.viewer_target.borrow()).is_some();
+        if pdf_scrolls == Some(true) || (!is_pdf && self.0.viewer.borrow().picture.is_some()) {
+            return self.pan(dx, dy);
+        }
+        // A PDF's first look (no viewer yet) is not turned by the wheel: nothing starts by itself.
+        if !is_pdf || dy == 0.0 || pdf_scrolls.is_none() || self.0.turned.get().is_some_and(|t| t.elapsed() < TURN_GAP)
+        {
+            return;
+        }
+        self.0.turned.set(Some(Instant::now()));
+        if dy < 0.0 {
+            self.pdf_step(1, true);
+        } else {
+            self.pdf_step(-1, false);
+        }
+    }
+
+    /// pdfium was downloaded: the shown PDF `path` looks for it again.
+    fn look_again(&self, path: &Path) {
+        if let Some(pdf) = self.0.viewer.borrow_mut().pdf.as_mut().filter(|pdf| pdf.path == path) {
+            pdf.state = State::Finding;
+        } else {
+            return;
+        }
+        self.find_pdfium(path.to_path_buf());
+        self.redraw();
+    }
+
+    /// The bar's link: download pdfium, or the PDF's password.
+    fn bar_link(&self) {
+        let (path, state) = {
+            let v = self.0.viewer.borrow();
+            let Some(pdf) = v.pdf.as_ref() else { return };
+            (pdf.path.clone(), pdf.state.clone())
+        };
+        match state {
+            State::BrokenPdfium => {
+                let again = Rc::new(move || with_current(|p| p.look_again(&path)).unwrap_or_default());
+                crate::archives::with_current(|archives| archives.offer_pdfium(true, None, again, None));
+            }
+            State::NoPdfium(hint) => {
+                let again = Rc::new(move || with_current(|p| p.look_again(&path)).unwrap_or_default());
+                crate::archives::with_current(|archives| archives.offer_pdf_pages(hint, again));
+            }
+            State::Password { wrong } => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let message = if wrong {
+                    "Wrong password. Try again:".to_owned()
+                } else {
+                    format!("{name} is encrypted. Password:")
+                };
+                crate::operations::with_current(|ops| {
+                    ops.dialogs().ask_secret("Password", message, &["Open", "Cancel"], move |text| {
+                        let Some(text) = text else { return };
+                        with_current(|p| {
+                            if let Some(pdf) = p.0.viewer.borrow_mut().pdf.as_mut().filter(|pdf| pdf.path == path) {
+                                pdf.state = State::Opening;
+                            } else {
+                                return;
+                            }
+                            // Only in the command on its way to the worker; never kept.
+                            p.pdf_send(Command::Password(text));
+                            p.redraw();
+                        });
+                    });
+                });
+            }
+            _ => {}
         }
     }
 }
@@ -1083,7 +1789,7 @@ Some folders could not be read"
     fn the_viewer_fills_the_bar_and_rows_and_leaves_an_unused_preview_alone() {
         use slint::Model;
         let mut info = PreviewInfo::default();
-        Viewer::default().fill(&mut info, (80, 40));
+        Viewer::default().fill(&mut info, (80, 40), true);
         let d = PreviewInfo::default();
         assert!(
             info.rows == d.rows && info.bar == 0 && info.scroll_size == d.scroll_size,
@@ -1091,12 +1797,12 @@ Some folders could not be read"
         );
         let file = entry(PathBuf::from("/x/a.rs"), false);
         let mut info = describe(&file, Some(Body::Picture(SharedPixelBuffer::new(2, 2), None)));
-        Viewer::default().fill(&mut info, (80, 40));
+        Viewer::default().fill(&mut info, (80, 40), true);
         assert_eq!(info.bar, 3, "a file offers Hex");
         let text = text::TextView::from_head(Path::new("/x/a.rs"), 9, "fn x\ny\n".into(), (true, false));
-        let viewer = Viewer { text: Some(text), hex: None };
+        let viewer = Viewer { text: Some(text), ..Viewer::default() };
         let mut info = describe(&file, Some(Body::Text(String::new())));
-        viewer.fill(&mut info, (80, 40));
+        viewer.fill(&mut info, (80, 40), true);
         assert_eq!((info.bar, info.gutter, info.bar_text.as_str(), info.wrap), (1, 1, "2 lines", false));
         assert_eq!(info.rows.row_count(), 2);
         let first = info.rows.row_data(0).unwrap();
@@ -1107,13 +1813,99 @@ Some folders could not be read"
     fn the_viewer_goes_back_to_a_place_and_knows_its_widest_row() {
         use slint::Model;
         let text = text::TextView::from_head(Path::new("/x/a.txt"), 12, "a\nbbbb\nc\nd\n".into(), (false, false));
-        let mut viewer = Viewer { text: Some(text), hex: None };
+        let mut viewer = Viewer { text: Some(text), ..Viewer::default() };
         let place = viewer.place();
         viewer.scroll(2, (80, 2));
         viewer.set_place(place);
         let mut info = PreviewInfo::default();
-        viewer.fill(&mut info, (80, 2));
+        viewer.fill(&mut info, (80, 2), true);
         assert_eq!(info.rows.row_data(0).unwrap().number.as_str(), "1", "back at the top");
         assert_eq!(info.max_cols, 4, "bbbb");
+    }
+
+    #[test]
+    fn the_preview_has_no_text_field_of_its_own() {
+        // The window's key router gives a field its editing keys (Ctrl+A, Ctrl+C, arrows…) only
+        // for the fields it knows (path box, search, filter, dialogs): a text field in the
+        // preview would lose Ctrl+A to "select all files". The page is asked by a question.
+        let pane = include_str!("../../ui/widgets/preview-pane.slint");
+        for field in ["TextField", "TextInput", "LineEdit", "TextEdit"] {
+            assert!(!pane.contains(field), "{field} in the preview pane");
+        }
+    }
+
+    #[test]
+    fn a_picture_over_the_decode_limit_says_its_size_and_a_pdf_is_never_text() {
+        let dir = temp("limits");
+        let wide = dir.join("wide.png");
+        image::GrayImage::new(gezik_platform::MAX_DECODE_SIDE + 8, 4).save(&wide).unwrap();
+        if let Body::Picture(_, size) = load(&entry(wide, false), 64) {
+            assert_eq!(size, Some((gezik_platform::MAX_DECODE_SIDE + 8, 4)), "its own size, from its header");
+        }
+        let pdf = dir.join("plain.pdf");
+        std::fs::write(
+            &pdf,
+            "%PDF-1.4
+1 0 obj << /Type /Catalog >> endobj
+",
+        )
+        .unwrap();
+        assert!(!matches!(load(&entry(pdf.clone(), false), 64), Body::Text(_)));
+        let renamed = dir.join("plain.txt");
+        std::fs::rename(&pdf, &renamed).unwrap();
+        assert!(!matches!(load(&entry(renamed, false), 64), Body::Text(_)), "%PDF- however it is named");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_pdf_offers_its_pages_and_a_picture_its_zoom_and_fit_lets_the_large_copy_go() {
+        let pdf = entry(PathBuf::from("/x/a.PDF"), false);
+        let mut info = describe(&pdf, Some(Body::Picture(SharedPixelBuffer::new(2, 2), None)));
+        Viewer::default().fill(&mut info, (80, 40), true);
+        assert_eq!((info.bar, info.page, info.zoom_text.as_str(), info.zoomed), (4, 1, "Fit", false));
+        {
+            use slint::Model;
+            let texts =
+                |narrow| viewer::bar_tools(&info, narrow).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+            assert_eq!(texts(false), ["Hex", "‹", "1", "›", "−", "+", "Fit"], "Fit once");
+            assert_eq!(texts(true), ["‹", "1", "›", "−", "+", "Fit"], "narrow: no Hex, no figure");
+            let mut zoomed = info.clone();
+            zoomed.zoom_text = "125%".into();
+            assert_eq!(viewer::bar_tools(&zoomed, true).row_count(), 6);
+            assert_eq!(viewer::bar_tools(&zoomed, false).row_data(5).unwrap().text.as_str(), "125%");
+            let mut locked = info.clone();
+            locked.bar_link = "Enter Password…".into();
+            let locked =
+                |narrow| viewer::bar_tools(&locked, narrow).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+            assert_eq!(locked(true), ["Enter Password…"], "locked: the note gets the room");
+            assert_eq!(locked(false), ["Enter Password…", "Hex"]);
+        }
+        // A 4000 × 3000 photo shown from its 1024 px preview.
+        let photo = entry(PathBuf::from("/x/p.jpg"), false);
+        let base = describe(&photo, Some(Body::Picture(SharedPixelBuffer::new(1024, 768), Some((4000, 3000)))));
+        let mut info = base.clone();
+        Viewer::default().fill(&mut info, (80, 40), true);
+        assert_eq!((info.bar, info.page), (5, 0));
+        let mut view = PictureView::new((4000, 3000), 1.0, (400.0, 300.0));
+        assert_eq!(view.too_large, None);
+        view.full = Some(Image::from_rgba8(SharedPixelBuffer::new(4000, 3000)));
+        view.zoom.fit_to(Fit::Zoom(1.0));
+        let viewer = Viewer { picture: Some(view), ..Viewer::default() };
+        let mut info = base.clone();
+        viewer.fill(&mut info, (80, 40), true);
+        assert!(info.zoomed && info.zoom_text == "100%" && info.picture.size().width == 4000);
+        assert_eq!((info.pic_w, info.pic_h), (4000.0, 3000.0), "one picture pixel a physical pixel");
+        // Back to fit: filled from the file's own preview again, the large copy is not held.
+        let mut info = base;
+        Viewer::default().fill(&mut info, (80, 40), true);
+        assert!(!info.zoomed && info.picture.size().width == 1024);
+        // Past 48 MP only the preview is zoomed.
+        assert_eq!(viewer::too_large((8000, 6100)).as_deref(), Some("Too large to zoom (49 MP)"));
+        assert_eq!(viewer::too_large((8000, 6000)), None);
+        assert_eq!(
+            viewer::too_large((8200, 6200)).as_deref(),
+            Some("Too large to zoom (8200 × 6200, over 8192 px a side)"),
+            "Gezik does not decode it at all"
+        );
     }
 }
