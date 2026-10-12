@@ -173,9 +173,10 @@ impl Palette {
         for name in crate::convert::command_names() {
             add(Kind::Command, name.clone(), name.clone(), String::new(), Target::Command(name));
         }
+        // Actions like `tag-1…7` (remembered as `action:toggle-tag:Red`), named by the tag.
         for tag in crate::tags::list() {
-            let title = format!("Toggle Tag: {}", tag.name);
-            add(Kind::Command, title.clone(), title, String::new(), Target::ToggleTag(tag.name.into()));
+            let (id, title) = (format!("toggle-tag:{}", tag.name), format!("Toggle Tag: {}", tag.name));
+            add(Kind::Action, id, title, String::new(), Target::ToggleTag(tag.name.into()));
         }
         let resident = crate::resident::status();
         for command in crate::integration::Command::ALL.into_iter().filter(|c| c.applies(&resident)) {
