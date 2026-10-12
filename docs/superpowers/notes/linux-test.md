@@ -704,6 +704,10 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 266. **Ctrl+, and one line.** As macOS 365–367 with Ctrl+, (and the View button's Settings…), `~/.config/gezik/settings.toml` and `diff`; on Wayland and on X11 the theme list and the right-click menu open under the row and a second click closes them.
 267. **Orca.** As macOS 368 with Orca on GNOME: a row's control reads its title and value.
 
+### 14b, the shortcuts page
+
+268. **Set Key… on GNOME and KDE.** As macOS 369 with Ctrl+Alt+K and Ctrl+W. Then Set Key… and a Super combination (Super+E): the line at the bottom says the Windows (Super) key is the system's; if the desktop takes the key first (the Activities overview opens), write that down. With a layout that has AltGr (Turkish Q, German): AltGr+Q (`@`) is refused, not taken as Ctrl+Alt+Q.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
