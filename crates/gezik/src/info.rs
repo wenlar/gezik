@@ -68,6 +68,8 @@ struct Loaded {
     names: Option<Names>,
     /// macOS and Linux, one file: the apps that open it.
     apps: Vec<AppChoice>,
+    /// One file: its metadata (spec 13 §7.4).
+    fields: gezik_core::fields::Fields,
 }
 
 fn load(paths: &[PathBuf], names: bool) -> Loaded {
@@ -96,7 +98,11 @@ fn load(paths: &[PathBuf], names: bool) -> Loaded {
         }
         _ => Vec::new(),
     };
-    Loaded { unreadable: paths.len() - items.len(), items, acl, times, names, apps }
+    let fields = match items.as_slice() {
+        [(path, e)] if !e.is_dir => gezik_batch::fields::read(path, gezik_core::fields::FieldSet::ALL, &|| false),
+        _ => gezik_core::fields::Fields::default(),
+    };
+    Loaded { unreadable: paths.len() - items.len(), items, acl, times, names, apps, fields }
 }
 
 struct State {
@@ -108,6 +114,7 @@ struct State {
     acl: bool,
     times: [Option<SystemTime>; 3],
     apps: Vec<AppChoice>,
+    fields: gezik_core::fields::Fields,
     size: String,
     note: (String, bool),
     /// This window's jobs and what each was to change.
@@ -231,6 +238,7 @@ impl Info {
                 state.acl = loaded.acl;
                 state.times = loaded.times;
                 state.apps = loaded.apps;
+                state.fields = loaded.fields;
             }
             return self.show(true);
         };
@@ -244,6 +252,7 @@ impl Info {
             acl: loaded.acl,
             times: loaded.times,
             apps: loaded.apps,
+            fields: loaded.fields,
             size: "Size: calculating…".to_owned(),
             note: unreadable_note(loaded.unreadable),
             jobs: Vec::new(),
@@ -277,6 +286,7 @@ impl Info {
         window.set_info_view(InfoView {
             title: title(&state.items).into(),
             general: general_text(&state.items, state.times, &state.size).into(),
+            properties: crate::preview::fields::model(crate::preview::fields::rows(&state.fields)),
             perms,
             perms_enabled,
             ids_enabled,

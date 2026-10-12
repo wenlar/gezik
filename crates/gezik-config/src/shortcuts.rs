@@ -442,12 +442,18 @@ pub enum Action {
     /// Removes, when the user says so, the tag store's entries of files that are gone (spec 12
     /// §7.4).
     CleanTagStore,
+    /// The preview of the selected file as hex, or back (spec 13 §4.4; no key).
+    PreviewHex,
+    /// The selected video or sound file plays in the preview, or pauses (spec 13 §6; no key).
+    PreviewPlay,
+    /// The metadata fields to show as columns (spec 13 §8.1; no key).
+    MoreColumns,
     /// The settings window (spec 14 §4).
     Settings,
 }
 
 impl Action {
-    pub const ALL: [Action; 125] = [
+    pub const ALL: [Action; 128] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -572,6 +578,9 @@ impl Action {
         Action::ClearTags,
         Action::EditComment,
         Action::CleanTagStore,
+        Action::PreviewHex,
+        Action::PreviewPlay,
+        Action::MoreColumns,
         Action::Settings,
     ];
 
@@ -701,6 +710,9 @@ impl Action {
             Action::ClearTags => "clear-tags",
             Action::EditComment => "edit-comment",
             Action::CleanTagStore => "clean-tag-store",
+            Action::PreviewHex => "preview-hex",
+            Action::PreviewPlay => "preview-play",
+            Action::MoreColumns => "more-columns",
             Action::Settings => "settings",
         }
     }
@@ -844,6 +856,9 @@ impl Action {
             Action::ClearTags => "Clear Tags",
             Action::EditComment => "Comment…",
             Action::CleanTagStore => "Clean Up Tag Store…",
+            Action::PreviewHex => "Show Preview as Hex",
+            Action::PreviewPlay => "Play/Pause Preview",
+            Action::MoreColumns => "More Columns…",
             Action::Settings => "Settings…",
         }
     }
@@ -1068,7 +1083,10 @@ impl Action {
                 | Action::SplitFile
                 | Action::JoinFiles
                 | Action::EditComment
-                | Action::CleanTagStore,
+                | Action::CleanTagStore
+                | Action::PreviewHex
+                | Action::PreviewPlay
+                | Action::MoreColumns,
                 _,
             ) => &[],
             // Finder's ⌃1…⌃7 and ⌃0 on macOS; elsewhere Ctrl+digit is a tab, Alt+digit a pin and
@@ -2296,6 +2314,19 @@ refresh = [\"f5\", \"ctrl+r\"]
             assert_eq!(key.key, Key::Char(','));
             assert_eq!(shortcuts.action_for(&key), Some(Action::Settings), "no other action has it");
             assert_eq!(fixed_owner(&key, platform), None);
+        }
+    }
+
+    #[test]
+    fn the_preview_hex_action_has_no_key() {
+        assert_eq!(Action::from_name("preview-hex"), Some(Action::PreviewHex));
+        assert_eq!(Action::PreviewHex.title(), "Show Preview as Hex");
+        assert_eq!(Action::from_name("preview-play"), Some(Action::PreviewPlay));
+        assert_eq!(Action::PreviewPlay.title(), "Play/Pause Preview");
+        assert_eq!(Action::from_name("more-columns"), Some(Action::MoreColumns));
+        assert_eq!(Action::MoreColumns.title(), "More Columns…");
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::PreviewHex), None, "spec 13 §10.2");
         }
     }
 }

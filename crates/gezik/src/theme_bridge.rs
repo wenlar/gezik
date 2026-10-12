@@ -90,6 +90,12 @@ pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     global.set_overlay(color(c.overlay));
     global.set_scrollbar(color(c.scrollbar));
     global.set_scrollbar_hover(color(c.scrollbar_hover));
+    global.set_syntax_keyword(color(c.syntax_keyword));
+    global.set_syntax_type(color(c.syntax_type));
+    global.set_syntax_string(color(c.syntax_string));
+    global.set_syntax_number(color(c.syntax_number));
+    global.set_syntax_comment(color(c.syntax_comment));
+    global.set_syntax_tag(color(c.syntax_tag));
 
     let m = &theme.metrics;
     global.set_font_family(m.font_family.as_str().into());

@@ -255,6 +255,8 @@ pub enum ColumnKey {
     /// The row's stars and comment (spec 12 §8.2).
     Rating,
     Comment,
+    /// A metadata field (spec 13 §8.1), read only for the rows on screen.
+    Field(crate::fields::FieldId),
 }
 
 impl ColumnKey {
@@ -292,11 +294,16 @@ impl ColumnKey {
             ColumnKey::Tags => "tags",
             ColumnKey::Rating => "rating",
             ColumnKey::Comment => "comment",
+            ColumnKey::Field(id) => id.def().key,
         }
     }
 
+    /// A column's name, or a field's key (`artist`).
     pub fn parse(text: &str) -> Option<ColumnKey> {
-        ColumnKey::RESULTS.into_iter().find(|k| k.as_str() == text)
+        ColumnKey::RESULTS
+            .into_iter()
+            .find(|k| k.as_str() == text)
+            .or_else(|| crate::fields::by_key(text).map(ColumnKey::Field))
     }
 
     pub fn title(self) -> &'static str {
@@ -310,6 +317,7 @@ impl ColumnKey {
             ColumnKey::Tags => "Tags",
             ColumnKey::Rating => "Rating",
             ColumnKey::Comment => "Comment",
+            ColumnKey::Field(id) => id.def().label,
         }
     }
 
@@ -325,11 +333,12 @@ impl ColumnKey {
             ColumnKey::Match | ColumnKey::Comment => SortKey::Name,
             ColumnKey::Tags => SortKey::Tags,
             ColumnKey::Rating => SortKey::Rating,
+            ColumnKey::Field(id) => SortKey::Field(id),
         }
     }
 
     /// The column's number in the UI: 0 is Name, then 1–4 the folder columns, 5 Folder, 6 Match,
-    /// 7 Tags, 8 Rating, 9 Comment.
+    /// 7 Tags, 8 Rating, 9 Comment, a field [`FIELD_INDEX`] + its place in the registry.
     pub fn index(self) -> i32 {
         match self {
             ColumnKey::Modified => 1,
@@ -341,6 +350,7 @@ impl ColumnKey {
             ColumnKey::Tags => 7,
             ColumnKey::Rating => 8,
             ColumnKey::Comment => 9,
+            ColumnKey::Field(id) => FIELD_INDEX + id.number(),
         }
     }
 
@@ -354,9 +364,15 @@ impl ColumnKey {
             ColumnKey::Tags => 160,
             ColumnKey::Rating => 90,
             ColumnKey::Comment => 200,
+            ColumnKey::Field(id) => u32::from(id.def().width),
         }
     }
 }
+
+/// Where the fields' column numbers start (`ColumnKey::index`); 7–15 stay for other columns.
+pub const FIELD_INDEX: i32 = 16;
+/// At most this many field columns in a list (spec 13 §8.1, decision 24).
+pub const MAX_FIELD_COLUMNS: usize = 8;
 
 pub const MIN_COLUMN_WIDTH: u32 = 50;
 pub const MAX_COLUMN_WIDTH: u32 = 600;
@@ -383,15 +399,49 @@ pub fn default_columns() -> Vec<ColumnState> {
 }
 
 /// `saved` (from `state.toml`, possibly edited by hand) made complete: every column once,
-/// in display order, widths within range; missing columns get their defaults.
+/// in display order, widths within range; missing columns get their defaults. Field columns
+/// follow in their saved order, each once, at most [`MAX_FIELD_COLUMNS`].
 pub fn normalize_columns(saved: &[ColumnState]) -> Vec<ColumnState> {
-    default_columns()
+    with_fields(default_columns(), saved)
+}
+
+fn with_fields(defaults: Vec<ColumnState>, saved: &[ColumnState]) -> Vec<ColumnState> {
+    let width = |c: &ColumnState| ColumnState { width: c.width.clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH), ..*c };
+    let mut out: Vec<ColumnState> = defaults
         .into_iter()
-        .map(|default| match saved.iter().find(|c| c.key == default.key) {
-            Some(c) => ColumnState { width: c.width.clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH), ..*c },
-            None => default,
-        })
-        .collect()
+        .map(|default| saved.iter().find(|c| c.key == default.key).map_or(default, width))
+        .collect();
+    for c in saved.iter().filter(|c| matches!(c.key, ColumnKey::Field(_))) {
+        if !out.iter().any(|o| o.key == c.key) && field_columns(&out) < MAX_FIELD_COLUMNS {
+            out.push(width(c));
+        }
+    }
+    out
+}
+
+/// How many field columns `columns` has.
+pub fn field_columns(columns: &[ColumnState]) -> usize {
+    columns.iter().filter(|c| matches!(c.key, ColumnKey::Field(_))).count()
+}
+
+/// Field `id`'s column shown: made visible, or added at the end (`false` when the list has
+/// [`MAX_FIELD_COLUMNS`] already).
+pub fn show_field(columns: &mut Vec<ColumnState>, id: crate::fields::FieldId) -> bool {
+    let key = ColumnKey::Field(id);
+    if let Some(c) = columns.iter_mut().find(|c| c.key == key) {
+        c.visible = true;
+        return true;
+    }
+    if field_columns(columns) >= MAX_FIELD_COLUMNS {
+        return false;
+    }
+    columns.push(ColumnState { key, visible: true, width: key.default_width() });
+    true
+}
+
+/// Field `id`'s column taken out of the list (a hidden field column is not kept).
+pub fn hide_field(columns: &mut Vec<ColumnState>, id: crate::fields::FieldId) {
+    columns.retain(|c| c.key != ColumnKey::Field(id));
 }
 
 /// The search results' columns: Folder, Match, Modified and Size shown (spec 4.5).
@@ -408,13 +458,7 @@ pub fn default_result_columns() -> Vec<ColumnState> {
 
 /// [`normalize_columns`] for the results' columns.
 pub fn normalize_result_columns(saved: &[ColumnState]) -> Vec<ColumnState> {
-    default_result_columns()
-        .into_iter()
-        .map(|default| match saved.iter().find(|c| c.key == default.key) {
-            Some(c) => ColumnState { width: c.width.clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH), ..*c },
-            None => default,
-        })
-        .collect()
+    with_fields(default_result_columns(), saved)
 }
 
 #[cfg(test)]
@@ -527,5 +571,31 @@ mod tests {
         assert_eq!(normal[0], ColumnState { key: ColumnKey::Folder, visible: false, width: MIN_COLUMN_WIDTH });
         assert_eq!(normal.len(), ColumnKey::RESULTS.len());
         assert_eq!(normalize_columns(&saved), default_columns(), "a folder list never gets them");
+    }
+
+    #[test]
+    fn field_columns_round_trip_and_stop_at_eight() {
+        use crate::fields::{self, ARTIST, DURATION};
+        let artist = ColumnKey::Field(ARTIST);
+        assert_eq!(ColumnKey::parse("artist"), Some(artist));
+        assert_eq!((artist.as_str(), artist.title()), ("artist", "Artist"));
+        assert_eq!(artist.sort_key(), SortKey::Field(ARTIST));
+        assert_eq!(artist.index(), FIELD_INDEX + ARTIST.number());
+        assert_eq!(ColumnKey::parse("colour"), None);
+        let mut columns = default_columns();
+        assert!(show_field(&mut columns, DURATION) && show_field(&mut columns, ARTIST));
+        assert!(show_field(&mut columns, ARTIST), "already there");
+        assert_eq!(field_columns(&columns), 2);
+        assert_eq!(normalize_columns(&columns), columns, "kept, in their order");
+        hide_field(&mut columns, DURATION);
+        assert_eq!(columns.last().map(|c| c.key), Some(artist));
+        let many: Vec<ColumnState> =
+            fields::all().map(|id| ColumnState { key: ColumnKey::Field(id), visible: true, width: 9000 }).collect();
+        let normal = normalize_columns(&many);
+        assert_eq!(field_columns(&normal), MAX_FIELD_COLUMNS);
+        assert!(normal.iter().all(|c| c.width <= MAX_COLUMN_WIDTH));
+        let mut full = normal.clone();
+        assert!(!show_field(&mut full, crate::fields::WORDS), "a ninth is refused");
+        assert_eq!(field_columns(&normalize_result_columns(&many)), MAX_FIELD_COLUMNS, "results too");
     }
 }

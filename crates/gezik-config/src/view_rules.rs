@@ -42,7 +42,7 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
     if path.is_none() && kind.is_none() && content.is_none() {
         return Err("needs path, kind or content".to_owned());
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\" or \"rating\"";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)";
     let set = RuleView {
         mode: text(table, "mode")?.map(mode_of).transpose()?,
         // `folder` is the search results' own sort, as in [view].
@@ -54,7 +54,7 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
             .transpose()?,
         group: text(table, "group")?
             .map(|t| {
-                choice(t, "group", "\"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\"", GroupBy::parse)
+                choice(t, "group", "\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)", GroupBy::parse)
             })
             .transpose()?,
         grid_size: text(table, "grid-size")?
@@ -125,7 +125,7 @@ fn mode_of(text: &str) -> Result<ViewMode, String> {
 fn columns_of(value: &toml::Value) -> Result<Columns, String> {
     let bad = || {
         format!(
-            "columns: expected a list of modified, created, type, size, folder, match, tags, rating or comment, got {value}"
+            "columns: expected a list of modified, created, type, size, folder, match, tags, rating, comment or properties (artist, duration…), got {value}"
         )
     };
     let items = value.as_array().ok_or_else(bad)?;
@@ -212,6 +212,34 @@ mod tests {
         let (named, warnings) = parse("[[view-rules]]\npath = \"~/Projects/**\"\nmode = \"columns\"\n");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(named[0].set.mode, Some(ViewMode::Columns));
+        // Properties (spec 13 §8.2): columns, sort and group by a field's key.
+        let (music, warnings) = parse(
+            "[[view-rules]]
+path = \"~/Music/**\"
+columns = [\"artist\", \"album\", \"track\", \"duration\"]
+             sort = \"track\"
+group = \"album\"
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        use gezik_core::fields::{ALBUM, ARTIST, DURATION, TRACK};
+        let fields = [ARTIST, ALBUM, TRACK, DURATION].map(ColumnKey::Field);
+        assert_eq!(music[0].set.columns, Some(Columns::of(&fields)));
+        assert_eq!((music[0].set.sort, music[0].set.group), (Some(SortKey::Field(TRACK)), Some(GroupBy::Field(ALBUM))));
+        let (_, warnings) = parse(
+            "[[view-rules]]
+kind = \"trash\"
+group = \"duration\"
+",
+        );
+        assert!(warnings[0].contains("group: expected"), "a number does not group: {warnings:?}");
+        let (_, warnings) = parse(
+            "[[view-rules]]
+kind = \"trash\"
+columns = [\"artsit\"]
+",
+        );
+        assert!(warnings[0].contains("columns: expected"), "an unknown name: {warnings:?}");
     }
 
     #[test]

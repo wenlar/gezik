@@ -40,7 +40,7 @@ pub(crate) fn builtin_source(id: &str) -> Option<&'static str> {
 macro_rules! theme_colors {
     ($($(#[$doc:meta])* $field:ident = $key:literal,)*) => {
         /// Every color a theme can set, as written in `[colors]`.
-        pub const COLOR_KEYS: [&str; 43] = [$($key),*];
+        pub const COLOR_KEYS: [&str; 49] = [$($key),*];
 
         #[derive(Debug, Clone, Default, PartialEq)]
         pub struct ThemeColors {
@@ -126,6 +126,13 @@ theme_colors! {
     overlay = "overlay",
     scrollbar = "scrollbar",
     scrollbar_hover = "scrollbar-hover",
+    /// The preview's code colors (spec 13 §4.3).
+    syntax_keyword = "syntax-keyword",
+    syntax_type = "syntax-type",
+    syntax_string = "syntax-string",
+    syntax_number = "syntax-number",
+    syntax_comment = "syntax-comment",
+    syntax_tag = "syntax-tag",
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -433,13 +440,28 @@ file-icon = \"blue\"
     }
 
     #[test]
+    fn code_colors_are_readable_on_the_preview() {
+        use crate::theme_rules::contrast;
+        for id in ["dark", "light", "classic-dark", "classic-light"] {
+            let theme = resolve_theme(id, &HashMap::new(), &mut Vec::new()).unwrap();
+            let c = &theme.colors;
+            for key in COLOR_KEYS.iter().filter(|k| k.starts_with("syntax-")) {
+                for ground in [c.background, c.surface] {
+                    let ratio = contrast(c.get(key), ground);
+                    assert!(ratio >= 4.5, "{id} {key}: {ratio:.2}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn builtin_themes_define_every_value() {
         for id in ["dark", "light", "classic-dark", "classic-light"] {
             let (theme, warnings) = parse(builtin_source(id).unwrap());
             let theme = theme.unwrap();
             assert!(warnings.is_empty(), "{id}: {warnings:?}");
             assert_eq!(theme.colors.len(), COLOR_KEYS.len(), "{id}");
-            assert_eq!(COLOR_KEYS.len(), 43);
+            assert_eq!(COLOR_KEYS.len(), 49);
             assert_eq!(theme.numbers.len(), METRIC_RANGES.len(), "{id}");
             assert!(theme.font_family.is_some(), "{id}");
             assert!(theme.base.is_none(), "{id}");

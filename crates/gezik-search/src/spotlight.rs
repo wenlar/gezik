@@ -73,7 +73,10 @@ pub fn search(
         let name = name.to_string_lossy().into_owned();
         let is_dir = meta.is_dir();
         let size = if meta.is_file() { meta.len() } else { 0 };
-        if !query.passes(&name, is_dir, size, meta.modified().ok()) || !query.passes_meta(|| path.clone()) {
+        if !query.passes(&name, is_dir, size, meta.modified().ok())
+            || !query.passes_meta(|| path.clone())
+            || !query.passes_fields(&name, is_dir, crate::query::field_reader(&path, cancel))
+        {
             continue;
         }
         if found.len() >= query.max_results() {

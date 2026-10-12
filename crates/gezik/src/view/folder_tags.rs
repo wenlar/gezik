@@ -246,20 +246,25 @@ impl View {
         move |e: &Entry| known.as_ref().and_then(|f| f.of(&e.name)).map(|m| m.rating)
     }
 
-    /// What `pattern` and the `tag:` words `terms` let through of `full` (the entries of `dir`);
-    /// rows whose tags are on their way pass.
+    /// What `pattern`, the `tag:` words `terms` and the property words `fields` (spec 13 §8.3)
+    /// let through of `full` (the entries of `dir`); rows whose tags or fields are on their way
+    /// pass.
     pub(super) fn filter_files(
         &self,
         dir: &Path,
         full: &Rc<Vec<Entry>>,
         pattern: &Pattern,
         terms: &[TagTerm],
+        fields: &[gezik_core::field_filter::FieldTerm],
     ) -> (Listing, Option<Vec<usize>>) {
-        if terms.is_empty() {
+        if terms.is_empty() && fields.is_empty() {
             return filtered_with(dir, full, pattern, None);
         }
-        let known = self.0.data.borrow().folder_tags.clone().filter(|f| f.dir == dir);
-        let keep = |e: &Entry| known.as_ref().and_then(|f| f.of(&e.name)).is_none_or(|meta| matches(terms, meta));
+        let known = self.0.data.borrow().folder_tags.clone().filter(|f| f.dir == dir && !terms.is_empty());
+        let by_fields = self.field_filter(dir, fields);
+        let keep = |e: &Entry| {
+            known.as_ref().and_then(|f| f.of(&e.name)).is_none_or(|meta| matches(terms, meta)) && by_fields(e)
+        };
         filtered_with(dir, full, pattern, Some(&keep))
     }
 }
@@ -390,9 +395,9 @@ mod tests {
         assert_eq!(shown(&view), ["c.txt", "a.txt", "b.txt"], "most stars first, not rated last");
         let terms = gezik_core::meta_filter::split("rating:>=2").1;
         let full = view.0.data.borrow().full.clone();
-        let (listing, _) = view.filter_files(Path::new("/x"), &full, &Pattern::default(), &terms);
+        let (listing, _) = view.filter_files(Path::new("/x"), &full, &Pattern::default(), &terms, &[]);
         assert_eq!(listing.len(), 2, "b.txt has no stars");
-        let (none, _) = view.filter_files(Path::new("/x"), &full, &Pattern::default(), &[TagTerm::Unrated]);
+        let (none, _) = view.filter_files(Path::new("/x"), &full, &Pattern::default(), &[TagTerm::Unrated], &[]);
         assert_eq!(none.len(), 1);
     }
 
@@ -406,6 +411,7 @@ mod tests {
             &view.0.data.borrow().full.clone(),
             &Pattern::default(),
             &[TagTerm::Named("Red".into())],
+            &[],
         );
         assert_eq!(listing.len(), 2, "not read yet: shown");
         assert!(view.0.data.borrow().folder_tags.as_ref().unwrap().faint.get());

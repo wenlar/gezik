@@ -103,9 +103,51 @@ pub fn decode(bytes: &[u8], ansi: impl Fn(&[u8]) -> Option<String>) -> Option<St
     })
 }
 
+/// East Asian wide and emoji ranges: two columns in a fixed-width font.
+const WIDE: [(u32, u32); 14] = [
+    (0x1100, 0x115F),
+    (0x2E80, 0x303E),
+    (0x3041, 0x33FF),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xA000, 0xA4CF),
+    (0xAC00, 0xD7A3),
+    (0xF900, 0xFAFF),
+    (0xFE30, 0xFE4F),
+    (0xFF00, 0xFF60),
+    (0xFFE0, 0xFFE6),
+    (0x1F300, 0x1F64F),
+    (0x1F900, 0x1F9FF),
+    (0x20000, 0x3FFFD),
+];
+
+/// Columns `c` takes in a fixed-width font (the preview's text, spec 13 §4.2): 0 for combining
+/// marks and zero-width characters, 2 for wide East Asian characters and emoji, else 1.
+pub fn display_width(c: char) -> usize {
+    let c = u32::from(c);
+    if (0x300..0x370).contains(&c) || (0x200B..=0x200F).contains(&c) || (0xFE00..=0xFE0F).contains(&c) {
+        0
+    } else if WIDE.iter().any(|&(first, last)| (first..=last).contains(&c)) {
+        2
+    } else {
+        1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_characters_take_two_columns() {
+        let width = |s: &str| s.chars().map(display_width).sum::<usize>();
+        assert_eq!(width("Satır"), 5);
+        assert_eq!(width("日本語"), 6);
+        assert_eq!(width("한글"), 4);
+        assert_eq!(width("😀"), 2);
+        assert_eq!(width("e\u{301}"), 1, "a combining accent");
+        assert_eq!(width("ｶ"), 1, "half-width katakana");
+    }
 
     fn none(_: &[u8]) -> Option<String> {
         None

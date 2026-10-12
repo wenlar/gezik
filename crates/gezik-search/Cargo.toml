@@ -10,6 +10,8 @@ gezik-core.workspace = true
 gezik-platform.workspace = true
 # The checksum core (duplicates read files with it, spec 11 §9.2).
 gezik-ops.workspace = true
+# The metadata field readers: a search's Properties (spec 13 §9.1, decision 27).
+gezik-batch.workspace = true
 # gezik-batch's regex features plus the Unicode classes (p{L}, p{Latin}) and the fast engines
 # ("perf": content search), which the RAR build (unrar-ng) already links into the app.
 regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl", "unicode-gencat", "unicode-script"] }

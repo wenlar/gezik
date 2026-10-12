@@ -22,6 +22,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use crate::tags::RowMeta;
 use std::time::SystemTime;
 
+use gezik_core::fields::{FieldSet, Fields};
 use gezik_platform::{IconTarget, Rgba};
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -35,6 +36,8 @@ const MISSING_COST: usize = 64;
 const MAX_PLAIN_FOLDERS: usize = 10_000;
 /// Rows whose tags are known; forgotten wholesale beyond this many.
 const MAX_TAGGED: usize = 50_000;
+/// Rows whose fields are known; forgotten wholesale beyond this many.
+const MAX_FIELD_ROWS: usize = 50_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MediaKey {
@@ -71,11 +74,18 @@ pub enum MediaKey {
     Tags {
         path: PathBuf,
     },
+    /// A row's metadata fields for the field columns (spec 13 §7.5): only rows on screen ask,
+    /// only for the fields not read yet.
+    Fields {
+        path: PathBuf,
+        want: FieldSet,
+    },
 }
 
 impl MediaKey {
+    /// Thumbnails and fields (a file's own bytes) wait on their own thread, behind no icon.
     fn slow(&self) -> bool {
-        matches!(self, MediaKey::Thumbnail { .. })
+        matches!(self, MediaKey::Thumbnail { .. } | MediaKey::Fields { .. })
     }
 }
 
@@ -86,6 +96,7 @@ pub enum Outcome {
     /// A folder without a custom icon: the generic folder icon applies.
     PlainFolder,
     Tags(Arc<RowMeta>),
+    Fields(Fields),
     Nothing,
 }
 
@@ -121,6 +132,10 @@ fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
         MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
         MediaKey::Tags { path } if wanted() => Outcome::Tags(Arc::new(crate::tags::read_for_rows(path))),
         MediaKey::Tags { .. } => Outcome::Nothing,
+        MediaKey::Fields { path, want } if wanted() => {
+            Outcome::Fields(gezik_batch::fields::read(path, *want, &|| !wanted()))
+        }
+        MediaKey::Fields { .. } => Outcome::Nothing,
     }
 }
 
@@ -217,6 +232,9 @@ impl<K: Eq + Hash + Clone, V: Clone> ByteLru<K, V> {
 
 /// A row's meta and the generation it was read in.
 type ReadTags = (u64, Arc<RowMeta>);
+/// A row's fields once read: the generation they were read in, which fields were read, and the
+/// values found.
+type ReadFields = (u64, FieldSet, Rc<Fields>);
 
 type ReadyListener = Rc<dyn Fn(&[usize], Ready)>;
 
@@ -237,6 +255,10 @@ struct Inner {
     /// an older one is still drawn (no flicker) but read again.
     tags: RefCell<HashMap<PathBuf, ReadTags>>,
     tags_generation: Cell<u64>,
+    /// Each row's fields once read, by path (spec 13 §7.5): an older generation's are still
+    /// drawn (no flicker) but read again; a wider set reads only the missing fields.
+    fields: RefCell<HashMap<PathBuf, ReadFields>>,
+    fields_generation: Cell<u64>,
     /// The keys queued or loading, each with its job's flag.
     pending: RefCell<HashMap<MediaKey, Wanted>>,
     clients: RefCell<Vec<Weak<Client>>>,
@@ -290,6 +312,8 @@ impl Media {
                 plain_folders: RefCell::default(),
                 tags: RefCell::default(),
                 tags_generation: Cell::new(0),
+                fields: RefCell::default(),
+                fields_generation: Cell::new(0),
                 pending: RefCell::default(),
                 clients: RefCell::default(),
             }),
@@ -386,7 +410,7 @@ impl Media {
             MediaKey::ExtIcon { .. } | MediaKey::GenericFolder { .. } => self.shared.shared.borrow().get(key).cloned(),
             MediaKey::FolderIcon { .. } | MediaKey::PathIcon { .. } => self.shared.paths.borrow_mut().get(key),
             MediaKey::Thumbnail { .. } => self.shared.thumbnails.borrow_mut().get(key),
-            MediaKey::TypeName { .. } | MediaKey::Tags { .. } => None,
+            MediaKey::TypeName { .. } | MediaKey::Tags { .. } | MediaKey::Fields { .. } => None,
         }
     }
 
@@ -420,10 +444,44 @@ impl Media {
         self.shared.tags_generation.set(generation + 1);
     }
 
+    /// `path`'s values of `want` as far as read: those of an older generation, or of fewer
+    /// fields, until the read asked for here (only the missing fields) lands and redraws entry
+    /// `entry`. `None` while nothing was read.
+    pub fn fields(&self, path: PathBuf, want: FieldSet, entry: usize) -> Option<Rc<Fields>> {
+        let found = self.shared.fields.borrow().get(&path).cloned();
+        let generation = self.shared.fields_generation.get();
+        let missing = match &found {
+            Some((g, read, _)) if *g == generation => want.without(*read),
+            _ => want,
+        };
+        if !missing.is_empty() {
+            self.request(MediaKey::Fields { path, want: missing }, Some(entry));
+        }
+        found.map(|(_, _, values)| values)
+    }
+
+    /// Only what is already known; asks for nothing (an export).
+    pub fn known_fields(&self, path: &std::path::Path) -> Option<Rc<Fields>> {
+        self.shared.fields.borrow().get(path).map(|(_, _, values)| values.clone())
+    }
+
+    /// Every row's fields read again when next drawn (a listing shown, F5, a change seen);
+    /// those already old once are dropped, so the cache holds two listings' at most.
+    pub fn forget_fields(&self) {
+        let generation = self.shared.fields_generation.get();
+        self.shared.fields.borrow_mut().retain(|_, (g, ..)| *g == generation);
+        self.shared.fields_generation.set(generation + 1);
+    }
+
     /// How many requests are queued or loading (tests).
     #[cfg(test)]
     pub fn pending(&self) -> usize {
         self.shared.pending.borrow().len()
+    }
+
+    #[cfg(test)]
+    pub fn is_pending(&self, key: &MediaKey) -> bool {
+        self.shared.pending.borrow().contains_key(key)
     }
 
     fn store(&self, key: MediaKey, picture: Option<Image>, bytes: usize) {
@@ -435,7 +493,7 @@ impl Media {
                 self.shared.paths.borrow_mut().insert(key, picture, bytes)
             }
             MediaKey::Thumbnail { .. } => self.shared.thumbnails.borrow_mut().insert(key, picture, bytes),
-            MediaKey::TypeName { .. } | MediaKey::Tags { .. } => {}
+            MediaKey::TypeName { .. } | MediaKey::Tags { .. } | MediaKey::Fields { .. } => {}
         }
     }
 
@@ -499,6 +557,26 @@ impl Media {
         }
     }
 
+    /// `values` of fields `want` were read for `path`: added to what this generation read of it,
+    /// else in place of an older one's.
+    fn merge_fields(&self, path: &std::path::Path, want: FieldSet, values: Fields) {
+        let generation = self.shared.fields_generation.get();
+        let mut known = self.shared.fields.borrow_mut();
+        let merged = match known.get(path) {
+            Some((g, read, old)) if *g == generation && !old.is_empty() => {
+                let mut all: Vec<_> = old.iter().map(|(id, v)| (id, v.clone())).collect();
+                all.extend(values.iter().map(|(id, v)| (id, v.clone())));
+                (read.with(want), Rc::new(Fields::new(all)))
+            }
+            Some((g, read, _)) if *g == generation => (read.with(want), Rc::new(values)),
+            _ => (want, Rc::new(values)),
+        };
+        if known.len() >= MAX_FIELD_ROWS {
+            known.clear();
+        }
+        known.insert(path.to_path_buf(), (generation, merged.0, merged.1));
+    }
+
     /// A worker's result, on the UI thread. Results no longer wanted (an older generation)
     /// only fill the caches, and not with a miss.
     pub fn finish(&self, wanted: &AtomicBool, key: MediaKey, outcome: Outcome) {
@@ -521,6 +599,13 @@ impl Media {
                     known.clear();
                 }
                 known.insert(path.clone(), (self.shared.tags_generation.get(), tags));
+                Ready::Picture
+            }
+            (MediaKey::Fields { path, want }, Outcome::Fields(values)) => {
+                // An older listing's read may be of a file since changed: not kept.
+                if current {
+                    self.merge_fields(path, *want, values);
+                }
                 Ready::Picture
             }
             (MediaKey::FolderIcon { path, .. }, Outcome::PlainFolder) => {

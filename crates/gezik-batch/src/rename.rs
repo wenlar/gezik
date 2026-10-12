@@ -5,7 +5,8 @@ use regex::{Regex, RegexBuilder};
 use gezik_core::batch::case::{Lang, convert};
 use gezik_core::batch::date::{DateParts, format as format_date};
 use gezik_core::batch::rules::{CleanRule, ExtensionRule, NumberAt, NumberRule, Rule, RuleEntry};
-use gezik_core::batch::template::{Piece, parse as parse_template, uses_taken};
+use gezik_core::batch::template::{Piece, bare, needed, parse as parse_template, safe_part};
+use gezik_core::fields::{self as f, FieldSet, Fields, Value};
 use gezik_core::format_size;
 use gezik_core::ops::names::{NameError, NameRules, split_name, validate_name};
 
@@ -20,8 +21,8 @@ pub struct Item {
     pub folder: usize,
     pub size: u64,
     pub modified: Option<DateParts>,
-    /// From EXIF, once read.
-    pub taken: Option<DateParts>,
+    /// The metadata fields the rules use (`{taken}`, `{artist}`), once read.
+    pub fields: Fields,
 }
 
 enum Ready {
@@ -38,7 +39,8 @@ enum Ready {
 pub struct Compiled {
     ready: Vec<Ready>,
     errors: Vec<Option<String>>,
-    taken: bool,
+    fields: FieldSet,
+    bare: FieldSet,
 }
 
 impl Compiled {
@@ -51,19 +53,25 @@ impl Compiled {
         self.errors.iter().all(Option::is_none)
     }
 
-    /// Some rule uses `{taken}`: the EXIF dates must be read.
-    pub fn needs_taken(&self) -> bool {
-        self.taken
+    /// The fields the rules use (`{taken}`, `{artist}`): they must be read.
+    pub fn needs_fields(&self) -> FieldSet {
+        self.fields
+    }
+
+    /// The fields used without a `|` text: an item that has no value for one is warned about.
+    pub fn bare_fields(&self) -> FieldSet {
+        self.bare
     }
 }
 
 pub fn compile(rules: &[RuleEntry]) -> Compiled {
-    let mut compiled = Compiled { ready: Vec::new(), errors: Vec::new(), taken: false };
+    let mut compiled = Compiled { ready: Vec::new(), errors: Vec::new(), fields: FieldSet::NONE, bare: FieldSet::NONE };
     for entry in rules {
         let ready = if entry.enabled { ready(&entry.rule) } else { Ok(None) };
         match ready {
-            Ok(Some((ready, taken))) => {
-                compiled.taken |= taken;
+            Ok(Some((ready, (fields, bare)))) => {
+                compiled.fields = compiled.fields.with(fields);
+                compiled.bare = compiled.bare.with(bare);
                 compiled.ready.push(ready);
                 compiled.errors.push(None);
             }
@@ -74,7 +82,12 @@ pub fn compile(rules: &[RuleEntry]) -> Compiled {
     compiled
 }
 
-fn ready(rule: &Rule) -> Result<Option<(Ready, bool)>, String> {
+/// The fields a rule uses, and those of them without a `|` text.
+type Uses = (FieldSet, FieldSet);
+
+/// A rule made ready, with the fields it uses.
+fn ready(rule: &Rule) -> Result<Option<(Ready, Uses)>, String> {
+    let none = (FieldSet::NONE, FieldSet::NONE);
     Ok(Some(match rule {
         Rule::Replace(r) => {
             if r.find.is_empty() {
@@ -88,22 +101,22 @@ fn ready(rule: &Rule) -> Result<Option<(Ready, bool)>, String> {
                 .map_err(|err| last_line(&err.to_string()))?;
             // Plain text is put in as written: `$` means nothing there.
             let with = if r.regex { r.with.clone() } else { r.with.replace('$', "$$") };
-            (Ready::Replace { regex, with, all: r.all }, false)
+            (Ready::Replace { regex, with, all: r.all }, none)
         }
-        Rule::Number(n) => (Ready::Number(n.clone()), false),
-        Rule::Case(mode) => (Ready::Case(*mode), false),
+        Rule::Number(n) => (Ready::Number(n.clone()), none),
+        Rule::Case(mode) => (Ready::Case(*mode), none),
         Rule::AddText { prefix, suffix } => {
             let (prefix, suffix) = (parse_template(prefix)?, parse_template(suffix)?);
-            let taken = uses_taken(&prefix) || uses_taken(&suffix);
-            (Ready::AddText { prefix, suffix }, taken)
+            let uses = (needed(&prefix).with(needed(&suffix)), bare(&prefix).with(bare(&suffix)));
+            (Ready::AddText { prefix, suffix }, uses)
         }
-        Rule::Extension(e) => (Ready::Extension(e.clone()), false),
+        Rule::Extension(e) => (Ready::Extension(e.clone()), none),
         Rule::Template(text) => {
             let pieces = parse_template(text)?;
-            let taken = uses_taken(&pieces);
-            (Ready::Template(pieces), taken)
+            let uses = (needed(&pieces), bare(&pieces));
+            (Ready::Template(pieces), uses)
         }
-        Rule::Clean(c) => (Ready::Clean(*c), false),
+        Rule::Clean(c) => (Ready::Clean(*c), none),
     }))
 }
 
@@ -138,11 +151,19 @@ fn render(pieces: &[Piece], name: &str, ext: &str, cx: &Context<'_>) -> String {
                 }
             }
             Piece::Taken(format) => {
-                if let Some(date) = cx.item.taken.as_ref().or(cx.item.modified.as_ref()) {
+                let taken = match cx.item.fields.get(f::TAKEN) {
+                    Some(Value::Date(date)) => Some(date),
+                    _ => None,
+                };
+                if let Some(date) = taken.or(cx.item.modified.as_ref()) {
                     out.push_str(&format_date(format, date));
                 }
             }
             Piece::Size => out.push_str(&format_size(cx.item.size)),
+            Piece::Field { id, arg, fallback } => match cx.item.fields.get(*id) {
+                Some(value) => out.push_str(&safe_part(&f::name_text(*id, value, arg.as_deref()))),
+                None => out.push_str(fallback.as_deref().unwrap_or_default()),
+            },
         }
     }
     out
@@ -369,18 +390,42 @@ mod tests {
     fn templates_and_add_text() {
         let date = DateParts { year: 2024, month: 7, day: 1, hour: 9, minute: 30, second: 0 };
         let mut list = items(&["IMG_1.jpg", "IMG_2.jpg"]);
-        list[0].taken = Some(date);
+        list[0].fields = Fields::new(vec![(f::TAKEN, Value::Date(date))]);
         list[1].modified = Some(DateParts { day: 2, ..date });
         let entries = vec![
             RuleEntry::new(Rule::Template("{taken:%Y-%m-%d} {parent} {n:02}".into())),
             RuleEntry::new(Rule::AddText { prefix: "[".into(), suffix: "] {ext}".into() }),
         ];
         let compiled = compile(&entries);
-        assert!(compiled.needs_taken());
+        assert_eq!(compiled.needs_fields(), FieldSet::of(&[f::TAKEN]));
         assert_eq!(
             new_names(&list, &compiled, false, Lang::Other),
             ["[2024-07-01 Tatil 01] jpg.jpg", "[2024-07-02 Tatil 02] jpg.jpg"]
         );
+    }
+
+    #[test]
+    fn metadata_fields_fill_names_safely() {
+        let mut list = items(&["01.mp3", "02.mp3", "03.mp3"]);
+        list[0].fields = Fields::new(vec![
+            (f::TRACK, Value::Int(7)),
+            (f::ARTIST, Value::Text("Tarkan".into())),
+            (f::TITLE, Value::Text("Şımarık".into())),
+            (f::DURATION, Value::Duration(205_000)),
+        ]);
+        list[1].fields = Fields::new(vec![(f::TRACK, Value::Int(12)), (f::ARTIST, Value::Text("../../x".into()))]);
+        let template = "{track:02} {artist|Unknown} - {title} {duration}";
+        let compiled = compile(&[RuleEntry::new(Rule::Template(template.into()))]);
+        assert!(compiled.ok());
+        assert_eq!(compiled.needs_fields(), FieldSet::of(&[f::TRACK, f::ARTIST, f::TITLE, f::DURATION]));
+        assert_eq!(compiled.bare_fields(), FieldSet::of(&[f::TRACK, f::TITLE, f::DURATION]));
+        let new = new_names(&list, &compiled, false, Lang::Other);
+        assert_eq!(new, ["07 Tarkan - Şımarık 3m25s.mp3", "12 _.._x -  .mp3", " Unknown -  .mp3"]);
+        assert!(new.iter().all(|n| !n.contains(['/', '\\'])), "a tag never leaves the folder");
+        let statuses = check(&list, &new, &|_, _| false, NameRules::Unix, false);
+        assert_eq!(statuses[1], Status::Changed);
+        let bad = compile(&[RuleEntry::new(Rule::Template("{artist:2}".into()))]);
+        assert_eq!(bad.errors()[0].as_deref(), Some("{artist} takes no format"));
     }
 
     #[test]

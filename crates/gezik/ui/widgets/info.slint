@@ -2,12 +2,15 @@ import { Theme } from "../theme.slint";
 import { TextButton } from "text-button.slint";
 import { TextField } from "text-field.slint";
 import { Check } from "check.slint";
+import { PropRow, PropRows } from "preview-pane.slint";
 
 // What the Info window shows (info.rs fills it).
 export struct InfoView {
     title: string,
     // Kind, size, where and dates, a line each.
     general: string,
+    // One file's metadata under their group headings (spec 13 §7.4), as the preview shows them.
+    properties: [PropRow],
     // Read, write, execute of the owner, the group, everyone: 0 off, 1 on, 2 mixed, box `i` in
     // base-3 digit `i` (an int, not a model: a new model type costs exe size).
     perms: int,
@@ -117,6 +120,9 @@ export component InfoLayer inherits Rectangle {
                     text: root.view.general;
                     wrap: word-wrap;
                     color: Theme.foreground-muted;
+                }
+                PropRows {
+                    rows: root.view.properties;
                 }
                 Text {
                     text: "Sharing & Permissions";

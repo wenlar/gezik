@@ -535,7 +535,10 @@ fn candidates(
             entry.modified = meta.modified().ok();
             entry.created = entry.created.or_else(|| meta.created().ok());
         }
-        if query.passes(&entry.name, entry.is_dir, entry.size, entry.modified) && query.passes_meta(|| path.clone()) {
+        if query.passes(&entry.name, entry.is_dir, entry.size, entry.modified)
+            && query.passes_meta(|| path.clone())
+            && query.passes_fields(&entry.name, entry.is_dir, crate::query::field_reader(&path, cancel))
+        {
             out.push((path, entry));
         }
     }

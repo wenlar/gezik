@@ -2665,6 +2665,23 @@ Gözlemler (hata değil):
 - Gözden geçirme düzeltmeleri (7 hata, her biri testli): sürücüler arası taşınan klasörün `Created { from }`'u yalnız klasörün kendi kaydını düşürür (iptalde geride kalan dosyalarınki kalır); bir işin yeniden adlandırmaları birlikte uygulanır (`Store::rename_all`: a↔b, 1→2→3 etiket karıştırmaz); kayıt tutmayan sürücüde (vfat, exFAT, NFS) dosyanın kendi kaydı okunmaz, `ENOTSUP` boş sayılır; klasöre kendi kaydı yazılınca içindekilerin merkezi kayıtları silinmez (`Store::remove`); eşitlemenin üzerine yazması etiketi geçici adla değil son adla taşır, kopya hedefin yolunda kalmış eski dosyanın kaydını düşürür (kopya/taşıma "Replace" de); iki taraf da dosya kimliği biliyorsa ve farklıysa kayıt o dosyaya ait sayılmaz; ikili plist en çok 1.000 dizgi ve 64 KB çözer. Ayrıca: klasörün birimi 5 sn sonra yeniden sorulur (aynı harfle takılan başka USB), boş akış yazılabilir, dosya başına en çok 40 etiket (akış < 16 KB; aşılırsa yazılmaz), ad ve yorumda denetim karakteri yok (U+001F dahil), Linux/macOS puanı yalnız yıldız değişince yazılır (Baloo'nun 7'si kalır), `refind` kimlikle de olsa aynı boyut ve zaman ister.
 - Bilinen sınır: yönetici yardımcısının yaptığı işlerin (`Outcome::AsAdmin`) etiketleri `follow`/`carry` görmez; yönetici olarak taşınan/kopyalanan dosyanın merkezi kaydı izlemez (NTFS akışı ve xattr'lar sistemle zaten gider).
 
+## Adım 13, alt parça 13a (Görüntüleyici, metin, hex) sonrası
+
+- Önizleme `preview/` modülüne bölündü (`mod.rs` bugünkü kod; `viewer.rs`, `text.rs`, `hex.rs`, `scroller.rs`). Tek sahipli `Viewer` (metin görünümü ve üstünde hex): hedef (yol, boyut, tarih) değişince, önizleme kapanınca bırakılır; aynı hedefte (bölme genişliği, liste yenileme) yeri korunur.
+- Metin: işçinin okuduğu ilk 64 KB hemen satır görünümü olur (numaralı, renkli). Başın sonuna kayınca (ya da End, kaydırma çubuğu) dosya ≤ 2 MB ise tamamı bellekte, büyükse 64 KB'lık pencerelerle bayt konumundan sayfalı; aynı satırda kalınır. Sayfalı dosya açık tutulmaz (her okuma ayrı açılır), satır numarası ve renk yok (`Plain text: the file is larger than 2 MB`), çubukta `2.8 GB · 37%`. UTF-8 pencerede karakter, UTF-16'da çift bayt ve vekil çifti bölünmez; ANSI kod sayfası korunur.
+- Satır düzeni: sekme 4, kontrol karakteri `·`, geniş karakter 2 sütun (`gezik_core::text::display_width`), sarmasız satır 4.096 sütunda `…`, satır başına ≤ 64 renk parçası. Sarma metinde açık, kodda kapalı; `W`/çubuk/menü ile, state.toml `[preview] wrap-text`, `wrap-code`.
+- Renklendirici `gezik-core/src/syntax.rs`: tablo güdümlü, 27 dil, satır başı durumu bir bayt (blok yorum, çok satırlı/ham dize, Markdown kod bloğu). Tema belirteçleri `syntax-keyword/-type/-string/-number/-comment/-tag` (dört yerleşik temada ≥ 4,5:1, testli).
+- Hex: her dosyada, yalnız görünen satırlar (≤ 4 KB), 16 bayt (76 sütundan dar yerde 8, ofset 6 hane). Kendiliğinden açılmaz: dosyada çubukta `Hex`, `H`, sağ tık `Show as Hex`, `preview-hex` eylemi (Action 114, tuşsuz, View menüsü). Yalnız-bulut dosyada okumaz.
+- Tuşlar yalnız görüntüleyicide (bölmede tıklayınca odak; Esc listeye geri verir; Quick Look'ta her zaman): Page Up/Down, Home/End, H, W; bölmede ↑/↓ satır. Teker satır, Shift+teker sarmasız satırı yana kaydırır. Menü kimlikleri 2600–2602.
+- Ayrıştırıcı ve sayfalama kodunda `#![deny(clippy::indexing_slicing)]`; çözücüde 10.000, sayfalamada 40 dosya × 20, hex'te 10.000 rastgele giriş testi.
+- Sapmalar (plan): `Viewer` yapı (enum değil); hedef aynıysa görüntüleyici yaşar; anahtar sözcükler boşluklu tek dize; `LangDef.mode`; baştan tam okumaya geçiş UI iş parçacığında (≤ 2 MB, `shortcut:` notlu); hex eşiği sütunla; tek düzen (Quick Look açıksa onun ölçüsü); sağ tık menüsü yalnız ana pencerede; `Copy Value` 13d'ye.
+- Not: `PreviewInfo::default() != PreviewInfo::default()` (Slint `Image` eşitliği); `schedule`'ün önizleme kapalıyken her seçimde `release` yapması `master`'da da böyle, 13a değiştirmedi.
+- Gözden geçirme ve ekran testi düzeltmeleri: hex ofset sütunu satırın bayt sayısına bağlı değil (8↔16 salınımı yoktu artık), satır 16/8/4 bayt sığdığı kadar, metnin üst satırının bayt konumunda açılır; bellekte 64 KB'tan uzun satır tek satır, önceki satırlar satır dizininden; kaydırma çubuğunun yolu "son sayfaya kadar" (End'de dibe değer, sona sürükleme son sayfa); son okunan sayfa önbellekte; End/sürüklemede uzunluk yeniden okunur, dosya gitmişse başa; sayfalı okuma yalnız-bulut dosyayı okumaz; hedef yol+tür ile aynı sayılır (büyüyen günlük yerini korur); `schedule` `kind != 0` ile bakar. Satır numarası/ofset metnin üstüne biniyordu (x yoktu); ana pencerenin görüntüleyici olayları kendi önizlemesine bağlı (çizim sırasında boyut bildirimi kayboluyordu: End altta boşluk bırakıyor, Quick Look son satırlara inmiyordu), Quick Look bağlanınca boyutu yeniden sorar (`PreviewActions.ask`); klavye bütün önizleme alanında (simgede H çalışır, hex'ten çıkınca odak kalır); geniş karakterler UI yazı tipiyle (Basitleştirilmiş Çince yedek yazı tipi); Windows View menüsünde Show Preview as Hex (2600); baş kipinde çubuk `N+ lines`.
+- İkinci ekran testi sonrası: Quick Look kendi başına kayar, bölme açılıştaki yerine döner (End bölmeyi kaydırmıyor); Shift+teker en geniş satırın sonunda durur (`max-cols`).
+- **Bilinen sınır (bütün uygulama, 13a öncesi de):** Windows'ta Basitleştirilmiş Çince'ye özgü karakterler (测试这检查对齐) boş çıkıyor; Çince/Japonca ortak Han karakterleri (中文行是), kana ve Hangul çiziliyor. Neden: Slint'in metin yolu (parley + fontique) yedek yazı tipini karakter başına değil **yazı sistemi + dil** başına seçiyor; dil verilmeyince Han için Japonca bir yazı tipi (Yu Gothic) seçiliyor ve onda olmayan sadeleştirilmiş biçimler boş kalıyor. Aynı yol dosya listesinin adlarını da çiziyor, yani dosya adında da aynı. Düzeltme merkezde olmalı (vendor `i-slint-core/textlayout/sharedparley/shaping.rs`: sistem diline göre `StyleProperty::Locale` vermek ya da Windows'ta zh-Hans için `Microsoft YaHei`'yi yedek listesine koymak); ikisi de Japonca kullanıcıda Kanji biçimini değiştirebileceği için 13a'da yapılmadı.
+- Sürüm exe'si 27.305.984 B (taban `master` c103e95 kodu 27.096.576 B, **+209.408 B**; ilk düzeltme turunda 27.302.400 B; bütçe 262.144, spec tahmini ≈ 140 KB). İlk teslimde 27.293.696 B. Küçültme denemesi: çubuk düğmelerini hafif bir bileşene çevirmek exe'yi 8.704 B büyüttü, geri alındı; `cargo bloat` kurulu değil. Boşta yeni zamanlayıcı/iş parçacığı yok.
+- Windows ekran testleri, macOS 366–368 ve Linux 266–267 bekliyor.
+
 ## Adım 12, alt parça 12b (Toplu etiketleme) sonrası
 
 - Plan `docs/superpowers/plans/2026-10-12-etiketler-12b.md` (sapmalar 1–10); dal `feat/tags-12b`, `feat/tags-12a`'nın üstüne yığılı (12a'nın gözden geçirme düzeltmeleri f4f2eac birleştirildi). Yeni Slint katmanı yok.
@@ -2859,6 +2876,383 @@ Güvenlik: her tuş/tıktan önce ön plan ve nokta kontrolü; picker/yorum/süz
 Temizlik: başlatılan Gezik süreci WM_CLOSE ile kapandı (çalışan yok); `data\t` (p.jpg dahil) ve `cfg\d1` silindi. Kayıt defteri, Çöp, `%APPDATA%\gezik`, E: ve klavye düzeni kullanılmadı; dosyalar kabukla açılmadı.
 
 Düzeltmeler (aynı gün): bulgu 1 Info'nun Windows dalı kaldırıldı (planda sapma 9); bulgu 2 not `Comments differ across 2 items`; bulgu 3 puansızlar iki yönde ad sırasıyla sonda; bulgu 4 bilerek (sapma 17); bulgu 5 dokunulmadı (sütun genişliği kullanıcının).
+
+## Adım 13, alt parça 13b (PDF ve yakınlaştırma) sonrası
+
+- `ChildProcess::spawn_binary` (`gezik-platform/src/process.rs`): stdin ve stdout ham boru, stderr son 64 KB; iş nesnesi / süreç grubu `spawn_with_input` ile ortak `start`ta. 8 MB ikili çıktı testi.
+- Protokol `gezik-core/src/batch/pdf_view.rs` (saf, `#![deny(clippy::indexing_slicing)]`): işçi `gezik-pdf-view 1` diye selamlar; komutlar tek satır (`open`, `password`, `render`, `close`, `quit`; yollar `encode_path`, parola kaçışlı); yanıt başlığı ≤ 1 KB, görüntü ≤ 4096² ve istenen bölgeden büyük olamaz (`fits`). 20.000 rastgele yanıtta panik yok.
+- İşçi `gezik --pdf-view` (`gezik-batch/src/pdf/view.rs`): pdfium bir kez bağlanır, tek belge, `render` yalnız istenen bölgeyi `set_origin`'li w × h bit eşleme çizer (`pdfium::render_region`), ölçek 0 = görünen alana sığdır. Parola yalnız stdin'den, NUL'lu parola yanlış sayılır, panikte yalnız yer yazılır. Gerçek pdfium testi (`tests/pdf_view.rs`, `GEZIK_TEST_PDFIUM`): AES-256 örnekte parola soruları, 3 sayfa, sığdırma ve kırpılmış bölge — Windows'ta chromium/8086 ile geçti.
+- İstemci `preview/pdf.rs`: bir işçi, bir konuşma, bir okuma iş parçacığı; bekleyenlerden yalnız en yeni `render` gönderilir, her yanıt 20 sn içinde ve `fits` ile; aşan/bozan işçi öldürülür, çubukta `This PDF could not be shown`, sonraki PDF yeni işçi. İşçi ilk sayfa/yakınlaştırma isteğinde kurulur (PDF'i seçmek bir şey başlatmaz); PDF'ten çıkınca `close` (belge belleği hemen), 10 sn sonra süreç biter (sahte saatle test).
+- Yüzey `preview/zoom.rs` (saf): sayfaya/genişliğe sığdır, %25–%800 adımları, imleç sabit yakınlaştırma, sınırlı kaydırma, görünen bölge ≤ görünen alan. PDF'te %100 = 96 dpi; çizim fiziksel pikselde.
+- Arayüz: `PreviewInfo.bar` 4 (PDF: `‹ sayfa ›`, `− % + Fit`, not ve `Download`/`Enter Password…`), 5 (resim: `− % + Fit`, 48 MP üstünde `Too large to zoom (N MP)`); sayfa numarasına tıklayınca alan. Tuşlar görüntüleyicide: Page Up/Down, Home/End, `+`/`-`/`0`/`1`; Ctrl(⌘)+teker imleç altında yakınlaştırır, teker sayfa sonunda sayfayı çevirir (en çok 300 ms'de bir), sürükleme kaydırır, 150 ms durunca yeni bölge. Resim: ilk yakınlaştırmada gerçek boyutunda bir kez çözülür (iş parçacığında), `0`/Fit büyük kopyayı bırakır.
+- pdfium yoksa çubukta `More pages need pdfium · Download` → bugünkü teklif kutusu (`Need::PdfPages`, `More PDF pages need pdfium (~… MB, free).`); indirince kendiliğinden açar.
+- Eylem ve menü kimliği eklenmedi (spec 13b için eylem istemiyor; `Action::ALL` 125).
+- Sapmalar (plan 1–12): `open` yanıtı yalnız sayfa sayısı (boyut her `image`'da; 10.000 sayfa 1 KB'a sığmazdı); ölçek 0 = sığdır; `close` komutu; işçinin sahibi `Preview` (park); pdfium araması ilk kullanımda; `Fit` sayfa ↔ genişlik; sayfa alanı; bugünkü `ask_secret`; resim kırpması alanla; resim çubuğu her zaman görünür; ekran ölçeği `shortcut:` notlu; `PreviewInfo` görüntüleyicisiz saklanır.
+- Sürüm exe'si 27.551.744 B (taban `feat/preview-13a` 6c2dd60, 27.305.984 B, **+245.760 B**; bütçe 262.144, spec tahmini ≈ 100 KB). Boşta yeni zamanlayıcı/iş parçacığı/süreç yok: zamanlayıcılar yalnız PDF/resim yakınlaştırılırken ve işçi park ederken kurulur.
+- Windows ekran testleri, macOS 369–372 ve Linux 268–270 bekliyor.
+- Gözden geçirme ve ekran testi düzeltmeleri: çöken işçi yalnız açık tuttuğu PDF'i başarısız sayar (başka PDF gösteriliyorsa yeni işçiyle yeniden açılır); tek sayfanın çizim hatası belgeyi kapatmaz (`This page could not be shown`); yüzeyin ölçeği protokolün sınırında (küçük sayfa + Fit); yüklenmeyen pdfium işçiyi bitirir ve yeniden indirmeyi önerir; hata iletisi karakter ve kaçış bütünüyle kesilir (çok baytlı rastgele test); komut numaraları işçiler arasında tek; sayfa görüntüsü bir kez `Image` olur; görülen sayfaların boyutu hatırlanır (geri dönülen sayfa bir istekte, tekerle geri gelince altından); teker açılmamış PDF'i çevirmez; resim gerçek boyutunda doğrudan arabelleğine ve bir seferde bir tane çözülür (`decode_image_into`); 8192 px'i aşan resim boyutunu ve nedenini söyler; PDF hiçbir zaman metin olarak açılmaz (uzantı ve `%PDF-`); pdfium yokken sayaç gösterilen sayfayı söyler; Quick Look arkasındaki bölme yakınlaştırılmış görüntüyü germez. Sayfa alanı yerine `Go to Page…` sorusu (alan Ctrl+A'yı listeye kaçırıyordu); dar bölmede çubuk sığar, sağ tıkta bütün sayfa/yakınlaştırma eylemleri ve bağlantı (2603–2610).
+- Boyut ölçümü (sürüm derlemesi, deneme yapıları): 13b'nin Slint öğeleri 133.120 B, işçi kipi 13.312 B, gerisi Rust önizleme kodu. Dokuz geri çağrı tek oldu, düğmeler tek tekrarlanan `TextButton`'dan, iki görüntü tek: 27.559.424 → **27.475.968 B** (taban 27.305.984 B, **+169.984 B**; ilk teslim +245.760 B).
+
+## Windows ekran testleri: 13b
+
+- İlk koşu (2026-10-12 08:19–08:30, `t13b.exe`, ajan): 8 maddeden 7'si geçti; dar bölmede çubuk taşıyordu. Bulunanlar: sayfa alanında Ctrl+A listedeki bütün dosyaları seçiyordu; Quick Look arkasındaki bölme gerilmiş sayfa gösteriyordu; sıkıştırılmamış ASCII PDF metin olarak açılıyordu; 8192 px'i aşan resimde ne yakınlaştırma çubuğu ne de neden çıkıyordu; pdfium yokken sayaç `2` diyordu. Hepsi `6576536` ve `3125190`'da düzeltildi.
+
+### Yeniden test: 13b düzeltme sonrası ekran testleri (Windows, birincil monitör)
+
+Tarih: 2026-10-12 ~10:00. Yapı: `%TEMP%\gezik-gui-13\bin\t13b-fix.exe` (feat/preview-13b 343cdf1).
+Ayarlar her koşu için temiz: `%TEMP%\gezik-gui-13\cfg\f1..f4` (`[files] confirm-trash = true`, `[preview] open = true`, `width` 280/200/500),
+pdfium `cfg\q1\tools\pdfium-8086`'dan `cfg\fN\tools\` altına kopyalandı (f4'te yok). Pencere 1600x900.
+Veri `%TEMP%\gezik-gui-13\data\q` (50 sayfa sıkıştırılmış PDF, 5 sayfa sıkıştırılmamış ASCII PDF, `enc_aes256.pdf`, metin olan `fake.pdf`,
+`%PDF-` ile başlayan `pdfastext.txt` ve `pdfasdat.dat`, 4000x3000 JPEG, 8200x6200 PNG ve JPEG). Sonunda veri ve `f1..f4` silindi.
+Betikler: scratchpad `m13g\13b-fix\` (`mkdata.py`, `f.ps1`). Ekran görüntüleri: `%TEMP%\gezik-gui-13\shots\fix\`.
+
+| # | Madde | Sonuç |
+|---|---|---|
+| 1 | Go to Page…, içinde Ctrl+A, Enter | GEÇTİ |
+| 2 | Dar bölme (<300 px), şifreli PDF, sağ tık menüsü | KISMEN (iki küçük not) |
+| 3 | 8200×6200 resim: "Too large to zoom (…)" | GEÇTİ |
+| 4 | pdfium yokken sayaç, sayfa değişmez, indirme önerisi | GEÇTİ |
+| 5 | Quick Look arkasındaki bölme | GEÇTİ |
+| 6 | PDF hiçbir zaman metin değil | GEÇTİ |
+| 7 | Gerileme: sayfa, yakınlaştırma, tekerlek, resim | GEÇTİ |
+
+#### Ayrıntı
+
+1. `f1-start.png`, `f1-goto-open.png`, `f1-goto-ctrla.png`, `f1-goto-25.png` (bölme ~268 px)
+   - Önizlemede metin alanı yok; sayfa numarası bir düğme (`Page 2 of 50, go to page`).
+   - Tıklayınca "Go to Page" kutusu açılıyor: "Page (1 to 50):", alanda `2`, Go / Cancel. UIA: odak bu kutunun Edit'inde (Gezik PID'i, liste dışında).
+   - Ctrl+A: alandaki `2` seçildi; listede seçim önce 1 (fifty.pdf), sonra yine 1. Durum çubuğu "1 selected". `25` yazınca alan `25` oldu (yani seçili metnin yerine yazdı).
+   - Enter: 25 / 50, sayfa 25 çizildi. Odak ana pencereye döndü.
+2. `f2-ctx-pdf.png`, `f2-enc-268.png`, `f2-enc-200.png`, `f2-enc-200-zoom.png`, `f2-ctx-enc.png`, `f2-pw-dialog.png`, `f2-enc-200-open.png`, `f2-ctx-open.png`
+   - ~268 px: çubuk `‹ 1 › − + Fit` sığıyor; Hex ve yüzde düşmüş.
+   - 200 px (ayarın en darı): fifty.pdf `‹ 1 › − + Fit` sığıyor (sağ uç 1589, metin alanı 1614'te bitiyor). Parolayla açıldıktan sonra `‹ 2 / 3 › − + Fit` de sığıyor (sağ uç 1607).
+   - Sağ tık (PDF): Previous Page, Next Page, Go to Page…, Zoom In, Zoom Out, Fit, Actual Size, Show as Hex. Şifreli PDF'te başta ayrıca `Enter Password…`; pdfium yokken `Download pdfium…` (4. madde).
+   - `Enter Password…` düğmesi çalışıyor: "Password" kutusu açılıyor, `pw` ile 2. sayfa çiziliyor.
+   - **Not A (sayaç):** şifreli PDF'te › sonrası çubuk `Enter Password… ‹ 2 ›` diyor, oysa görünen 1. sayfanın simgesi. Beklenen `‹ 1 ›`. pdfium yokken bu düzeltilmiş (sayaç 1 kalıyor), parola durumunda düzeltilmemiş.
+   - **Not B (200 px'te taşma):** şifreli durumda çubuk 1438–1627 px, bölmenin metin alanı 1614'te bitiyor. `›` düğmesinin sağ kenarı bölmenin kenarında kesiliyor (görünüyor ve tıklanabilir), "Password protected" notu tamamen gizli (UIA'da 1633–1646). Sayaç `1` olsaydı da aynı genişlikte olurdu. 268 px'te taşma yok, not "Pass…" diye kısalıyor.
+3. `f3-huge-png.png`, `f3-hugej-jpg.png` (bölme 500 px)
+   - huge.png ve hugej.jpg (8200×6200): çubukta `Too large to zoom (8200 × 6200, over 8192 px a side)` (UIA'da tam metin; 500 px'te ekranda sonu "…" ile kısalıyor). Bilgide "8200 × 6200 pixels".
+   - Küçük görsel not: yakınlaştırma figürü `Fit` olunca çubukta yan yana iki `Fit` görünüyor (`− Fit + Fit`). Hata değil, ama kafa karıştırabilir.
+4. `f4-nopdfium-next.png`, `f4-ctx.png`, `f4-download-offer.png` (pdfium'suz `cfg\f4`, bölme ~268 px)
+   - › → çubuk `Download ‹ 1 › More pages n…`; sayaç 1'de kalıyor. İkinci › sonrası da 1. Sayfa değişmiyor.
+   - Çubuk bölmeye sığıyor (Download 1358–1428).
+   - Download → "pdfium needed — More PDF pages need pdfium (~2.7 MB, free)" (Download / Where does it come from? / Cancel). Cancel'a basıldı; hiçbir şey indirilmedi.
+5. `f5-ql-open.png`, `f5-ql-zoom.png`, `f5-after-esc.png`
+   - Space ile Quick Look açıldı; QL'de › ile 2. sayfa ve + ile 100%. Arkadaki bölme dosyanın kendi görünüşünü (PDF simgesi, bölmeye sığmış) gösteriyor; gerilmiş ya da yakınlaştırılmış görüntü yok.
+   - Esc ile kapanınca bölme 2 / 50 ve 100%'te devam ediyor.
+6. `f6-*.png`
+   - note.txt (kontrol): Text / Hex / Wrap, metin görünüyor.
+   - ascii.pdf (sıkıştırılmamış, tamamen ASCII): sayfa çubuğu (`Hex ‹ 1 › − Fit + Fit`), metin değil. Önceki notta Text olarak açılıyordu; artık açılmıyor.
+   - fake.pdf (metin dosyası, .pdf uzantılı): sayfa çubuğu, metin değil; › → "This PDF could not be shown", sayaç 1 kalıyor, Gezik çökmüyor (`f6-fake-next.png`).
+   - pdfastext.txt ve pdfasdat.dat (`%PDF-` ile başlıyor): yalnızca Hex düğmesi, metin değil.
+7. `f7-wheel-combo.png`, `f7-img-combo.png`, `f7-prev.png`, `f7-zoomin.png`, `f7-zoomout.png`, `f7-fit.png`, `f7-fit2.png` (bölme 500 px)
+   - › 2, › 3, ‹ 2. + 75%, + 100%, − 75%. Fit → Fit, tekrar → Fit Width.
+   - Fit Width'te tekerlek: 2 tık sonra 3. sayfa (üstü görünüyor). Bir tık yukarı: 2. sayfa, altından ("BOTTOM OF PAGE 2" görünüyor, başlık üstte kesik).
+   - photo12.jpg: çift tık 100%, sürükleme kaydırıyor (1600,1000 → 2000,1000 sağda), − 75%, Fit düğmesi Fit'e döndürüyor.
+
+#### Bulunan sorunlar
+1. Küçük: şifreli PDF'te › sonrası sayaç `2` diyor, görünen 1. sayfa (pdfium'suz durumda düzeltilen hata parola durumunda kalmış).
+2. Küçük: 200 px bölmede şifreli PDF çubuğu ~13 px taşıyor: `›`'in sağ kenarı kesik, "Password protected" notu görünmüyor. Düğmeler yine erişilebilir.
+3. Kozmetik: resim/PDF çubuğunda yakınlaştırma figürü `Fit` iken `Fit` iki kez görünüyor.
+
+Atlananlar: 150%/200% ekran ölçeği (ekran ayarı değiştirilmedi), `--pdf-view` süreç sayımı (önceki koşuda geçti, bu koşuda tekrarlanmadı).
+
+- Bu yeniden testin üç notu da düzeltildi (fix2): sayfalar belge açılmadan (parola, pdfium aranırken) dönmüyor, sayaç gösterilen sayfada kalıyor; kilitliyken (bağlantı varken) çubukta yalnız bağlantı (ve geniş bölmede Hex), not ona yer buluyor; yakınlaştırma `Fit` iken yüzde gösterilmiyor (`Fit` bir kez). Sürüm exe'si değişmedi: 27.475.968 B (+169.984 B). Yapı `t13b-fix2.exe`; ekranda yeniden denenmedi.
+
+### Yeniden test 2 (fix2 sonrası)
+
+
+Tarih: 2026-10-12. Yapı: `%TEMP%\gezik-gui-13\bin\t13b-fix2.exe`. Pencere 1600x900 (40,40).
+Ayarlar temiz `cfg\g1` (width 280), `g2` (200), `g3` (500); `[files] confirm-trash = true`; pdfium `cfg\q1\tools\pdfium-8086`'dan kopyalandı.
+Veri `data\q` (`mkdata.py`, enc.pdf = `crates/gezik-batch/tests/data/pdf/enc_aes256.pdf`, parola `pw`, 3 sayfa).
+Betik: scratchpad `m13g\13b-fix2\f2.ps1`. Görüntüler: `%TEMP%\gezik-gui-13\shots\fix2\`. Sonunda veri ve g1..g3 silindi (q1 duruyor).
+
+| # | Madde | Sonuç |
+|---|---|---|
+| A | enc.pdf, › sonrası sayaç; parola sonrası 1. ve 2. sayfa | GEÇTİ |
+| B | width 200, enc.pdf çubuğu sığıyor, "Password protected" | GEÇTİ (not: metin "Pass…" diye kısalıyor) |
+| C | Fit'te "Fit" bir kez | GEÇTİ |
+| D | Normal PDF sayfa/yakınlaştırma, Go to Page Ctrl+A | GEÇTİ (not: ilk › 1. sayfayı çiziyor) |
+
+#### Ayrıntı
+
+- A (280 px, `g1-*`): seçince `‹ 1 › − + Fit`, önizlemede PDF simgesi. › → çubuk `Enter Password… | Password protected`, sayaç yok (artık `‹ 2 ›` yok), ikinci › düğmesi de yok. Enter Password… → odak parola Edit'inde (Gezik PID), `pw` + Enter → `‹ 1 / 3 ›`, 1. sayfa çizildi (`g1-enc-open-crop.png`). › → `2 / 3`, farklı sayfa çizildi (`g1-enc-p2-crop.png`).
+- B (200 px, `g2-*`): › sonrası `Enter Password…` 1438–1555, not 1561–1604; bölme metin alanı 1614'te bitiyor, taşma yok (`g2-bar.png`). Not görünüyor ama "Pass…" diye kısalmış (UIA'da tam metin). Çubukta yalnız Enter Password…. 500 px'te (`g3`): `Enter Password… Hex`, başka düğme yok. Parola öncesi 200 px'te `‹ 1 › − + Fit` 1438–1589, sığıyor.
+- C: 280 ve 500 px'te Fit durumunda çubuk `‹ n › − + Fit`, tek "Fit" (`g1-bar.png`, `g3-bar.png`). Yakınlaşınca `− 75% +`, `− 100% +`; Fit'e ikinci basış `− Fit Width + Fit`.
+- D (500 px): fifty.pdf `› 1/50, › 2/50, ‹ 1/50, + 75%, + 100%, − 75%, Fit, Fit Width`. Go to Page: odak dialog Edit'inde (değer `2`), Ctrl+A sonrası listede seçim aynı (ascii.pdf, "1 selected"), `4` yazınca alan `4` (seçili metin değişti), Enter → `4 / 5`, "Page 4 of 5" çizildi, seçim değişmedi.
+
+#### Not
+- Önizleme başta yalnızca PDF simgesi gösterirken ilk › sayfa 2'ye değil, 1. sayfayı çizmeye gidiyor (`1` → `1 / 5`, `g3-a0/a1`). Sayaç tutarlı (gösterilen sayfa), ama kullanıcı ilk ›'te 2. sayfayı bekleyebilir. Önceki koşuda (fix) ilk › doğrudan 2'ye gidiyordu. Tasarım kararıysa sorun değil.
+
+## Adım 13, alt parça 13c sonrası
+
+- Oynatıcı `preview/media.rs`: oynat'a basılmadan hiçbir şey çalışmaz (poster bugünkü küçük resim/simge, ortada `▶`, çubukta `--:--`). Oynat'ta bir iş parçacığında ffmpeg aranır (`find_ffmpeg`, `[convert] ffmpeg` dahil) ve ffprobe ile yoklanır (`ffmpeg::probe`: süre, görüntü izi — kapak resmi sayılmaz —, ses izi, kare hızı); sonra iki `spawn_binary` süreci: görüntü PAM kareleri (`fps=r,scale=w:h:force_original_aspect_ratio=decrease`, en çok 1280 × 720 ve 30 kare/sn, `-hwaccel auto`), ses 48 kHz s16 stereo. Her biri kendi iş parçacığında okunur.
+- Saat: ses aygıtının çaldığı kare sayısı; ses yoksa duvar saati ilk kareyle başlar, ses bitince/bozulunca oradan sürer. Kare erkense beklenir, bir kare süresinden geçse atılır (ilk kare hep). UI'a yolda en çok bir kare; kareler `PreviewActions.frame` genel özelliğiyle (her karede `PreviewInfo` kurulmaz). Çubuk yalnız oynarken 250 ms'de bir.
+- Ses `gezik-platform/src/audio/`: WASAPI paylaşımlı (`AUTOCONVERTPCM`, 100 ms, 5 ms yoklama, aygıt geçersizleşince yeniden açar), macOS AudioQueue (3 × 50 ms, `AudioQueueGetCurrentTime`), Linux `libpulse-simple.so.0` `dlopen` (100 ms; duraklatmada `flush`). Aygıt açılmazsa `Silent` alıcı sesi duyulacağı hızda okur: görüntü sessiz ve doğru hızda oynar, çubukta `No sound: …`.
+- Duraklat: okuma durur (ffmpeg boru dolunca bekler), aygıt durur; 60 sn sonra süreçler kapanır, son kare ve konum kalır, devam `-ss` ile. Sarma: iki süreç öldürülüp aynı `-ss` ile yeniden; sürüklerken yalnız süre değişir. `J`/`L` 10 sn, `K`, `M`. Dosya sonu: son kare kalır, `▶` baştan. Hiçbir şey çıkmadıysa `Cannot play this file`, ffmpeg'in son hata satırı standart hataya.
+- Ses düzeyi yazılımda (kazanç düzey², Q16), `state.toml [preview] volume = 80`, `muted = false`. Çubuk: (bağlantı), Hex, ▶/❚❚, sarma çubuğu, süre, `Mute`, düzey çubuğu (300 px'ten dar bölmede Hex ve düzey çubuğu düşer, 13b'nin dar çubuk kuralı; sağ tıkta hepsi). Sağ tık 2610–2614 (`Download ffmpeg…`, Play/Pause, Back/Forward 10 Seconds, Mute/Unmute); `preview-play` eylemi (`Action::ALL` 115, tuşsuz), View menüsünde 2611 (Windows ve macOS menü çubuğu).
+- ffmpeg yoksa: `Playing needs ffmpeg · Download` → bugünkü teklif kutusu (`Need::Playback`), indirince kendiliğinden oynar.
+- Testler: komut satırları, PAM başlığı (+ 5.000 rastgele giriş), saat (ses, duvar, duraklama, ses bitişi), kare temposu, ölçekleme, sahte aygıtla ses döngüsü ve duraklamada durma, `Silent` hızı, `state.toml` gidiş-dönüşü, menüler. `#[ignore]`: WASAPI gerçek aygıt (Windows'ta geçti), PATH'teki ffmpeg ile 1 sn'lik test videosu uçtan uca (25 kare, 48.000 ses karesi; geçti).
+- Sapmalar (plan 1–7): PAM; ses posteri kapak değil küçük resim (13d); süre oynatmadan önce `--:--`; WASAPI yoklamayla; kazanç kare; küçültülmüş pencerede kare yine gönderilir; hata ipucu yerine standart hata. Linux `cargo clippy -p gezik` bu makinede fontconfig çapraz derlemesinde duruyor (13c'den bağımsız); `gezik-platform` Linux hedefinde temiz.
+- Sürüm exe'si **27.594.752 B** (taban 13b 27.475.968 B, **+118.784 B**; bütçe 262.144, spec tahmini ≈ 130 KB). Boşta yeni zamanlayıcı/iş parçacığı/süreç yok: hepsi oynat'la kurulur, önizleme değişince gider.
+- Windows ekran testleri, macOS 373–378 ve Linux 271–275 bekliyor.
+
+## Windows ekran testleri: 13c
+
+### 13c screen tests (Windows, t13c.exe), 2026-10-12
+
+Primary monitor, window 1600x900 at 40,40, preview pane 420 px (item 8: 260 px). Config `%TEMP%\gezik-gui-13\cfg\13c`
+(confirm-trash = true, `[preview] volume = 1, muted = true`), media generated with ffmpeg in `data\13c`
+(mp4 h264+aac 20 s, mkv 12 s, webm vp9+opus 12 s, mp3 8 s with attached cover, text-as-.mp4, plus
+`broken.mp4` = first 4 KB of the mp4, `junk.mp4` = 8 KB random). Audio in the files is about -47 dBFS.
+Nothing was audible: muted except where noted, unmuted only at Gezik volume 1-11 (output peak 1-2 LSB).
+Audio checked via Core Audio session (state, IAudioMeterInformation peak, ISimpleAudioVolume), read-only.
+Windows volume before/after: scalar 0.0600, not muted (unchanged). Screenshots: `%TEMP%\gezik-gui-13\shots\13c\`.
+
+| # | Item | Result |
+|---|------|--------|
+| 1 | Poster + centre ▶, no ffmpeg before Play | PASS (01-poster) |
+| 1 | First frame after ▶ | PASS: MKV first frame by 300 ms (frame 0.120 shown at 300 ms), MP4 strip first changed at 360 ms (poll step ~120 ms) (06t-combo) |
+| 1 | Audio flows, volume 1 unmuted | PASS: session state=1, peak 3.4e-5 |
+| 2 | Click preview pauses, K pause/resume | PASS |
+| 2 | Pause > 60 s ends ffmpeg, K resumes at same place | PASS: both ffmpeg gone at ~60.6 s, resumed 0:06 → 0:07 with new pids (03-*) |
+| 3 | Seek drag: only label changes while held, plays from there on release | PASS: label 0:14 held for 1.5 s, same ffmpeg pids; new pids and 0:15 after release |
+| 3 | J / L | PASS: 0:16 → J 0:07 → L 0:18 |
+| 4 | Mute button and M toggle | PASS (state.toml `muted` follows) |
+| 4 | Volume slider changes Gezik's output | PASS (software gain, so ISimpleAudioVolume stays 1.00 by design): peak 1 LSB at vol 1/2/5, 2 LSB at vol 11, 0 muted; slider click unmutes |
+| 4 | Restart keeps volume/muted; Windows volume unchanged | PASS: `volume = 2, muted = true` kept; system scalar 0.06 before/after |
+| 5 | MKV, WebM play | PASS (05-combo) |
+| 5 | Broken/junk .mp4: "Cannot play this file", poster stays | PASS (05e-combo). A text file renamed .mp4 is shown as text (sniffed), no player: OK by me, noted |
+| 6 | MP3: time + seek bar advance, stop at end, ▶ restarts | PASS: 2%→100%, button back to Play, ffmpeg gone at end, restart works; cover art poster shown (07-combo) |
+| 7 | Select another file while playing | PASS: ffmpeg and session (state 0) gone ≤ 0.4 s |
+| 7 | Same in Quick Look (Space, ▶, Down) | PASS: gone ≤ 0.31 s |
+| 7 | Right-click Play/Pause, Back/Forward 10 Seconds, Mute/Unmute; View ▸ Play/Pause Preview | PASS (09a-ctx, 09b-view) |
+| 8 | Pane 260 px: volume slider drops, Hex and Mute stay | FAIL vs checklist: volume slider and **Hex** drop; Play, seek bar, time, Mute stay. Code (`viewer.rs bar_tools`, narrow drops Hex) does this on purpose, so the checklist or the code needs to agree. Right-click has all 5 items incl. Show as Hex (10a, 10b) |
+| 8 | Alt+F4 while playing: no orphan ffmpeg | PASS: Gezik exited, both ffmpeg pids gone |
+
+#### CPU (percent of one core, 5 s windows)
+
+- Playing MP4 640x360 (unmuted vol 1): Gezik 7.8 %, ffmpeg video 3.1 %, ffmpeg audio 0.9 %.
+- Playing muted: Gezik 4.7-5.9 %, ffmpeg 1-2 % each. MKV: Gezik 4.7 %, ffmpeg 1 % + 1 %.
+- Paused, ffmpeg still alive: 0 % for all. Paused after 60 s (no ffmpeg): Gezik 0.3 %.
+- Idle after stopping (another file selected): Gezik 0.3 %.
+
+#### Findings
+
+1. **Pause glyph invisible.** While playing, the Play/Pause button is an empty box (the `❚❚` text, U+275A, does not render
+   with the UI font); UIA name "Pause" is right. Repro: play any video, look at the button left of the seek bar
+   (02-bar-zoom.png, 03b-resumed-crop.png, 10a-narrow-crop.png). ▶ renders fine.
+2. **Hex drops in a narrow pane** (item 8 above): checklist says it stays.
+3. Minor: clicking the ▶/❚❚ button leaves keyboard focus on the window, so K/J/L/M do nothing until the picture is
+   clicked (checklist does say "click preview then K"). After clicking ▶ on the MP3 and pressing K, playback went on.
+4. Minor (a11y): "Cannot play this file" is drawn but its UIA Text has an empty name.
+5. Minor: while a right-click menu is open the time label and picture do not update (Win32 menu loop); playback keeps
+   going underneath (audio clock), so after a long open menu the clip may have ended.
+6. Note: the volume gain is `(s * g) >> 16`, which rounds toward −∞; at very low volume a −1 LSB signal remains
+   (peak 3.4e-5 at volume 1 and 2). Inaudible, just explains why the meter does not scale at 1-5.
+
+Skipped: headphones / device change (no device changes allowed). Test config and media removed; cfg\q1 kept.
+
+#### Düzeltmeler (aynı dal, `ac1a9bb`)
+- Sona (bilinen sürenin son 0,5 sn'si) sarma ffmpeg başlatmaz: konum sonda, durur, `▶` baştan (gözden geçirme; önceden `-ss = süre` hiçbir şey vermiyor, `Cannot play this file` çıkıyordu).
+- Basılı tutulan `J`/`L` ve sarma çubuğu: konum hemen değişir, süreçler hemen gider, yenileri 150 ms dinginlikten sonra bir kez başlar (duraklatma zamanlayıcısı oynarken boş, o kullanılıyor).
+- `Session::error` UI iş parçacığında süreç başına en çok 200 ms bekler, sonra süreci bitirir (dolu boruda takılan ffmpeg UI'ı kilitlemesin).
+- Duraklat düğmesi iki çizgi olarak çizilir (`TextButton.icon`; UI yazı tipinde ❚❚ yok). Çubuk notunun (`Cannot play this file`) UIA adı var.
+- Dar bölmede Hex'in düşmesi bilerek (13b'nin dar çubuk kuralı); checklist ve notlar buna göre düzeltildi.
+- Sürüm exe'si düzeltmelerle **27.596.288 B** (13b tabanı 27.475.968 B, **+120.320 B**).
+
+### Yeniden test (düzeltmeler sonrası)
+
+
+Primary monitor, window 1600x900 at 40,40, preview 420 px, config `cfg\13c` (confirm-trash = true,
+`[preview] volume = 1, muted = true`). Media: `a20.mp4` (ffmpeg testsrc2 640x360 + quiet sine, 20 s), `junk.mp4`
+(8 KB random). Muted throughout; Windows volume scalar 0.0600, not muted, before and after.
+Screenshots: `%TEMP%\gezik-gui-13\shots\13cfix\`. Keys sent only with focus on the preview picture (Custom, my pid).
+
+| # | Item | Result |
+|---|------|--------|
+| 1 | L near the end (0:16 → L) | PASS: 0:20 / 0:20, button Play, no ffmpeg, no "Cannot play this file" (01-L-end) |
+| 1 | Drag seek bar past the far right | PASS: label 0:20 while held (same pids), after release 0:20 Play, no ffmpeg, no error (01-drag-end) |
+| 1 | ▶ / K after the end | PASS: restarts at 0:00 with a new ffmpeg pair |
+| 2 | Hold L 1 s (500 ms delay + 33 ms repeat, pids sampled ~50 ms) from 0:02 | PASS: one pair at 201 ms (the first press), none after release; ends at 0:20 stopped, no ffmpeg |
+| 2 | Hold J 1 s from 0:13 (to get a non-end final position) | PASS: one pair for the first press, exactly one new pair 125 ms after release, plays from 0:00 |
+| 3 | Pause glyph | PASS: two bars (1 px wide, 6 px tall, 2 px gap; bars lum ~205, gap ~90 on bg 29), UIA name "Pause" (03-pause-zoom). Small but visible |
+| 4 | junk.mp4 ▶ | PASS: "Cannot play this file" drawn, UIA Text name is that text, time `0:00 / --:--`, no ffmpeg (04-junk) |
+| 5 | K pause / resume | PASS: 0:04 held for 1.5 s while paused (pids kept), resumed to 0:06 |
+| 5 | Select another file while playing | PASS: both ffmpeg gone in 177 ms, audio session state 0 |
+| 5 | Alt+F4 while playing | PASS: Gezik exited, both ffmpeg pids gone |
+
+Note: clicking ▶ still leaves focus on the window (K/J/L need a click on the picture first), as in finding 3 of the first run.
+Test data and `cfg\13c` removed; `cfg\q1` kept.
+
+## Adım 13, alt parça 13d sonrası
+
+- Alan kaydı `gezik-core/src/fields.rs`: 31 alan (Picture, Photo, Media, Music, Document; her biri bir sabit, `FIELDS` bir makroyla), `FieldSet` (u64), `Value`, tek gösterim `Fields::text` (`4032 × 3024`, `1/250 s`, `f/1.8`, `3:25`, `41.0082° N, …`), `compare` (değersiz sonda, metin harf duyarsız), `parse_value` (`3m`, `1:30`, `2024-05`, `50 mm`, `f/2.8`, `1/250`), `READERS`/`readers_for` (istenen alanla kesişmeyen okuyucu çalışmaz, uzantısı olmayan dosya açılmaz).
+- Okuyucular `gezik-batch/src/fields/`: resim başlığı (`image` sandığı, EXIF yönüyle görünen boyut; HEIF/AVIF `ispe`), EXIF (`exif.rs` buraya taşındı, `taken()` dahil: tarih, kamera, lens, pozlama, diyafram, ISO, odak, konum), ses (ID3v2.2–2.4, ID3v1.1, MPEG Xing/VBRI ya da sabit bit hızı, ADTS, FLAC, Ogg Vorbis/Opus, WAV, AIFF), MP4/MOV/M4A (`moov` sonda da, ≤ 4 MB; `ilst` etiketleri), Matroska/WebM, AVI, OOXML/ODF özellikleri (ZIP'ten parça başına ≤ 256 KB), PDF `/Info` ve sayfa ağacı kökü (baştaki ve sondaki 64 KB). Okuyucu dosyanın ilk baytlarına bakar; uzantı yalnız okuyucuyu seçer. `#![deny(clippy::indexing_slicing)]`, uzunluklar ayırma yapmaz (okunan kadar büyür), yalnız-bulut dosya okunmaz.
+- Testler: gerçek küçük örnekler `crates/gezik-batch/tests/data/fields/` (`make.py`: ffmpeg ve Pillow; Türkçe etiketler; her biri ≤ 20 KB), her okuyucuda 10.000 rastgele/kesilmiş/bozulmuş giriş (uzunluk baytları 0xFF), kayıt testleri, panel satırları, ayar.
+- Panel: önizleme işçisi gövdeyi gönderdikten sonra aynı iş parçacığında alanları okur, ayrı gönderir (resim beklemez; yeni seçim okumayı keser). Bilgi satırlarının altında grup başlıklarıyla `Label  Value` satırları (`PropRows`, önizleme, Quick Look ve Info ortak); Width/Height yerine Dimensions; `title` müzik alanlarıyla Music'te, belgeyle Document'ta. Gezik'in çözdüğü resimde boyut alanları okunmaz (bilgi satırı söylüyor). Sağ tık `Copy Value` (2615). `[preview] properties = true` (settings.toml; false: önizleme okumaz). Info (macOS/Linux) tek dosyada aynı satırları gösterir.
+- 13c'nin bıraktığı: ses dosyasının gömülü kapağı (ID3 `APIC`, FLAC `PICTURE`, MP4 `covr`, ≤ 8 MB) poster olur (`decode_image_bytes`, yalnız JPEG/PNG çözücüsü); alanlarda süre varsa oynatıcı çubuğu oynatmadan önce `--:--` yerine onu yazar.
+- Sapmalar (plan 1–6): `Tags` alanları ve `meta` okuyucusu yok (12a bu dalda yok); MP3 sabit bit hızı tahmini `≈`'siz; panelde PDF sayfa sayısı pdfium'dan alınmaz; `Show Column` 13e'de; numaralı ID3 türleri (`(17)`) gösterilmez; fikstürler `tests/data/fields/` (spec: `tests/fixtures/fields/`).
+- Boyut: ilk ölçümde +572.928 B (bütçe aşımı). Nedeni genel kodun yeni okuyucu türleriyle ikinci kez derlenmesiydi: `image` sandığının bütün çözücüleri `Cursor` ve `&mut BufReader` için, `zip` okuması `&mut BufReader` için. Düzeltme: resim başlığı `ImageReader::open` ile (önizlemeyle aynı tür), ZIP `BufReader<File>` ile (arşivlerle aynı), kapak yalnız PNG/JPEG çözücüsüyle, okuyucular tek tür (`BufReader<File>`).
+- Sürüm exe'si **27.782.144 B** (taban 13c f225669, 27.596.288 B, **+185.856 B**; bütçe 262.144, spec tahmini ≈ 200 KB). Boşta yeni zamanlayıcı/iş parçacığı yok: alanlar önizleme işçisinde, yalnız önizleme açıkken ve dosya seçiliyken okunur.
+- Windows ekran testleri, macOS 379–381 ve Linux 276–277 bekliyor.
+
+## Windows ekran testleri: 13d
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d.exe. Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on), data = the
+`tests/data/fields` fixtures + empty.mp3 + random-junk junk.mp4/.docx/.pdf + 30 copies in `many\`.
+Screenshots: %TEMP%\gezik-gui-13\shots\13d\.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | JPEG (GPS, orientation 6): Photo group date, camera, lens, exposure, aperture, ISO, focal length, location; 24 × 32 upright | PASS (01-photo) |
+| 2 | MP3 with cover: poster = cover, Media (duration, codec, bitrate, rate, channels) + Music rows; bar shows 0:02 before play | PASS (02-id3v24_mp3); id3v23/id3v1 also right, Turkish text right |
+| 3 | M4A, FLAC, Opus (+ OGG, WAV): same rows | PASS |
+| 3b | AIFF codec row | FAIL (minor): shows "SSND" |
+| 4 | MP4, MKV, AVI: Dimensions 64 × 48, video/audio codec, 10 fps, duration | PASS |
+| 5 | DOCX (Title, Author, Subject, Pages, Words), PDF (Title, Author with escapes, Subject, Pages), ODT | PASS |
+| 6 | Right-click row → Copy Value: clipboard = value, status "Copied the value" | PASS (Camera, Location; clipboard saved and restored) |
+| 7a | Quick Look (Space): same rows (photo, mp3, mkv, docx) | PASS (07-ql-*) |
+| 7b | Pane at 200 px: no horizontal overflow (values wrap) | PASS |
+| 7c | Pane at 200 px: vertical | FAIL: the rows past the pane bottom are cut off, the last visible row draws over the pane's bottom border, no scroll |
+| 8a | `[preview] properties = false` (settings.toml): no rows, also in Quick Look | PASS (10-noprops-*); bar shows --:-- before play then |
+| 8b | Fast arrows over 30 files (60 ms steps, 15 ms bursts): rows always match the file name in the pane | PASS (no stale rows) |
+| - | 0-byte .mp3, junk .mp4/.docx/.pdf: no crash, no rows | PASS (08-*) |
+| - | CPU after tests | PASS, 0 % over 5 s |
+
+### Yeniden test 2 (fix2 sonrası)
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d-fix2.exe. Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on), data =
+the `tests/data/fields` fixtures. Screenshots: %TEMP%\gezik-gui-13\shots\13dfix2\. Play never pressed.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1a | width 200, 1600×900, photo.jpg: all rows down to Location visible | PASS (01): the image now shrinks so the wrapped facts fit; nothing left to scroll, wheel is a no-op (02) |
+| 1b | width 200, 1600×650 (forces overflow): wheel scrolls to Location | PASS (03 → 04): Exposure..Location reached, content clips under the zoom buttons |
+| 1c | rows clip at the pane edge, label/value rows don't overlap | PASS (04z zoom): wrapped Date Taken/Camera/Lens/Location values stay in their rows, labels vertically centred |
+| 2a | width 420, 1000×450: wheel scrolls to Location | PASS (05 → 06) |
+| 2b | width 420, 1600×900 | PASS (07): all rows visible, single-line |
+| 3 | Right-click Lens value → Copy Value | PASS: clipboard = "iPhone 15 Pro back camera 6.86mm f/1.78", status "Copied the value"; clipboard restored |
+| 4 | width 200, id3v23/id3v24.mp3, tags.flac (Turkish title/artist/album artist) | PASS (09-*, 10): Çiğdem Öztürk / Öztürk Ailesi wrap to 2 lines, readable, no overlap; Media+Music down to Year fit |
+
+Note: the fixtures have no really long title/album (longest wraps to 2 lines at 200 px), so a 5+ line value was
+only exercised by photo.jpg's Lens.
+
+## Failures
+
+1. AIFF codec "SSND". Repro: select `plain.aiff` (fixture) → Media › Audio Codec = "SSND" (ffprobe: pcm_s16be).
+   Cause: `aiff()` in `crates/gezik-batch/src/fields/audio.rs` reads 22 bytes of `COMM`, but a plain AIFF `COMM`
+   is 18 bytes, so bytes 18..22 are the next chunk's id. Read the compression type only when the chunk size is
+   at least 22 (AIFC), else PCM.
+2. Rows cut off in a narrow pane. Repro: state.toml `[preview] width = 200`, window 1600×900, select `photo.jpg`.
+   The values wrap to 2-4 lines; Exposure is drawn half over the pane's bottom border, Aperture/ISO/Focal
+   Length/Location can't be seen; mouse wheel over the rows does nothing (09-w200-photo-wheel-crop.png,
+   09-w200-bottom-zoom.png). Same at 420 px when the window is short. Needs a clip and/or a scroll for the info area.
+
+- Gözden geçirme ve ekran testi düzeltmeleri: HEIF EXIF okumasından önce `ftyp`/`meta` kutularının boyutu denetlenir (dosya sonuna uzanan `meta` büyük dosyayı belleğe almaz; kamadak-exif onları bütün okur); belge etiket bulucusu ad için en çok 128, varlık için 11 karakter bakar (256 KB `<`/`&` doğrusal); düz AIFF `COMM` 18 bayt okunur (kodek artık `SSND` değil `PCM`); önizlemede başlık, bilgi ve özellikler kayan, bölme kenarında kesilen bir alanda (dar bölmede ve kısa pencerede teker çalışır). Sürüm exe'si **27.790.336 B** (taban 27.596.288 B, **+194.048 B**). Yapı `t13d-fix.exe`; ekranda yeniden denenmedi.
+
+### Yeniden test (düzeltmeler sonrası)
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d-fix.exe (commit 72c3983). Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on),
+data = the `tests/data/fields` fixtures. Screenshots: %TEMP%\gezik-gui-13\shots\13dfix\.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1a | width 200, 1600×900, photo.jpg: rows cut at the pane edge, nothing over the border | PASS (01-w200-photo) |
+| 1b | width 200, 1600×900: wheel scrolls to Location | FAIL: no scroll at all (3 points, 5-15 notches each); Exposure..Location still unreachable (03, 04, 15) |
+| 2 | width 420, 1000×450, photo.jpg: cut at the edge, wheel scrolls to Location | PASS (05-short-photo, 07-short-wheel-end); also video.mkv, plain.aiff (10b, 12b) |
+| 3 | Image area ≥ 80 px | PASS: ~95 px at 1000×450, ~430 px at width 200 |
+| 4 | Right-click Lens value → Copy Value | PASS: clipboard = "iPhone 15 Pro back camera 6.86mm f/1.78", status "Copied the value"; clipboard restored |
+| 5 | plain.aiff codec | PASS: Audio Codec = PCM |
+| 6a | Fast arrows (4 rounds: 15 down @60 ms, 15 up @15 ms, 7 down @15 ms) | PASS: 12/12 pane title = selected row; facts scroll back to top on file change |
+| 6b | Quick Look (photo.jpg) rows | PASS, and the wheel scrolls to Location inside Quick Look (13, 14) |
+
+## Failure
+
+1b. Repro: state.toml `[preview] width = 200`, window 1600×900, select `photo.jpg`. The facts block gets ~300 px
+(y 558-858), which is its unwrapped height; the values wrap to 2-5 lines, so Lens ends at the pane bottom and
+Exposure/Aperture/ISO/Focal Length/Location are clipped away with no scroll range. Likely cause: in
+`preview-pane.slint` the Flickable's `preferred-height`/`max-height`/`content-height` all bind to
+`facts-text.preferred-height`, which does not reflect the word-wrapped height at the narrow width, so the
+layout caps the Flickable at the single-line height and the content equals the viewport (nothing to scroll),
+while the image takes the spare space. At 420 px (no wrapping) the same code works.
+
+Note: UIA focus reports the main Window (not the list) after a row click in this build; arrow keys still go to the list.
+
+- Yeniden testin tek notu düzeltildi (fix2): satırdaki değer yatay düzende satırın genişliğiyle ölçülüyordu, 200 px bölmede liste olduğundan kısa çıkıp kaymıyordu; etiket ve değer artık elle yerleşiyor, değer kendi genişliğiyle ölçülüyor. Sürüm exe'si **27.784.704 B** (+188.416 B). Yapı `t13d-fix2.exe`; ekranda yeniden denenmedi.
+
+## Adım 13, alt parça 13e sonrası
+
+- Alan sütunları: `ColumnKey::Field`, `SortKey::Field`, `GroupBy::Field` (ad alanın anahtarı; `state.toml [[columns]]`, `views.toml`, `[[view-rules]] columns/sort/group` ek kodsuz). Başlık menüsünde `Hide <alan>` ve `More Columns…` (2620; eylem `more-columns`, palet, macOS View menüsü), sekme seçicisinin kutusunda alan listesi (yazınca süzülür, aç/kapa, kutu açık kalır). En çok 8 alan sütunu; gizlenen listeden çıkar. Kenar sürükleme alan sütununu yerinde genişletir; genişlik saklanır.
+- Okuma: yalnız ekrandaki satırlar, yalnız gösterilen sütunlar, yalnız uzantısının okuyucusunun verdiği alanlar (`.txt` hiçbir şey istemez), küçük resim iş parçacığında (`MediaKey::Fields`); önbellek yol başına nesil + okunan küme, küme büyüyünce yalnız eksik alanlar; `show`/F5 nesli ilerletir, eski değer yenisi gelene dek çizilir. Alan sütunu yokken satır başına ek iş yok (100k ad/boyut sıralaması 13d ile aynı: 44/41 ms, 17/17 ms).
+- Sıralama/gruplama/süzgeç: klasör yalnız gerekince bütün okunur (`view/folder_fields.rs`, 12c'nin deseni), `Reading properties… n of m`, bitince bir kez yeniden sıralama. Değersiz ve okunmamış satırlar iki yönde de sonda; gruplar yalnız metin alanları, yıl ve `taken` (yıla göre), `No Artist` sonda. Süzgeç sözcükleri `gezik-core/src/field_filter.rs`: `artist:tarkan`, `artist="Sezen Aksu"`, `duration>3m`, `taken>=2024-05`, `camera:any`, `album:none`; ad deseniyle birlikte; hatalı değer çubukta; okunana dek satırlar soluk. View ▸ `Sort by property…` (2700), Group by ▸ alanlar (2710+). Önizleme özellik satırında `Show Column` (2616).
+- Sapmalar (plan 1–6): 12'nin okuyucusu/`meta_filter` bu dalda yok (ayrı ama aynı desen; birleşmede `tag:` bağlanır); sütunlar `state.toml`'da (klasör başına değil); arama sonuçlarında alanla sıralama/gruplama/süzme yok; değersizler azalan sırada da sonda; Miller sütunlarında alan sütunu yok; macOS menü çubuğunda gruplama seçiciyle.
+- Sürüm exe'si **27.910.144 B** (13d 83b77ba birleştirildikten sonra; taban 13d e5a0e48, 27.790.336 B, **+119.808 B**; bütçe 262.144, spec tahmini ≈ 80 KB). Boşta yeni zamanlayıcı/iş parçacığı yok. Yapı `t13e.exe`; Windows ekran testleri, macOS 382–384 ve Linux 278–279 bekliyor.
+
+## Windows ekran testleri: 13e
+
+Build: %TEMP%\gezik-gui-13\bin\t13e.exe; baseline t13d-fix2.exe. Primary monitor, muted, own config/data (cleaned up).
+Data: 40 tagged MP3s (ffmpeg, 5 artists, some untagged), 5 .txt, the fields fixtures; 60 EXIF JPEGs (Apple/Canon/Nikon, 2021-2025); 10,000 16x16 EXIF JPEGs.
+Screenshots: %TEMP%\gezik-gui-13\shots\13e\
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Header menu > More Columns…, `art` > Artist, then Album, Duration | PASS: picker stays open (focus in its field, "Shown" marks), columns land after Size, values there at once (e1a–e1d) |
+| 2 | Duration sort, valueless rows last both ways | PASS: .txt/.pdf/.docx/.odt/.jpg last ascending and descending (e2a, e2b) |
+| 3 | Drag field column edge, width kept after restart | PASS (single pane): rows follow header; state.toml keeps artist=250, album=70; same after restart. Note: the handle at a column boundary resizes the column on its right (Name absorbs), so dragging the Artist/Album boundary right shrank Album. Dual pane not tried. |
+| 4 | `taken>=2024 camera:iphone`; `duration>3x` | PASS: photos folder 12/60 matches (correct set); error text `duration>3x: "3x" is not a duration (3m, 1:30)` next to the field (e4a, e4b). Faded rows / status progress NOT OBSERVED: 10,000 JPEGs read in <~300 ms (burst captures at 35 ms intervals already final). Note: with the invalid query the list shows 0 items. |
+| 5 | Group by > Artist | PASS: groups by artist, `No Artist (16)` last (e5d, e5e). `Reading properties…` group not observed (read too fast). |
+| 6 | Preview property row > Show Column; 9th field column | PASS: menu Copy Value / Show Column, Artist column added (e6b, e6c); 9th pick shows "At most 8 property columns: hide one first" in the status bar (e6e). |
+| 7 | [[view-rules]] path=music columns=[artist,album,track,duration] sort=track | PASS with note: those columns show and rows sort by Track (e7). Column order is the field registry's (Duration, Artist, Album, Track), not the rule's list order. |
+| 8 | 10k photos: scroll CPU with/without Date Taken, idle, leave mid-read | PASS on CPU (table below); idle 0% once read. Leave-mid-read NOT OBSERVABLE (whole read incl. sort by Date Taken finishes in ~0.2–0.4 s: CPU 31% in the first 200 ms, then 0). Sort by Date Taken correct (img00000, img00420, img00840 first). |
+| + | Retag MP3 on disk (ffmpeg -metadata artist) while column shown, F5 | PASS: new artist showed (already before F5, via the watcher) and after F5 (e9). |
+
+## Scroll CPU (150 wheel notches down, then up, ~10 s each; Gezik process CPU ms)
+
+| Build | Date Taken column | down | up | idle after |
+|---|---|---|---|---|
+| t13e | yes | 2812 | 2906 | 0% |
+| t13e | no | 2344 | 2219 | 0% |
+| t13d-fix2 | no | 2234 | 2188 | 0% |
+| t13e (repeat) | yes | 2781 | 2703 | 0% |
+
+Without the column t13e = t13d-fix2 (within noise). With the column about +20–25% CPU while scrolling (one more column drawn), no stalls. The very first scroll after a fresh start with the column cost 5016 ms (one-off; warm-up).
+
+## Notes for the implementer
+- (minor) View rule `columns` order not kept: shown in registry order (Duration before Artist).
+- (question) Invalid filter (`duration>3x`) empties the list (0 items) rather than keeping the unfiltered rows.
+- In the Duration descending sort, the valueless rows are also name-descending (notes4..notes0, fx-report..fx-info); fine if intended.
+- Harness: walking the UIA desktop tree while a native popup menu was open hung the test script twice (not a Gezik issue); stopping that task also ended its child Gezik.
+
+- Gözden geçirme ve ekran testi düzeltmeleri (13e fix): alanla gruplanıp aynı alanla sıralanınca gruplar artık ters dönmüyor (artan sırada `No Artist` ve okunmayanlar sonda); kısmi tarih (`2024`, `2024-05`) her işleçte o dönemi kapsar (`taken>2024` 2025'ten başlar, `taken<=2024-05` Mayıs'ı içerir); metin alanları adların sırasıyla (doğal, Türk alfabesi, harf duyarsız; `Şebnem` `Zeki`'den önce) ve satır başına bir anahtarla sıralanır (karşılaştırmada ayırma yok); `[[view-rules]] columns` alan sütunlarını kuralın sırasıyla gösterir; hatalı süzgeç sözcüğü (`duration>3x`) iletisini verir ama yalnız o sözcük atlanır, öbürleri ve ad deseni süzer (yalnızsa liste tam görünür). 100k ölçüm (sürüm, en iyi 7): ad 47 ms, boyut 19 ms, alan Artist 63 ms (değerler yapılırken dizeler dahil), Duration 23 ms. Klasör okumasının dosya başına yeniden kullanımı yapılmadı (isteğe bağlıydı). Sürüm exe'si **27.911.168 B** (13d e5a0e48 tabanı 27.790.336 B, **+120.832 B**); yapı `t13e-fix.exe`.
+
+### Yeniden deneme: 13e fix re-check (t13e-fix.exe, 2026-10-12)
+
+Data regenerated: 24 MP3s (artists Ahmet Kaya, Cem Karaca, Çiğdem Talu, Ilgaz, İlhan İrem, Sezen Aksu, Şebnem Ferah, Uğur Işılak, Ümit Besen, Zeki Müren; 3 untagged) + 4 .txt; 60 EXIF JPEGs, 12 each in 2023-12, 2024-04, 2024-05, 2024-06, 2025-03. Sort/group set through `[[view-rules]]` and Artist header clicks. Shots: %TEMP%\gezik-gui-13\shots\13e\f*.png
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Group by Artist, sort Artist asc / desc | PARTIAL. Asc: Ahmet > Cem > Çiğdem > Ilgaz > İlhan > Sezen > Şebnem > Uğur > Ümit > Zeki > No Artist (7) - PASS. Desc (rule `sort-dir = "desc"` and also one header click): values reversed correctly, but **`No Artist (7)` is FIRST**, not last - FAIL (f1-desc, f1-click1). Second click returns to asc with No Artist last. |
+| 2 | Sort by Artist alone | PASS: same Turkish order asc; desc reversed; valueless rows (3 untagged MP3 + .txt) last both ways (f2-asc, f2-desc). |
+| 3 | `taken` partial dates | PASS: `taken>2024` 12 items, all 2025; `taken<=2024` 48 (2023-12 + 2024-04/05/06); `taken>2024-05` 24 (2024-06 + 2025); `taken<=2024-05` 36 (2023-12, 2024-04, 2024-05 incl.). |
+| 4 | `duration>3x` | PASS: error `duration>3x: "3x" is not a duration (3m, 1:30)` shows, list stays 28 items (full). `*.mp3 duration>3x`: 24 items (the MP3s), same error text. |
+| 5 | Rule `columns = ["duration","track","artist","album"]` | PASS: headers Name, Duration, Track, Artist, Album in that order (f5). |
+
+- Fix2: alanla gruplamada `No Artist` ve `Reading properties…` grupları artık her iki yönde sonda (yön çevirmesinin dışında; azalan sıra testi eklendi). Sürüm exe'si **27.911.168 B** (+120.832 B, 13d e5a0e48 tabanına göre); yapı `t13e-fix2.exe`.
+
+- 12 ile birleşme (13e, master'daki 12 + 13a–13d): etiket/puan/yorum sütunları, sıralama, gruplama ve `tag:`/`rating:`/`comment:` süzgeci ile alan sütunları, sıralama, gruplama ve özellik sözcükleri yan yana çalışır (`MediaKey::Tags` ve `MediaKey::Fields`, `FolderTags` ve `FolderFields` ayrı; süzgeç önce 12'nin sözcüklerini, sonra özellik sözcüklerini ayırır; ikisi VE). Sütun numaraları 7–9 (12) ve 16+ (13). Açık iş: spec 13 §7.2/§8.3'teki birleştirme (12'nin alanları kayda `Tags` grubu olarak, `tag:`/`rating:` alan sözdizimine, tek okuyucu/önbellek) yapılmadı.
+
+## Adım 13, alt parça 13f sonrası
+
+- Arama ölçütü: `SearchSpec.fields` süzgecin sözcükleri (`artist:tarkan duration>3m`; yalnız sözcükler, `field_filter::parse_where`). `Filters ▸ Properties…` (2621) bugünkü ölçüt sorusunu açar; yazarken not son sözcüğün olabileceği anahtarları söyler (`art` → `artist, album-artist`), hatalı sözcükte hata. Menüde değer görünür, Filters sayısına girer, Clear filters siler. `[[searches]] where` ve oturum (`state.toml`) aynı tablodan; bozuk `where` uyarıyla atlanır.
+- `Query::passes_fields` öbür ölçütlerden sonra, içerikten önce; dosya değilse ya da uzantısının okuyucusu istenen alanı vermiyorsa okumadan değersiz yargılar (`duration>3m` `.txt`'i eler, `album:none` geçirir); sözcük yoksa hiç okuma yok (testte sayaçla). Okuma `gezik_batch::fields::read` (`gezik-search → gezik-batch`, karar 27), yalnız düzenli dosya (FIFO açılmaz), yalnız-bulut okunmaz. Tarayıcı, Everything adayları, kopyalar ve iş sonrası sonuç denetimi aynı yoldan; ad önbelleği ve yazarken arama alan ölçütünde kullanılmaz (Enter).
+- Ad şablonu: kaydın her alanı (`{artist}`, `{track:02}`, `{aperture:1}`, `{taken:%Y}`, `{duration}` → `3m25s`, `{width}x{height}`), `{artist|Unknown}` yedeği; `{taken}` bugünkü anlamında. Değerler `template::safe_part`'tan geçer (`/ \ : * ? " < > |` ve kontrol karakterleri `_`, ≤ 100 karakter, uçta boşluk/nokta yok, `..` → `_`; üç sistemde aynı). Toplu ad değiştirmenin EXIF tarih okuması genelleşti: açılış başına alan başına bir kez, arka planda, yalnız şablonun istediği alanlar (`reading properties…`, Rename bekler); yedeksiz boş alanlı satır `⚠` (kırmızı değil), notu `no artist`, altbilgide `1 name with an empty field`. Şablonun yanında `Fields ▾` (gruplar alt menü, 2740 + alanın yeri) alanı şablonun sonuna ekler.
+- Sapmalar (plan 1–5): vurgulama kuralında `where` yok (12f bu dalda yok; denetim listesi 387/281 "12'yi bekler"); arama çubuğunda ayrı Properties alanı yok (Filters'taki soru kutusu); `Fields ▾` imlece değil sona ekler; arama menü kimliği 2621; kopya aramasında da alan ölçütü işler.
+- 13e fix (7814d08, 33dec37) birleştirildi. Sürüm exe'si **27.941.888 B** (taban 13e fix 33dec37, 27.911.168 B, **+30.720 B**; bütçe 262.144, spec tahmini ≈ 70 KB). Boşta yeni zamanlayıcı/iş parçacığı yok: alanlar yalnız aramada ölçüt varken ve toplu ad değiştirmede şablon alan isteyince okunur. Yapı `t13f.exe`; Windows ekran testleri, macOS 385–386 ve Linux 280 bekliyor (387/281 12'yi bekler).
+- 12 ile birleşme (13f, 13e'deki 12 + 13a–13e): aramada 12'nin etiket/puan/yorum ölçütleri (`passes_meta`) ve 13f'nin alan ölçütü (`passes_fields`) yan yana; ikisi de ucuz ölçütlerden sonra, yalnız istenince okur. Alan ölçütü artık ad önbelleğinde (`cache::select`), Spotlight'ta ve etiket deposunun dosyalarında da denetlenir (önbellek alan ölçütünde de kullanılır; yazarken arama yine Enter ister). `[[searches]]`/oturum: `tags`, `untagged`, `min-rating`, `comment`, `where` birlikte. Menü: 12'nin Tags…/Comment… (2404–2405, Rating ▸) ve 13f'nin Properties… (2621) yan yana. **Vurgulama kuralında `where` hâlâ bağlı değil:** 12f birleşti ama bağlamak satır alanı okumasını (13e'nin `MediaKey::Fields` önbelleği) vurgulama yoluna ve `RowMeta` beklemesine taşımayı istiyor, küçük değil; ayrı iş (denetim 387/281 atlanır).
 
 ## Adım 14, alt parça 14a sonrası
 
