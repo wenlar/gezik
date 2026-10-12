@@ -423,10 +423,12 @@ pub enum Action {
     SplitFile,
     /// The parts of the selected `.001` (or `.crc`) into one file, checked by CRC (no key).
     JoinFiles,
+    /// The preview of the selected file as hex, or back (spec 13 §4.4; no key).
+    PreviewHex,
 }
 
 impl Action {
-    pub const ALL: [Action; 113] = [
+    pub const ALL: [Action; 114] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -540,6 +542,7 @@ impl Action {
         Action::MoveTo,
         Action::SplitFile,
         Action::JoinFiles,
+        Action::PreviewHex,
     ];
 
     pub fn name(self) -> &'static str {
@@ -657,6 +660,7 @@ impl Action {
             Action::MoveTo => "move-to",
             Action::SplitFile => "split-file",
             Action::JoinFiles => "join-files",
+            Action::PreviewHex => "preview-hex",
         }
     }
 
@@ -788,6 +792,7 @@ impl Action {
             Action::MoveTo => "Move To…",
             Action::SplitFile => "Split File…",
             Action::JoinFiles => "Join Files",
+            Action::PreviewHex => "Show Preview as Hex",
         }
     }
 
@@ -990,7 +995,8 @@ impl Action {
                 | Action::CopyTo
                 | Action::MoveTo
                 | Action::SplitFile
-                | Action::JoinFiles,
+                | Action::JoinFiles
+                | Action::PreviewHex,
                 _,
             ) => &[],
             // TC's compare key; ⌃⌘C goes on 10b's ⌃⌘ row (spec 11 §3.3).
@@ -2142,6 +2148,15 @@ refresh = [\"f5\", \"ctrl+r\"]
             for platform in [Platform::Other, Platform::Mac] {
                 assert_eq!(Shortcuts::defaults(platform).chord_for(action), None, "{name}");
             }
+        }
+    }
+
+    #[test]
+    fn the_preview_hex_action_has_no_key() {
+        assert_eq!(Action::from_name("preview-hex"), Some(Action::PreviewHex));
+        assert_eq!(Action::PreviewHex.title(), "Show Preview as Hex");
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::PreviewHex), None, "spec 13 §10.2");
         }
     }
 }

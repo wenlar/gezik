@@ -207,6 +207,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::ViewGrid
         | Action::ViewColumns
         | Action::TogglePreview
+        | Action::PreviewHex
         | Action::QuickLook
         | Action::Trash
         | Action::DeletePermanently
