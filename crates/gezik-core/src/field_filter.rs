@@ -134,7 +134,7 @@ fn holds(op: Op, value: &Value, wanted: &Value) -> bool {
 mod tests {
     use super::*;
     use crate::batch::date::DateParts;
-    use crate::fields::{ALBUM, ARTIST, CAMERA, DURATION, TAKEN, WIDTH, YEAR};
+    use crate::fields::{ALBUM, ARTIST, CAMERA, DURATION, TAKEN, YEAR};
 
     fn song() -> Fields {
         Fields::new(vec![

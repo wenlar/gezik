@@ -45,11 +45,6 @@ impl FolderFields {
     pub fn of(&self, name: &str) -> Option<Rc<Fields>> {
         self.complete.then(|| self.values.get(name).cloned().unwrap_or_default())
     }
-
-    #[cfg(test)]
-    pub fn read(dir: PathBuf, read: FieldSet, values: HashMap<Box<str>, Rc<Fields>>) -> FolderFields {
-        FolderFields { dir, read, values, complete: true, faint: Cell::new(false), stamp: 0 }
-    }
 }
 
 /// The read going on; dropped (a read overtaken, a pane or window closed), it stops.
