@@ -778,6 +778,12 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 360. **Manage the list.** On a tag's menu: Color ▸ Blue, Move up/down, Rename… (to `Urgent`), Remove from list, New tag…. settings.toml's `[tags] list` changes in place and its comments stay. Rename… says files keep the old name; Search and Retag… opens the old tag's search; select the results, ⌃⌘L: the picker has the old tag off and `Urgent` on, Esc makes one job (one ⌘Z).
 361. **Search words and Clean Up.** In the search bar (This Mac / every drive): `tag:Red rating:3` and `comment:review` use Spotlight; on a folder they walk it. Filters ▸ Tags…, Rating ▸ and Comment… do the same; saving the search writes `tags`, `min-rating`, `comment` into `[[searches]]`. File ▸ Tags ▸ Clean Up Tag Store…: with no store entries it says none are gone; with entries for deleted files (exFAT stick, `write-to-files = false`) it asks, Remove keeps `tags-store.tsv.bak`, entries of an unplugged stick stay.
 
+### 12f, highlight rules
+
+362. **Rules color rows.** Uncomment the four `[[highlight-rules]]` examples in settings.toml and save: `.tmp`/`.bak` files turn gray, folders changed today green, files tagged Red have a bold name, big unrated files orange, at once and in the list, grid and column views and in search results. A wrong rule (`min-size = "lots"`) shows a notice naming `highlight-rules[n]` and the others keep working.
+363. **Dark theme and selection.** Switch System Settings ▸ Appearance to Dark: the named colors become lighter shades, the folder rule uses its `dark-color`. Select a colored row: its text keeps the color where it reads on the selection, else it is the selection's white; bold stays. Bold names are crisp on Retina.
+364. **Only when asked.** With only the `name`/`kind` rules (no `tag`/`rating`/`comment`) and tag dots and columns off, a 10,000-file folder scrolls as before (Activity Monitor: no extra CPU). With the `tag` rule, tag a file Red in Finder: its name turns bold after the row is read, with no other rule's color flashing first.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

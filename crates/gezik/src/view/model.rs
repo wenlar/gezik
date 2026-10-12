@@ -224,8 +224,30 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let finder = (cfg!(target_os = "macos") && is_dir && entries)
         .then(|| listing.path_at(i).and_then(|(path, _)| gezik_platform::finder::finder_name(&path)))
         .flatten();
-    let RowCells { dots: [dot1, dot2, dot3], count: dots, more, tag_names, rating, rating_faint, comment } =
-        row_meta(data, i);
+    let RowCells {
+        dots: [dot1, dot2, dot3],
+        count: dots,
+        more,
+        tag_names,
+        rating,
+        rating_faint,
+        comment,
+        meta,
+        pending,
+    } = row_meta(data, i);
+    let selected = data.selection.is_selected(i);
+    let (tint, bold) = match entry.filter(|_| entries) {
+        Some(e) => {
+            use gezik_core::highlight::RowMeta;
+            let known = match (&meta, pending) {
+                (Some(meta), _) => RowMeta::Known(meta),
+                (None, true) => RowMeta::Pending,
+                (None, false) => RowMeta::Never,
+            };
+            crate::tags::highlight_of(e, now, known, selected)
+        }
+        None => Default::default(),
+    };
     let (folder, found) = match listing {
         Listing::Results(set) => (
             set.shown_folder(i).unwrap_or_default().into(),
@@ -247,7 +269,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         type_name: type_name_for(data, i).into(),
         has_icon: icon.is_some(),
         icon: icon.unwrap_or_default(),
-        selected: data.selection.is_selected(i),
+        selected,
         focused: data.selection.focus() == Some(i),
         cut: entries && (listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)) || waiting(data)),
         cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
@@ -262,6 +284,8 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         rating: rating.into(),
         rating_faint,
         comment: comment.into(),
+        tint,
+        bold,
     }
 }
 
@@ -300,6 +324,9 @@ struct RowCells {
     rating: String,
     rating_faint: bool,
     comment: String,
+    /// The meta, for highlight rules that ask for it (spec 12 §9.2); `pending`: it is being read.
+    meta: Option<gezik_core::meta::Meta>,
+    pending: bool,
 }
 
 /// Entry `i`'s tag dots while dots show (spec 12 §5.4), its tags' names while they or the Tags
@@ -311,7 +338,8 @@ struct RowCells {
 fn row_meta(data: &ViewData, i: usize) -> RowCells {
     let dots_on = crate::tags::dots_on();
     let columns = data.tags_column || data.rating_column || data.comment_column;
-    if matches!(data.listing, Listing::Drives(_)) || !(dots_on || columns) {
+    let highlight = crate::tags::highlight_needs_meta();
+    if matches!(data.listing, Listing::Drives(_)) || !(dots_on || columns || highlight) {
         return RowCells::default();
     }
     let entry = data.listing.entry(i);
@@ -328,13 +356,17 @@ fn row_meta(data: &ViewData, i: usize) -> RowCells {
     // Cloud folders are not read row by row (a folder read whole was asked for: it answers).
     let cloud = path.as_ref().is_some_and(|p| !crate::tags::dots_forced() && crate::cloud::root_of(p).is_some());
     let windows = path.as_deref().filter(|_| explorer && !cloud).and_then(crate::tags::explorer_of);
+    let asked = whole.is_none() && !cloud && path.is_some();
     let row = match path {
         Some(path) if whole.is_none() && !cloud => data.media.tags(path, i),
         _ => None,
     };
-    let Some(meta) = whole.or(row.as_deref().map(|r| &r.meta)) else { return RowCells::default() };
+    let Some(meta) = whole.or(row.as_deref().map(|r| &r.meta)) else {
+        // Asked for and on its way (a row not read, as in a cloud folder, never comes).
+        return RowCells { pending: asked, ..RowCells::default() };
+    };
     let windows = windows.as_ref();
-    let mut cells = RowCells::default();
+    let mut cells = RowCells { meta: highlight.then(|| meta.clone()), ..RowCells::default() };
     if !meta.tags.is_empty() {
         let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&meta.tags, list));
         if dots_on {
@@ -876,6 +908,72 @@ mod tests {
         assert_eq!((row.rating.as_str(), row.comment.as_str()), ("★★★☆☆", "Ready"), "a picture keeps its stars");
         assert_eq!(data.media.pending(), pending, "no row read, no Explorer read in the cloud");
         crate::cloud::set_roots(Vec::new());
+    }
+
+    #[test]
+    fn highlight_rules_color_rows_and_read_meta_only_when_they_ask() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_config::theme::ThemeColors;
+        use gezik_core::highlight::{Highlights, Hue, Rule, Style};
+        use gezik_core::meta::{Meta, Tag, TagColor};
+        use gezik_core::meta_filter::TagTerm;
+        use gezik_core::search::KindFilter;
+        let entries: Vec<Entry> = ["a.jpg", "b.txt"]
+            .iter()
+            .map(|n| Entry { name: (*n).into(), is_dir: false, flags: 0, size: 1, modified: None, created: None })
+            .collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\h" } else { "/h" });
+        let mut data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        let color = |c: &str| gezik_config::Color::parse(c).unwrap();
+        let light = ThemeColors { background: color("#ffffff"), selection: color("#0060d0"), ..ThemeColors::default() };
+        let dark = ThemeColors { background: color("#1e1e1e"), selection: color("#3a3a3a"), ..ThemeColors::default() };
+        let none = slint::Color::from_argb_u8(0, 0, 0, 0);
+        // No rules: nothing colored, nothing read.
+        crate::tags::set_highlights(Highlights::default(), Some(&light));
+        let row = file_row(&data, 0);
+        drop(file_row(&data, 1));
+        let others = data.media.pending();
+        assert_eq!((row.tint, row.bold), (none, false));
+        // A rule without meta: colored at once, still nothing read.
+        let pictures = Rule {
+            kind: Some(KindFilter::Pictures),
+            style: Style { color: Some(Hue::Named(TagColor::Blue)), dark: None, bold: true },
+            ..Rule::default()
+        };
+        crate::tags::set_highlights(Highlights::new(vec![pictures.clone()]), Some(&light));
+        let row = file_row(&data, 0);
+        assert_eq!((row.tint, row.bold), (slint::Color::from_rgb_u8(0x00, 0x60, 0xd0), true));
+        assert_eq!(file_row(&data, 1).tint, none);
+        assert_eq!(data.media.pending(), others, "no meta rule: no read");
+        // Selected: blue on the blue selection does not read, the theme's color shows; bold stays.
+        data.selection = Selection::from_indices(2, [0], Some(0));
+        let row = file_row(&data, 0);
+        assert_eq!((row.tint, row.bold), (none, true));
+        data.selection = Selection::default();
+        // The dark theme's shade.
+        crate::tags::set_highlights(Highlights::new(vec![pictures.clone()]), Some(&dark));
+        assert_eq!(file_row(&data, 0).tint, slint::Color::from_rgb_u8(0x40, 0x9c, 0xff));
+        // A tag rule first: rows on screen are read; until then no color (not the later rule's).
+        let red = Rule {
+            terms: vec![TagTerm::Named("Red".into())],
+            style: Style { color: Some(Hue::Rgb([1, 2, 3])), dark: None, bold: false },
+            ..Rule::default()
+        };
+        crate::tags::set_highlights(Highlights::new(vec![red, pictures]), Some(&dark));
+        let row = file_row(&data, 0);
+        assert_eq!((row.tint, row.bold), (none, false), "waits for the tags");
+        assert_eq!(data.media.pending(), others + 1, "the row is read");
+        let meta = Meta { tags: vec![Tag::new("Red", TagColor::Red)], ..Meta::default() };
+        let key = crate::media::MediaKey::Tags { path: dir.join("a.jpg") };
+        let read = std::sync::Arc::new(crate::tags::RowMeta { meta });
+        data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Tags(read));
+        assert_eq!(file_row(&data, 0).tint, slint::Color::from_rgb_u8(1, 2, 3));
+        crate::tags::set_highlights(Highlights::default(), Some(&light));
     }
 
     #[test]

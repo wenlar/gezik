@@ -396,6 +396,8 @@ pub struct Settings {
     pub commands: Vec<CommandSpec>,
     /// View rules (`[[view-rules]]`, spec 10 §8); invalid ones are left out.
     pub view_rules: Vec<gezik_core::view_rules::RuleSpec>,
+    /// Highlight rules (`[[highlight-rules]]`, spec 12 §9), compiled; invalid ones are left out.
+    pub highlight_rules: gezik_core::highlight::Highlights,
     /// `[tags]` (spec 12 §4.5).
     pub tags: crate::tags::TagsSettings,
 }
@@ -439,6 +441,7 @@ impl Default for Settings {
             convert: ConvertSettings::default(),
             commands: Vec::new(),
             view_rules: Vec::new(),
+            highlight_rules: Default::default(),
             tags: crate::tags::TagsSettings::default(),
         }
     }
@@ -822,6 +825,9 @@ impl Settings {
         }
         if let Some(value) = table.get("view-rules") {
             settings.view_rules = crate::view_rules::parse_view_rules(value, file, warnings);
+        }
+        if let Some(value) = table.get("highlight-rules") {
+            settings.highlight_rules = crate::highlight_rules::parse_highlight_rules(value, file, warnings);
         }
         settings
     }
