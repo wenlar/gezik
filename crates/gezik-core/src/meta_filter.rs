@@ -3,6 +3,7 @@
 //! `[tags] list`.
 
 use crate::meta::{Meta, Tag, same_name};
+use crate::pattern::fold_text;
 use crate::sort::natural_cmp;
 
 /// One `tag:` or `rating:` word: every one must hold (and).
@@ -20,6 +21,8 @@ pub enum TagTerm {
     Unrated,
     /// `rating:any`.
     Rated,
+    /// `comment:review`: the comment holds this text (ignoring case; spec 12 §7.2).
+    Comment(Box<str>),
 }
 
 /// The term a `rating:` word's value makes; `None` for one half typed or out of range, and for
@@ -35,7 +38,7 @@ fn rating_term(value: &str) -> Option<TagTerm> {
     }
 }
 
-/// `text` without its `tag:` and `rating:` words, and those words. A word starts the text or
+/// `text` without its `tag:`, `rating:` and `comment:` words, and those words. A word starts the text or
 /// follows a space or `;`; its value is quoted (`tag:"Project X"`) or runs to the next space or
 /// `;`. A quoted word (`"tag:x"`) stays a name to look for, without its quotes.
 pub fn split(text: &str) -> (String, Vec<TagTerm>) {
@@ -49,6 +52,8 @@ pub fn split(text: &str) -> (String, Vec<TagTerm>) {
             4
         } else if prefixed(here, "rating:") {
             7
+        } else if prefixed(here, "comment:") {
+            8
         } else {
             0
         };
@@ -67,12 +72,13 @@ pub fn split(text: &str) -> (String, Vec<TagTerm>) {
             match name.trim() {
                 "" => {}
                 n if word == 7 => terms.extend(rating_term(n)),
+                n if word == 8 => terms.push(TagTerm::Comment(n.into())),
                 n if n.eq_ignore_ascii_case("any") => terms.push(TagTerm::Any),
                 n if n.eq_ignore_ascii_case("none") => terms.push(TagTerm::None),
                 n => terms.push(TagTerm::Named(n.into())),
             }
             i += word + used;
-        } else if starts && (prefixed(here, "\"tag:") || prefixed(here, "\"rating:")) {
+        } else if starts && (prefixed(here, "\"tag:") || prefixed(here, "\"rating:") || prefixed(here, "\"comment:")) {
             let inner = &here[1..];
             let end = inner.find('"').unwrap_or(inner.len());
             rest.push_str(&inner[..end]);
@@ -96,6 +102,7 @@ pub fn matches(terms: &[TagTerm], meta: &Meta) -> bool {
         TagTerm::MinRating(n) => meta.rating >= *n,
         TagTerm::Unrated => meta.rating == 0,
         TagTerm::Rated => meta.rating > 0,
+        TagTerm::Comment(text) => fold_text(&meta.comment).contains(&fold_text(text)),
     })
 }
 
@@ -189,6 +196,17 @@ mod tests {
         assert!(matches(&split("rating:>=3").1, &three) && !matches(&split("rating:4").1, &three));
         assert!(matches(&[TagTerm::Rated], &three) && !matches(&[TagTerm::Unrated], &three));
         assert!(matches(&[TagTerm::Unrated], &Meta::default()) && !matches(&[TagTerm::MinRating(1)], &Meta::default()));
+    }
+
+    #[test]
+    fn comment_words_hold_text_ignoring_case() {
+        let comment = |c: &str| TagTerm::Comment(c.into());
+        assert_eq!(split("*.pdf comment:review"), ("*.pdf ".to_owned(), vec![comment("review")]));
+        assert_eq!(split("comment:\"ask Ayşe\"").1, [comment("ask Ayşe")]);
+        assert_eq!(split("\"comment:x\""), ("comment:x".to_owned(), vec![]), "a quoted word is a name");
+        let meta = Meta { comment: "Ready for REVIEW; ask AYŞE".into(), ..Meta::default() };
+        assert!(matches(&split("comment:review comment:\"ask ayşe\"").1, &meta));
+        assert!(!matches(&[comment("draft")], &meta) && !matches(&[comment("x")], &Meta::default()));
     }
 
     #[test]

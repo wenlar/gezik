@@ -695,6 +695,12 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 259. **Comment.** As macOS 354: `user.xdg.comment` holds the text (`getfattr -n user.xdg.comment f`), Dolphin shows it; a comment set in Dolphin shows in Gezik's Comment column.
 260. **Columns, sort, group, filter.** As macOS 355–356 (the View button's Group by ▸ Rating here).
 
+### 12e, the tags sidebar and search
+
+261. **TAGS and a click.** As macOS 357; a click on a tag searches the folder shown with its subfolders (no Spotlight on Linux), the tab titled `Tag: Red`; the menu's Search everywhere walks every drive and adds the tag store's files on a vfat stick (`[tags] write-to-files` or vfat).
+262. **Drop and the list.** As macOS 359–360 (Ctrl+Shift+L for the picker); tags Dolphin wrote are found by the search too (`getfattr -n user.xdg.tags`).
+263. **Search words and Clean Up.** As macOS 361 without Spotlight; with the vfat stick unplugged Clean Up Tag Store… leaves its entries alone and says how many; plugged in with a file deleted from it, Remove takes only that entry.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

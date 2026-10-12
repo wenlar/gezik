@@ -401,6 +401,8 @@ pub enum Action {
     AddToArchive,
     /// Onto the drop stack: the paths are kept there.
     AddToStack,
+    /// Onto a sidebar tag (spec 12 §7.1): the files get that tag; nothing is copied or moved.
+    Tag,
 }
 
 /// The text next to the dragged items; `folder` is the archive for `AddToArchive`.
@@ -412,6 +414,8 @@ pub fn label(action: Action, folder: &Path) -> String {
         Action::Pin => "Pin to sidebar".to_owned(),
         Action::AddToArchive => format!("Add to {}", folder_name(folder)),
         Action::AddToStack => "Add to drop stack".to_owned(),
+        // The app says which tag and how many (`folder` is no folder here).
+        Action::Tag => format!("Tag with {}", folder.display()),
     }
 }
 

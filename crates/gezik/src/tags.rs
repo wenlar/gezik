@@ -9,9 +9,10 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use gezik_config::settings_writer::SettingsChange;
 use gezik_config::shortcuts::{Action, Chord, Key, Platform};
 use gezik_config::store::ConfigStore;
-use gezik_config::tags::{Dots, TagsSettings};
+use gezik_config::tags::{Dots, TagListEdit, TagsSettings};
 use gezik_core::meta::{Meta, MetaEdit, Tag, TagColor, check_tag_name, same_name};
 use gezik_core::pattern::fold_text;
 use gezik_ops::meta::MetaStore;
@@ -59,6 +60,9 @@ pub fn set_settings(settings: TagsSettings) {
     });
     if before != dots_on() || (list_changed && dots_on()) {
         redraw_all();
+    }
+    if list_changed {
+        crate::windows::for_each(|_| crate::sidebar::with_current(crate::sidebar::Sidebar::tags_changed));
     }
     sync_window();
 }
@@ -806,7 +810,8 @@ impl TagPicker {
         self.0.opening.set(opening);
         *self.0.paths.borrow_mut() = paths.clone();
         *self.0.metas.borrow_mut() = None;
-        *self.0.edits.borrow_mut() = Edits::default();
+        // Search and Retag… on its results: the old tag off, the new one on (spec 12 §7.3).
+        *self.0.edits.borrow_mut() = retag_edits().unwrap_or_default();
         self.0.query.borrow_mut().clear();
         self.0.current.set(0);
         self.0.open.set(true);
@@ -1010,14 +1015,348 @@ fn add_to_list(tag: Tag) {
         }
         new.then(|| (s.settings.list.clone(), s.config.clone()))
     });
+    if added.is_some() {
+        list_shown();
+    }
     if let Some((list, Some(config))) = added {
-        let id = crate::windows::current();
-        let change = gezik_config::settings_writer::SettingsChange::TagAdded(tag, list);
-        config.write_settings(change, move |result| {
-            if let Err(warning) = result {
-                crate::windows::post(id, move || crate::panes::active_view().note(warning.to_string()));
-            }
+        write_list(config, SettingsChange::TagAdded(tag, list));
+    }
+}
+
+/// `change` to settings.toml; a warning goes to the status bar.
+fn write_list(config: ConfigStore, change: SettingsChange) {
+    let id = crate::windows::current();
+    config.write_settings(change, move |result| {
+        if let Err(warning) = result {
+            crate::windows::post(id, move || crate::panes::active_view().note(warning.to_string()));
+        }
+    });
+}
+
+/// The list in memory changed: the sidebars' TAGS and the dots' colours follow.
+fn list_shown() {
+    crate::windows::for_each(|_| crate::sidebar::with_current(crate::sidebar::Sidebar::tags_changed));
+    if dots_on() {
+        redraw_all();
+    }
+}
+
+// The sidebar's TAGS and the list (spec 12 §7).
+
+/// What a search reads tags with: the engine's store (the file's own record, else Gezik's).
+pub fn meta_reader() -> Option<gezik_search::query::MetaReader> {
+    let store = STORE.get()?.clone();
+    Some(gezik_search::query::MetaReader(Arc::new(move |path: &Path| store.read(path).unwrap_or_default())))
+}
+
+/// The tag store's files that pass `terms`, on the drives mounted now (any thread).
+pub fn store_files(terms: &[gezik_core::meta_filter::TagTerm]) -> Vec<PathBuf> {
+    STORE.get().map(|store| store.find(|meta| gezik_core::meta_filter::matches(terms, meta))).unwrap_or_default()
+}
+
+/// The search for the tag `name` (spec 12 §7.1): under `folder` with its subfolders, or on
+/// every drive (`None`; macOS: Spotlight).
+pub fn tag_search(name: &str, folder: Option<PathBuf>) -> gezik_core::search::SearchSpec {
+    use gezik_core::search::{Scope, SearchSpec};
+    let scope = folder.map_or(Scope::AllDrives, Scope::Folder);
+    SearchSpec { tags: vec![name.to_owned()], ..SearchSpec::new(scope) }
+}
+
+/// The folder the active pane shows (a search's own folder), if any.
+fn shown_folder() -> Option<PathBuf> {
+    use gezik_core::nav::Location;
+    match crate::panes::active_nav().active_location() {
+        Location::Path(folder) | Location::Flat(folder) => Some(folder),
+        Location::Search(spec) => spec.scope.folder().map(Path::to_path_buf),
+        Location::Drives | Location::Trash => None,
+    }
+}
+
+fn search_tag(name: &str, folder: Option<PathBuf>, new_tab: bool) {
+    let spec = tag_search(name, folder);
+    crate::panes::with_active(|p| p.search.run_saved(spec, new_tab));
+}
+
+/// A click on the sidebar's tag `index` (a middle click: in a new tab): its files, on macOS
+/// everywhere (Spotlight, as Finder), elsewhere in the folder shown (spec 12 §7.1, decision 20).
+pub fn sidebar_clicked(index: i32, new_tab: bool) {
+    let Some(tag) = usize::try_from(index).ok().and_then(|i| list().get(i).cloned()) else { return };
+    let folder = if cfg!(target_os = "macos") { None } else { shown_folder() };
+    if folder.is_some() {
+        crate::panes::active_view().note(format!("Searching {} here; Search everywhere is in its menu", tag.name));
+    }
+    search_tag(&tag.name, folder, new_tab);
+}
+
+/// `tag:Name` for the filter bar, quoted when the name has a space or `;`.
+pub fn tag_word(name: &str) -> String {
+    if name.contains([' ', ';']) { format!("tag:\"{name}\"") } else { format!("tag:{name}") }
+}
+
+/// An item of the sidebar tag `name`'s menu.
+pub fn row_menu_chosen(id: u32, name: &str) {
+    use crate::context_menu::{
+        TAG_COLOR_FIRST, TAG_DOWN, TAG_FILTER, TAG_REMOVE, TAG_RENAME, TAG_SEARCH_EVERYWHERE, TAG_SEARCH_HERE, TAG_UP,
+        TAGS_NEW,
+    };
+    match id {
+        TAG_SEARCH_HERE => match shown_folder() {
+            Some(folder) => search_tag(name, Some(folder), false),
+            None => crate::panes::active_view()
+                .note("No folder is shown here; Search everywhere looks on every drive".to_owned()),
+        },
+        TAG_SEARCH_EVERYWHERE => search_tag(name, None, false),
+        TAG_FILTER => {
+            let word = tag_word(name);
+            crate::panes::with_active(|p| p.filter.apply_text(&word));
+        }
+        TAG_RENAME => ask_rename(name),
+        TAG_UP | TAG_DOWN => edit_list(TagListEdit::Move(name.into(), id == TAG_UP)),
+        TAG_REMOVE => {
+            edit_list(TagListEdit::Remove(name.into()));
+            crate::panes::active_view().note(format!("{name} left your list; files keep it"));
+        }
+        TAGS_NEW => ask_new_tag(),
+        id if (TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8).contains(&id) => {
+            edit_list(TagListEdit::Color(name.into(), TagColor::from_number((id - TAG_COLOR_FIRST) as u8)));
+        }
+        _ => {}
+    }
+}
+
+/// `edit` on the list in memory now and in settings.toml (comments kept); files are not touched.
+fn edit_list(edit: TagListEdit) {
+    let (before, config) = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        let before = s.settings.list.clone();
+        s.settings.list = gezik_config::tags::edited(&before, &edit);
+        (before, s.config.clone())
+    });
+    list_shown();
+    if let Some(config) = config {
+        write_list(config, SettingsChange::TagList(edit, before));
+    }
+}
+
+/// The line under a tag name typed for `old` (`""`: a new tag), and whether it cannot be used.
+pub fn name_note(old: &str, text: &str, list: &[Tag]) -> (String, bool) {
+    let name = text.trim();
+    if name.is_empty() {
+        return ("Type a name".to_owned(), true);
+    }
+    if let Err(err) = check_tag_name(name) {
+        return (err.to_owned(), true);
+    }
+    if !same_name(name, old) && list.iter().any(|t| same_name(&t.name, name)) {
+        return (format!("{name} is in your list already"), true);
+    }
+    (String::new(), false)
+}
+
+/// Rename… (spec 12 §7.3): the list's name only, and the store's entries; files keep the old
+/// name. Search and Retag… also looks for the files with the old one.
+fn ask_rename(old: &str) {
+    let old = old.to_owned();
+    let message = format!(
+        "New name for {old}. Files keep the tag they have ({old}); Search and Retag… finds them so you can give them the new one."
+    );
+    let note = {
+        let old = old.clone();
+        move |text: &str| name_note(&old, text, &list())
+    };
+    crate::operations::with_current(|ops| {
+        ops.dialogs().ask_text_choice(
+            "Rename Tag",
+            message,
+            old.clone(),
+            &["Rename", "Search and Retag…", "Cancel"],
+            note,
+            move |answer| {
+                let Some((button, text)) = answer else { return };
+                let new = text.trim().to_owned();
+                if name_note(&old, &new, &list()).1 {
+                    return;
+                }
+                let color = list().iter().find(|t| same_name(&t.name, &old)).map_or(TagColor::None, |t| t.color);
+                if new != old {
+                    edit_list(TagListEdit::Rename(old.as_str().into(), new.as_str().into()));
+                    if let Some(store) = STORE.get().cloned() {
+                        let (from, to) = (old.clone(), new.clone());
+                        let _ = std::thread::Builder::new()
+                            .name("gezik-tags".into())
+                            .spawn(move || store.rename_tag(&from, &to));
+                    }
+                }
+                if button == 1 {
+                    retag(&old, Tag::new(&new, color));
+                }
+            },
+        );
+    });
+}
+
+thread_local! {
+    /// Search and Retag…: the old name and the new tag the next picker on that search's
+    /// results comes with.
+    static RETAG: RefCell<Option<(Box<str>, Tag)>> = const { RefCell::new(None) };
+}
+
+fn retag(old: &str, new: Tag) {
+    let note = format!(
+        "Select the files, then Tags… ({}): {old} comes off and {} goes on, as one job",
+        key_label_of(Action::Tags),
+        new.name
+    );
+    RETAG.with(|r| *r.borrow_mut() = Some((old.into(), new)));
+    search_tag(old, shown_folder(), false);
+    crate::panes::active_view().note(note);
+}
+
+fn key_label_of(action: Action) -> String {
+    crate::keys::chord_for(action).map(|c| crate::keys::chord_label(&c, Platform::current())).unwrap_or_default()
+}
+
+/// What the status bar adds while a Search and Retag… search shows (plan sapma 7).
+pub fn retag_hint() -> Option<String> {
+    let gezik_core::nav::Location::Search(spec) = crate::panes::active_nav().active_location() else { return None };
+    RETAG.with(|r| {
+        let r = r.borrow();
+        let (old, new) = r.as_ref()?;
+        spec.tags.iter().any(|t| same_name(t, old)).then(|| {
+            format!(
+                "Select them, then Tags… ({}): {old} comes off and {} goes on",
+                key_label_of(Action::Tags),
+                new.name
+            )
+        })
+    })
+}
+
+/// The picker's edits when it opens on the results of a Search and Retag… search (taken once).
+fn retag_edits() -> Option<Edits> {
+    let gezik_core::nav::Location::Search(spec) = crate::panes::active_nav().active_location() else { return None };
+    RETAG.with(|r| {
+        let mut r = r.borrow_mut();
+        let (old, _) = r.as_ref()?;
+        if !spec.tags.iter().any(|t| same_name(t, old)) {
+            return None;
+        }
+        let (old, new) = r.take()?;
+        Some(Edits { adds: vec![new], removes: vec![old], rating: None })
+    })
+}
+
+/// New tag… (the sidebar): a name for the end of the list, no colour yet.
+fn ask_new_tag() {
+    crate::operations::with_current(|ops| {
+        ops.dialogs().ask_text_noted(
+            "New Tag",
+            "Name of the new tag (its colour is in its menu):",
+            "",
+            &["Add", "Cancel"],
+            |text| name_note("", text, &list()),
+            |text| {
+                let Some(name) = text.map(|t| t.trim().to_owned()) else { return };
+                if !name_note("", &name, &list()).1 {
+                    add_to_list(Tag::new(&name, TagColor::None));
+                }
+            },
+        );
+    });
+}
+
+/// What files dropped on the sidebar's tag `index` get: that tag (spec 12 §7.1); `None` for no
+/// such tag.
+pub fn drop_edits(list: &[Tag], index: usize) -> Option<(Tag, Vec<MetaEdit>)> {
+    let tag = list.get(index)?.clone();
+    Some((tag.clone(), vec![MetaEdit::AddTags(vec![tag])]))
+}
+
+/// Files dropped on the sidebar's tag `index`: one job, one undo.
+pub fn drop_on_tag(index: usize, paths: Vec<PathBuf>) {
+    let Some((tag, edits)) = drop_edits(&list(), index) else { return };
+    let note = format!("{} added to {}", tag.name, crate::stack::count_text(paths.len()));
+    submit(paths, edits);
+    crate::panes::active_view().note(note);
+}
+
+/// The label beside files dragged over the sidebar's tag `name`.
+pub fn drop_label(name: &str, count: usize) -> String {
+    format!("Tag {} {name}", crate::stack::count_text(count))
+}
+
+/// The question of Clean Up Tag Store… for what `orphans` found; `None` when nothing is gone
+/// (the status bar says it then).
+pub fn clean_up_text(orphans: &gezik_ops::meta::Orphans) -> (Option<String>, String) {
+    let n = orphans.gone.len();
+    let mut away = match orphans.unmounted {
+        0 => String::new(),
+        1 => " 1 entry on a drive that is not connected was left alone.".to_owned(),
+        m => {
+            format!(" {} entries on drives that are not connected were left alone.", gezik_core::group_digits(m as u64))
+        }
+    };
+    match orphans.unreachable {
+        0 => {}
+        1 => away.push_str(" 1 entry Gezik cannot look at (no access, or the drive does not answer) was left alone."),
+        m => away.push_str(&format!(
+            " {} entries Gezik cannot look at (no access, or the drive does not answer) were left alone.",
+            gezik_core::group_digits(m as u64)
+        )),
+    }
+    match n {
+        0 => (None, format!("No entries point to files that are gone.{away}")),
+        1 => (Some(format!("1 entry points to a file that is gone. Remove it?{away}")), String::new()),
+        n => {
+            let n = gezik_core::group_digits(n as u64);
+            (Some(format!("{n} entries point to files that are gone. Remove them?{away}")), String::new())
+        }
+    }
+}
+
+/// Clean Up Tag Store… (spec 12 §7.4): counts on a thread, asks, removes only what the answer
+/// says (and only what is still gone), a copy of the store kept as tags-store.tsv.bak.
+pub fn clean_up_store() {
+    let Some(store) = STORE.get().cloned() else { return };
+    let id = crate::windows::current();
+    let spawned = std::thread::Builder::new().name("gezik-tags".into()).spawn(move || {
+        let found = store.orphans();
+        crate::windows::post(id, move || {
+            let orphans = match found {
+                Ok(orphans) => orphans,
+                Err(err) => {
+                    return crate::panes::active_view().note(format!("The tag store cannot be cleaned up: {err}"));
+                }
+            };
+            let (question, note) = clean_up_text(&orphans);
+            let Some(question) = question else { return crate::panes::active_view().note(note) };
+            crate::operations::with_current(|ops| {
+                ops.dialogs().ask("Clean Up Tag Store", question, &["Remove", "Cancel"], move |answer| {
+                    if answer != Some(0) {
+                        return;
+                    }
+                    let Some(store) = STORE.get().cloned() else { return };
+                    let id = crate::windows::current();
+                    let _ = std::thread::Builder::new().name("gezik-tags".into()).spawn(move || {
+                        let note = match store.remove_orphans(&orphans.gone) {
+                            Ok(n) => format!(
+                                "{} removed from the tag store; the old one is tags-store.tsv.bak",
+                                if n == 1 {
+                                    "1 entry".to_owned()
+                                } else {
+                                    format!("{} entries", gezik_core::group_digits(n as u64))
+                                }
+                            ),
+                            Err(err) => format!("The tag store cannot be cleaned up: {err}"),
+                        };
+                        crate::windows::post(id, move || crate::panes::active_view().note(note));
+                    });
+                });
+            });
         });
+    });
+    if let Err(err) = spawned {
+        eprintln!("gezik: cannot start the tags thread: {err}");
     }
 }
 
@@ -1066,6 +1405,75 @@ mod tests {
         assert_eq!(exact.len(), 3, "a tag's own name: no Create");
         let turkish = picker_lines(&[tag("İş", TagColor::Blue)], None, &Edits::default(), "iş");
         assert_eq!(turkish.len(), 3, "Turkish İ folds");
+    }
+
+    #[test]
+    fn a_drop_on_a_sidebar_tag_adds_it_as_one_edit() {
+        let list = list();
+        let (tag, edits) = drop_edits(&list, 2).unwrap();
+        assert_eq!(&*tag.name, "Green");
+        assert_eq!(edits, [MetaEdit::AddTags(vec![tag.clone()])], "one job, undone as one");
+        let mut meta = Meta::default();
+        edits.iter().for_each(|e| meta.apply(e));
+        assert!(meta.has_tag("green"));
+        assert_eq!(drop_edits(&list, 9), None, "no such tag");
+        assert_eq!(drop_label("Red", 3), "Tag 3 items Red");
+    }
+
+    #[test]
+    fn names_typed_for_the_list_keep_its_rules() {
+        let list = list();
+        assert!(name_note("Red", "Crimson", &list).0.is_empty());
+        assert!(name_note("Red", "RED", &list).0.is_empty(), "its own name in another case");
+        assert_eq!(name_note("Red", "green", &list), ("green is in your list already".to_owned(), true));
+        assert!(name_note("", "a,b", &list).1 && name_note("", "  ", &list).1);
+    }
+
+    #[test]
+    fn search_and_retag_takes_the_old_tag_off_and_puts_the_new_one_on() {
+        let edits = Edits { adds: vec![tag("Crimson", TagColor::Red)], removes: vec!["Red".into()], rating: None };
+        assert_eq!(
+            edits.to_edits(),
+            [MetaEdit::RemoveTags(vec!["Red".into()]), MetaEdit::AddTags(vec![tag("Crimson", TagColor::Red)])]
+        );
+        let metas = [with(&["Red"])];
+        assert_eq!((edits.check("Red", Some(&metas)), edits.check("Crimson", Some(&metas))), (0, 2));
+    }
+
+    #[test]
+    fn a_tag_search_and_filter_word() {
+        let spec = tag_search("Red", Some(PathBuf::from("/w")));
+        assert_eq!((spec.tags.as_slice(), spec.scope.folder()), (&["Red".to_owned()][..], Some(Path::new("/w"))));
+        assert_eq!(tag_search("Red", None).scope, gezik_core::search::Scope::AllDrives);
+        assert_eq!(tag_word("Red"), "tag:Red");
+        assert_eq!(tag_word("Project X"), "tag:\"Project X\"");
+        assert_eq!(gezik_core::meta_filter::split(&tag_word("a;b")).1.len(), 1);
+    }
+
+    #[test]
+    fn the_clean_up_asks_only_when_something_is_gone() {
+        use gezik_ops::meta::Orphans;
+        let gone = |n: usize, unmounted: usize| Orphans {
+            gone: vec![("v".to_owned(), "x".into()); n],
+            unmounted,
+            unreachable: 0,
+        };
+        assert_eq!(clean_up_text(&gone(0, 0)), (None, "No entries point to files that are gone.".to_owned()));
+        assert_eq!(clean_up_text(&gone(1, 0)).0.as_deref(), Some("1 entry points to a file that is gone. Remove it?"));
+        assert_eq!(
+            clean_up_text(&gone(142, 318)).0.as_deref(),
+            Some(
+                "142 entries point to files that are gone. Remove them? 318 entries on drives that are not connected were left alone."
+            )
+        );
+        assert!(clean_up_text(&gone(0, 1)).1.ends_with("1 entry on a drive that is not connected was left alone."));
+        let locked = Orphans { unreachable: 2, ..gone(1, 0) };
+        assert!(
+            clean_up_text(&locked)
+                .0
+                .unwrap()
+                .ends_with("2 entries Gezik cannot look at (no access, or the drive does not answer) were left alone.")
+        );
     }
 
     fn rated(stars: u8, comment: &str) -> Meta {

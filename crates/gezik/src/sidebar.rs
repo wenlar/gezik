@@ -34,6 +34,8 @@ pub const SECTION_CLOUD: i32 = 6;
 pub const SECTION_TREE: i32 = 7;
 /// A capped branch's "… n more" line, `index` the branch's node: it opens that folder.
 pub const SECTION_TREE_MORE: i32 = 8;
+/// A tag of `[tags] list` (spec 12 §7.1), `index` its place there.
+pub const SECTION_TAGS: i32 = 9;
 
 /// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
 const ICON_HOME: i32 = 1;
@@ -176,6 +178,7 @@ pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<S
         icon: 0,
         depth: 0,
         arrow: 0,
+        dot: Default::default(),
     }];
     rows.extend(roots.iter().enumerate().map(|(i, root)| {
         let path = root.path.display().to_string();
@@ -190,7 +193,33 @@ pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<S
             icon: ICON_CLOUD,
             depth: 0,
             arrow: 0,
+            dot: Default::default(),
         }
+    }));
+    rows
+}
+
+/// The TAGS section (spec 12 §7.1): `list`'s tags with their colours, under their heading, or
+/// nothing (`[sidebar] tags = false`, or an empty list). Made from the settings alone: no I/O.
+pub fn tag_rows(list: &[gezik_core::meta::Tag], on: bool) -> Vec<SidebarRow> {
+    if !on || list.is_empty() {
+        return Vec::new();
+    }
+    let linux = cfg!(target_os = "linux");
+    let mut rows = vec![SidebarRow {
+        header: true,
+        label: "TAGS".into(),
+        section: SECTION_TAGS,
+        index: -1,
+        ..SidebarRow::default()
+    }];
+    rows.extend(list.iter().enumerate().map(|(i, tag)| SidebarRow {
+        label: (*tag.name).into(),
+        section: SECTION_TAGS,
+        index: i32::try_from(i).unwrap_or(i32::MAX),
+        tip: format!("Files tagged {}; drop files here to tag them", tag.name).into(),
+        dot: crate::tags::color_of(crate::tags::shown_color(tag, list, linux)),
+        ..SidebarRow::default()
     }));
     rows
 }
@@ -319,6 +348,8 @@ struct Inner {
     dialogs: crate::dialog::Dialogs,
     /// `[sidebar] cloud`.
     show_cloud: bool,
+    /// `[sidebar] tags`.
+    show_tags: bool,
     /// `[sidebar] tree-follow`.
     follow: bool,
     /// The folder last shown (`None`: not a folder), so a reload of the same one follows nothing.
@@ -432,6 +463,7 @@ impl Sidebar {
             groups: Vec::new(),
             dialogs,
             show_cloud: true,
+            show_tags: true,
             follow: false,
             followed: None,
             pending: None,
@@ -1161,6 +1193,19 @@ impl Sidebar {
         self.update_rows();
     }
 
+    /// `[sidebar] tags` (at start and on every settings reload).
+    pub fn set_show_tags(&self, on: bool) {
+        let changed = std::mem::replace(&mut self.0.borrow_mut().show_tags, on) != on;
+        if changed {
+            self.update_rows();
+        }
+    }
+
+    /// `[tags] list` changed: TAGS follows.
+    pub fn tags_changed(&self) {
+        self.update_rows();
+    }
+
     /// Rebuilds the rows: sections, labels, the pinned part's headings and tips, and the
     /// highlight of the exact current location. No file system access.
     fn update_rows(&self) {
@@ -1183,6 +1228,7 @@ impl Sidebar {
                 icon: 0,
                 depth: 0,
                 arrow: 0,
+                dot: Default::default(),
             };
             let item = |label: &str, section, i, path: &Path, icon: i32| SidebarRow {
                 header: false,
@@ -1194,6 +1240,7 @@ impl Sidebar {
                 icon,
                 depth: 0,
                 arrow: 0,
+                dot: Default::default(),
             };
 
             let mut rows = vec![header("FOLDERS", SECTION_FOLDERS, -1)];
@@ -1257,8 +1304,10 @@ impl Sidebar {
                     icon: ICON_SEARCH,
                     depth: 0,
                     arrow: 0,
+                    dot: Default::default(),
                 }));
             }
+            rows.extend(crate::tags::with_list(|list| tag_rows(list, inner.show_tags)));
             rows.push(header(DRIVES_HEADER, SECTION_DRIVES, -1));
             rows.extend(
                 places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path, ICON_DRIVE)),
@@ -1273,6 +1322,7 @@ impl Sidebar {
                 icon: ICON_TRASH,
                 depth: 0,
                 arrow: 0,
+                dot: Default::default(),
             });
 
             let current_path = match &current {
@@ -1308,6 +1358,26 @@ impl Sidebar {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tags_come_from_the_list_alone() {
+        use gezik_core::meta::{Tag, TagColor};
+        let list = [Tag::new("Red", TagColor::Red), Tag::new("Project X", TagColor::None)];
+        let rows = tag_rows(&list, true);
+        let shown: Vec<(&str, bool, i32, i32)> =
+            rows.iter().map(|r| (r.label.as_str(), r.header, r.section, r.index)).collect();
+        assert_eq!(
+            shown,
+            [("TAGS", true, SECTION_TAGS, -1), ("Red", false, SECTION_TAGS, 0), ("Project X", false, SECTION_TAGS, 1)]
+        );
+        assert_eq!(rows[1].dot, crate::tags::color_of(TagColor::Red));
+        assert_eq!(rows[2].dot == slint::Color::default(), !cfg!(target_os = "linux"), "a ring, gray on Linux");
+        assert!(rows.iter().all(|r| r.icon == 0 && r.depth == 0));
+        assert!(tag_rows(&list, false).is_empty(), "[sidebar] tags = false");
+        assert!(tag_rows(&[], true).is_empty(), "no heading without tags");
+        let places = Places::default();
+        assert_eq!(place_path(&places, &[], SECTION_TAGS, 0), None, "no folder, no tree");
+    }
 
     #[test]
     fn only_the_first_known_folder_called_home_gets_the_house() {

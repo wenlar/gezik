@@ -197,6 +197,7 @@ fn apply_to_window(window: &AppWindow, loaded: &Loaded) {
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     sidebar::with_current(sidebar::Sidebar::relabel);
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
+    sidebar::with_current(|s| s.set_show_tags(loaded.settings.sidebar_tags));
     sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
     view_options::sync(window, view_options::current());
     window.set_mono_font(mono_font().into());
@@ -335,6 +336,7 @@ fn perform(
         | Action::PutBack
         | Action::EmptyTrash
         | Action::SystemIntegration
+        | Action::CleanTagStore
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow

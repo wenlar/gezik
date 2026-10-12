@@ -10,6 +10,7 @@ use std::rc::Rc;
 use gezik_config::settings::ViewOption;
 use gezik_core::drag::Effect;
 use gezik_core::group::GroupBy;
+use gezik_core::meta::{Tag, TagColor};
 use gezik_core::nav::Location;
 use gezik_core::path_text::PathFormat;
 use gezik_core::search::{DateRange, Scope, SearchSpec};
@@ -179,6 +180,13 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
     for (i, (on, title)) in options.into_iter().zip(titles).enumerate() {
         items.push((OPTION_FIRST + i as u32, marked(on, title), true));
     }
+    let mut tags: Vec<String> = spec.tags.clone();
+    if spec.untagged {
+        tags.push("none".to_owned());
+    }
+    let shown = |text: String| if text.is_empty() { text } else { format!(" ({text})") };
+    items.push((SEARCH_TAGS, format!("Tags…{}", shown(tags.join(", "))), true));
+    items.push((SEARCH_COMMENT, format!("Comment…{}", shown(spec.comment.clone())), true));
     items.push((FILTERS_CLEAR, "Clear filters".to_owned(), spec.filter_count() > 0));
     let mut modified: Vec<(u32, String, bool)> = MODIFIED_PRESETS
         .iter()
@@ -195,9 +203,16 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
         .enumerate()
         .map(|(i, kind)| (KIND_FIRST + i as u32, marked(spec.kind == *kind, kind.label()), true))
         .collect();
+    let ratings = (0..=5u8)
+        .map(|stars| {
+            let title = if stars == 0 { "Any rating".to_owned() } else { "★".repeat(usize::from(stars)) };
+            (SEARCH_RATING_FIRST + u32::from(stars), marked(spec.min_rating == stars, &title), true)
+        })
+        .collect();
     let subs = vec![
         Submenu { title: "Modified".to_owned(), at: 0, items: modified },
         Submenu { title: "Type".to_owned(), at: 0, items: kinds },
+        Submenu { title: "Rating".to_owned(), at: 0, items: ratings },
     ];
     (items, subs)
 }
@@ -580,10 +595,11 @@ pub const TOOLS_MOVE_TO: u32 = 2208;
 pub const TOOLS_SPLIT: u32 = 2209;
 pub const TOOLS_JOIN: u32 = 2210;
 // Step 12 (spec 12 §12.3): 2400–2599. Tags ▸ 2400–2409 (Tags… 2400, Clear tags 2401, 12d's
-// Comment… 2402; New Tag… later), the list's tags 2410–2469, ratings 2470–2475, the sidebar's
-// tag menu 2480–2489, colours 2490–2497, View items 2500–2509 (Tag dots 2500; 12c: Sort by tags
-// 2501, Group by ▸ Tag 2502, Show/Hide Tags in the column headers 2503; 12d: Sort by rating
-// 2504, Group by ▸ Rating 2505, Show/Hide Rating 2506 and Comment 2507).
+// Comment… 2402; 12e: New tag… 2403, the search bar's Filters ▸ Tags… 2404 and Comment… 2405),
+// the list's tags 2410–2469, ratings 2470–2475, the sidebar's tag menu 2480–2489, colours
+// 2490–2497, View items 2500–2509 (Tag dots 2500; 12c: Sort by tags 2501, Group by ▸ Tag 2502,
+// Show/Hide Tags in the column headers 2503; 12d: Sort by rating 2504, Group by ▸ Rating 2505,
+// Show/Hide Rating 2506 and Comment 2507), 12e's Filters ▸ Rating ▸ 2510–2515.
 /// Tags ▸ Tags…, Clear tags (12b) and Comment… (12d), on rows.
 pub const TAGS_PICKER: u32 = 2400;
 pub const TAGS_CLEAR: u32 = 2401;
@@ -605,6 +621,57 @@ pub const SORT_BY_RATING: u32 = 2504;
 pub const GROUP_BY_RATING: u32 = 2505;
 pub const RATING_COLUMN: u32 = 2506;
 pub const COMMENT_COLUMN: u32 = 2507;
+/// A sidebar tag's menu (12e, spec 12 §7.1): New tag…, the searches, Rename…, the moves.
+pub const TAGS_NEW: u32 = 2403;
+pub const TAG_SEARCH_HERE: u32 = 2480;
+pub const TAG_SEARCH_EVERYWHERE: u32 = 2481;
+pub const TAG_FILTER: u32 = 2482;
+pub const TAG_RENAME: u32 = 2483;
+pub const TAG_UP: u32 = 2484;
+pub const TAG_DOWN: u32 = 2485;
+pub const TAG_REMOVE: u32 = 2486;
+/// Color ▸: 2490 + Finder's colour number.
+pub const TAG_COLOR_FIRST: u32 = 2490;
+/// The search bar's Filters ▸ Tags…, Comment… and Rating ▸ Any rating, ★ … ★★★★★ (12e).
+pub const SEARCH_TAGS: u32 = 2404;
+pub const SEARCH_COMMENT: u32 = 2405;
+pub const SEARCH_RATING_FIRST: u32 = 2510;
+
+/// A sidebar tag's menu for `tag`, the first and the last of the list or not: the searches,
+/// Filter, Rename…, Color ▸ (marked), the moves, Remove from list, New tag….
+pub fn tag_row_items(tag: &Tag, first: bool, last: bool) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
+    let items: Vec<(u32, String, bool)> = [
+        (TAG_SEARCH_HERE, "Search this folder", true),
+        (TAG_SEARCH_EVERYWHERE, "Search everywhere", true),
+        (TAG_FILTER, "Filter this folder", true),
+        (TAG_RENAME, "Rename…", true),
+        (TAG_UP, "Move up", !first),
+        (TAG_DOWN, "Move down", !last),
+        (TAG_REMOVE, "Remove from list", true),
+        (TAGS_NEW, "New tag…", true),
+    ]
+    .into_iter()
+    .map(|(id, title, on)| (id, title.to_owned(), on))
+    .collect();
+    // Finder's order: the colours, then none.
+    let colors = [
+        TagColor::Red,
+        TagColor::Orange,
+        TagColor::Yellow,
+        TagColor::Green,
+        TagColor::Blue,
+        TagColor::Purple,
+        TagColor::Gray,
+        TagColor::None,
+    ]
+    .into_iter()
+    .map(|color| {
+        let title = if color == TagColor::None { "No color" } else { color.default_name() };
+        (TAG_COLOR_FIRST + u32::from(color.number()), marked(tag.color == color, title), true)
+    })
+    .collect();
+    (items, vec![Submenu { title: "Color".to_owned(), at: 4, items: colors }])
+}
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
 /// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
@@ -1170,6 +1237,8 @@ enum Subject {
     Search,
     /// A saved search in the sidebar, by name.
     SavedSearch(String),
+    /// A tag in the sidebar, by name.
+    TagRow(String),
     /// A job's row in the operations panel, by id.
     Job(i32),
     /// The size map's rectangle menu (items by id).
@@ -1588,6 +1657,13 @@ impl Menus {
             *self.subject.borrow_mut() = Some(Subject::SavedSearch(name));
             let list = [(RUN_SEARCH_NEW_TAB, "Run in new tab"), (RENAME_SEARCH, "Rename…"), (DELETE_SEARCH, "Delete")];
             return self.open_slint(&list, Anchor::point(x, y));
+        }
+        if section == crate::sidebar::SECTION_TAGS {
+            let list = crate::tags::list();
+            let Some(i) = usize::try_from(index).ok().filter(|i| *i < list.len()) else { return };
+            *self.subject.borrow_mut() = Some(Subject::TagRow(list[i].name.to_string()));
+            let (items, subs) = tag_row_items(&list[i], i == 0, i + 1 == list.len());
+            return self.open_slint_entries(&items, subs, Anchor::point(x, y));
         }
         if section == crate::sidebar::SECTION_TRASH {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
@@ -2065,6 +2141,7 @@ impl Menus {
             (COMMENT_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Comment),
             (COLLAPSE_GROUPS, _) => crate::panes::active_view().collapse_all(true),
             (EXPAND_GROUPS, _) => crate::panes::active_view().collapse_all(false),
+            (id, Subject::TagRow(name)) => crate::tags::row_menu_chosen(id, &name),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
                 crate::saved_searches::with_current(|s| s.run(&name, true));
             }
@@ -2604,6 +2681,8 @@ fn from_submenu(id: u32) -> bool {
         || (QUICK_ACTION_FIRST..QUICK_ACTION_FIRST + QUICK_ACTION_MAX).contains(&id)
         || (MODIFIED_FIRST..=MODIFIED_BETWEEN).contains(&id)
         || (KIND_FIRST..KIND_FIRST + gezik_core::search::KindFilter::ALL.len() as u32).contains(&id)
+        || (SEARCH_RATING_FIRST..SEARCH_RATING_FIRST + 6).contains(&id)
+        || (TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8).contains(&id)
         || matches!(
             id,
             NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
@@ -3122,6 +3201,16 @@ mod tests {
             GROUP_BY_RATING,
             RATING_COLUMN,
             COMMENT_COLUMN,
+            TAGS_NEW,
+            SEARCH_TAGS,
+            SEARCH_COMMENT,
+            TAG_SEARCH_HERE,
+            TAG_SEARCH_EVERYWHERE,
+            TAG_FILTER,
+            TAG_RENAME,
+            TAG_UP,
+            TAG_DOWN,
+            TAG_REMOVE,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -3129,6 +3218,8 @@ mod tests {
             GROUP_BY_NONE..GROUP_BY_NONE + 4,
             TAGS_TAG_FIRST..TAGS_TAG_FIRST + TAGS_TAG_MAX,
             TAGS_RATING_FIRST..TAGS_RATING_LAST + 1,
+            TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8,
+            SEARCH_RATING_FIRST..SEARCH_RATING_FIRST + 6,
             DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT,
             TOGGLE_COLUMN_FIRST..RESET_COLUMNS,
             CONFLICT_FIRST..CONFLICT_FIRST + 4,
@@ -3728,7 +3819,8 @@ mod tests {
             .chain(subs.iter().flat_map(|s| s.items.iter().map(|i| i.0)))
             .chain(search_more_items(3, &[], true).iter().map(|i| i.0).filter(|id| *id != SAVE_SEARCH))
             .collect();
-        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "{ids:?}");
+        // 8a's range, and 12e's tag, comment and rating filters.
+        assert!(ids.iter().all(|id| (1500..1600).contains(id) || (2400..2600).contains(id)), "{ids:?}");
         assert!(search_more_items(0, &[], true).iter().all(|(id, _, _)| *id != SEARCH_PROBLEMS));
         assert_eq!(modified_for(MODIFIED_FIRST + 3), Some(DateRange::LastDays(30)));
         assert_eq!(modified_for(MODIFIED_BETWEEN), None, "asked for in a box");
@@ -3736,6 +3828,50 @@ mod tests {
             vec![(Scope::Folder("/w".into()), "This folder (w)".to_owned()), (Scope::AllDrives, "This PC".to_owned())];
         let scope = search_scope_items(&choices, &Scope::AllDrives);
         assert_eq!(scope[1], (SCOPE_FIRST + 1, "• This PC".to_owned(), true));
+    }
+
+    #[test]
+    fn the_tag_filters_show_what_is_asked_for() {
+        use gezik_core::search::{Scope, SearchSpec};
+        let mut spec = SearchSpec::new(Scope::AllDrives);
+        spec.tags = vec!["Red".into(), "Blue".into()];
+        spec.untagged = true;
+        spec.comment = "review".into();
+        spec.min_rating = 3;
+        let (items, subs) = search_filter_items(&spec);
+        assert!(items.contains(&(SEARCH_TAGS, "Tags… (Red, Blue, none)".to_owned(), true)));
+        assert!(items.contains(&(SEARCH_COMMENT, "Comment… (review)".to_owned(), true)));
+        let rating = subs.iter().find(|s| s.title == "Rating").unwrap();
+        assert_eq!(rating.items.len(), 6);
+        assert_eq!(rating.items[3], (SEARCH_RATING_FIRST + 3, "• ★★★".to_owned(), true));
+        assert!(rating.items[0].1.ends_with("Any rating"));
+        let (items, _) = search_filter_items(&SearchSpec::new(Scope::AllDrives));
+        assert!(items.contains(&(SEARCH_TAGS, "Tags…".to_owned(), true)), "nothing asked: no brackets");
+    }
+
+    #[test]
+    fn a_sidebar_tag_has_its_menu() {
+        let tag = Tag::new("Red", TagColor::Red);
+        let (items, subs) = tag_row_items(&tag, true, false);
+        let ids: Vec<(u32, bool)> = items.iter().map(|(id, _, on)| (*id, *on)).collect();
+        assert_eq!(
+            ids,
+            [
+                (TAG_SEARCH_HERE, true),
+                (TAG_SEARCH_EVERYWHERE, true),
+                (TAG_FILTER, true),
+                (TAG_RENAME, true),
+                (TAG_UP, false),
+                (TAG_DOWN, true),
+                (TAG_REMOVE, true),
+                (TAGS_NEW, true)
+            ],
+            "the first cannot go up"
+        );
+        assert_eq!((subs[0].title.as_str(), subs[0].at, subs[0].items.len()), ("Color", 4, 8));
+        assert_eq!(subs[0].items[0], (TAG_COLOR_FIRST + 6, "• Red".to_owned(), true), "Finder's number");
+        assert_eq!(subs[0].items[7].0, TAG_COLOR_FIRST, "No color");
+        assert!(subs[0].items.iter().chain(&items).all(|(id, _, _)| (2400..2600).contains(id)), "step 12's range");
     }
 
     #[test]

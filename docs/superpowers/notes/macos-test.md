@@ -770,6 +770,14 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 355. **Columns.** Header ▸ Show Rating and Show Comment: `★★★☆☆` and the comment's text; a click on Rating's header sorts most stars first (a second click turns it round); the Comment header does not sort. View ▸ Group By ▸ Rating: `★★★★★ (1)` … `Not Rated (12)`.
 356. **Filter.** ⌘F, `rating:3` (or `rating:>=3`): files with three stars or more; `rating:none` the unrated; `rating:any` the rated; `*.jpg rating:4 tag:Red` combines them. In search results Sort by rating says `Tags and ratings sort, group and filter folders, not search results`.
 
+### 12e, the tags sidebar and search
+
+357. **TAGS in the sidebar.** Between SEARCHES and LOCATIONS a TAGS section lists `[tags] list` with coloured dots (a tag without a colour: a ring). `[sidebar] tags = false` in settings.toml hides it; true brings it back.
+358. **A click is Spotlight.** Tag a few files Red in Finder (one in `~/Documents`, one on the Desktop). Click Red in Gezik's sidebar: a search tab titled `Tag: Red` lists them all within a second, as Finder's own sidebar tag does; the status bar ends `via Spotlight (drives it does not index are not in it)`. A middle click opens it in a new tab. The tag's menu ▸ Search this folder searches only the folder shown (no Spotlight); Filter this folder puts `tag:Red` in the filter bar.
+359. **Drop to tag.** Drag two files from the list onto Purple in the sidebar: the label says `Tag 2 items Purple`, the drop adds Purple (Finder shows it), nothing is moved; Edit ▸ Undo takes it off. Drag a file from Finder onto Green: it gets Green.
+360. **Manage the list.** On a tag's menu: Color ▸ Blue, Move up/down, Rename… (to `Urgent`), Remove from list, New tag…. settings.toml's `[tags] list` changes in place and its comments stay. Rename… says files keep the old name; Search and Retag… opens the old tag's search; select the results, ⌃⌘L: the picker has the old tag off and `Urgent` on, Esc makes one job (one ⌘Z).
+361. **Search words and Clean Up.** In the search bar (This Mac / every drive): `tag:Red rating:3` and `comment:review` use Spotlight; on a folder they walk it. Filters ▸ Tags…, Rating ▸ and Comment… do the same; saving the search writes `tags`, `min-rating`, `comment` into `[[searches]]`. File ▸ Tags ▸ Clean Up Tag Store…: with no store entries it says none are gone; with entries for deleted files (exFAT stick, `write-to-files = false`) it asks, Remove keeps `tags-store.tsv.bak`, entries of an unplugged stick stay.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

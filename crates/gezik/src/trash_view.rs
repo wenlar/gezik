@@ -251,6 +251,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::PutBack
         | Action::EmptyTrash
         | Action::SystemIntegration
+        | Action::CleanTagStore
         | Action::ConnectToServer
         | Action::GroupNone
         | Action::GroupType
