@@ -164,6 +164,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::ViewColumns
         | Action::TogglePreview
         | Action::PreviewHex
+        | Action::PreviewPlay
         | Action::QuickLook
         | Action::Share
         | Action::Copy

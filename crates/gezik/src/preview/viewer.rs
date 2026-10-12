@@ -7,19 +7,21 @@ use gezik_core::text::display_width;
 use slint::{Image, ModelRc, VecModel};
 
 use super::hex::HexView;
+use super::media::Player;
 use super::pdf::PdfView;
 use super::text::{Row, TextView};
 use super::zoom::{Fit, ZoomView};
 use crate::{PreviewInfo, PreviewPart, PreviewRow, PreviewTool};
 
 /// The text view, and the hex view over it while shown (the text keeps its place under it);
-/// a PDF's pages or a zoomed picture (spec 13 §5).
+/// a PDF's pages or a zoomed picture (spec 13 §5); a video's or sound's player (spec 13 §6).
 #[derive(Default)]
 pub struct Viewer {
     pub text: Option<TextView>,
     pub hex: Option<HexView>,
     pub pdf: Option<PdfView>,
     pub picture: Option<PictureView>,
+    pub media: Option<Player>,
 }
 
 /// The largest picture zoomed at its own size (spec 13 §5.3: 48 MP, about 192 MB); a larger
@@ -63,8 +65,9 @@ pub fn too_large((w, h): (u32, u32)) -> Option<String> {
 }
 
 /// A PDF's or picture's bar buttons for `info` (bar 4 or 5): Hex, ‹ the page ›, − the zoom
-/// +, Fit, after the link when there is one. A `narrow` bar drops Hex and the zoom's figure,
-/// and the zoom when there is a link (the right-click menu has them all).
+/// +, Fit, after the link when there is one; a player's (bar 6): Hex, Play or Pause. A
+/// `narrow` bar drops Hex and the zoom's figure, and the zoom when there is a link (the
+/// right-click menu has them all).
 pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
     if info.bar < 4 {
         return ModelRc::default();
@@ -83,6 +86,11 @@ pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
     }
     if !narrow {
         tools.push(tool("Hex".into(), "Hex".into(), -1, 0));
+    }
+    if info.bar == 6 {
+        let (text, label) = if info.playing { ("❚❚", "Pause") } else { ("▶", "Play") };
+        tools.push(tool(text.into(), label.into(), 10, 0));
+        return ModelRc::new(VecModel::from(tools));
     }
     if info.bar == 4 {
         let (page, pages) = (info.page, info.pages);
@@ -139,6 +147,7 @@ impl Viewer {
     pub fn fill(&self, info: &mut PreviewInfo, (cols, page): Room, surface: bool) {
         let pdf = self.pdf.as_ref().filter(|_| surface);
         let picture = self.picture.as_ref().filter(|_| surface);
+        info.seek = -1.0;
         let (bar, rows, text, note, gutter, (pos, size)) = if let Some(hex) = &self.hex {
             (2, hex.rows(page + 1, cols), hex.status(), String::new(), hex.gutter(), hex.scroll_bar(page, cols))
         } else if let Some(pdf) = pdf {
@@ -163,6 +172,12 @@ impl Viewer {
             let scale = size.width as f32 / picture.zoom.content().0;
             place(info, &picture.zoom, picture.scale_factor, scale, (0, 0, size.width, size.height));
             (5, Vec::new(), String::new(), picture.too_large.clone().unwrap_or_default(), 0, (0.0, 0.0))
+        } else if let Some(player) = &self.media {
+            let (note, link) = player.note();
+            info.bar_link = link.into();
+            info.seek = player.seek_bar();
+            info.playing = player.playing();
+            (6, Vec::new(), player.time(), note, 0, (0.0, 0.0))
         } else if let Some(view) = &self.text {
             (
                 1,
@@ -179,13 +194,16 @@ impl Viewer {
             let bar = match (file, info.kind, info.page) {
                 (false, ..) => 0,
                 (_, _, 1..) => 4,
+                // A video or sound file (its `Kind`): Play is a click away.
+                _ if super::media_kind(info.item_kind) => 6,
                 (_, 1, _) => 5,
                 _ => 3,
             };
-            if bar >= 4 {
+            if bar == 4 || bar == 5 {
                 info.zoom_text = "Fit".into();
             }
-            (bar, Vec::new(), String::new(), String::new(), 0, (0.0, 0.0))
+            let time = if bar == 6 { "--:--" } else { "" };
+            (bar, Vec::new(), time.to_owned(), String::new(), 0, (0.0, 0.0))
         };
         info.bar = bar;
         info.max_cols = rows
@@ -219,7 +237,11 @@ impl Viewer {
     }
 
     pub fn shown(&self) -> bool {
-        self.hex.is_some() || self.text.is_some() || self.pdf.is_some() || self.picture.is_some()
+        self.hex.is_some()
+            || self.text.is_some()
+            || self.pdf.is_some()
+            || self.picture.is_some()
+            || self.media.is_some()
     }
 
     pub fn scroll(&mut self, delta: i64, (cols, page): Room) {

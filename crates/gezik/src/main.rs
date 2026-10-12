@@ -264,6 +264,7 @@ fn perform(
         Action::TogglePreview => preview.toggle_pane(),
         Action::QuickLook => preview.toggle_quick_look(),
         Action::PreviewHex => preview.show_hex(),
+        Action::PreviewPlay => preview.play_action(),
         Action::Share => finder_menu::share_selection(window, view),
         Action::Rename => ops.rename_start(),
         Action::NewFolder => ops.new_folder(None),

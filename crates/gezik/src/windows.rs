@@ -866,7 +866,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     window.set_column_width(state.column_width.unwrap_or(crate::COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(settings.folder_sizes, settings.search.everything);
-    let preview = preview::Preview::new(&window, state.preview_wrap.unwrap_or((true, false)));
+    let preview = preview::Preview::new(
+        &window,
+        state.preview_wrap.unwrap_or((true, false)),
+        state.preview_volume.unwrap_or((80, false)),
+    );
     let StartPlan { session, select, start, .. } = opening.plan;
     let nav = navigation::Navigator::new(pane_id, window.as_weak(), view.clone(), session, select, start);
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so

@@ -242,6 +242,7 @@ confirm = true
 # split-file = ""   # Split File…: the selected file into .001, .002… parts and a .crc
 # join-files = ""   # Join Files: the parts of the selected .001 (or .crc) into one file, checked by CRC
 # preview-hex = ""  # Show Preview as Hex: the selected file's bytes in the preview, or back to its text or picture
+# preview-play = ""  # Play/Pause Preview: the selected video or sound file plays in the preview, or pauses
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

@@ -425,10 +425,12 @@ pub enum Action {
     JoinFiles,
     /// The preview of the selected file as hex, or back (spec 13 §4.4; no key).
     PreviewHex,
+    /// The selected video or sound file plays in the preview, or pauses (spec 13 §6; no key).
+    PreviewPlay,
 }
 
 impl Action {
-    pub const ALL: [Action; 114] = [
+    pub const ALL: [Action; 115] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -543,6 +545,7 @@ impl Action {
         Action::SplitFile,
         Action::JoinFiles,
         Action::PreviewHex,
+        Action::PreviewPlay,
     ];
 
     pub fn name(self) -> &'static str {
@@ -661,6 +664,7 @@ impl Action {
             Action::SplitFile => "split-file",
             Action::JoinFiles => "join-files",
             Action::PreviewHex => "preview-hex",
+            Action::PreviewPlay => "preview-play",
         }
     }
 
@@ -793,6 +797,7 @@ impl Action {
             Action::SplitFile => "Split File…",
             Action::JoinFiles => "Join Files",
             Action::PreviewHex => "Show Preview as Hex",
+            Action::PreviewPlay => "Play/Pause Preview",
         }
     }
 
@@ -996,7 +1001,8 @@ impl Action {
                 | Action::MoveTo
                 | Action::SplitFile
                 | Action::JoinFiles
-                | Action::PreviewHex,
+                | Action::PreviewHex
+                | Action::PreviewPlay,
                 _,
             ) => &[],
             // TC's compare key; ⌃⌘C goes on 10b's ⌃⌘ row (spec 11 §3.3).
@@ -2155,6 +2161,8 @@ refresh = [\"f5\", \"ctrl+r\"]
     fn the_preview_hex_action_has_no_key() {
         assert_eq!(Action::from_name("preview-hex"), Some(Action::PreviewHex));
         assert_eq!(Action::PreviewHex.title(), "Show Preview as Hex");
+        assert_eq!(Action::from_name("preview-play"), Some(Action::PreviewPlay));
+        assert_eq!(Action::PreviewPlay.title(), "Play/Pause Preview");
         for platform in [Platform::Other, Platform::Mac] {
             assert_eq!(Shortcuts::defaults(platform).chord_for(Action::PreviewHex), None, "spec 13 §10.2");
         }
