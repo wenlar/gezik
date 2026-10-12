@@ -7,7 +7,7 @@
 
 pub mod archive;
 pub mod convert;
-pub mod exif;
+pub mod fields;
 pub mod pdf;
 pub mod rename;
 pub mod tasks;

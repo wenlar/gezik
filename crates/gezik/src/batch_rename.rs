@@ -747,7 +747,7 @@ impl BatchRename {
                 .enumerate()
                 .filter(|&(i, p)| {
                     !r.items[i].is_dir
-                        && p.file_name().is_some_and(|n| gezik_batch::exif::may_have_exif(&n.to_string_lossy()))
+                        && p.file_name().is_some_and(|n| gezik_batch::fields::exif::may_have_exif(&n.to_string_lossy()))
                 })
                 .map(|(i, p)| (i, p.clone()))
                 .collect()
@@ -762,7 +762,7 @@ impl BatchRename {
                 if counter.load(Ordering::Relaxed) != opening {
                     return;
                 }
-                dates.extend(gezik_batch::exif::taken(&path).map(|d| (i, d)));
+                dates.extend(gezik_batch::fields::exif::taken(&path).map(|d| (i, d)));
             }
             crate::windows::post(window_id, move || {
                 with_current(|layer| {
