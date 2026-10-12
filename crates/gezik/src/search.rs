@@ -1419,7 +1419,11 @@ impl Searches {
                 self.0.view.set_results_status(Some(comparing_text(scanned, files, bytes)))
             }
             Event::Done(summary) => {
-                let text = summary_text(&summary, self.0.view.results().as_deref());
+                let mut text = summary_text(&summary, self.0.view.results().as_deref());
+                if let Some(hint) = crate::tags::retag_hint() {
+                    text.push_str(" · ");
+                    text.push_str(&hint);
+                }
                 *self.0.problems.borrow_mut() = summary.problems.first.clone();
                 self.0.running.borrow_mut().take();
                 self.0.view.set_searching(false);
@@ -1651,8 +1655,15 @@ impl Searches {
             Location::Search(shown) => *shown != *self.0.draft.borrow(),
             _ => false,
         };
-        if rerun && changed && self.0.draft.borrow().is_query() {
-            self.go(false);
+        if rerun && changed {
+            if self.0.draft.borrow().is_query() {
+                self.go(false);
+            } else {
+                // Nothing left to look for (Clear filters on a tag search): the old results
+                // and their title go, the status bar says to type something.
+                let draft = self.0.draft.borrow().clone();
+                self.0.nav.replace_location(Location::Search(Box::new(draft)));
+            }
         }
     }
 

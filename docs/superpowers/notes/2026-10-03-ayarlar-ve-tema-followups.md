@@ -2716,7 +2716,38 @@ Gözlemler (hata değil):
 - Bırakma: etiket satırına bırakılan dosyalar `Action::Tag` (`Tag 3 items Red`), tek `TagsTask`, geri alınır; sanal öğeler reddedilir.
 - `clean-tag-store` (`Clean Up Tag Store…`, `Action::ALL` 124, tuş yok, palet ve macOS menüsü): takılı birimlerde yolu olmayanları sayar, sorar; `Remove` önce `tags-store.tsv.bak`, sonra yalnız hâlâ yolu olmayanları siler; takılı olmayan birimin kayıtları sayılır, dokunulmaz (test: canlı kayıt istense de silinmez).
 - Sürüm exe'si 27.674.624 B (taban `feat/tags-12d` c6ee7dc: 27.586.560 B, **+88.064 B**; bütçe 262.144; spec tahmini ≈ 90 KB). macOS clippy temiz. Kopya `%TEMP%\gezik-gui-12\bin\t12e.exe`. Not: sürüm derlemesi `-j 2` ile iki kez `rustc` erişim ihlaliyle (0xc0000005) düştü, `-j 1` ile geçti (koddan bağımsız).
+- Gözden geçirme düzeltmesi: temizlik ve yeniden bulma yalnız `NotFound`/`NotADirectory`'yi "gitmiş" sayar (`is_gone`); erişim reddi, zaman aşımı, bayat ağ bağlaması kaydı korur ve soruda "cannot look at" diye sayılır. Linux'ta aynı UUID'yi taşıyan birden çok kök (btrfs alt birimleri, bind bağlamaları) olabildiği için böyle bir birimin kayıtları ne bulunur ne silinir (`roots_by_key`).
+- Ekran testi düzeltmeleri: Filters ▸ Clear filters arayacak bir şey bırakmazsa eski sonuçlar ve `Tag: …` başlığı gider (boş arama gösterilir); Move up/down bir öğenin üstündeki yorum satırlarını onunla taşır (aynı satırdaki yorum yerinde kalır); Search and Retag… aramasının durum satırı bir sonraki seçicinin hazır geleceğini söyler. Klasör kapsamlı etiket aramasındaki `via Everything` doğru: adayları Everything verir, etiketleri Gezik okur (değiştirilmedi).
 - Bekleyen: Windows ekran testi (TAGS bölümü, tık ve orta tık, satır menüsü ve settings.toml'un yorumları, sürükle-bırak ve Ctrl+Z, `tag:`/`rating:`/`comment:` sözcükleri ve Filters, Search and Retag…, Clean Up Tag Store… FAT USB ile), macOS 357–361, Linux 261–263.
+
+## Windows ekran testleri: 12e
+
+Exe: `%TEMP%\gezik-gui-12\bin\t12e.exe` (perf compare: `t12d-fix.exe`). Config `%TEMP%\gezik-gui-12\cfg\12e` (GEZIK_CONFIG_DIR, `confirm-trash = true`, commented `[tags] list`), data `%TEMP%\gezik-gui-12\data\12e` (.gzt files, metadata written as the `gezik.meta` stream). Primary monitor, window 1600x900 at 40,40. Scripts: `scratchpad\m12g\12e\h.ps1` (reuses m12g `g/d/s/t/b.ps1`). Screenshots: `%TEMP%\gezik-gui-12\shots\12e\`. Test data and configs were deleted afterwards; the screenshots were kept. No unexpected windows, no focus pauses, no Alt+Shift keys, no keyboard layout changes, E: not touched.
+
+Data in `main`: a (Red, 3★), b (Green, 4★), c (Red+Green, 1★), d (Red, comment "xray note"), e (comment "the x file"), f, h (Orange), n.gzr (Red, 5★), sub\s1 (Red, 5★), drop1/drop2 (none).
+
+| # | Item | Result | Evidence |
+|---|------|--------|----------|
+| 1 | TAGS section; `[sidebar] tags = false` hides it live | PASS | e1-start.png (TAGS between CLOUD and DRIVES, coloured dots); editing the file to false removed TAGS and the rows from UIA within 2 s, back to true restored them (e1-tags-on.png) |
+| 2 | Click a tag shows the files; middle-click opens a new tab | PASS | Click Red opened tab `Tag: Red`: a, c, d, n.gzr, s1 (subfolder included) (e2-red.png). Middle-click Green added a tab `Tag: Green`: b, c (e2-green-middle.png). Also menu ▸ Filter this folder: list shows a, c, d, n.gzr (e2-filter-folder.png) |
+| 3 | Row menu Color/Move/Rename/Remove/New tag; settings.toml comments kept | PASS | Menu e3-menu.png, Color submenu e3-color-sub.png (8 colours + No color, current one marked). `git diff` of settings.toml after each step changed only the intended line(s): Blue color blue→gray; Move up and Move down swapped item lines; Rename Blue→Azure (dialog e3-rename-dlg.png); Remove from list deleted only the Purple line (status `Purple left your list; files keep it`); New tag… `Project X` added `{ name = "Project X", color = "none" }` (ring dot, e4-drag-label.png). All 6 comments, including the inline `# red comment` after Rename Red→Urgent, were still there |
+| 4 | Drag files onto a tag row; undo entry; Ctrl+Z | PASS | Label `Tag 2 items Orange` (e4-drag-label.png); both streams got `tag 7 Orange`; status `Orange added to 2 items`; History shows one job `Changing the tags of 2 items` (e4-history.png); Ctrl+Z removed the tags on disk (e4-undo.png) |
+| 5 | Search words and Filters ▸ Tags…/Rating/Comment… | PASS | `*.gzt tag:Red rating:3` → a, s1 (e5-q1.png); `comment:x` → d, e; `comment:"xray"` → d; `tag:none` → sub, drop1, drop2, e, f; `rating:any` → a, b, c, n, s1. Filters ▸ Tags… `Red, Green` → c (tab `Tag: Red, Green`); Rating ▸ ★★★★ → b, n, s1; + Comment… `NOTE` → 0 (AND); Comment `NOTE` alone → d (case-insensitive) (e5-*.png) |
+| 6 | Search and Retag… → select → Ctrl+Shift+L → one job | PASS | Rename Red→Urgent ▸ Search and Retag… opened `Tag: Red` with 5 results; settings.toml changed only the name. Selected all 5, Ctrl+Shift+L: picker preset with Urgent ✓ and Red (`Not in your list`) off (e6-picker.png). Esc: on disk all 5 files had `tag 6 Urgent` and no Red (c kept Green); History showed one job `Changing the tags of 5 items`; one Ctrl+Z restored Red on all 5 |
+| 7 | Clean Up Tag Store… (folder deleted under the test dir) | PASS | `write-to-files = false`; g1, g2 (store\gone) and k1 (store\keep) tagged Red by drag → 3 store records. Deleted `store\gone` on disk, restarted, palette ▸ Clean Up Tag Store…: `2 entries point to files that are gone. Remove them?` (e7-ask.png). Remove: status `2 entries removed from the tag store; the old one is tags-store.tsv.bak`; the store kept only k1, and the .bak held all 3 records (e7-done.png). Run again: `No entries point to files that are gone.` Clicking Red then found k1 through the store (e7-store-search.png) |
+
+## Perf (10,000 .gzt files in 20 folders)
+
+Plain name search `*_7*.gzt` (220 results), clicked Search 5× per run: t12e 0.1 s ×10, t12d-fix 0.1 s ×5. Every run said `via Everything`, so this compared the Everything path, not the walker (the walker path was not timed). Wall time from click until the Search button came back was about 450–500 ms. No slowdown. `tag:Red` over the same 10k files (meta read for every candidate): 0.4–0.5 s.
+
+## Findings (none blocking)
+
+1. **Clear filters does not search again.** Filters ▸ Clear filters cleared the criteria (the button lost its count), but the results and the tab title (`Tag: Red, Green`) stayed until the next search. The other Filters items search again at once.
+2. **Move up/down keeps a comment line in place.** With `Green`, `# between comment`, `Blue`, Move up on Blue gave `Blue`, `# between comment`, `Green`. The comment stays where it was and the items swap around it. A comment that described Blue now sits above Green. This is acceptable; it only matters if users write comments about single items.
+3. **Search and Retag… has no hint in the status bar.** After it, the status bar showed only `5 results in 0.0 s`. Plan deviation 7 says the status bar tells the user that the next picker comes preset. The preset worked.
+4. **The History entry has a different name from the drag label.** The drag label was `Tag 2 items Orange`; the History entry was `Changing the tags of 2 items` (undo: `Undoing Change tags of 2 items`). This is consistent with the 12a/12b tag jobs.
+5. **A tag search scoped to a folder still says `via Everything`.** Everything supplies the candidates and Gezik filters them. Results were correct.
+6. In the test setup, a settings.toml with a duplicate `[tags]` table showed `settings.toml line 22: duplicate key` in the status bar, as expected. That was my setup error, not a bug.
 
 ## Windows ekran testleri: 12c
 

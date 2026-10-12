@@ -1293,6 +1293,22 @@ fn key_label_of(action: Action) -> String {
     crate::keys::chord_for(action).map(|c| crate::keys::chord_label(&c, Platform::current())).unwrap_or_default()
 }
 
+/// What the status bar adds while a Search and Retag… search shows (plan sapma 7).
+pub fn retag_hint() -> Option<String> {
+    let gezik_core::nav::Location::Search(spec) = crate::panes::active_nav().active_location() else { return None };
+    RETAG.with(|r| {
+        let r = r.borrow();
+        let (old, new) = r.as_ref()?;
+        spec.tags.iter().any(|t| same_name(t, old)).then(|| {
+            format!(
+                "Select them, then Tags… ({}): {old} comes off and {} goes on",
+                key_label_of(Action::Tags),
+                new.name
+            )
+        })
+    })
+}
+
 /// The picker's edits when it opens on the results of a Search and Retag… search (taken once).
 fn retag_edits() -> Option<Edits> {
     let gezik_core::nav::Location::Search(spec) = crate::panes::active_nav().active_location() else { return None };
@@ -1350,13 +1366,21 @@ pub fn drop_label(name: &str, count: usize) -> String {
 /// (the status bar says it then).
 pub fn clean_up_text(orphans: &gezik_ops::meta::Orphans) -> (Option<String>, String) {
     let n = orphans.gone.len();
-    let away = match orphans.unmounted {
+    let mut away = match orphans.unmounted {
         0 => String::new(),
         1 => " 1 entry on a drive that is not connected was left alone.".to_owned(),
         m => {
             format!(" {} entries on drives that are not connected were left alone.", gezik_core::group_digits(m as u64))
         }
     };
+    match orphans.unreachable {
+        0 => {}
+        1 => away.push_str(" 1 entry Gezik cannot look at (no access, or the drive does not answer) was left alone."),
+        m => away.push_str(&format!(
+            " {} entries Gezik cannot look at (no access, or the drive does not answer) were left alone.",
+            gezik_core::group_digits(m as u64)
+        )),
+    }
     match n {
         0 => (None, format!("No entries point to files that are gone.{away}")),
         1 => (Some(format!("1 entry points to a file that is gone. Remove it?{away}")), String::new()),
@@ -1506,7 +1530,11 @@ mod tests {
     #[test]
     fn the_clean_up_asks_only_when_something_is_gone() {
         use gezik_ops::meta::Orphans;
-        let gone = |n: usize, unmounted: usize| Orphans { gone: vec![("v".to_owned(), "x".into()); n], unmounted };
+        let gone = |n: usize, unmounted: usize| Orphans {
+            gone: vec![("v".to_owned(), "x".into()); n],
+            unmounted,
+            unreachable: 0,
+        };
         assert_eq!(clean_up_text(&gone(0, 0)), (None, "No entries point to files that are gone.".to_owned()));
         assert_eq!(clean_up_text(&gone(1, 0)).0.as_deref(), Some("1 entry points to a file that is gone. Remove it?"));
         assert_eq!(
@@ -1516,6 +1544,13 @@ mod tests {
             )
         );
         assert!(clean_up_text(&gone(0, 1)).1.ends_with("1 entry on a drive that is not connected was left alone."));
+        let locked = Orphans { unreachable: 2, ..gone(1, 0) };
+        assert!(
+            clean_up_text(&locked)
+                .0
+                .unwrap()
+                .ends_with("2 entries Gezik cannot look at (no access, or the drive does not answer) were left alone.")
+        );
     }
 
     fn rated(stars: u8, comment: &str) -> Meta {
