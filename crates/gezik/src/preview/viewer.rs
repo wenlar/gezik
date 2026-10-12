@@ -65,9 +65,9 @@ pub fn too_large((w, h): (u32, u32)) -> Option<String> {
 }
 
 /// A PDF's or picture's bar buttons for `info` (bar 4 or 5): Hex, ‹ the page ›, − the zoom
-/// +, Fit, after the link when there is one; a player's (bar 6): Hex, Play or Pause. A
-/// `narrow` bar drops Hex and the zoom's figure, and the zoom when there is a link (the
-/// right-click menu has them all).
+/// +, Fit; with a link (locked) only the link and Hex; a player's (bar 6): Hex, Play or Pause
+/// after its link. A `narrow` bar drops Hex and the zoom's figure (the right-click menu has
+/// them all).
 pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
     if info.bar < 4 {
         return ModelRc::default();
@@ -92,6 +92,11 @@ pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
         tools.push(tool(text.into(), label.into(), 10, 0));
         return ModelRc::new(VecModel::from(tools));
     }
+    // Locked (a password, no pdfium): pages cannot turn and the zoom shows nothing new, so
+    // only the link, and the note gets the room.
+    if link {
+        return ModelRc::new(VecModel::from(tools));
+    }
     if info.bar == 4 {
         let (page, pages) = (info.page, info.pages);
         let (text, label) = if pages > 0 {
@@ -103,12 +108,9 @@ pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
         tools.push(tool(text, label, 2, 0));
         tools.push(tool("›".into(), "Next page".into(), 1, 1));
     }
-    if narrow && link {
-        return ModelRc::new(VecModel::from(tools));
-    }
     tools.push(tool("−".into(), "Zoom out".into(), 3, -1));
-    if !narrow {
-        // The figure; a click is 100%.
+    // The figure (a click is 100%); "Fit" only once, the button says it.
+    if !narrow && info.zoom_text != "Fit" {
         tools.push(tool(info.zoom_text.to_string(), format!("{}, actual size", info.zoom_text), 5, 0));
     }
     tools.push(tool("+".into(), format!("Zoom in, {}", info.zoom_text), 3, 1));

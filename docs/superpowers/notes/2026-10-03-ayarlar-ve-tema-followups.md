@@ -2684,3 +2684,94 @@ Gözlemler (hata değil):
 - Windows ekran testleri, macOS 369–372 ve Linux 268–270 bekliyor.
 - Gözden geçirme ve ekran testi düzeltmeleri: çöken işçi yalnız açık tuttuğu PDF'i başarısız sayar (başka PDF gösteriliyorsa yeni işçiyle yeniden açılır); tek sayfanın çizim hatası belgeyi kapatmaz (`This page could not be shown`); yüzeyin ölçeği protokolün sınırında (küçük sayfa + Fit); yüklenmeyen pdfium işçiyi bitirir ve yeniden indirmeyi önerir; hata iletisi karakter ve kaçış bütünüyle kesilir (çok baytlı rastgele test); komut numaraları işçiler arasında tek; sayfa görüntüsü bir kez `Image` olur; görülen sayfaların boyutu hatırlanır (geri dönülen sayfa bir istekte, tekerle geri gelince altından); teker açılmamış PDF'i çevirmez; resim gerçek boyutunda doğrudan arabelleğine ve bir seferde bir tane çözülür (`decode_image_into`); 8192 px'i aşan resim boyutunu ve nedenini söyler; PDF hiçbir zaman metin olarak açılmaz (uzantı ve `%PDF-`); pdfium yokken sayaç gösterilen sayfayı söyler; Quick Look arkasındaki bölme yakınlaştırılmış görüntüyü germez. Sayfa alanı yerine `Go to Page…` sorusu (alan Ctrl+A'yı listeye kaçırıyordu); dar bölmede çubuk sığar, sağ tıkta bütün sayfa/yakınlaştırma eylemleri ve bağlantı (2603–2610).
 - Boyut ölçümü (sürüm derlemesi, deneme yapıları): 13b'nin Slint öğeleri 133.120 B, işçi kipi 13.312 B, gerisi Rust önizleme kodu. Dokuz geri çağrı tek oldu, düğmeler tek tekrarlanan `TextButton`'dan, iki görüntü tek: 27.559.424 → **27.475.968 B** (taban 27.305.984 B, **+169.984 B**; ilk teslim +245.760 B).
+
+## Windows ekran testleri: 13b
+
+- İlk koşu (2026-10-12 08:19–08:30, `t13b.exe`, ajan): 8 maddeden 7'si geçti; dar bölmede çubuk taşıyordu. Bulunanlar: sayfa alanında Ctrl+A listedeki bütün dosyaları seçiyordu; Quick Look arkasındaki bölme gerilmiş sayfa gösteriyordu; sıkıştırılmamış ASCII PDF metin olarak açılıyordu; 8192 px'i aşan resimde ne yakınlaştırma çubuğu ne de neden çıkıyordu; pdfium yokken sayaç `2` diyordu. Hepsi `6576536` ve `3125190`'da düzeltildi.
+
+### Yeniden test: 13b düzeltme sonrası ekran testleri (Windows, birincil monitör)
+
+Tarih: 2026-10-12 ~10:00. Yapı: `%TEMP%\gezik-gui-13\bin\t13b-fix.exe` (feat/preview-13b 343cdf1).
+Ayarlar her koşu için temiz: `%TEMP%\gezik-gui-13\cfg\f1..f4` (`[files] confirm-trash = true`, `[preview] open = true`, `width` 280/200/500),
+pdfium `cfg\q1\tools\pdfium-8086`'dan `cfg\fN\tools\` altına kopyalandı (f4'te yok). Pencere 1600x900.
+Veri `%TEMP%\gezik-gui-13\data\q` (50 sayfa sıkıştırılmış PDF, 5 sayfa sıkıştırılmamış ASCII PDF, `enc_aes256.pdf`, metin olan `fake.pdf`,
+`%PDF-` ile başlayan `pdfastext.txt` ve `pdfasdat.dat`, 4000x3000 JPEG, 8200x6200 PNG ve JPEG). Sonunda veri ve `f1..f4` silindi.
+Betikler: scratchpad `m13g\13b-fix\` (`mkdata.py`, `f.ps1`). Ekran görüntüleri: `%TEMP%\gezik-gui-13\shots\fix\`.
+
+| # | Madde | Sonuç |
+|---|---|---|
+| 1 | Go to Page…, içinde Ctrl+A, Enter | GEÇTİ |
+| 2 | Dar bölme (<300 px), şifreli PDF, sağ tık menüsü | KISMEN (iki küçük not) |
+| 3 | 8200×6200 resim: "Too large to zoom (…)" | GEÇTİ |
+| 4 | pdfium yokken sayaç, sayfa değişmez, indirme önerisi | GEÇTİ |
+| 5 | Quick Look arkasındaki bölme | GEÇTİ |
+| 6 | PDF hiçbir zaman metin değil | GEÇTİ |
+| 7 | Gerileme: sayfa, yakınlaştırma, tekerlek, resim | GEÇTİ |
+
+#### Ayrıntı
+
+1. `f1-start.png`, `f1-goto-open.png`, `f1-goto-ctrla.png`, `f1-goto-25.png` (bölme ~268 px)
+   - Önizlemede metin alanı yok; sayfa numarası bir düğme (`Page 2 of 50, go to page`).
+   - Tıklayınca "Go to Page" kutusu açılıyor: "Page (1 to 50):", alanda `2`, Go / Cancel. UIA: odak bu kutunun Edit'inde (Gezik PID'i, liste dışında).
+   - Ctrl+A: alandaki `2` seçildi; listede seçim önce 1 (fifty.pdf), sonra yine 1. Durum çubuğu "1 selected". `25` yazınca alan `25` oldu (yani seçili metnin yerine yazdı).
+   - Enter: 25 / 50, sayfa 25 çizildi. Odak ana pencereye döndü.
+2. `f2-ctx-pdf.png`, `f2-enc-268.png`, `f2-enc-200.png`, `f2-enc-200-zoom.png`, `f2-ctx-enc.png`, `f2-pw-dialog.png`, `f2-enc-200-open.png`, `f2-ctx-open.png`
+   - ~268 px: çubuk `‹ 1 › − + Fit` sığıyor; Hex ve yüzde düşmüş.
+   - 200 px (ayarın en darı): fifty.pdf `‹ 1 › − + Fit` sığıyor (sağ uç 1589, metin alanı 1614'te bitiyor). Parolayla açıldıktan sonra `‹ 2 / 3 › − + Fit` de sığıyor (sağ uç 1607).
+   - Sağ tık (PDF): Previous Page, Next Page, Go to Page…, Zoom In, Zoom Out, Fit, Actual Size, Show as Hex. Şifreli PDF'te başta ayrıca `Enter Password…`; pdfium yokken `Download pdfium…` (4. madde).
+   - `Enter Password…` düğmesi çalışıyor: "Password" kutusu açılıyor, `pw` ile 2. sayfa çiziliyor.
+   - **Not A (sayaç):** şifreli PDF'te › sonrası çubuk `Enter Password… ‹ 2 ›` diyor, oysa görünen 1. sayfanın simgesi. Beklenen `‹ 1 ›`. pdfium yokken bu düzeltilmiş (sayaç 1 kalıyor), parola durumunda düzeltilmemiş.
+   - **Not B (200 px'te taşma):** şifreli durumda çubuk 1438–1627 px, bölmenin metin alanı 1614'te bitiyor. `›` düğmesinin sağ kenarı bölmenin kenarında kesiliyor (görünüyor ve tıklanabilir), "Password protected" notu tamamen gizli (UIA'da 1633–1646). Sayaç `1` olsaydı da aynı genişlikte olurdu. 268 px'te taşma yok, not "Pass…" diye kısalıyor.
+3. `f3-huge-png.png`, `f3-hugej-jpg.png` (bölme 500 px)
+   - huge.png ve hugej.jpg (8200×6200): çubukta `Too large to zoom (8200 × 6200, over 8192 px a side)` (UIA'da tam metin; 500 px'te ekranda sonu "…" ile kısalıyor). Bilgide "8200 × 6200 pixels".
+   - Küçük görsel not: yakınlaştırma figürü `Fit` olunca çubukta yan yana iki `Fit` görünüyor (`− Fit + Fit`). Hata değil, ama kafa karıştırabilir.
+4. `f4-nopdfium-next.png`, `f4-ctx.png`, `f4-download-offer.png` (pdfium'suz `cfg\f4`, bölme ~268 px)
+   - › → çubuk `Download ‹ 1 › More pages n…`; sayaç 1'de kalıyor. İkinci › sonrası da 1. Sayfa değişmiyor.
+   - Çubuk bölmeye sığıyor (Download 1358–1428).
+   - Download → "pdfium needed — More PDF pages need pdfium (~2.7 MB, free)" (Download / Where does it come from? / Cancel). Cancel'a basıldı; hiçbir şey indirilmedi.
+5. `f5-ql-open.png`, `f5-ql-zoom.png`, `f5-after-esc.png`
+   - Space ile Quick Look açıldı; QL'de › ile 2. sayfa ve + ile 100%. Arkadaki bölme dosyanın kendi görünüşünü (PDF simgesi, bölmeye sığmış) gösteriyor; gerilmiş ya da yakınlaştırılmış görüntü yok.
+   - Esc ile kapanınca bölme 2 / 50 ve 100%'te devam ediyor.
+6. `f6-*.png`
+   - note.txt (kontrol): Text / Hex / Wrap, metin görünüyor.
+   - ascii.pdf (sıkıştırılmamış, tamamen ASCII): sayfa çubuğu (`Hex ‹ 1 › − Fit + Fit`), metin değil. Önceki notta Text olarak açılıyordu; artık açılmıyor.
+   - fake.pdf (metin dosyası, .pdf uzantılı): sayfa çubuğu, metin değil; › → "This PDF could not be shown", sayaç 1 kalıyor, Gezik çökmüyor (`f6-fake-next.png`).
+   - pdfastext.txt ve pdfasdat.dat (`%PDF-` ile başlıyor): yalnızca Hex düğmesi, metin değil.
+7. `f7-wheel-combo.png`, `f7-img-combo.png`, `f7-prev.png`, `f7-zoomin.png`, `f7-zoomout.png`, `f7-fit.png`, `f7-fit2.png` (bölme 500 px)
+   - › 2, › 3, ‹ 2. + 75%, + 100%, − 75%. Fit → Fit, tekrar → Fit Width.
+   - Fit Width'te tekerlek: 2 tık sonra 3. sayfa (üstü görünüyor). Bir tık yukarı: 2. sayfa, altından ("BOTTOM OF PAGE 2" görünüyor, başlık üstte kesik).
+   - photo12.jpg: çift tık 100%, sürükleme kaydırıyor (1600,1000 → 2000,1000 sağda), − 75%, Fit düğmesi Fit'e döndürüyor.
+
+#### Bulunan sorunlar
+1. Küçük: şifreli PDF'te › sonrası sayaç `2` diyor, görünen 1. sayfa (pdfium'suz durumda düzeltilen hata parola durumunda kalmış).
+2. Küçük: 200 px bölmede şifreli PDF çubuğu ~13 px taşıyor: `›`'in sağ kenarı kesik, "Password protected" notu görünmüyor. Düğmeler yine erişilebilir.
+3. Kozmetik: resim/PDF çubuğunda yakınlaştırma figürü `Fit` iken `Fit` iki kez görünüyor.
+
+Atlananlar: 150%/200% ekran ölçeği (ekran ayarı değiştirilmedi), `--pdf-view` süreç sayımı (önceki koşuda geçti, bu koşuda tekrarlanmadı).
+
+- Bu yeniden testin üç notu da düzeltildi (fix2): sayfalar belge açılmadan (parola, pdfium aranırken) dönmüyor, sayaç gösterilen sayfada kalıyor; kilitliyken (bağlantı varken) çubukta yalnız bağlantı (ve geniş bölmede Hex), not ona yer buluyor; yakınlaştırma `Fit` iken yüzde gösterilmiyor (`Fit` bir kez). Sürüm exe'si değişmedi: 27.475.968 B (+169.984 B). Yapı `t13b-fix2.exe`; ekranda yeniden denenmedi.
+
+### Yeniden test 2 (fix2 sonrası)
+
+
+Tarih: 2026-10-12. Yapı: `%TEMP%\gezik-gui-13\bin\t13b-fix2.exe`. Pencere 1600x900 (40,40).
+Ayarlar temiz `cfg\g1` (width 280), `g2` (200), `g3` (500); `[files] confirm-trash = true`; pdfium `cfg\q1\tools\pdfium-8086`'dan kopyalandı.
+Veri `data\q` (`mkdata.py`, enc.pdf = `crates/gezik-batch/tests/data/pdf/enc_aes256.pdf`, parola `pw`, 3 sayfa).
+Betik: scratchpad `m13g\13b-fix2\f2.ps1`. Görüntüler: `%TEMP%\gezik-gui-13\shots\fix2\`. Sonunda veri ve g1..g3 silindi (q1 duruyor).
+
+| # | Madde | Sonuç |
+|---|---|---|
+| A | enc.pdf, › sonrası sayaç; parola sonrası 1. ve 2. sayfa | GEÇTİ |
+| B | width 200, enc.pdf çubuğu sığıyor, "Password protected" | GEÇTİ (not: metin "Pass…" diye kısalıyor) |
+| C | Fit'te "Fit" bir kez | GEÇTİ |
+| D | Normal PDF sayfa/yakınlaştırma, Go to Page Ctrl+A | GEÇTİ (not: ilk › 1. sayfayı çiziyor) |
+
+#### Ayrıntı
+
+- A (280 px, `g1-*`): seçince `‹ 1 › − + Fit`, önizlemede PDF simgesi. › → çubuk `Enter Password… | Password protected`, sayaç yok (artık `‹ 2 ›` yok), ikinci › düğmesi de yok. Enter Password… → odak parola Edit'inde (Gezik PID), `pw` + Enter → `‹ 1 / 3 ›`, 1. sayfa çizildi (`g1-enc-open-crop.png`). › → `2 / 3`, farklı sayfa çizildi (`g1-enc-p2-crop.png`).
+- B (200 px, `g2-*`): › sonrası `Enter Password…` 1438–1555, not 1561–1604; bölme metin alanı 1614'te bitiyor, taşma yok (`g2-bar.png`). Not görünüyor ama "Pass…" diye kısalmış (UIA'da tam metin). Çubukta yalnız Enter Password…. 500 px'te (`g3`): `Enter Password… Hex`, başka düğme yok. Parola öncesi 200 px'te `‹ 1 › − + Fit` 1438–1589, sığıyor.
+- C: 280 ve 500 px'te Fit durumunda çubuk `‹ n › − + Fit`, tek "Fit" (`g1-bar.png`, `g3-bar.png`). Yakınlaşınca `− 75% +`, `− 100% +`; Fit'e ikinci basış `− Fit Width + Fit`.
+- D (500 px): fifty.pdf `› 1/50, › 2/50, ‹ 1/50, + 75%, + 100%, − 75%, Fit, Fit Width`. Go to Page: odak dialog Edit'inde (değer `2`), Ctrl+A sonrası listede seçim aynı (ascii.pdf, "1 selected"), `4` yazınca alan `4` (seçili metin değişti), Enter → `4 / 5`, "Page 4 of 5" çizildi, seçim değişmedi.
+
+#### Not
+- Önizleme başta yalnızca PDF simgesi gösterirken ilk › sayfa 2'ye değil, 1. sayfayı çizmeye gidiyor (`1` → `1 / 5`, `g3-a0/a1`). Sayaç tutarlı (gösterilen sayfa), ama kullanıcı ilk ›'te 2. sayfayı bekleyebilir. Önceki koşuda (fix) ilk › doğrudan 2'ye gidiyordu. Tasarım kararıysa sorun değil.
