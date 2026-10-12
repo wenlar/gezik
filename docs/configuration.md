@@ -51,7 +51,9 @@ starting.
 ## Settings window
 
 **Settings…** (Ctrl+, on Windows and Linux, ⌘, on macOS; also in the View menu, at the end of
-a folder's right-click menu and in the command palette) shows `settings.toml` in a window. On
+a folder's right-click menu and in the command palette) shows `settings.toml` in a window. An
+app with a system-wide Ctrl+, (1Password, for one) takes the key before Gezik sees it: then use
+the View menu or the palette, or give `settings` another key in `[shortcuts]`. On
 the left are the pages (General, Appearance, Files and Tools, Layouts, Tags, Keyboard, System,
 Advanced), then Open settings.toml and Open Config Folder; the search box above the rows looks
 through every page by title, key and description. Each row has the comment the file has for it; a setting the file does not set
@@ -63,7 +65,10 @@ shows its default, marked "default".
   written on Enter or when the field is left. A value Gezik would not read (a number out of
   range, a speed it does not understand) is not written; the line at the bottom says why.
 - Pointing at a theme in the theme list shows it in every window until the pointer leaves.
-- A choice opens its list under the row. Right-click a row for **Reset to Default**, **Copy
+- Keyboard: Tab goes through the page list (Up and Down choose a page), the search box and the
+  rows; Ctrl+PageDown, Ctrl+PageUp and Ctrl+Tab change the page; Esc closes an open list, else
+  the window.
+- A choice opens its list under the row (Up, Down, Enter; Esc closes it). Right-click a row for **Reset to Default**, **Copy
   Key** (`layout.density`) and **Edit in settings.toml** (opens the file with your editor).
 - Lists and tables (`pinned`, `[[commands]]`, rules, the shortcuts …) show how many entries
   they have and are edited in the file. The tray icon and the global shortcut are changed in

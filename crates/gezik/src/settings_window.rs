@@ -96,6 +96,7 @@ impl Shown {
             description: described.description.as_str().into(),
             value: self.values[i].as_deref().unwrap_or(&described.default).into(),
             is_default: self.values[i].is_none(),
+            default: described.default.as_str().into(),
             options: ModelRc::new(VecModel::from(options)),
         }
     }
@@ -162,7 +163,9 @@ fn current() -> Option<Rc<Open>> {
 pub fn open() {
     if let Some(open) = current() {
         let _ = open.window.show();
-        open.window.window().set_minimized(false);
+        crate::single_instance::raise_native(open.window.window());
+        #[cfg(target_os = "macos")]
+        gezik_platform::app::activate();
         return;
     }
     let window = match SettingsWindow::new() {
@@ -336,6 +339,7 @@ fn bind(open: &Rc<Open>) {
             }
         }
     });
+    window.on_escape(|| slint::Timer::single_shot(Duration::ZERO, close));
     window.window().on_close_requested(|| {
         // Not inside the window's own event: on the next turn of the event loop.
         slint::Timer::single_shot(Duration::ZERO, close);

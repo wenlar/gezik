@@ -45,8 +45,10 @@ export component TextField inherits Rectangle {
         vertical-alignment: center;
         single-line: true;
         input-type: root.secret ? InputType.password : InputType.text;
-        // A TextInput's own value is its text, in clear.
+        // A TextInput's own value is its text, in clear; its name the field's (the one that has
+        // the keyboard is this one).
         accessible-value: root.secret ? "" : root.text;
+        accessible-label: root.accessible-label;
         text <=> root.text;
         color: root.enabled ? Theme.foreground : Theme.foreground-muted;
         selection-background-color: Theme.selection;

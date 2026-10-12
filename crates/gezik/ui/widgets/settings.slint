@@ -14,6 +14,8 @@ export struct SettingItem {
     value: string,
     // Not in settings.toml: the default shows.
     is-default: bool,
+    // The default as shown ("" for a list).
+    default: string,
     options: [string],
 }
 
@@ -23,6 +25,7 @@ component PlainButton inherits Rectangle {
     in property <string> text;
     // The choice button's arrow.
     in property <bool> arrow;
+    in property <bool> enabled: true;
     callback clicked();
     height: Theme.row-height + 4px;
     min-width: caption.preferred-width + 4 * Theme.spacing;
@@ -33,7 +36,13 @@ component PlainButton inherits Rectangle {
     forward-focus: scope;
     accessible-role: button;
     accessible-label: root.text;
-    accessible-action-default => { root.clicked(); }
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if root.enabled {
+            root.clicked();
+        }
+    }
+    opacity: root.enabled ? 1 : 0.5;
     caption := Text {
         x: 2 * Theme.spacing;
         width: parent.width - 4 * Theme.spacing - (root.arrow ? 12px : 0px);
@@ -57,7 +66,7 @@ component PlainButton inherits Rectangle {
     }
     scope := FocusScope {
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == " " {
+            if root.enabled && (event.text == Key.Return || event.text == " ") {
                 root.clicked();
                 return accept;
             }
@@ -65,6 +74,7 @@ component PlainButton inherits Rectangle {
         }
     }
     touch := TouchArea {
+        enabled: root.enabled;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -76,14 +86,18 @@ component PlainButton inherits Rectangle {
 component SettingLine inherits Rectangle {
     in property <SettingItem> item;
     in property <bool> read-only;
-    // The text the control speaks: the title, the value, and "default" when it is one.
-    property <string> spoken: root.item.title + ", " + root.item.value + (root.item.is-default ? ", default" : "");
+    // The text the control speaks: the title, the value, and "default" when it is one, else the
+    // default.
+    property <string> spoken: root.item.title + ", " + root.item.value
+        + (root.item.is-default ? ", default" : root.item.default == "" ? "" : ", default " + root.item.default);
     property <string> value: root.item.value;
     property <bool> on: root.value == "true";
     // The choices or the right-click menu, under the row (no popup window: less code).
     property <[string]> lines;
     property <bool> menu-shown;
     property <bool> lines-open;
+    // The line the arrow keys are on (-1: none yet).
+    property <int> cursor: -1;
     // Writes `text` (Rust says in the status line why it did not).
     callback commit(string);
     // The pointer is over a choice ("" when it left them): a theme previews.
@@ -117,15 +131,42 @@ component SettingLine inherits Rectangle {
         root.lines-open = false;
     }
 
+    // Line `i` of the open list: a choice is written, a menu item done.
+    function choose(i: int) {
+        if root.menu-shown {
+            root.close-lines();
+            root.action(2810 + i);
+        } else {
+            root.write(root.lines[i]);
+        }
+        root.refocus();
+    }
+
+    // The keyboard back to the row's control once its list closes.
+    function refocus() {
+        if root.item.kind == 0 {
+            box-scope.focus();
+        } else if root.item.kind == 2 {
+            field.focus();
+        } else {
+            button.focus();
+        }
+    }
+
+    function open-lines(menu: bool) {
+        root.lines = menu ? ["Reset to Default", "Copy Key", "Edit in settings.toml"] : root.item.options;
+        root.menu-shown = menu;
+        root.cursor = -1;
+        root.lines-open = true;
+    }
+
     background: touch.has-hover ? Theme.hover : transparent;
     border-radius: Theme.radius;
 
     touch := TouchArea {
         pointer-event(event) => {
             if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
-                root.lines = ["Reset to Default", "Copy Key", "Edit in settings.toml"];
-                root.menu-shown = true;
-                root.lines-open = true;
+                root.open-lines(true);
             }
         }
     }
@@ -159,11 +200,12 @@ component SettingLine inherits Rectangle {
                     accessible-checkable: true;
                     accessible-checked: root.on;
                     accessible-label: root.spoken;
+                    accessible-enabled: !root.read-only;
                     accessible-action-default => { box-touch.clicked(); }
                     box-scope := FocusScope {
                         enabled: root.item.kind == 0;
                         key-pressed(event) => {
-                            if event.text == " " {
+                            if event.text == " " && !root.read-only {
                                 box-touch.clicked();
                                 return accept;
                             }
@@ -193,14 +235,15 @@ component SettingLine inherits Rectangle {
                     x: parent.width - self.width;
                     text: root.item.kind == 1 ? root.value : root.item.kind == 3 ? "Edit in settings.toml" : "System Integration…";
                     arrow: root.item.kind == 1;
+                    enabled: root.item.kind != 1 || !root.read-only;
                     accessible-label: root.item.kind == 1 ? root.spoken : self.text;
                     clicked => {
                         if root.item.kind != 1 {
                             root.button();
-                        } else if !root.read-only {
-                            root.lines = root.item.options;
-                            root.menu-shown = false;
-                            root.lines-open = !root.lines-open;
+                        } else if root.lines-open {
+                            root.close-lines();
+                        } else {
+                            root.open-lines(false);
                         }
                     }
                 }
@@ -226,39 +269,55 @@ component SettingLine inherits Rectangle {
             font-size: Theme.font-size-small;
             wrap: word-wrap;
         }
-        // The choices, or the right-click menu; a choice or a second click closes it.
+        // The choices, or the right-click menu: Up and Down move, Enter takes the line, Esc, a
+        // choice or a second click closes it.
         if root.lines-open: Rectangle {
             background: Theme.surface-raised;
             border-width: 1px;
             border-color: Theme.border;
             border-radius: Theme.radius;
             accessible-role: list;
+            FocusScope {
+                init => { self.focus(); }
+                key-pressed(event) => {
+                    if event.text == Key.DownArrow || event.text == Key.UpArrow {
+                        root.cursor = event.text == Key.DownArrow ? min(root.cursor + 1, root.lines.length - 1) : max(root.cursor - 1, 0);
+                        if !root.menu-shown {
+                            root.hovered(root.lines[root.cursor]);
+                        }
+                        return accept;
+                    }
+                    if event.text == Key.Return && root.cursor >= 0 {
+                        root.choose(root.cursor);
+                        return accept;
+                    }
+                    if event.text == Key.Escape {
+                        root.close-lines();
+                        root.refocus();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
             VerticalLayout {
                 padding: 4px;
                 for line[i] in root.lines: Rectangle {
                     height: Theme.row-height;
                     border-radius: Theme.radius-small;
-                    background: line-touch.has-hover ? Theme.selection : transparent;
+                    background: line-touch.has-hover || i == root.cursor ? Theme.selection : transparent;
                     accessible-role: list-item;
                     accessible-label: line;
-                    accessible-action-default => { line-touch.chosen(); }
+                    accessible-item-selected: i == root.cursor;
+                    accessible-action-default => { root.choose(i); }
                     Text {
                         x: Theme.spacing;
                         text: (!root.menu-shown && line == root.value ? "• " : "    ") + line;
-                        color: line-touch.has-hover ? Theme.selection-foreground : Theme.foreground;
+                        color: line-touch.has-hover || i == root.cursor ? Theme.selection-foreground : Theme.foreground;
                         vertical-alignment: center;
                         height: parent.height;
                     }
                     line-touch := TouchArea {
-                        function chosen() {
-                            if root.menu-shown {
-                                root.close-lines();
-                                root.action(2810 + i);
-                            } else {
-                                root.write(line);
-                            }
-                        }
-                        clicked => { self.chosen(); }
+                        clicked => { root.choose(i); }
                         changed has-hover => {
                             if !root.menu-shown {
                                 root.hovered(self.has-hover ? line : "");
@@ -296,14 +355,60 @@ export component SettingsWindow inherits Window {
     callback hovered(int, string);
     callback button(int);
     callback row-action(int, int);
+    // Esc with no list open.
+    callback escape();
+    // The page the arrow keys are on in the page list (it may be one of the two links).
+    property <int> page-cursor: root.page;
+    // The pages without the two links.
+    property <int> page-count: root.pages.length - 2;
+
+    function step-page(by: int) {
+        root.page-chosen(root.page + by < 0 ? root.page-count - 1 : root.page + by >= root.page-count ? 0 : root.page + by);
+    }
 
     init => { search-field.focus(); }
 
+    // Esc closes the window; Ctrl+PageDown, Ctrl+PageUp and Ctrl+Tab go through the pages.
+    FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.escape();
+                return accept;
+            }
+            if event.modifiers.control && (event.text == Key.PageDown || (event.text == Key.Tab && !event.modifiers.shift)) {
+                root.step-page(1);
+                return accept;
+            }
+            if event.modifiers.control && (event.text == Key.PageUp || event.text == Key.Backtab || (event.text == Key.Tab && event.modifiers.shift)) {
+                root.step-page(-1);
+                return accept;
+            }
+            return reject;
+        }
     HorizontalLayout {
         Rectangle {
             width: 180px;
             background: Theme.chrome;
             accessible-role: tab-list;
+            // The page list is one stop of Tab; Up and Down choose a page, Enter the links.
+            pages-scope := FocusScope {
+                key-pressed(event) => {
+                    if event.text == Key.DownArrow || event.text == Key.UpArrow {
+                        root.page-cursor = event.text == Key.DownArrow ? min(root.page-cursor + 1, root.pages.length - 1) : max(root.page-cursor - 1, 0);
+                        if root.page-cursor < root.page-count {
+                            root.page-chosen(root.page-cursor);
+                        }
+                        return accept;
+                    }
+                    if (event.text == Key.Return || event.text == " ") && root.page-cursor >= root.page-count {
+                        root.page-chosen(root.page-cursor);
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
             VerticalLayout {
                 padding: Theme.spacing * 2;
                 spacing: 2px;
@@ -312,6 +417,8 @@ export component SettingsWindow inherits Window {
                     height: Theme.row-height + 2px;
                     border-radius: Theme.radius;
                     background: i == root.page ? Theme.selection : page-touch.has-hover ? Theme.hover : transparent;
+                    border-width: pages-scope.has-focus && i == root.page-cursor ? Theme.focus-width : 0px;
+                    border-color: Theme.focus-ring;
                     accessible-role: tab;
                     accessible-label: title;
                     accessible-item-selected: i == root.page;
@@ -324,7 +431,10 @@ export component SettingsWindow inherits Window {
                         color: i == root.page ? Theme.selection-foreground : Theme.foreground;
                     }
                     page-touch := TouchArea {
-                        clicked => { root.page-chosen(i); }
+                        clicked => {
+                            root.page-cursor = i;
+                            root.page-chosen(i);
+                        }
                     }
                 }
             }
@@ -335,7 +445,8 @@ export component SettingsWindow inherits Window {
             // Its hint is the status line's when nothing else is said there.
             search-field := TextField {
                 accessible-label: "Search settings";
-                edited(text) => { root.search(text); }
+                // Not `edited`: a screen reader's or a test's set value searches too.
+                changed text => { root.search(self.text); }
             }
             ScrollView {
                 content-width: self.visible-width;
@@ -363,5 +474,6 @@ export component SettingsWindow inherits Window {
                 wrap: word-wrap;
             }
         }
+    }
     }
 }
