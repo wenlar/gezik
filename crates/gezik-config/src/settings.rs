@@ -373,6 +373,8 @@ pub struct Settings {
     pub system: SystemSettings,
     /// `[sidebar] cloud`: the CLOUD section (spec 13.1); roots are found either way.
     pub sidebar_cloud: bool,
+    /// `[sidebar] tags`: the TAGS section (spec 12 §7.1).
+    pub sidebar_tags: bool,
     /// `[sidebar] tree-follow`: the sidebar tree opens down to the folder shown (spec 10 §5.3).
     pub sidebar_tree_follow: bool,
     /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
@@ -423,6 +425,7 @@ impl Default for Settings {
             session: SessionSettings::default(),
             system: SystemSettings::default(),
             sidebar_cloud: true,
+            sidebar_tags: true,
             sidebar_tree_follow: false,
             panes_confirm: true,
             terminal: TerminalSettings::default(),
@@ -651,6 +654,13 @@ impl Settings {
                                 file,
                                 format!("sidebar.cloud: expected true or false, got {value}"),
                             )),
+                        }
+                    }
+                    if let Some(value) = sidebar.get("tags") {
+                        match value.as_bool() {
+                            Some(on) => settings.sidebar_tags = on,
+                            None => warnings
+                                .push(Warning::new(file, format!("sidebar.tags: expected true or false, got {value}"))),
                         }
                     }
                     if let Some(value) = sidebar.get("tree-follow") {
@@ -2317,9 +2327,9 @@ mod tests {
 
     #[test]
     fn the_cloud_section_is_on_unless_turned_off() {
-        assert!(Settings::default().sidebar_cloud);
-        let (settings, warnings) = parse("[sidebar]\ncloud = false\n");
-        assert!(!settings.sidebar_cloud);
+        assert!(Settings::default().sidebar_cloud && Settings::default().sidebar_tags);
+        let (settings, warnings) = parse("[sidebar]\ncloud = false\ntags = false\n");
+        assert!(!settings.sidebar_cloud && !settings.sidebar_tags);
         assert!(warnings.is_empty());
         let (settings, warnings) = parse("[sidebar]\ncloud = \"no\"\n");
         assert!(settings.sidebar_cloud, "a bad value keeps the default");

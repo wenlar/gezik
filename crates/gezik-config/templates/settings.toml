@@ -132,6 +132,8 @@ hotkey = ""
 # OneDrive, iCloud Drive, Dropbox, Google Drive … under CLOUD, found by Gezik. Rows in these
 # folders show whether a file is only in the cloud either way.
 cloud = true
+# TAGS: your [tags] list, a click shows the files with that tag (macOS: Spotlight).
+tags = true
 # The sidebar's folder tree opens down to the folder shown, as Explorer's "Expand to open
 # folder" (each closed folder above it is read once). Off: Show in Sidebar Tree does it once.
 tree-follow = false
@@ -262,6 +264,7 @@ dots = "auto"
 # tag-1 = "alt+shift+1"    # the first tag of [tags] list on (or, when all have it, off) the selection; tag-2 … tag-7 likewise; macOS: "ctrl+1"
 # clear-tags = "alt+shift+0"   # takes every tag off the selection; macOS: "ctrl+0"
 # edit-comment = ""        # Comment…: asks for the selection's comment (no key by default)
+# clean-tag-store = ""     # Clean Up Tag Store…: removes, when you say so, entries of files that are gone
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
@@ -295,7 +298,9 @@ dots = "auto"
 # name-regex, content-regex, match-case, hidden, skipped (true or false), size-min, size-max
 # ("500 MB"), modified (today | 7d | 30d | year | 2026-01-01..2026-06-30) and type (files |
 # folders | pictures | videos | audio | documents | archives | code). duplicates = true finds
-# duplicate files instead (Find Duplicates). At most 30.
+# duplicate files instead (Find Duplicates). tags = ["Red"] (every one), untagged = true,
+# min-rating = 4 (stars) and comment = "review" (text in the comment) look at the tags; pattern
+# may say them too (tag:Red rating:4 comment:review). At most 30.
 # [[searches]]
 # name = "Large videos"
 # folder = "{home}"

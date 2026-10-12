@@ -145,6 +145,58 @@ pub fn list_value(list: &[Tag]) -> toml_edit::Value {
     toml_edit::Value::Array(array)
 }
 
+/// A change to `[tags] list` made from the sidebar's menu (spec 12 §7.3); files are not touched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TagListEdit {
+    /// The tag called `.0` is called `.1`.
+    Rename(Box<str>, Box<str>),
+    Color(Box<str>, TagColor),
+    /// One place up (`true`) or down.
+    Move(Box<str>, bool),
+    Remove(Box<str>),
+}
+
+impl TagListEdit {
+    /// The name of the tag it changes.
+    pub fn name(&self) -> &str {
+        match self {
+            TagListEdit::Rename(name, _)
+            | TagListEdit::Color(name, _)
+            | TagListEdit::Move(name, _)
+            | TagListEdit::Remove(name) => name,
+        }
+    }
+}
+
+/// `list` with `edit` made; the same list when it names no tag there (or moves the first up).
+pub fn edited(list: &[Tag], edit: &TagListEdit) -> Vec<Tag> {
+    let mut list = list.to_vec();
+    let Some(at) = list.iter().position(|t| same_name(&t.name, edit.name())) else { return list };
+    match edit {
+        TagListEdit::Rename(_, to) => list[at].name = to.clone(),
+        TagListEdit::Color(_, color) => list[at].color = *color,
+        TagListEdit::Move(_, up) => {
+            let other = if *up { at.checked_sub(1) } else { Some(at + 1).filter(|n| *n < list.len()) };
+            if let Some(other) = other {
+                list.swap(at, other);
+            }
+        }
+        TagListEdit::Remove(_) => {
+            list.remove(at);
+        }
+    }
+    list
+}
+
+/// The tag name of a `[tags] list` entry as written (`"Red"` or `{ name = "Red", … }`).
+pub fn entry_name(value: &toml_edit::Value) -> Option<&str> {
+    match value {
+        toml_edit::Value::String(name) => Some(name.value()),
+        toml_edit::Value::InlineTable(table) => table.get("name")?.as_str(),
+        _ => None,
+    }
+}
+
 /// `dots` as written: `"auto"`, true or false.
 pub fn dots_value(dots: Dots) -> toml_edit::Value {
     match dots {
@@ -163,6 +215,20 @@ mod tests {
         let mut warnings = Vec::new();
         let tags = parse(&table, "settings.toml", &mut warnings);
         (tags, warnings.into_iter().map(|w| w.to_string()).collect())
+    }
+
+    #[test]
+    fn list_edits_rename_recolour_move_and_remove() {
+        let list = TagsSettings::default().list;
+        let names = |list: &[Tag]| list.iter().map(|t| t.name.to_string()).collect::<Vec<_>>().join(",");
+        let renamed = edited(&list, &TagListEdit::Rename("red".into(), "Urgent".into()));
+        assert_eq!((&*renamed[0].name, renamed[0].color), ("Urgent", TagColor::Red), "the colour stays");
+        assert_eq!(edited(&list, &TagListEdit::Color("Gray".into(), TagColor::None))[6].color, TagColor::None);
+        assert_eq!(names(&edited(&list, &TagListEdit::Move("Orange".into(), true)))[..10], *"Orange,Red");
+        assert_eq!(edited(&list, &TagListEdit::Move("Red".into(), true)), list, "the first stays first");
+        assert_eq!(edited(&list, &TagListEdit::Move("Gray".into(), false)), list, "the last stays last");
+        assert_eq!(edited(&list, &TagListEdit::Remove("Blue".into())).len(), 6);
+        assert_eq!(edited(&list, &TagListEdit::Remove("Nope".into())), list);
     }
 
     #[test]
