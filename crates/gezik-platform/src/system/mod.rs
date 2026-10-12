@@ -68,6 +68,26 @@ pub fn register_app(app: &Path) {
     let _ = app;
 }
 
+/// This computer's name (`COMPUTERNAME` on Windows, the host name elsewhere), if known.
+pub fn machine_name() -> Option<String> {
+    #[cfg(windows)]
+    {
+        std::env::var("COMPUTERNAME").ok().filter(|n| !n.is_empty())
+    }
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        // SAFETY: the buffer is writable for its whole length; the name is NUL-ended within it.
+        if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+            return None;
+        }
+        let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        // "mac.local" and "mac" are one machine.
+        let name = String::from_utf8_lossy(&buf[..end]);
+        name.split('.').next().filter(|n| !n.is_empty()).map(str::to_owned)
+    }
+}
+
 /// This Gezik's exe; on macOS and Linux the real file (a link Gezik makes points to it).
 pub fn exe() -> io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
@@ -112,6 +132,12 @@ pub fn environment_changed() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn this_machine_has_a_name() {
+        let name = machine_name().expect("a name");
+        assert!(!name.is_empty() && !name.contains('.'), "{name}");
+    }
 
     #[test]
     fn only_an_empty_place_or_our_own_link_is_replaced() {

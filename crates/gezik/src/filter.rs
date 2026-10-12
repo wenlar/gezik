@@ -388,8 +388,8 @@ typing = \"filter\"
         assert!(note.is_some_and(|n| n.contains("settings.toml")));
         assert_eq!(super::saved(), [saved("A", "a")], "the menu stays as the file is");
         assert_eq!(latest(), [saved("A", "a")]);
-        assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), broken);
-        let _ = std::fs::remove_dir_all(store.dir());
+        assert_eq!(std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap(), broken);
+        let _ = std::fs::remove_dir_all(store.shared_dir());
     }
 
     #[test]
@@ -400,9 +400,9 @@ typing = \"filter\"
         let seq = queue_write(wanted.clone());
         assert_eq!(finish_write(seq, wanted.clone(), store.save_filters(&wanted)), None);
         assert_eq!(super::saved(), wanted);
-        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        let text = std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap();
         assert!(text.contains("[[filters]]") && text.contains("name = \"Resimler\""));
-        let _ = std::fs::remove_dir_all(store.dir());
+        let _ = std::fs::remove_dir_all(store.shared_dir());
     }
 
     #[test]

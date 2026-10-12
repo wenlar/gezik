@@ -1358,9 +1358,9 @@ impl Convert {
         });
     }
 
-    /// Where downloaded tools are: `<config dir>/tools/` (as archives.rs has it).
+    /// Where downloaded tools are (as archives.rs has it).
     fn data_dir(&self) -> PathBuf {
-        self.0.store.as_ref().map_or_else(|| std::env::temp_dir().join("gezik"), |store| store.dir().to_path_buf())
+        self.0.store.as_ref().map_or_else(|| std::env::temp_dir().join("gezik").join("tools"), ConfigStore::tools_dir)
     }
 
     /// Writes the last choices to state.toml.

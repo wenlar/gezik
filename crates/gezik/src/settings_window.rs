@@ -630,9 +630,14 @@ fn bind(open: &Rc<Open>) {
     });
 }
 
-/// Opens the config folder in a new tab of the window last used.
+/// Opens the config folder (settings.toml's) in a new tab of the window last used.
 fn open_folder() {
-    let Some(dir) = crate::windows::config().map(|store| store.dir().to_owned()) else { return };
+    open_folder_of(ConfigStore::shared_dir);
+}
+
+/// Opens one of the store's folders in a new tab of the window last used.
+fn open_folder_of(which: fn(&ConfigStore) -> &std::path::Path) {
+    let Some(dir) = crate::windows::config().map(|store| which(&store).to_owned()) else { return };
     crate::windows::with_focused(|_| {
         crate::panes::with_active(|p| p.nav.open_tab(Location::Path(dir), true));
     });
@@ -669,7 +674,7 @@ fn note(text: String) {
 
 /// Opens settings.toml with the system's editor for it.
 fn edit_file() {
-    let Some(path) = crate::windows::config().map(|store| store.dir().join("settings.toml")) else { return };
+    let Some(path) = crate::windows::config().map(|store| store.shared_dir().join("settings.toml")) else { return };
     if let Err(err) = open::that_detached(&path) {
         let text = format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err));
         match current() {
@@ -692,7 +697,7 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
             let Some((id, contents)) = shown.got.install(i, text == themes::KEEP_BOTH, &date) else { return };
             let name = shown.got.found[i].name.clone();
             drop(shown);
-            let Some(dir) = crate::windows::config().map(|store| store.dir().join("themes")) else { return };
+            let Some(dir) = crate::windows::config().map(|store| store.shared_dir().join("themes")) else { return };
             say(open, &format!("Installing {name}…"));
             // Off the UI thread; the config watcher's reload then shows it installed.
             std::thread::spawn(move || {
@@ -734,7 +739,7 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                     _ => say_bad(open, &format!("Cannot open {address}")),
                 },
                 themes::DELETE => {
-                    let Some(dir) = crate::windows::config().map(|s| s.dir().join("themes")) else { return };
+                    let Some(dir) = crate::windows::config().map(|s| s.shared_dir().join("themes")) else { return };
                     // The real file name is read off the UI thread.
                     std::thread::spawn(move || {
                         let path = themes::theme_path(&dir, &id);
@@ -803,6 +808,12 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
     let mut shown = open.shown.borrow_mut();
     let state = &mut shown.backup;
     match row {
+        Row::Portable => {
+            if text == backup::OPEN_DATA {
+                drop(shown);
+                return open_folder_of(ConfigStore::local_dir);
+            }
+        }
         Row::Templates => state.without_templates = !on,
         Row::Views => state.with_views = on,
         Row::Group(group) => {
@@ -826,7 +837,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
-                crate::settings_backup::export(store.dir(), &out, &groups).map(|n| (n, out))
+                crate::settings_backup::export(store.shared_dir(), &out, &groups).map(|n| (n, out))
             };
             return work(open, &saying, job, |open, result| match (open, result) {
                 (Some(open), Ok((n, out))) => say(open, &format!("Exported {n} files to {}", out.display())),
@@ -838,7 +849,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let from = match row {
                 Row::Import => path(),
                 _ => match crate::windows::config() {
-                    Some(store) => store.dir().join("backups").join(text),
+                    Some(store) => store.shared_dir().join("backups").join(text),
                     None => return,
                 },
             };
@@ -854,7 +865,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let saying = format!("Reading {}…", from.display());
             // Gezik's own backups are not checked: a broken settings.toml comes back as it was.
             let check = row == Row::Import;
-            let job = move |store: &ConfigStore| crate::settings_backup::preview(store.dir(), &from, check);
+            let job = move |store: &ConfigStore| crate::settings_backup::preview(store.shared_dir(), &from, check);
             return work(open, &saying, job, |open, result| {
                 let Some(open) = open else { return };
                 let programs = match result {
@@ -899,7 +910,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
-                crate::settings_backup::import(store.dir(), chosen, &crate::settings_backup::stamp(), &discard)
+                crate::settings_backup::import(store.shared_dir(), chosen, &crate::settings_backup::stamp(), &discard)
             };
             return work(open, "Backing up, then importing…", job, |open, result| {
                 imported(open, result, "Imported: Undo Import puts the files back");
@@ -915,7 +926,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
-                crate::settings_backup::undo(store.dir(), &last, &crate::settings_backup::stamp(), &discard)
+                crate::settings_backup::undo(store.shared_dir(), &last, &crate::settings_backup::stamp(), &discard)
             };
             return work(open, "Undoing the import…", job, |open, result| {
                 imported(open, result, "Undone: the files are as they were before the import");
@@ -1003,7 +1014,7 @@ fn list_backups(open: &Open) {
         return;
     }
     std::thread::spawn(move || {
-        let names = crate::settings_backup::backups(store.dir());
+        let names = crate::settings_backup::backups(store.shared_dir());
         let _ = slint::invoke_from_event_loop(move || {
             let Some(open) = current() else { return };
             open.shown.borrow_mut().backup.listing = false;

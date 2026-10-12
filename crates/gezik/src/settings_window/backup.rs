@@ -14,6 +14,7 @@ use crate::settings_backup::{Change, Incoming, Preview, Undo};
 
 pub(super) const IMPORT: &str = "Import";
 pub(super) const UNDO: &str = "Undo";
+pub(super) const OPEN_DATA: &str = "Open Data Folder";
 
 thread_local! {
     /// The last import of this run, for Undo Import (it outlives the window).
@@ -30,6 +31,8 @@ pub(super) fn set_last(undo: Option<Undo>) {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Row {
+    /// Portable mode's data folder (spec 14 §9.1).
+    Portable,
     Export,
     Templates,
     Views,
@@ -74,7 +77,9 @@ impl Backup {
 
     /// The rows a search for `query` shows (all without one).
     pub fn rows(&self, query: &str) -> Vec<Row> {
-        let mut all = vec![Row::Export, Row::Templates, Row::Views, Row::Import];
+        let portable = gezik_config::paths::location().dirs.as_ref().is_some_and(|d| d.portable);
+        let mut all = if portable { vec![Row::Portable] } else { Vec::new() };
+        all.extend([Row::Export, Row::Templates, Row::Views, Row::Import]);
         if let Some(preview) = &self.preview {
             all.extend(Group::ALL.into_iter().filter(|g| preview.files.iter().any(|f| f.group == *g)).map(Row::Group));
             if !preview.programs.is_empty() {
@@ -105,6 +110,21 @@ impl Backup {
         let check = |on: bool| if on { "true" } else { "false" }.to_owned();
         let (kind, title, key, value, description, options): (i32, String, String, String, String, Vec<&str>) =
             match row {
+                Row::Portable => {
+                    let location = gezik_config::paths::location();
+                    let data = location.dirs.as_ref().map(|d| d.local.display().to_string()).unwrap_or_default();
+                    let read_only = if location.read_only { " It is read-only: changes are not saved." } else { "" };
+                    (
+                        1,
+                        format!("Portable: settings are kept in {data}"),
+                        "gezik-portable".to_owned(),
+                        "On".to_owned(),
+                        format!(
+                            "A gezik-portable file next to Gezik keeps everything in this folder.{read_only} Delete                              that file to use this computer's settings folder again (the data stays); Export and                              Import move settings between the two."
+                        ),
+                        vec![OPEN_DATA],
+                    )
+                }
                 Row::Export => (
                     2,
                     "Export Settings".to_owned(),

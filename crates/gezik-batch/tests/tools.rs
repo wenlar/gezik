@@ -174,7 +174,7 @@ fn download_checks_the_hash_and_installs() {
     let body = tool_zip(&d);
     let build = build(body.len() as u64, hex_sha256(&body));
     let data = d.join("data");
-    let tools = data.join("tools");
+    let tools = data.clone();
     // An older version goes, another tool's folder stays.
     std::fs::create_dir_all(tools.join("7zip-24.09")).unwrap();
     std::fs::write(tools.join("7zip-24.09").join("7z.exe"), b"old").unwrap();
@@ -252,7 +252,7 @@ fn a_bad_hash_leaves_nothing() {
     assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
     assert_eq!(report.failures[0].message, "download damaged — try again");
     assert!(!install_dir(build, &data).exists());
-    let tools = data.join("tools");
+    let tools = data.clone();
     assert!(leftovers(&tools).is_empty(), "{:?}", leftovers(&tools));
     let pending = PendingDeletes::new(d.join("pending-deletes"));
     assert!(pending.load().is_empty() && pending.copies().is_empty());
@@ -273,7 +273,7 @@ fn a_failed_download_says_why() {
     // WinHTTP, NSURLSession, curl and wget all say they could not connect.
     let message = &report.failures[0].message;
     assert!(message.to_lowercase().contains("connect"), "{message}");
-    assert!(leftovers(&data.join("tools")).is_empty());
+    assert!(leftovers(&data).is_empty());
     let _ = std::fs::remove_dir_all(&d);
 }
 
@@ -295,7 +295,7 @@ fn cancel_stops_the_download() {
     assert!(report.cancelled);
     assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
     assert!(!install_dir(build, &data).exists());
-    let tools = data.join("tools");
+    let tools = data.clone();
     assert!(leftovers(&tools).is_empty(), "{:?}", leftovers(&tools));
     // The download is gone: the server cannot send the rest.
     std::thread::sleep(Duration::from_millis(500));

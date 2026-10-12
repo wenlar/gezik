@@ -1226,8 +1226,22 @@ pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places
     }
 }
 
+/// The journal in the local config folder; in portable mode one per machine (spec 14 §9.2).
 fn journal_file() -> Option<JournalFile> {
-    gezik_config::paths::config_dir().map(JournalFile::new)
+    let dirs = gezik_config::paths::location().dirs.as_ref()?;
+    let machine = if dirs.portable { gezik_platform::system::machine_name() } else { None };
+    let name = gezik_config::system_journal::file_name(machine.as_deref());
+    Some(JournalFile::named(dirs.local.clone(), name))
+}
+
+/// Said first in every question of the System Integration page in portable mode (spec 14 §9.2).
+pub fn portable_note() -> Option<String> {
+    let dirs = gezik_config::paths::location().dirs.as_ref().filter(|d| d.portable)?;
+    let from = dirs.local.parent().unwrap_or(&dirs.local);
+    Some(format!(
+        "Gezik is running in portable mode from {}. These stop working when the drive is removed.",
+        from.display()
+    ))
 }
 
 fn exe_text() -> Result<String, String> {

@@ -1,6 +1,6 @@
 //! Downloading a tool: the system's own HTTP client (`gezik_platform::http`) into a temporary
 //! file, the SHA-256 checked, then unpacked by Gezik's own archive reader into a staging
-//! folder and moved to `<data>/tools/<name>-<version>/` in one step. Older versions go after.
+//! folder and moved to `<tools>/<name>-<version>/` in one step. Older versions go after.
 //! Not undone and not in the history: the folder may be deleted by hand.
 
 use std::cell::RefCell;
@@ -26,15 +26,15 @@ const CONTENT: &str = "x";
 /// Downloads, checks and unpacks `build` into `install_dir`; then removes older versions.
 pub struct DownloadTask {
     build: &'static ToolBuild,
-    data_dir: PathBuf,
+    tools_dir: PathBuf,
     url: String,
     /// Plain http allowed: only for a test server's address given by `with_url`.
     allow_http: bool,
 }
 
 impl DownloadTask {
-    pub fn new(build: &'static ToolBuild, data_dir: PathBuf) -> DownloadTask {
-        DownloadTask { build, data_dir, url: build.url.to_owned(), allow_http: false }
+    pub fn new(build: &'static ToolBuild, tools_dir: PathBuf) -> DownloadTask {
+        DownloadTask { build, tools_dir, url: build.url.to_owned(), allow_http: false }
     }
 
     /// Downloads from `url` instead of the build's own address (tests: a local server, so
@@ -99,7 +99,7 @@ impl DownloadTask {
         gezik_platform::fs::move_entry(&content, target)
     }
 
-    /// Removes `<data>/tools/<name>-*` folders other than `keep`; one in use stays.
+    /// Removes `<tools>/<name>-*` folders other than `keep`; one in use stays.
     fn remove_older(&self, tools: &Path, keep: &Path) {
         let Ok(listing) = std::fs::read_dir(tools) else { return };
         let prefix = format!("{}-", folder_name(self.build.tool));
@@ -129,18 +129,18 @@ impl Task for DownloadTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.data_dir.clone()], work: Work::External }
+        Resources { paths: vec![self.tools_dir.clone()], work: Work::External }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         let facts = Facts { is_dir: true, size: 0, modified: None };
         // The download counts instead, once it starts.
-        sink.item(PlanItem::new(Stage::Parallel, facts).target(install_dir(self.build, &self.data_dir)).uncounted());
+        sink.item(PlanItem::new(Stage::Parallel, facts).target(install_dir(self.build, &self.tools_dir)).uncounted());
     }
 
     fn run(&self, _item: &PlanItem, cx: &RunCx<'_>) -> io::Result<Outcome> {
-        let target = install_dir(self.build, &self.data_dir);
-        let tools = target.parent().unwrap_or(&self.data_dir).to_path_buf();
+        let target = install_dir(self.build, &self.tools_dir);
+        let tools = target.parent().unwrap_or(&self.tools_dir).to_path_buf();
         std::fs::create_dir_all(&tools)?;
         cx.found(1, self.build.size);
         let temp = TempFile(cx.temp_file_for(&target));

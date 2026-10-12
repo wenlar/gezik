@@ -36,8 +36,8 @@ pub struct Ffmpeg {
 /// The ffmpeg to use: the path in settings (a full one), Gezik's download, then PATH; only a
 /// program that answers `-version` as ffmpeg counts, whatever its version (callers that need
 /// a newer one look at `version`). It starts programs, so this runs off the UI thread.
-pub fn find_ffmpeg(data_dir: &Path, configured: Option<&Path>) -> Option<Ffmpeg> {
-    let ffmpeg = crate::tools::find(Tool::Ffmpeg, data_dir, configured)?;
+pub fn find_ffmpeg(tools_dir: &Path, configured: Option<&Path>) -> Option<Ffmpeg> {
+    let ffmpeg = crate::tools::find(Tool::Ffmpeg, tools_dir, configured)?;
     let beside = ffmpeg.with_file_name(format!("ffprobe{}", std::env::consts::EXE_SUFFIX));
     let ffprobe = Some(beside)
         .filter(|path| path.is_file())

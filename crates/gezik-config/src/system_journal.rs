@@ -169,19 +169,39 @@ fn inline(v: &Value) -> InlineTable {
     table
 }
 
+/// The journal's name: `system-changes.toml`, or in portable mode one per machine,
+/// `system-changes-<machine>.toml` (a drive opened on another computer must not list this
+/// one's changes; spec 14 decision 14). Characters a file name cannot hold become `_`.
+pub fn file_name(machine: Option<&str>) -> String {
+    match machine.filter(|m| !m.trim().is_empty()) {
+        None => FILE.to_owned(),
+        Some(machine) => {
+            let safe: String =
+                machine.trim().chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '_' }).collect();
+            format!("system-changes-{safe}.toml")
+        }
+    }
+}
+
 /// `system-changes.toml` in a config folder.
 #[derive(Debug, Clone)]
 pub struct JournalFile {
     dir: PathBuf,
+    name: String,
 }
 
 impl JournalFile {
     pub fn new(dir: PathBuf) -> JournalFile {
-        JournalFile { dir }
+        JournalFile { dir, name: FILE.to_owned() }
+    }
+
+    /// The journal named by [`file_name`].
+    pub fn named(dir: PathBuf, name: String) -> JournalFile {
+        JournalFile { dir, name }
     }
 
     pub fn path(&self) -> PathBuf {
-        self.dir.join(FILE)
+        self.dir.join(&self.name)
     }
 
     pub fn dir(&self) -> &Path {
@@ -279,6 +299,18 @@ impl Locked {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_portable_journal_is_named_by_the_machine() {
+        assert_eq!(file_name(None), FILE);
+        assert_eq!(file_name(Some(" ")), FILE);
+        assert_eq!(file_name(Some("OFİS-PC")), "system-changes-OFİS-PC.toml");
+        assert_eq!(file_name(Some("mac.local")), "system-changes-mac_local.toml");
+        assert_eq!(file_name(Some(r"a/b\c:d")), "system-changes-a_b_c_d.toml");
+        let dir = crate::test_dir("journal-named");
+        let file = JournalFile::named(dir.clone(), file_name(Some("PC1")));
+        assert_eq!(file.path(), dir.join("system-changes-PC1.toml"));
+    }
 
     fn sample() -> Journal {
         let base = Change {
