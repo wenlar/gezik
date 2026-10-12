@@ -30,6 +30,7 @@ pub fn apply(window: &AppWindow, theme: &ResolvedTheme) {
     apply_global(&window.global::<Theme>(), theme);
     CURRENT.with(|c| *c.borrow_mut() = Some(theme.clone()));
     crate::preview::with_current(|p| p.retheme(theme));
+    crate::settings_window::retheme(theme);
 }
 
 /// Makes the next frame redraw the whole window: the window's background (`Theme.chrome`,

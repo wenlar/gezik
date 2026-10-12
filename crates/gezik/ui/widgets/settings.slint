@@ -1,0 +1,351 @@
+import { Theme } from "../theme.slint";
+import { Check } from "check.slint";
+import { TextField } from "text-field.slint";
+import { TextButton } from "text-button.slint";
+import { ScrollView } from "scrollbar.slint";
+
+// One setting (settings_window.rs builds them from the schema and settings.toml).
+export struct SettingItem {
+    // 0 on/off, 1 a choice (a theme too), 2 typed (a number, text, a path), 3 a list (edited in
+    // settings.toml), 4 System Integration's.
+    kind: int,
+    title: string,
+    // `layout.density`: under the title, and Copy Key's text.
+    key: string,
+    description: string,
+    value: string,
+    // Not in settings.toml: the default shows.
+    is-default: bool,
+    options: [string],
+}
+
+// A row: the title, the key and the description on the left, the control on the right; its
+// right-click menu. Typed values are written on Enter or when the field loses the keyboard.
+component SettingLine inherits Rectangle {
+    in property <SettingItem> item;
+    in property <bool> read-only;
+    // The text the control speaks: the title, the value, and "default" when it is one.
+    property <string> spoken: root.item.title + ", " + root.item.value + (root.item.is-default ? ", default" : "");
+    property <string> value: root.item.value;
+    // The parser's word on the last value typed or chosen ("" when it was written).
+    property <string> error;
+    // The file changed while the field had the keyboard.
+    property <string> note;
+    property <length> menu-x;
+    property <length> menu-y;
+    // Writes `text`; returns why not ("" when it is written).
+    callback commit(string) -> string;
+    // The pointer is over a choice ("" when it left them): a theme previews.
+    callback hovered(string);
+    // The list's or System Integration's button.
+    callback button();
+    // The right-click menu's item (2810 Reset to Default, 2811 Copy Key, 2812 Edit in settings.toml).
+    callback action(int);
+
+    changed value => {
+        if root.item.kind == 2 && field.has-focus {
+            root.note = field.text == root.value ? "" : "Changed in settings.toml: " + root.value;
+        } else {
+            field.text = root.value;
+            root.note = "";
+        }
+    }
+
+    function write(text: string) {
+        root.error = root.commit(text);
+        root.note = "";
+    }
+
+    background: touch.has-hover ? Theme.hover : transparent;
+    border-radius: Theme.radius;
+
+    touch := TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                root.menu-x = self.mouse-x;
+                root.menu-y = self.mouse-y;
+                menu.show();
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding: Theme.spacing + 2px;
+        spacing: 2px;
+        HorizontalLayout {
+            spacing: 2 * Theme.spacing;
+            VerticalLayout {
+                alignment: center;
+                Text {
+                    text: root.item.title;
+                    color: Theme.foreground;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.item.key + (root.item.is-default ? "  ·  default" : "");
+                    color: Theme.foreground-muted;
+                    font-size: Theme.font-size-small;
+                }
+            }
+            Rectangle {
+                width: 240px;
+                if root.item.kind == 0: Check {
+                    x: parent.width - self.width;
+                    text: "";
+                    checked: root.value == "true";
+                    enabled: !root.read-only;
+                    accessible-label: root.spoken;
+                    toggled => { root.write(root.value == "true" ? "false" : "true"); }
+                }
+                if root.item.kind == 1: choice := TextButton {
+                    width: parent.width;
+                    text: root.value;
+                    icon: "M 1 3 L 4 6 L 7 3";
+                    accessible-role: combobox;
+                    accessible-label: root.spoken;
+                    clicked => {
+                        if !root.read-only {
+                            choices.show();
+                        }
+                    }
+                }
+                field := TextField {
+                    visible: root.item.kind == 2;
+                    width: parent.width;
+                    enabled: !root.read-only;
+                    text: root.value;
+                    accessible-label: root.spoken;
+                    accepted(text) => { root.write(text); }
+                    changed has-focus => {
+                        if !self.has-focus && self.visible && self.text != root.value {
+                            root.write(self.text);
+                        }
+                    }
+                }
+                if root.item.kind >= 3: HorizontalLayout {
+                    spacing: Theme.spacing;
+                    Text {
+                        text: root.value;
+                        color: Theme.foreground-muted;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    TextButton {
+                        text: root.item.kind == 3 ? "Edit in settings.toml" : "System Integration…";
+                        clicked => { root.button(); }
+                    }
+                }
+            }
+        }
+        if root.item.description != "": Text {
+            text: root.item.description;
+            color: Theme.foreground-muted;
+            font-size: Theme.font-size-small;
+            wrap: word-wrap;
+        }
+        if root.error != "" || root.note != "": Text {
+            text: root.error != "" ? root.error : root.note;
+            color: root.error != "" ? Theme.danger : Theme.warning;
+            font-size: Theme.font-size-small;
+            wrap: word-wrap;
+        }
+    }
+
+    // The choices, under the button.
+    choices := PopupWindow {
+        x: root.width - 240px - Theme.spacing - 2px;
+        y: Theme.spacing + 2px + Theme.row-height + 4px;
+        width: 240px;
+        Rectangle {
+            background: Theme.surface-raised;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Theme.radius;
+            VerticalLayout {
+                padding: 4px;
+                for option in root.item.options: Rectangle {
+                    height: Theme.row-height;
+                    border-radius: Theme.radius-small;
+                    background: option-touch.has-hover ? Theme.selection : transparent;
+                    accessible-role: list-item;
+                    accessible-label: option;
+                    accessible-action-default => { root.write(option); }
+                    Text {
+                        x: Theme.spacing;
+                        text: (option == root.value ? "• " : "    ") + option;
+                        color: option-touch.has-hover ? Theme.selection-foreground : Theme.foreground;
+                        vertical-alignment: center;
+                        height: parent.height;
+                    }
+                    option-touch := TouchArea {
+                        clicked => { root.write(option); }
+                        changed has-hover => { root.hovered(self.has-hover ? option : ""); }
+                    }
+                }
+            }
+        }
+    }
+
+    menu := PopupWindow {
+        x: root.menu-x;
+        y: root.menu-y;
+        width: 200px;
+        Rectangle {
+            background: Theme.surface-raised;
+            border-width: 1px;
+            border-color: Theme.border;
+            border-radius: Theme.radius;
+            VerticalLayout {
+                padding: 4px;
+                for entry[i] in ["Reset to Default", "Copy Key", "Edit in settings.toml"]: Rectangle {
+                    height: Theme.row-height;
+                    border-radius: Theme.radius-small;
+                    background: entry-touch.has-hover ? Theme.selection : transparent;
+                    accessible-role: AccessibleRole.button;
+                    accessible-label: entry;
+                    accessible-action-default => { root.action(2810 + i); }
+                    Text {
+                        x: Theme.spacing;
+                        text: entry;
+                        color: entry-touch.has-hover ? Theme.selection-foreground : Theme.foreground;
+                        vertical-alignment: center;
+                        height: parent.height;
+                    }
+                    entry-touch := TouchArea {
+                        clicked => { root.action(2810 + i); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Settings… (spec 14 §4): the pages on the left, the search on top, the rows on the right.
+// Every change is written at once; nothing waits for an OK.
+export component SettingsWindow inherits Window {
+    title: "Settings — Gezik";
+    preferred-width: 820px;
+    preferred-height: 600px;
+    background: Theme.background;
+    default-font-family: Theme.font-family;
+    default-font-size: Theme.font-size;
+    in property <[string]> pages;
+    in property <int> page;
+    in property <[SettingItem]> rows;
+    // settings.toml does not read ("settings.toml line 12: …"): the rows are read-only.
+    in property <string> broken;
+    // A write that failed, the Advanced page's count of unknown keys.
+    in property <string> status;
+    callback page-chosen(int);
+    callback search(string);
+    callback commit(int, string) -> string;
+    callback hovered(int, string);
+    callback button(int);
+    callback row-action(int, int);
+    callback edit-file();
+    callback open-folder();
+
+    init => { search-field.focus(); }
+
+    HorizontalLayout {
+        Rectangle {
+            width: 180px;
+            background: Theme.chrome;
+            accessible-role: tab-list;
+            VerticalLayout {
+                padding: Theme.spacing * 2;
+                spacing: 2px;
+                alignment: start;
+                for title[i] in root.pages: Rectangle {
+                    height: Theme.row-height + 2px;
+                    border-radius: Theme.radius;
+                    background: i == root.page ? Theme.selection : page-touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: tab;
+                    accessible-label: title;
+                    accessible-item-selected: i == root.page;
+                    accessible-action-default => { root.page-chosen(i); }
+                    Text {
+                        x: Theme.spacing * 2;
+                        height: parent.height;
+                        text: title;
+                        vertical-alignment: center;
+                        color: i == root.page ? Theme.selection-foreground : Theme.foreground;
+                    }
+                    page-touch := TouchArea {
+                        clicked => { root.page-chosen(i); }
+                    }
+                }
+            }
+        }
+        VerticalLayout {
+            padding: Theme.spacing * 2;
+            spacing: Theme.spacing;
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: "Search";
+                    color: Theme.foreground-muted;
+                    vertical-alignment: center;
+                }
+                search-field := TextField {
+                    accessible-label: "Search settings";
+                    edited(text) => { root.search(text); }
+                }
+            }
+            if root.broken != "": HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.broken + " — fix it there; until then these are read-only.";
+                    color: Theme.danger;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                TextButton {
+                    text: "Edit in settings.toml";
+                    clicked => { root.edit-file(); }
+                }
+            }
+            view := ScrollView {
+                content-width: self.visible-width;
+                content-height: column.preferred-height;
+                column := VerticalLayout {
+                    width: parent.width;
+                    spacing: 2px;
+                    for row[i] in root.rows: SettingLine {
+                        item: row;
+                        read-only: root.broken != "";
+                        commit(text) => { return root.commit(i, text); }
+                        hovered(option) => { root.hovered(i, option); }
+                        button => { root.button(i); }
+                        action(id) => { root.row-action(i, id); }
+                    }
+                    if root.rows.length == 0: Text {
+                        text: "No setting matches.";
+                        color: Theme.foreground-muted;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.spacing;
+                Text {
+                    text: root.status;
+                    color: Theme.foreground-muted;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                TextButton {
+                    text: "Open settings.toml";
+                    clicked => { root.edit-file(); }
+                }
+                TextButton {
+                    text: "Open Config Folder";
+                    clicked => { root.open-folder(); }
+                }
+            }
+        }
+    }
+}

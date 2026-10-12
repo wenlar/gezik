@@ -124,7 +124,7 @@ pub fn chord_from_event(text: &str, ctrl: bool, alt: bool, shift: bool, meta: bo
         *key
     } else if altgr_types(c, ctrl, alt, cfg!(windows)) {
         return None;
-    } else if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | '=' | '-') {
+    } else if c.is_ascii_alphanumeric() || matches!(c, '[' | ']' | '.' | ',' | '=' | '-') {
         Key::Char(c.to_ascii_lowercase())
     } else {
         return None;
@@ -798,6 +798,7 @@ mod tests {
                 Action::QuickLook => "space",
                 Action::Copy => "ctrl+c",
                 Action::Cut => "ctrl+x",
+                Action::Settings => "ctrl+,",
                 Action::Paste => "ctrl+v",
                 Action::Trash => "delete",
                 Action::DeletePermanently => "shift+delete",
