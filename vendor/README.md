@@ -20,6 +20,14 @@ affected).
 **The fix.** A dropped `PropertyTracker` marks the bindings that depend on it dirty, as a
 changed dependency would.
 
+**A side effect to avoid.** A `Text` with `wrap: word-wrap` and `overflow: elide` inside a
+layout is measured unwrapped for its width and wrapped for its height; the cache keeps one
+wrap mode per item, so each measure drops the other's entry, and with this fix each drop
+dirties the other measure. Something that re-reads the layout every round (the focused text
+field's position tracker) then never settles: "long changed callback chain" on every event.
+Gezik has no such text in a layout (the settings rows' titles had one);
+`a_reload_with_settings_open_settles` in `windows.rs` catches it in Settings.
+
 **Test.** `crates/gezik/tests/slint_patch.rs` fails without the fix. The crate's own tests
 cannot be built outside the Slint repository.
 
