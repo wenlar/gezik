@@ -2750,3 +2750,28 @@ Betikler: scratchpad `m13g\13b-fix\` (`mkdata.py`, `f.ps1`). Ekran görüntüler
 Atlananlar: 150%/200% ekran ölçeği (ekran ayarı değiştirilmedi), `--pdf-view` süreç sayımı (önceki koşuda geçti, bu koşuda tekrarlanmadı).
 
 - Bu yeniden testin üç notu da düzeltildi (fix2): sayfalar belge açılmadan (parola, pdfium aranırken) dönmüyor, sayaç gösterilen sayfada kalıyor; kilitliyken (bağlantı varken) çubukta yalnız bağlantı (ve geniş bölmede Hex), not ona yer buluyor; yakınlaştırma `Fit` iken yüzde gösterilmiyor (`Fit` bir kez). Sürüm exe'si değişmedi: 27.475.968 B (+169.984 B). Yapı `t13b-fix2.exe`; ekranda yeniden denenmedi.
+
+### Yeniden test 2 (fix2 sonrası)
+
+
+Tarih: 2026-10-12. Yapı: `%TEMP%\gezik-gui-13\bin\t13b-fix2.exe`. Pencere 1600x900 (40,40).
+Ayarlar temiz `cfg\g1` (width 280), `g2` (200), `g3` (500); `[files] confirm-trash = true`; pdfium `cfg\q1\tools\pdfium-8086`'dan kopyalandı.
+Veri `data\q` (`mkdata.py`, enc.pdf = `crates/gezik-batch/tests/data/pdf/enc_aes256.pdf`, parola `pw`, 3 sayfa).
+Betik: scratchpad `m13g\13b-fix2\f2.ps1`. Görüntüler: `%TEMP%\gezik-gui-13\shots\fix2\`. Sonunda veri ve g1..g3 silindi (q1 duruyor).
+
+| # | Madde | Sonuç |
+|---|---|---|
+| A | enc.pdf, › sonrası sayaç; parola sonrası 1. ve 2. sayfa | GEÇTİ |
+| B | width 200, enc.pdf çubuğu sığıyor, "Password protected" | GEÇTİ (not: metin "Pass…" diye kısalıyor) |
+| C | Fit'te "Fit" bir kez | GEÇTİ |
+| D | Normal PDF sayfa/yakınlaştırma, Go to Page Ctrl+A | GEÇTİ (not: ilk › 1. sayfayı çiziyor) |
+
+#### Ayrıntı
+
+- A (280 px, `g1-*`): seçince `‹ 1 › − + Fit`, önizlemede PDF simgesi. › → çubuk `Enter Password… | Password protected`, sayaç yok (artık `‹ 2 ›` yok), ikinci › düğmesi de yok. Enter Password… → odak parola Edit'inde (Gezik PID), `pw` + Enter → `‹ 1 / 3 ›`, 1. sayfa çizildi (`g1-enc-open-crop.png`). › → `2 / 3`, farklı sayfa çizildi (`g1-enc-p2-crop.png`).
+- B (200 px, `g2-*`): › sonrası `Enter Password…` 1438–1555, not 1561–1604; bölme metin alanı 1614'te bitiyor, taşma yok (`g2-bar.png`). Not görünüyor ama "Pass…" diye kısalmış (UIA'da tam metin). Çubukta yalnız Enter Password…. 500 px'te (`g3`): `Enter Password… Hex`, başka düğme yok. Parola öncesi 200 px'te `‹ 1 › − + Fit` 1438–1589, sığıyor.
+- C: 280 ve 500 px'te Fit durumunda çubuk `‹ n › − + Fit`, tek "Fit" (`g1-bar.png`, `g3-bar.png`). Yakınlaşınca `− 75% +`, `− 100% +`; Fit'e ikinci basış `− Fit Width + Fit`.
+- D (500 px): fifty.pdf `› 1/50, › 2/50, ‹ 1/50, + 75%, + 100%, − 75%, Fit, Fit Width`. Go to Page: odak dialog Edit'inde (değer `2`), Ctrl+A sonrası listede seçim aynı (ascii.pdf, "1 selected"), `4` yazınca alan `4` (seçili metin değişti), Enter → `4 / 5`, "Page 4 of 5" çizildi, seçim değişmedi.
+
+#### Not
+- Önizleme başta yalnızca PDF simgesi gösterirken ilk › sayfa 2'ye değil, 1. sayfayı çizmeye gidiyor (`1` → `1 / 5`, `g3-a0/a1`). Sayaç tutarlı (gösterilen sayfa), ama kullanıcı ilk ›'te 2. sayfayı bekleyebilir. Önceki koşuda (fix) ilk › doğrudan 2'ye gidiyordu. Tasarım kararıysa sorun değil.
