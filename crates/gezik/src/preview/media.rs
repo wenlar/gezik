@@ -577,11 +577,13 @@ impl Session {
         self.control.set_paused(paused);
     }
 
-    /// The last line ffmpeg wrote to its error output (once its processes ended).
+    /// The last line ffmpeg wrote to its error output (once its output ended). Runs on the UI
+    /// thread: a process still running after 200 ms (blocked on a pipe no one reads) is ended.
     pub fn error(&mut self) -> String {
         let mut last = String::new();
         for process in &mut self.processes {
-            let _ = process.wait_or_stop(|| false);
+            let started = Instant::now();
+            let _ = process.wait_or_stop(|| started.elapsed() > Duration::from_millis(200));
             if let Some(line) = process.stderr_text().lines().rev().find(|l| !l.trim().is_empty()) {
                 last = line.trim().to_owned();
             }
@@ -663,6 +665,18 @@ impl Player {
     pub fn clamp(&self, to: f64) -> f64 {
         let to = if to.is_finite() { to.max(0.0) } else { 0.0 };
         self.duration.map_or(to, |d| to.min(d))
+    }
+
+    /// Goes to `to` seconds; true when that is the end (within half a second of a known
+    /// length): nothing is left to play, so it stops there instead of asking ffmpeg for nothing.
+    pub fn go_to(&mut self, to: f64) -> bool {
+        self.seeking = None;
+        self.position = self.clamp(to);
+        self.at_end = false;
+        let Some(duration) = self.duration.filter(|&d| self.position >= d - 0.5) else { return false };
+        self.session = None;
+        (self.position, self.state, self.at_end) = (duration, Play::Stopped, true);
+        true
     }
 
     /// The bar's time: `1:02 / 3:25` (`--:--` while the length is not known).
@@ -966,6 +980,22 @@ mod tests {
         assert!(session.position() >= 0.9, "{}", session.position());
         drop(session);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn going_to_the_end_stops_there() {
+        let mut player = Player::new("a.mp4".into());
+        player.state = Play::Playing;
+        assert!(!player.go_to(300.0), "the length is not known: it goes on");
+        assert_eq!(player.position, 300.0);
+        player.duration = Some(205.0);
+        assert!(!player.go_to(204.4));
+        assert_eq!((player.position, player.state.clone(), player.at_end), (204.4, Play::Playing, false));
+        assert!(player.go_to(204.6), "within half a second of the end");
+        assert_eq!((player.position, player.state.clone(), player.at_end), (205.0, Play::Stopped, true));
+        player.state = Play::Playing;
+        assert!(player.go_to(1e9) && player.position == 205.0);
+        assert!(!player.go_to(-3.0) && player.position == 0.0 && !player.at_end);
     }
 
     #[test]
