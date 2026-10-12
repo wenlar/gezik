@@ -425,7 +425,9 @@ mod tests {
         assert!(write(&file, other, before.attrs, before.attrs).is_err(), "another file is there now");
         let l = read(&link).unwrap();
         assert!(l.is_link);
-        assert!(write(&link, l.id, l.attrs, Change::bit(0o002, true).apply(l.attrs)).is_err(), "a link's permissions");
+        // A real change everywhere: Linux links are always 0777, macOS ones 0755.
+        let flip = Change::bit(0o002, l.attrs.mode & 0o002 == 0);
+        assert!(write(&link, l.id, l.attrs, flip.apply(l.attrs)).is_err(), "a link's permissions");
         assert_eq!(read(&file).unwrap().attrs.mode & PERMS, 0o664, "what it leads to is untouched");
         let gid = my_groups()[0];
         write(&link, l.id, l.attrs, Change::group(gid).apply(l.attrs)).unwrap();
