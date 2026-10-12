@@ -41,6 +41,11 @@ pub use windows::{
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};
 
+/// Whether [`copy_file`] may clone (APFS, Btrfs, XFS: instant, never verified or slowed). Tests
+/// of what a byte copy does (verifying it, its speed limit, its cancel) turn it off.
+#[doc(hidden)]
+pub static CLONES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 /// A file opened by [`open_uncached`].
 pub struct Uncached {
     pub file: std::fs::File,

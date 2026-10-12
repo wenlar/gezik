@@ -27,7 +27,7 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
     }
     // The clone is instant, so the first word comes after it, as below once the copy exists.
     #[cfg(target_os = "macos")]
-    if clone_file(from, to).is_ok() {
+    if super::CLONES.load(std::sync::atomic::Ordering::Relaxed) && clone_file(from, to).is_ok() {
         return if progress(0) {
             Ok(true)
         } else {
@@ -77,7 +77,9 @@ fn copy_contents(
 ) -> io::Result<bool> {
     use std::os::fd::AsRawFd;
     // Btrfs and XFS clone in one call; other file systems refuse and we copy.
-    if unsafe { libc::ioctl(target.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } == 0 {
+    if super::CLONES.load(std::sync::atomic::Ordering::Relaxed)
+        && unsafe { libc::ioctl(target.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } == 0
+    {
         return if progress(0) { Ok(true) } else { Err(cancelled()) };
     }
     let mut done = 0u64;
