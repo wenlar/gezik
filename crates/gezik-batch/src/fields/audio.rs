@@ -524,7 +524,8 @@ fn wav<R: Read + Seek>(r: &mut R, len: u64, out: &mut Out, mut cover: Cover) {
 fn aiff<R: Read + Seek>(r: &mut R, len: u64, out: &mut Out, mut cover: Cover) {
     chunks(r, len, false, |r, id, size, at| match &id {
         b"COMM" => {
-            let b = some_bytes(r, at, 22);
+            // 18 bytes in AIFF; AIFC adds its compression type (what follows is another chunk).
+            let b = some_bytes(r, at, size.min(22));
             out.int(f::CHANNELS, be16(&b, 0).unwrap_or(0).into());
             // An 80-bit extended float.
             let (Some(top), Some(mantissa)) = (be16(&b, 8), super::be64(&b, 10)) else { return };
@@ -613,6 +614,7 @@ mod tests {
         assert_eq!(aiff.get(f::DURATION), Some(&gezik_core::fields::Value::Duration(250)));
         assert_eq!(aiff.text(f::CHANNELS).as_deref(), Some("2"));
         assert_eq!(aiff.text(f::SAMPLE_RATE).as_deref(), Some("8,000 Hz"));
+        assert_eq!(aiff.text(f::AUDIO_CODEC).as_deref(), Some("PCM"), "not the next chunk's id");
     }
 
     #[test]

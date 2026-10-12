@@ -26,32 +26,55 @@ pub(super) fn cover<R: Read + Seek>(r: &mut R, len: u64) -> Option<Vec<u8>> {
     cover
 }
 
+/// The top-level box at `at`: its type, where its body starts and the body's length.
+fn top_box<R: Read + Seek>(r: &mut R, len: u64, at: u64) -> Option<([u8; 4], u64, u64)> {
+    r.seek(SeekFrom::Start(at)).ok()?;
+    let head = super::bytes(r, 16.min(len.checked_sub(at)?), 16)?;
+    let (size, header) = match be32(&head, 0)? {
+        0 => (len - at, 8),
+        1 => (be64(&head, 8)?, 16),
+        size => (u64::from(size), 8),
+    };
+    Some((super::array::<4>(&head, 4)?, at + header, size.checked_sub(header)?))
+}
+
 /// The body of the first top-level box of type `kind`, found by skipping the boxes before it;
 /// `None` if there is none or it is larger than `max`.
 pub(super) fn find_top<R: Read + Seek>(r: &mut R, len: u64, kind: [u8; 4], max: u64) -> Option<Vec<u8>> {
     let mut at = 0u64;
     // A file of many tiny boxes is given up on.
     for _ in 0..1024 {
-        r.seek(SeekFrom::Start(at)).ok()?;
-        let head = super::bytes(r, 16.min(len.checked_sub(at)?), 16)?;
-        let (size, header) = match be32(&head, 0)? {
-            0 => (len - at, 8),
-            1 => (be64(&head, 8)?, 16),
-            size => (u64::from(size), 8),
-        };
-        if size < header {
-            return None;
+        let (found, body, size) = top_box(r, len, at)?;
+        if found == kind {
+            r.seek(SeekFrom::Start(body)).ok()?;
+            return super::bytes(r, size, max);
         }
-        if super::array::<4>(&head, 4)? == kind {
-            r.seek(SeekFrom::Start(at + header)).ok()?;
-            return super::bytes(r, size - header, max);
-        }
-        at = at.checked_add(size)?;
+        at = body.checked_add(size)?;
         if at >= len {
             return None;
         }
     }
     None
+}
+
+/// Whether a HEIF's `ftyp` boxes and its first `meta` (what `kamadak-exif` reads whole) are
+/// each at most `max`: a `meta` "to the end of the file" would read all of it.
+pub(super) fn heif_meta_within<R: Read + Seek>(r: &mut R, len: u64, max: u64) -> bool {
+    let mut at = 0u64;
+    for _ in 0..1024 {
+        let Some((kind, body, size)) = top_box(r, len, at) else { return false };
+        if matches!(&kind, b"ftyp" | b"meta") && size > max {
+            return false;
+        }
+        if kind == *b"meta" {
+            return true;
+        }
+        match body.checked_add(size) {
+            Some(next) if next < len => at = next,
+            _ => return false,
+        }
+    }
+    false
 }
 
 /// The boxes in `data`, each as its type and body; ends at the first broken one.
@@ -268,6 +291,21 @@ pub(super) mod tests {
         assert!(fields.get(f::VIDEO_CODEC).is_none(), "the cover is not a video track");
         let cover = super::super::cover(&fixture("tags.m4a")).expect("covr");
         assert!(cover.starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn a_heif_meta_to_the_end_is_not_read() {
+        let mut data = make_box(b"ftyp", b"heic\0\0\0\0mif1heic");
+        data.extend(make_box(b"meta", &[0; 32]));
+        let len = data.len() as u64;
+        assert!(heif_meta_within(&mut std::io::Cursor::new(&data), len, 1024));
+        // A size-0 `meta` (to the end) in a file larger than the bound.
+        let mut big = make_box(b"ftyp", b"heic\0\0\0\0mif1heic");
+        big.extend(0u32.to_be_bytes());
+        big.extend(b"meta");
+        big.resize(big.len() + 4096, 0);
+        let len = big.len() as u64;
+        assert!(!heif_meta_within(&mut std::io::Cursor::new(&big), len, 1024));
     }
 
     #[test]

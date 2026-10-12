@@ -36,7 +36,12 @@ fn parse<R: BufRead + Seek>(r: &mut R) -> Option<exif::Exif> {
     r.seek(SeekFrom::Start(0)).ok()?;
     let reader = exif::Reader::new();
     if is_heif(&head) {
-        // Read box by box, skipping the image data.
+        // Read box by box, skipping the image data; its `meta` is read whole, so it must be small.
+        let len = r.seek(SeekFrom::End(0)).ok()?;
+        if !super::mp4::heif_meta_within(r, len, super::FRAME_MAX) {
+            return None;
+        }
+        r.seek(SeekFrom::Start(0)).ok()?;
         reader.read_from_container(r)
     } else {
         let max = if head.starts_with(&[0xFF, 0xD8]) { JPEG_MAX } else { OTHER_MAX };
@@ -220,6 +225,19 @@ mod tests {
         assert_eq!(camera("Apple", "iPhone 15 Pro"), "Apple iPhone 15 Pro");
         assert_eq!(camera("", "X100V"), "X100V");
         assert_eq!(camera("", ""), "");
+    }
+
+    #[test]
+    fn a_heif_meta_to_the_end_is_not_read_whole() {
+        let dir = std::env::temp_dir().join(format!("gezik-exif-heif-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut data = b"\0\0\0\x18ftypheic\0\0\0\0mif1heic".to_vec();
+        data.extend(0u32.to_be_bytes());
+        data.extend(b"meta");
+        data.resize(4 * 1024 * 1024, 0);
+        std::fs::write(dir.join("big.heic"), data).unwrap();
+        assert!(taken(&dir.join("big.heic")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

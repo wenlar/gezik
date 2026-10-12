@@ -530,23 +530,35 @@ export component PreviewPane inherits Rectangle {
             }
         }
 
-        Text {
-            text: root.info.title;
-            font-weight: 600;
-            wrap: word-wrap;
-            color: Theme.foreground;
-        }
+        // The facts and properties: as tall as they are, scrolling (and cut at the pane's edge)
+        // when the pane is short; the picture keeps at least its own minimum.
+        facts := Flickable {
+            vertical-stretch: 1;
+            min-height: min(facts-text.preferred-height, 96px);
+            preferred-height: facts-text.preferred-height;
+            max-height: facts-text.preferred-height;
+            content-height: facts-text.preferred-height;
+            facts-text := VerticalLayout {
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: root.info.title;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                    color: Theme.foreground;
+                }
 
-        Text {
-            text: root.info.details;
-            wrap: word-wrap;
-            color: Theme.foreground-muted;
-        }
+                Text {
+                    text: root.info.details;
+                    wrap: word-wrap;
+                    color: Theme.foreground-muted;
+                }
 
-        PropRows {
-            rows: root.info.properties;
-            menu(label, value, x, y) => {
-                PreviewActions.value-menu(label, value, x, y);
+                PropRows {
+                    rows: root.info.properties;
+                    menu(label, value, x, y) => {
+                        PreviewActions.value-menu(label, value, x, y);
+                    }
+                }
             }
         }
     }
