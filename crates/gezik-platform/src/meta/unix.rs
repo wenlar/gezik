@@ -52,7 +52,8 @@ fn get(path: &CString, name: &str) -> io::Result<Option<Vec<u8>>> {
         }
         let err = io::Error::last_os_error();
         match err.raw_os_error() {
-            Some(code) if code == NO_ATTR => return Ok(None),
+            // A file system without attributes (vfat, exFAT, NFS) has none to read.
+            Some(code) if code == NO_ATTR || code == libc::ENOTSUP || code == libc::EOPNOTSUPP => return Ok(None),
             // Bigger than the buffer: ask its size and try once more (it may grow meanwhile).
             Some(libc::ERANGE) if buffer.len() < 1 << 20 => buffer.resize(buffer.len() * 16, 0),
             _ => return Err(err),
@@ -115,12 +116,16 @@ pub fn read(path: &Path) -> io::Result<Own> {
 
 #[cfg(target_os = "linux")]
 pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
-    use gezik_core::meta::{encode_baloo_rating, encode_xdg_tags};
+    use gezik_core::meta::{decode_baloo_rating, encode_baloo_rating, encode_xdg_tags};
     let path = existing(path)?;
     let tags = (!meta.tags.is_empty()).then(|| encode_xdg_tags(&meta.tags));
     set(&path, names::TAGS, tags.as_deref().map(str::as_bytes))?;
-    let rating = (meta.rating > 0).then(|| encode_baloo_rating(meta.rating));
-    set(&path, names::RATING, rating.as_deref().map(str::as_bytes))?;
+    // Baloo keeps half stars: a 7 Dolphin wrote stays 7 unless the stars change.
+    let now = get(&path, names::RATING)?.map_or(0, |v| decode_baloo_rating(&String::from_utf8_lossy(&v)));
+    if now != meta.rating {
+        let rating = (meta.rating > 0).then(|| encode_baloo_rating(meta.rating));
+        set(&path, names::RATING, rating.as_deref().map(str::as_bytes))?;
+    }
     set(&path, names::COMMENT, (!meta.comment.is_empty()).then_some(meta.comment.as_bytes()))
 }
 
@@ -197,8 +202,15 @@ pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
     if new_info != info {
         set(&path, names::FINDER_INFO, new_info.as_deref())?;
     }
-    let rating = (meta.rating > 0).then(|| encode_int(i64::from(meta.rating.min(5))));
-    set(&path, names::RATING, rating.as_deref())?;
+    // Left as it is unless the stars change.
+    let now = match get(&path, names::RATING)?.map(|data| gezik_core::meta::bplist::decode(&data)) {
+        Some(Some(gezik_core::meta::bplist::Value::Int(stars))) => stars,
+        _ => 0,
+    };
+    if now != i64::from(meta.rating) {
+        let rating = (meta.rating > 0).then(|| encode_int(i64::from(meta.rating.min(5))));
+        set(&path, names::RATING, rating.as_deref())?;
+    }
     let comment = (!meta.comment.is_empty()).then(|| encode_string(&meta.comment));
     set(&path, names::COMMENT, comment.as_deref())
 }

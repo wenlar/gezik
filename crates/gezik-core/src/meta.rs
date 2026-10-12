@@ -73,6 +73,8 @@ impl Tag {
 pub const MAX_COMMENT: usize = 1000;
 /// The longest tag name (characters).
 pub const MAX_TAG_NAME: usize = 64;
+/// The most tags one file keeps: with a full comment its stream stays under 16 KB.
+pub const MAX_TAGS: usize = 40;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Meta {
@@ -110,7 +112,8 @@ impl Meta {
         match edit {
             MetaEdit::AddTags(tags) => {
                 for tag in tags {
-                    if !self.has_tag(&tag.name) {
+                    // A name no system can hold is never written.
+                    if self.tags.len() < MAX_TAGS && check_tag_name(&tag.name).is_ok() && !self.has_tag(&tag.name) {
                         self.tags.push(tag.clone());
                     }
                 }
@@ -138,7 +141,8 @@ pub enum MetaEdit {
 
 /// `text` on one line, at most [`MAX_COMMENT`] characters.
 fn one_paragraph(text: &str) -> Box<str> {
-    let line: String = text.trim().chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).collect();
+    // Line breaks, tabs and the store's field separator (U+001F) are all control characters.
+    let line: String = text.trim().chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     line.chars().take(MAX_COMMENT).collect::<String>().into()
 }
 
@@ -156,6 +160,8 @@ pub fn check_tag_name(name: &str) -> Result<(), &'static str> {
         Err("a tag name cannot hold a comma")
     } else if name.contains(['\n', '\r']) {
         Err("a tag name cannot hold a line break")
+    } else if name.chars().any(char::is_control) {
+        Err("a tag name cannot hold a control character")
     } else {
         Ok(())
     }
@@ -182,7 +188,9 @@ const STREAM_HEADER: &str = "gezik-meta";
 pub fn decode_stream(text: &str) -> StreamRecord {
     let mut lines = text.lines();
     let version = lines.next().and_then(|first| first.strip_prefix(STREAM_HEADER)).map(str::trim);
-    let mut record = StreamRecord { writable: version == Some("1"), ..StreamRecord::default() };
+    // A blank stream is Gezik's to write: nothing in it can be lost.
+    let blank = text.trim().is_empty();
+    let mut record = StreamRecord { writable: blank || version == Some("1"), ..StreamRecord::default() };
     for line in lines {
         if !decode_line(line, &mut record.meta) && !line.is_empty() {
             record.unknown.push(line.into());
@@ -314,6 +322,8 @@ mod tests {
         assert_eq!(check_tag_name("a\nb"), Err("a tag name cannot hold a line break"));
         assert_eq!(check_tag_name(" a"), Err("a tag name cannot start or end with a space"));
         assert_eq!(check_tag_name(""), Err("a tag name cannot be empty"));
+        assert_eq!(check_tag_name("a\u{1f}b"), Err("a tag name cannot hold a control character"));
+        assert_eq!(check_tag_name("a\tb"), Err("a tag name cannot hold a control character"));
         assert!(same_name("red", "RED"));
         assert!(same_name("İzmir", "izmir"));
         assert!(same_name("ılık", "ILIK"));
@@ -336,6 +346,18 @@ mod tests {
         assert_eq!(&*m.comment, "one two");
         m.apply(&MetaEdit::Comment("y".repeat(2000).into()));
         assert_eq!(m.comment.chars().count(), MAX_COMMENT);
+        m.apply(&MetaEdit::Comment("a\u{1f}b\tc".into()));
+        assert_eq!(&*m.comment, "a b c", "no control characters: the store parts fields with U+001F");
+        m.apply(&MetaEdit::AddTags(vec![Tag::new("bad\u{1f}", TagColor::Red)]));
+        assert!(m.tags.is_empty(), "a name no system holds is not added");
+        let many: Vec<Tag> = (0..100).map(|i| Tag::new(&format!("tag {i}"), TagColor::Red)).collect();
+        m.apply(&MetaEdit::AddTags(many));
+        assert_eq!(m.tags.len(), MAX_TAGS);
+        let longest: Vec<Tag> =
+            (0..MAX_TAGS).map(|i| Tag::new(&format!("{i:02}{}", "ğ".repeat(62)), TagColor::Red)).collect();
+        let full = Meta { tags: longest, rating: 5, comment: "ğ".repeat(MAX_COMMENT).into() };
+        assert!(encode_stream(&full, &[]).len() < 16 * 1024, "the fullest record fits the stream");
+        m.apply(&MetaEdit::ClearTags);
         m.apply(&MetaEdit::Rating(0));
         m.apply(&MetaEdit::Comment("".into()));
         assert!(m.is_empty());
@@ -368,6 +390,7 @@ mod tests {
         assert_eq!(later.meta.tags, [Tag::new("Red", TagColor::Red)]);
         assert!(!later.writable);
         assert!(!decode_stream("tag 6 Red\n").writable);
+        assert!(decode_stream("").writable && decode_stream(" \n\n").writable, "a blank stream is writable");
         let bad = decode_stream("gezik-meta 1\ntag x Red\nrating 9\ntag 1 a,b\n");
         assert!(bad.meta.is_empty());
         assert_eq!(bad.unknown.len(), 3, "bad lines are kept, not lost");

@@ -29,11 +29,14 @@ pub struct Record {
 }
 
 impl Record {
-    /// Whether the file now at its path is, as far as can be told, still this one: a path
-    /// reused by another file differs in all three.
+    /// Whether the file now at its path is, as far as can be told, still this one. Where both
+    /// file ids are known they decide (a file made anew under the old name has another);
+    /// otherwise a path reused by another file differs in size and time.
     pub fn fits(&self, size: u64, mtime_ns: i64, file_id: Option<u64>) -> bool {
-        let same_id = matches!((self.file_id, file_id), (Some(a), Some(b)) if a == b);
-        self.size == size || self.mtime_ns == mtime_ns || same_id
+        match (self.file_id, file_id) {
+            (Some(a), Some(b)) => a == b,
+            _ => self.size == size || self.mtime_ns == mtime_ns,
+        }
     }
 }
 
@@ -190,18 +193,36 @@ impl Store {
 
     /// `from` and everything inside it now at `to` (a rename or a move); how many moved.
     pub fn rename(&mut self, volume: &str, from: &str, to_volume: &str, to: &str) -> usize {
+        self.rename_all(&[(volume, from, to_volume, to)])
+    }
+
+    /// Several renames done together (volume, from, to volume, to): every source's entries are
+    /// taken out first, then put in at their new places, so swapped names (`a` ↔ `b`) and chains
+    /// (`1` → `2`, `2` → `3`) keep each file's own tags.
+    pub fn rename_all(&mut self, moves: &[(&str, &str, &str, &str)]) -> usize {
         if self.read_only {
             return 0;
         }
-        let keys = self.tree_keys(volume, from);
-        let from_len = from.trim_end_matches('/').len();
-        for key in &keys {
-            let Some(mut record) = self.records.remove(key) else { continue };
-            let rest = record.path.get(from_len..).unwrap_or("");
-            record.path = format!("{}{rest}", to.trim_end_matches('/')).into();
-            self.records.insert((to_volume.into(), key_path(&record.path)), record);
+        let mut taken = Vec::new();
+        for &(volume, from, to_volume, to) in moves {
+            let from_len = from.trim_end_matches('/').len();
+            for key in self.tree_keys(volume, from) {
+                let Some(mut record) = self.records.remove(&key) else { continue };
+                let rest = record.path.get(from_len..).unwrap_or("").to_owned();
+                record.path = format!("{}{rest}", to.trim_end_matches('/')).into();
+                taken.push((to_volume, record));
+            }
         }
-        keys.len()
+        let count = taken.len();
+        for (volume, record) in taken {
+            self.records.insert((volume.into(), key_path(&record.path)), record);
+        }
+        count
+    }
+
+    /// Drops the entry of `path` alone (what is inside a folder stays).
+    pub fn remove(&mut self, volume: &str, path: &str) -> bool {
+        !self.read_only && self.records.remove(&(volume.into(), key_path(path))).is_some()
     }
 
     /// A record whose path is gone (`gone` says so; at most 64 are asked) that is the file
@@ -226,10 +247,10 @@ impl Store {
             .filter(|record| {
                 let same_id = matches!((record.file_id, file_id), (Some(a), Some(b)) if a == b);
                 let base = record.path.rsplit('/').next().unwrap_or(&record.path);
-                same_id
-                    || (*key_path(base) == *name
-                        && record.size == size
-                        && (record.mtime_ns - mtime_ns).abs() <= TOLERANCE_NS)
+                // The same size and time always; then the same name, or the same file id (a rename).
+                record.size == size
+                    && (record.mtime_ns - mtime_ns).abs() <= TOLERANCE_NS
+                    && (same_id || *key_path(base) == *name)
             })
             .take(64)
             .find(|record| gone(&record.path))
@@ -277,7 +298,7 @@ mod tests {
     fn lines_round_trip_with_escapes_and_keep_what_they_do_not_know() {
         let mut store = Store::default();
         let mut odd = record("dir/a\tb\\c\nd.txt", "Red");
-        odd.meta.comment = "tab\there".into();
+        odd.meta.comment = r"back\slash".into();
         odd.meta.rating = 3;
         odd.file_id = Some(42);
         odd.unknown = vec!["future 1".into()];
@@ -330,6 +351,37 @@ mod tests {
     }
 
     #[test]
+    fn swapped_and_chained_renames_keep_each_files_tags() {
+        let mut store = Store::default();
+        store.set("v", record("a", "A")).unwrap();
+        store.set("v", record("b", "B")).unwrap();
+        store.set("v", record("1", "One")).unwrap();
+        store.set("v", record("2", "Two")).unwrap();
+        // a <-> b through a temporary name, and 2 -> 3, 1 -> 2, reported in the order done.
+        let moves = [("v", "a", "v", "t"), ("v", "b", "v", "a"), ("v", "t", "v", "b")];
+        for (vol, from, to_vol, to) in moves {
+            store.rename(vol, from, to_vol, to);
+        }
+        assert_eq!(&*store.get("v", "a").unwrap().meta.tags[0].name, "B");
+        assert_eq!(&*store.get("v", "b").unwrap().meta.tags[0].name, "A");
+        assert_eq!(store.rename_all(&[("v", "1", "v", "2"), ("v", "2", "v", "3")]), 2);
+        assert_eq!(&*store.get("v", "2").unwrap().meta.tags[0].name, "One");
+        assert_eq!(&*store.get("v", "3").unwrap().meta.tags[0].name, "Two");
+        assert_eq!(store.rename_all(&[("v", "a", "v", "b"), ("v", "b", "v", "a")]), 2, "a direct swap");
+        assert_eq!(&*store.get("v", "a").unwrap().meta.tags[0].name, "A");
+    }
+
+    #[test]
+    fn removing_a_folders_own_entry_keeps_what_is_inside() {
+        let mut store = Store::default();
+        store.set("v", record("d", "Red")).unwrap();
+        store.set("v", record("d/x", "Red")).unwrap();
+        assert!(store.remove("v", "d"));
+        assert!(store.get("v", "d/x").is_some());
+        assert!(!store.remove("v", "d"));
+    }
+
+    #[test]
     fn paths_compare_as_the_system_does() {
         let mut store = Store::default();
         store.set("v", record("Dir/A.txt", "Red")).unwrap();
@@ -345,6 +397,7 @@ mod tests {
         assert!(r.fits(11, 1_000_000_000_000, None));
         assert!(r.fits(11, 5, Some(7)));
         assert!(!r.fits(11, 5, Some(8)), "all three differ: another file");
+        assert!(!r.fits(10, 1_000_000_000_000, Some(8)), "known ids that differ decide: a file made anew");
         assert!(!r.fits(11, 5, None));
     }
 
@@ -366,7 +419,8 @@ mod tests {
         assert!(store.refind("v", "a.txt", 10, 1_000_000_000_000 + 3_000_000_000, None, gone).is_none());
         assert!(store.refind("v", "a.txt", 11, 1_000_000_000_000, None, gone).is_none());
         assert!(store.refind("w", "a.txt", 10, 1_000_000_000_000, None, gone).is_none(), "only on its volume");
-        let renamed = store.refind("v", "renamed.bin", 1, 2, Some(99), gone);
+        assert!(store.refind("v", "renamed.bin", 1, 2, Some(99), gone).is_none(), "an id alone is not enough");
+        let renamed = store.refind("v", "renamed.bin", 10, 1_000_000_000_000, Some(99), gone);
         assert_eq!(&*renamed.unwrap().path, "old/b.bin");
     }
 
