@@ -49,6 +49,7 @@ mod resident;
 mod saved_searches;
 mod search;
 mod select_tools;
+mod settings_backup;
 mod settings_window;
 mod sidebar;
 mod sidebar_model;
@@ -346,6 +347,8 @@ fn perform(
         | Action::Settings
         | Action::EditShortcuts
         | Action::InstallTheme
+        | Action::ExportSettings
+        | Action::ImportSettings
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow

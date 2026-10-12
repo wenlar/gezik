@@ -128,16 +128,18 @@ pub fn packed_size(path: &Path) -> u64 {
 /// The files of the zip in `bytes` whose names `wanted` takes (the first `max_count`), read
 /// in memory: nothing is written anywhere, so no entry name can lead outside. Each is read up
 /// to `max_each` bytes unpacked, counted as they come (a zip bomb stops there): `None` when it
-/// has more. Folders, links and files that do not read (encrypted, damaged) are left out; no
-/// other entry's content is read.
+/// has more. More than `max_total` bytes in all is an error. Folders, links and files that do
+/// not read (encrypted, damaged) are left out; no other entry's content is read.
 pub fn read_zip_entries(
     bytes: &[u8],
     wanted: &dyn Fn(&str) -> bool,
     max_each: u64,
     max_count: usize,
+    max_total: u64,
 ) -> IoResult<Vec<(String, Option<Vec<u8>>)>> {
     let mut archive = ::zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
     let mut found = Vec::new();
+    let mut total = 0u64;
     for i in 0..archive.len() {
         if found.len() == max_count {
             break;
@@ -151,10 +153,25 @@ pub fn read_zip_entries(
         if file.take(max_each + 1).read_to_end(&mut data).is_err() {
             continue;
         }
+        total += data.len() as u64;
+        if total > max_total {
+            return Err(IoError::new(ErrorKind::FileTooLarge, format!("more than {} MB unpacked", max_total >> 20)));
+        }
         let fits = data.len() as u64 <= max_each;
         found.push((name, fits.then_some(data)));
     }
     Ok(found)
+}
+
+/// A zip of `files` (name, contents), deflated, made in memory.
+pub fn write_zip_entries(files: &[(String, Vec<u8>)]) -> IoResult<Vec<u8>> {
+    let mut zip = ::zip::ZipWriter::new(std::io::Cursor::new(Vec::new())).set_auto_large_file();
+    let options = ::zip::write::SimpleFileOptions::default().compression_method(::zip::CompressionMethod::Deflated);
+    for (name, data) in files {
+        zip.start_file(name.as_str(), options).map_err(IoError::other)?;
+        zip.write_all(data)?;
+    }
+    Ok(zip.finish().map_err(IoError::other)?.into_inner())
 }
 
 /// Whether Gezik itself can open it (false: 7-Zip is needed).
@@ -600,7 +617,7 @@ mod tests {
         }
         let bytes = zip.finish().unwrap().into_inner();
         let toml = |name: &str| name.ends_with(".toml") || name.ends_with('/');
-        let found = read_zip_entries(&bytes, &toml, 64, 4).unwrap();
+        let found = read_zip_entries(&bytes, &toml, 64, 4, 1 << 20).unwrap();
         let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(
             names,
@@ -609,6 +626,12 @@ mod tests {
         );
         assert_eq!(found[0].1.as_deref(), Some(&b"a".repeat(10)[..]));
         assert_eq!(found[1].1, None, "1 MB unpacked from a few KB: cut at 64 bytes");
-        assert!(read_zip_entries(b"not a zip", &toml, 64, 4).is_err());
+        assert!(read_zip_entries(b"not a zip", &toml, 64, 4, 1 << 20).is_err());
+        let total = read_zip_entries(&bytes, &toml, 64, 4, 70).unwrap_err();
+        assert_eq!(total.kind(), ErrorKind::FileTooLarge, "10 + 65 bytes read: over 70 in all");
+        let files = vec![("a/b.txt".to_owned(), b"hi".to_vec()), ("c".to_owned(), Vec::new())];
+        let written = write_zip_entries(&files).unwrap();
+        let back = read_zip_entries(&written, &|_| true, 64, 4, 64).unwrap();
+        assert_eq!(back, files.into_iter().map(|(n, d)| (n, Some(d))).collect::<Vec<_>>());
     }
 }

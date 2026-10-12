@@ -6,7 +6,7 @@ import { ScrollView } from "scrollbar.slint";
 export struct SettingItem {
     // 0 on/off, 1 a choice (a theme too), 2 typed (a number, text, a path), 3 a list (edited in
     // settings.toml), 4 System Integration's, 5 a shortcut (Set Key… waits for a key), 6 a key
-    // macOS keeps.
+    // macOS keeps (or a line with no control), 7 a warning (red, no control).
     kind: int,
     title: string,
     // `layout.density`: under the title, and Copy Key's text.
@@ -184,7 +184,7 @@ component SettingLine inherits Rectangle {
             spacing: 2 * Theme.spacing;
             Text {
                 text: root.item.title;
-                color: Theme.foreground;
+                color: root.item.kind == 7 ? Theme.danger : Theme.foreground;
                 font-weight: 600;
                 vertical-alignment: center;
             }
@@ -237,7 +237,7 @@ component SettingLine inherits Rectangle {
                 // A choice's button (its value and an arrow), or the list's, System Integration's
                 // and a shortcut's.
                 button := PlainButton {
-                    visible: root.item.kind != 0 && root.item.kind != 2 && root.item.kind != 6;
+                    visible: root.item.kind != 0 && root.item.kind != 2 && root.item.kind < 6;
                     width: root.item.kind == 1 ? parent.width : self.min-width;
                     x: parent.width - self.width;
                     text: root.item.kind == 1 ? root.value : root.item.kind == 3 ? "Edit in settings.toml" : root.item.kind == 5 ? "Set Key…" : "System Integration…";
@@ -385,8 +385,10 @@ export component SettingsWindow inherits Window {
     in property <[string]> pages;
     in property <int> page;
     in property <[SettingItem]> rows;
-    // settings.toml does not read: the rows are read-only (the status line says the line).
+    // settings.toml does not read: the rows are read-only (the status line says the line), the
+    // first `locked-rows` of them (those after, themes and backups, still work).
     in property <bool> read-only;
+    in property <int> locked-rows;
     // A refused value, a write that failed, settings.toml's error, the unknown keys.
     in-out property <string> status;
     // The status is a problem: red.
@@ -500,7 +502,7 @@ export component SettingsWindow inherits Window {
                     spacing: 2px;
                     for row[i] in root.rows: SettingLine {
                         item: row;
-                        read-only: root.read-only;
+                        read-only: root.read-only && i < root.locked-rows;
                         commit(text) => { root.commit(i, text); }
                         hovered(option) => { root.hovered(i, option); }
                         button => { root.button(i); }

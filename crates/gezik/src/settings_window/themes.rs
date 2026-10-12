@@ -270,7 +270,8 @@ fn candidates(fetch: &Fetch, bytes: &[u8]) -> Result<Vec<Candidate>, String> {
         return Ok(vec![source::candidate(name, fits.then(|| bytes.to_vec()))]);
     }
     let wanted = |name: &str| source::theme_entry(&fetch.folder, name).is_some();
-    let entries = gezik_batch::archive::read_zip_entries(bytes, &wanted, source::MAX_THEME, source::MAX_THEMES)
+    let most = source::MAX_THEME * source::MAX_THEMES as u64 + source::MAX_THEMES as u64;
+    let entries = gezik_batch::archive::read_zip_entries(bytes, &wanted, source::MAX_THEME, source::MAX_THEMES, most)
         .map_err(|err| format!("The download is not a zip: {err}"))?;
     let found: Vec<Candidate> = entries
         .into_iter()
