@@ -46,7 +46,8 @@ impl fmt::Debug for Request {
     }
 }
 
-fn escape(text: &str) -> String {
+/// `text` as one field: no tab, no line break, no other control character (`\`-escaped).
+pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
         match c {
@@ -61,7 +62,8 @@ fn escape(text: &str) -> String {
     out
 }
 
-fn unescape(text: &str) -> Option<String> {
+/// The inverse of [`escape`]; `None` for a malformed field.
+pub fn unescape(text: &str) -> Option<String> {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars();
     while let Some(c) = chars.next() {
