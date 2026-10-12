@@ -30,6 +30,8 @@ Windows · macOS · Linux
 
 **Batch work.** Batch rename with rules and a live preview, archives (extract and compress zip, 7z, tar and more), and conversion of pictures, text, audio, video and PDF, plus your own commands. → [Batch rename](docs/features.md#batch-rename) · [Archives](docs/features.md#archives) · [Convert and PDF](docs/features.md#convert-and-pdf)
 
+**Preview.** A preview pane and Quick Look (Space) that show code in color with line numbers, large logs from end to end, any file as hex, PDF pages with zoom, play video and audio (with ffmpeg, downloaded on request), and a file's properties: camera and exposure, artist, album and length, pages and author, read by Gezik itself. The same properties are list columns to sort, group and filter by (`artist:tarkan duration>3m`), a search criterion, and fields of batch rename templates (`{track:02} {artist} - {title}`). Nothing is read until something asks for it. → [Preview and properties](docs/features.md#preview-and-properties)
+
 **Finding things.** A filter that narrows the folder as you type, search under any folder by name or content (Everything on Windows), flat view, saved searches, a command palette and quick open. → [Filter](docs/features.md#filter-and-selection) · [Search](docs/features.md#search)
 
 **Navigation.** Tabs that come back as you left them, tab sets, pinned folders with aliases and groups, and an address bar with Recent and Frequent folders. → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal)

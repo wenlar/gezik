@@ -3,7 +3,7 @@
 use gezik_config::theme::ResolvedTheme;
 use slint::ComponentHandle;
 
-use crate::{AppWindow, PreviewInfo, QuickLookWindow, Theme};
+use crate::{AppWindow, PreviewActions, PreviewInfo, QuickLookWindow, Theme};
 
 /// The share of the main window's size it takes.
 const SHARE: f32 = 0.7;
@@ -51,6 +51,11 @@ impl QuickLook {
         Ok(QuickLook { window })
     }
 
+    /// Its viewer's events (spec 13 §3.2).
+    pub fn viewer_actions(&self) -> PreviewActions<'_> {
+        self.window.global::<PreviewActions>()
+    }
+
     pub fn set_info(&self, info: PreviewInfo) {
         self.window.set_info(info);
     }
@@ -63,6 +68,11 @@ impl QuickLook {
     pub fn width(&self) -> f32 {
         let native = self.window.window();
         native.size().to_logical(native.scale_factor()).width
+    }
+
+    /// Its physical pixels per logical one.
+    pub fn scale_factor(&self) -> f32 {
+        self.window.window().scale_factor()
     }
 
     pub fn close(self) {

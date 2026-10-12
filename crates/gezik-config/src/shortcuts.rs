@@ -492,6 +492,12 @@ pub enum Action {
     /// Removes, when the user says so, the tag store's entries of files that are gone (spec 12
     /// §7.4).
     CleanTagStore,
+    /// The preview of the selected file as hex, or back (spec 13 §4.4; no key).
+    PreviewHex,
+    /// The selected video or sound file plays in the preview, or pauses (spec 13 §6; no key).
+    PreviewPlay,
+    /// The metadata fields to show as columns (spec 13 §8.1; no key).
+    MoreColumns,
     /// The settings window (spec 14 §4).
     Settings,
     /// The settings window at its Keyboard page, with the shortcuts (spec 14 §5).
@@ -499,7 +505,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 126] = [
+    pub const ALL: [Action; 129] = [
         Action::NewTab,
         Action::NewWindow,
         Action::CloseTab,
@@ -624,6 +630,9 @@ impl Action {
         Action::ClearTags,
         Action::EditComment,
         Action::CleanTagStore,
+        Action::PreviewHex,
+        Action::PreviewPlay,
+        Action::MoreColumns,
         Action::Settings,
         Action::EditShortcuts,
     ];
@@ -754,6 +763,9 @@ impl Action {
             Action::ClearTags => "clear-tags",
             Action::EditComment => "edit-comment",
             Action::CleanTagStore => "clean-tag-store",
+            Action::PreviewHex => "preview-hex",
+            Action::PreviewPlay => "preview-play",
+            Action::MoreColumns => "more-columns",
             Action::Settings => "settings",
             Action::EditShortcuts => "edit-shortcuts",
         }
@@ -898,6 +910,9 @@ impl Action {
             Action::ClearTags => "Clear Tags",
             Action::EditComment => "Comment…",
             Action::CleanTagStore => "Clean Up Tag Store…",
+            Action::PreviewHex => "Show Preview as Hex",
+            Action::PreviewPlay => "Play/Pause Preview",
+            Action::MoreColumns => "More Columns…",
             Action::Settings => "Settings…",
             Action::EditShortcuts => "Keyboard Shortcuts…",
         }
@@ -1124,6 +1139,9 @@ impl Action {
                 | Action::JoinFiles
                 | Action::EditComment
                 | Action::CleanTagStore
+                | Action::PreviewHex
+                | Action::PreviewPlay
+                | Action::MoreColumns
                 | Action::EditShortcuts,
                 _,
             ) => &[],
@@ -2506,5 +2524,18 @@ copy-path = \"ctrl+k\"
         assert_eq!(s.taken_by(none, KeyOwner::Command(0), chord("ctrl+alt+k"), Platform::Other), []);
         assert_eq!(s.chords_for(Action::Refresh), [chord("f5"), chord("ctrl+r")]);
         assert_eq!(Action::from_name("edit-shortcuts"), Some(Action::EditShortcuts));
+    }
+
+    #[test]
+    fn the_preview_hex_action_has_no_key() {
+        assert_eq!(Action::from_name("preview-hex"), Some(Action::PreviewHex));
+        assert_eq!(Action::PreviewHex.title(), "Show Preview as Hex");
+        assert_eq!(Action::from_name("preview-play"), Some(Action::PreviewPlay));
+        assert_eq!(Action::PreviewPlay.title(), "Play/Pause Preview");
+        assert_eq!(Action::from_name("more-columns"), Some(Action::MoreColumns));
+        assert_eq!(Action::MoreColumns.title(), "More Columns…");
+        for platform in [Platform::Other, Platform::Mac] {
+            assert_eq!(Shortcuts::defaults(platform).chord_for(Action::PreviewHex), None, "spec 13 §10.2");
+        }
     }
 }

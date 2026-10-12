@@ -670,6 +670,13 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 250. **Dolphin sees Gezik's tags.** `cargo test -p gezik-platform meta::tests::dolphin_probe -- --ignored`, then `getfattr -d ~/gezik-tag-probe.txt` shows `user.xdg.tags="Red,Öncelikli"`, `user.baloo.rating="8"` and `user.xdg.comment="Ready for review"`. In Dolphin (if installed), the file's Information panel shows the two tags, 4 stars and the comment. Tag it `Blue` and 3 stars in Dolphin, then `getfattr -d` shows `Red,Öncelikli,Blue` (or Dolphin's order) and `6`. The file's modification time did not change (`stat -c %y` before and after the probe).
 251. **vfat stick.** With a vfat USB stick mounted: `GEZIK_TEST_TAG_DIR=/media/$USER/<STICK> cargo test -p gezik-ops meta::tests::the_store_on_a_drive_without_records -- --ignored` passes: the tag goes to the store (vfat keeps no attributes), the store file is made and follows the rename. Write the stick's line of `lsblk -f` (the UUID is the store's key for it).
 
+### 13a, text, code and hex viewer
+
+Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 249–265).
+
+266. **Colors and the end of a big log.** As macOS 366 and 367 with Alt+P, Space and `ps -o rss= -p $(pgrep -x gezik)` (a `.rs` or `.py` file colored and numbered; a 3 GB log's End shows its last line within a moment and memory stays within +5 MB). Then `H` on `/usr/lib/x86_64-linux-gnu/libc.so.6` shows hex rows (`7F 45 4C 46` first).
+267. **Japanese text wraps in line.** A text file with long Japanese lines (`日本語のテキスト` repeated, mixed with Latin words): with Wrap on, every row ends at the same column width (a wide character takes two columns); the characters come from a fallback font and do not overlap. Write the font you see if they do not line up (GNOME and KDE).
+
 ### 12b, tagging and tag dots
 
 252. **The picker.** As macOS 344 with Ctrl+Shift+L: one job, one Ctrl+Z; `getfattr -n user.xdg.tags` on the files shows what the picker left. Before the first tag no dots show (`dots = "auto"`); after it they do, and `state.toml` has `[tags] used = true`.
@@ -698,6 +705,40 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 
 264. **Rules color rows.** As macOS 362–363 with a dark GTK/system theme; tags written by Dolphin (`user.xdg.tags`) light up the `tag` rule too.
 265. **Only when asked.** As macOS 364 (`top` instead of Activity Monitor; `setfattr` or Dolphin to tag the file).
+
+### 13b, PDF pages and zoom
+
+13b uses 268–270.
+
+268. **Pages and password.** As macOS 369 and 371 with Alt+P and Space (pdfium from the preview bar's `Download` or a PDF tool): `›`, Page Down/Up, Home/End, Go to Page (click the page number) and the wheel at a page's end; an encrypted PDF asks for its password.
+269. **Zoom.** As macOS 370 with Ctrl+wheel (X11 and Wayland, 100% and 200% scaling): the text stays sharp at 400%, a drag moves it and the edges fill in after stopping; a photo zooms to `100%` and back.
+270. **The worker goes.** `pgrep -af -- --pdf-view` shows one process after 268; 10 s after selecting a text file none; selecting a PDF without touching its pages starts none.
+271. **Play.** As macOS 373 with Alt+P and Space on PipeWire (and on PulseAudio if you have one): an MP4 plays with picture and sound in step after `▶` (ffmpeg from the bar's `Download` or the system's `apt install ffmpeg`); pause and play on; `K`, `M` and the volume bar (in a pane narrower than 300 px Hex and the volume bar drop, right-click has them).
+272. **Seek.** As macOS 374: the seek bar, `J`/`L`; after a minute's pause `pgrep -a ffmpeg` shows none and `K` goes on from the same place.
+273. **MKV.** An `.mkv` and a `.webm` play; an MP3 plays with its time and seek bar.
+274. **No sound server.** `systemctl --user stop pipewire-pulse.socket pipewire-pulse` (or `pulseaudio -k`), then play a video: it plays without sound at the right speed and the bar says `No sound: PulseAudio or PipeWire is not available`. Start the server again afterwards (`systemctl --user start pipewire-pulse`).
+275. **Processes go.** While a video plays select another file: within a second `pgrep -a ffmpeg` shows none.
+
+### 13d, file properties
+
+13d uses 276–277.
+
+276. **Photo and music.** As macOS 379 and 380 with Alt+P on ext4: the same photo (copy the HEIC or a JPEG from a phone) and MP3 show the same values as on macOS (camera, date, location, artist, album, length); the MP3's cover is its poster.
+277. **Info.** Get Info (Alt+Enter or the context menu) on that photo and MP3: a Properties part with the same groups and rows under the facts; on a folder or several items none.
+
+### 13e, property columns
+
+13e uses 278–279.
+
+278. **Columns and sort.** As macOS 382 on ext4 (header menu ▸ More Columns…, Artist, Album, Duration; sort by Duration, group by Album, widths kept after a restart).
+279. **Filter.** As macOS 383 with Ctrl+F: `taken>=2024 camera:` and a phone name, `artist:` with a Turkish name in another case (`artist:ŞEBNEM` finds `Şebnem`), faint rows until the read ends.
+
+### 13f, search and name templates
+
+13f uses 280–281.
+
+280. **Search and template.** As macOS 385 with Ctrl+Shift+F (Filters ▸ Properties…, `artist:` with a Turkish name in another case finds it) and 386 (Fields ▾, `{track:02} {artist} - {title}`; a tag `a:b` gives `a_b` here too although ext4 allows `:`).
+281. **Highlight rule `where`.** Not bound yet (follow-up after the 12 merge): skip.
 
 ### 14a, the settings window
 

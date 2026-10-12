@@ -22,6 +22,7 @@ mod dual;
 mod eject;
 mod elevated;
 mod export;
+mod field_picker;
 mod filter;
 mod finder_menu;
 mod folder_sizes;
@@ -132,6 +133,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
         p.nav.set_session_restore(loaded.settings.session.restore);
     }
     dual::set_confirm(loaded.settings.panes_confirm);
+    preview::fields::set_properties(loaded.settings.preview_properties);
     // The shortcuts first: the pins' tips name their keys.
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
     // 9b9: the tray and the shortcut follow [system] (the tray menu follows the sidebar's pins).
@@ -274,6 +276,8 @@ fn perform(
         }
         Action::TogglePreview => preview.toggle_pane(),
         Action::QuickLook => preview.toggle_quick_look(),
+        Action::PreviewHex => preview.show_hex(),
+        Action::PreviewPlay => preview.play_action(),
         Action::Share => finder_menu::share_selection(window, view),
         Action::Rename => ops.rename_start(),
         Action::NewFolder => ops.new_folder(None),
@@ -306,6 +310,7 @@ fn perform(
         | Action::TabLast
         | Action::ReopenTab
         | Action::TabPicker
+        | Action::MoreColumns
         | Action::ToggleTabLock
         | Action::ClearHistory
         | Action::OpenTerminal
@@ -479,6 +484,8 @@ fn handle_key(
         if let Some(chord) = &chord {
             if integration::is_open() {
                 integration::with_current(|i| used = i.chord(chord));
+            } else if field_picker::is_open() {
+                field_picker::with_current(|p| used = p.chord(chord));
             } else if palette::is_open() {
                 palette::with_current(|p| used = p.chord(chord));
             } else if tags::is_open() {
@@ -881,6 +888,11 @@ fn main() -> Result<(), slint::PlatformError> {
     // the handles `ChildProcess` gives it, so this works in the windowless release build too.
     if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_batch::pdf::client::WORKER_ARG) {
         std::process::exit(gezik_batch::pdf::worker::main());
+    }
+    // The preview's PDF worker (`gezik --pdf-view`, spec 13 §5.1): the same, but it stays and
+    // draws pages until its input closes.
+    if std::env::args_os().nth(1).is_some_and(|arg| arg == gezik_batch::pdf::view::VIEW_ARG) {
+        std::process::exit(gezik_batch::pdf::view::main());
     }
     // The command line (spec 5.1), before Slint and the settings: --help and --version only print.
     let mut cli = cli::parse(std::env::args_os().skip(1), cfg!(windows));

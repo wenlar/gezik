@@ -134,6 +134,7 @@ pub const FIELDS: &[Field] = &[
     f(Some("sidebar"), "cloud", Layouts, Bool),
     f(Some("sidebar"), "tags", Layouts, Bool),
     f(Some("sidebar"), "tree-follow", Layouts, Bool),
+    f(Some("preview"), "properties", Layouts, Bool),
     f(Some("archives"), "double-click", FilesAndTools, Choice(&["system", "extract-here"])),
     f(Some("convert"), "ffmpeg", FilesAndTools, Path),
     f(Some("tools"), "download", FilesAndTools, Bool),

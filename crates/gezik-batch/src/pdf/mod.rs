@@ -6,4 +6,5 @@ pub mod client;
 pub mod images;
 pub mod jpeg;
 pub mod pdfium;
+pub mod view;
 pub mod worker;

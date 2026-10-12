@@ -418,7 +418,11 @@ fn store_extras(query: &Query, walk: &Walk) -> Vec<FoundPath> {
             let meta = std::fs::symlink_metadata(&path).ok()?;
             let name = path.file_name()?.to_string_lossy().into_owned();
             let size = if meta.is_file() { meta.len() } else { 0 };
-            query.passes(&name, meta.is_dir(), size, meta.modified().ok()).then(|| {
+            let passes = query.passes(&name, meta.is_dir(), size, meta.modified().ok())
+                && query.passes_fields(&name, meta.is_dir(), |want| {
+                    gezik_search::query::field_reader(&path, &AtomicBool::new(false))(want)
+                });
+            passes.then(|| {
                 let entry = gezik_core::Entry {
                     name,
                     is_dir: meta.is_dir(),
@@ -439,6 +443,7 @@ fn search_finds(query: &Query, walk: &Walk, (path, e): &FoundPath) -> bool {
     gezik_search::everything::kept(path, &walk.roots, e.flags, &walk.rules, &std::collections::HashSet::new())
         && query.passes(&e.name, e.is_dir, e.size, e.modified)
         && query.passes_meta(|| path.clone())
+        && query.passes_fields(&e.name, e.is_dir, gezik_search::query::field_reader(path, &AtomicBool::new(false)))
         && query.content().is_none_or(|content| {
             content.reads(&e.name, e.size)
                 && content
@@ -820,8 +825,13 @@ impl Searches {
     /// can answer at once; text in files and a scope too large for the cache wait for Enter.
     fn follow_typing(&self) {
         let draft = self.0.draft.borrow().clone();
-        // Duplicates read files, tags read each file's record: only Enter starts them.
-        if !draft.content.is_empty() || !draft.is_query() || draft.duplicates || draft.has_meta() {
+        // Duplicates read files, tags and properties read each file: only Enter starts them.
+        if !draft.content.is_empty()
+            || !draft.is_query()
+            || draft.duplicates
+            || draft.has_meta()
+            || !draft.fields.trim().is_empty()
+        {
             return;
         }
         if !self.name_ok() {
@@ -1309,7 +1319,7 @@ impl Searches {
         let options = QueryOptions::local(settings.content_max_size, settings.max_results);
         let query = match compiled(&spec, &options) {
             Ok(query) => query,
-            Err(QueryError::Name(why) | QueryError::Content(why)) => {
+            Err(QueryError::Name(why) | QueryError::Content(why) | QueryError::Fields(why)) => {
                 return self.0.view.set_results_status(Some(why));
             }
         };
@@ -1582,7 +1592,9 @@ impl Searches {
                 return select_duplicates(&self.0.view, id);
             }
             ids::SEARCH_PROBLEMS => return self.show_problems(),
-            ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN => return self.ask_criterion(id),
+            ids::SIZE_MIN | ids::SIZE_MAX | ids::MODIFIED_BETWEEN | ids::SEARCH_PROPERTIES => {
+                return self.ask_criterion(id);
+            }
             ids::SEARCH_TAGS | ids::SEARCH_COMMENT => return self.ask_meta(id == ids::SEARCH_TAGS),
             ids::SAVE_SEARCH => return self.save_current(),
             id if (ids::SAVED_SEARCH_FIRST..ids::SAVED_SEARCH_DELETE_FIRST + ids::SAVED_SEARCH_MAX).contains(&id) => {
@@ -1672,7 +1684,13 @@ impl Searches {
     fn ask_criterion(&self, id: u32) {
         let draft = self.0.draft.borrow().clone();
         let between = id == ids::MODIFIED_BETWEEN;
+        let properties = id == ids::SEARCH_PROPERTIES;
         let (title, message, initial) = match id {
+            ids::SEARCH_PROPERTIES => (
+                "Properties",
+                "Property words, like artist:tarkan duration>3m (empty: any):",
+                Some(draft.fields.clone()),
+            ),
             ids::SIZE_MIN => {
                 ("Size at least", "Smallest size, like 500 MB (empty: any):", draft.size.min.map(size_text))
             }
@@ -1688,7 +1706,9 @@ impl Searches {
             if text.is_empty() {
                 return Ok(());
             }
-            if between {
+            if properties {
+                gezik_core::field_filter::parse_where(text).map(|_| ())
+            } else if between {
                 match DateRange::parse(text)? {
                     DateRange::Between(..) => Ok(()),
                     _ => Err("Two days, like 2026-01-01..2026-06-30".to_owned()),
@@ -1705,6 +1725,10 @@ impl Searches {
             &["OK", "Cancel"],
             move |text| match check(text) {
                 Ok(()) => (String::new(), false),
+                // The keys the last word may become, as it is typed (`art` → artist, album-artist).
+                Err(_) if properties && !gezik_core::field_filter::complete(text).is_empty() => {
+                    (gezik_core::field_filter::complete(text).join(", "), false)
+                }
                 Err(why) => (why, true),
             },
             move |text| {
@@ -1717,6 +1741,7 @@ impl Searches {
                     match id {
                         ids::SIZE_MIN => draft.size.min = parse_size(&text).ok(),
                         ids::SIZE_MAX => draft.size.max = parse_size(&text).ok(),
+                        ids::SEARCH_PROPERTIES => draft.fields = text,
                         _ => draft.modified = DateRange::parse(&text).unwrap_or(DateRange::Any),
                     }
                     draft.name = None;

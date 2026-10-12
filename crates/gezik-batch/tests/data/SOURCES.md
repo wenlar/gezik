@@ -14,6 +14,16 @@ README puts only user-contributed pictures under CC BY-SA 4.0. The HEIC test dow
 libheif's `examples/example.heic` into a temporary folder when `GEZIK_TEST_FFMPEG` names an
 ffmpeg 9 or later, and is skipped offline.
 
+## Metadata fields (`fields/`, spec 13d)
+
+Made by `fields/make.py` (run it from a temporary folder with ffmpeg and Pillow on PATH:
+`python make.py <this folder>/fields`): sine tones and `testsrc` clips from ffmpeg's own
+generators, a 32×24 JPEG with a hand-made camera EXIF (Apple iPhone 15 Pro, 1/250 s, f/1.8,
+ISO 100, 6.86 mm, GPS, orientation 6), MP3s with ID3v2.3, ID3v2.4 (with a PNG cover) and a
+hand-written ID3v1.1, FLAC and M4A with covers, Opus, Vorbis, an MP4 with `moov` at the end,
+MKV, AVI, WAV, AIFF, a DOCX and an ODT written by Python's `zipfile`, and a PDF whose `/Info`
+title is UTF-16BE. Turkish tag values throughout; each file is at most 20 KB.
+
 ## PDFs (`pdf/`)
 
 - `enc_aes256.pdf`: three pages of pictures written by Gezik itself (`write_pdf` in

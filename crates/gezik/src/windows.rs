@@ -73,6 +73,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::dual::DUAL.with(|s| s.forget(id)),
     |id| crate::info::CURRENT.with(|s| s.forget(id)),
     |id| crate::integration::CURRENT.with(|s| s.forget(id)),
+    |id| crate::field_picker::CURRENT.with(|s| s.forget(id)),
     |id| crate::operations::PARTS.with(|s| s.forget(id)),
     |id| crate::palette::CURRENT.with(|s| s.forget(id)),
     |id| crate::panes::PANES.with(|s| s.forget(id)),
@@ -873,7 +874,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     window.set_column_width(state.column_width.unwrap_or(crate::COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(settings.folder_sizes, settings.search.everything);
-    let preview = preview::Preview::new(&window);
+    let preview = preview::Preview::new(
+        &window,
+        state.preview_wrap.unwrap_or((true, false)),
+        state.preview_volume.unwrap_or((80, false)),
+    );
     let StartPlan { session, select, start, .. } = opening.plan;
     let nav = navigation::Navigator::new(pane_id, window.as_weak(), view.clone(), session, select, start);
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
@@ -937,6 +942,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let _integration = integration::Integration::new(&window);
     let _tags = crate::tags::TagPicker::new(&window);
     window.set_view_tag_dots(crate::tags::dots_on());
+    let _field_picker = crate::field_picker::FieldPicker::new(&window);
     let _select_tools =
         select_tools::SelectTools::new(dialogs.clone(), config.clone(), state.selection.last_pattern.clone());
     let ops = process.ops.clone();
@@ -1169,6 +1175,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         let preview = preview.clone();
         move || preview.schedule()
     });
+    window.on_field_resized(|pane, column, width| {
+        if let (Some(p), Ok(column)) = (crate::pick(pane), usize::try_from(column)) {
+            p.view.field_resized(column, width);
+        }
+    });
     // The columns are every pane's (spec 10 §3.3).
     window.on_columns_resized(|_pane| {
         for p in panes::all() {
@@ -1265,6 +1276,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         let menus = menus.clone();
         move |left, bottom, right, top| menus.add_rule(popup::Anchor::below(left, top, right, bottom))
     });
+    window.on_rb_fields({
+        let menus = menus.clone();
+        move |left, bottom, right, top| menus.template_fields(popup::Anchor::below(left, top, right, bottom))
+    });
     window.on_rb_presets({
         let menus = menus.clone();
         move |left, bottom, right, top| menus.presets(popup::Anchor::below(left, top, right, bottom))
@@ -1324,6 +1339,14 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             crate::size_map::with_current(|m| items = m.menu_items(x, y));
             menus.size_map_menu(items, popup::Anchor::point(wx, wy));
         }
+    });
+    window.global::<crate::PreviewActions>().on_context_menu({
+        let menus = menus.clone();
+        move |x, y| menus.preview_menu(popup::Anchor::point(x, y))
+    });
+    window.global::<crate::PreviewActions>().on_value_menu({
+        let menus = menus.clone();
+        move |label, value, x, y| menus.preview_value_menu(&label, value.into(), popup::Anchor::point(x, y))
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu({

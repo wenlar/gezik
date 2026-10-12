@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -326,9 +326,52 @@ impl ChildProcess {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        let mut process = ChildProcess::start(program, args, cwd, input.is_some())?;
+        let child = &mut process.child;
+        if let (Some(mut stdin), Some(input)) = (child.stdin.take(), input) {
+            // A program that never reads it ends the pipe: that error is no failure.
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(&input);
+            });
+        }
+        let pieces = Arc::new(Pieces::default());
+        match child.stdout.take() {
+            Some(stdout) => {
+                let pieces = pieces.clone();
+                std::thread::spawn(move || read_pieces(stdout, &pieces));
+            }
+            None => pieces.close(),
+        }
+        process.lines = Some(Lines(pieces));
+        Ok(process)
+    }
+
+    /// Starts `program` with `args` with its input and output as raw pipes (the PDF view
+    /// worker's pictures: bytes, not lines); its error output is kept as for `spawn`. Dropping
+    /// the input ends a program that waits for it; dropping the process ends it.
+    pub fn spawn_binary<I, S>(program: &Path, args: I) -> io::Result<(ChildProcess, ChildStdin, ChildStdout)>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut process = ChildProcess::start(program, args, None, true)?;
+        let (Some(stdin), Some(stdout)) = (process.child.stdin.take(), process.child.stdout.take()) else {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        };
+        Ok((process, stdin, stdout))
+    }
+
+    /// Starts it with no window, in its own job object (Windows) or process group (Unix), its
+    /// output and error output piped (the error output read on another thread), its input
+    /// piped when `stdin`.
+    fn start<I, S>(program: &Path, args: I, cwd: Option<&Path>, stdin: bool) -> io::Result<ChildProcess>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         let mut command = Command::new(program);
-        let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
-        command.args(args).stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let input = if stdin { Stdio::piped() } else { Stdio::null() };
+        command.args(args).stdin(input).stdout(Stdio::piped()).stderr(Stdio::piped());
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
@@ -352,26 +395,12 @@ impl ChildProcess {
             let _ = child.wait();
             return Err(err);
         }
-        if let (Some(mut stdin), Some(input)) = (child.stdin.take(), input) {
-            // A program that never reads it ends the pipe: that error is no failure.
-            std::thread::spawn(move || {
-                let _ = stdin.write_all(&input);
-            });
-        }
-        let pieces = Arc::new(Pieces::default());
-        match child.stdout.take() {
-            Some(stdout) => {
-                let pieces = pieces.clone();
-                std::thread::spawn(move || read_pieces(stdout, &pieces));
-            }
-            None => pieces.close(),
-        }
         let stderr = child.stderr.take().map(|stderr| std::thread::spawn(move || read_errors(stderr)));
         Ok(ChildProcess {
             child,
             #[cfg(windows)]
             job,
-            lines: Some(Lines(pieces)),
+            lines: None,
             stderr,
             finished: false,
         })
@@ -648,6 +677,48 @@ mod tests {
         let lines: Vec<String> = lines.map(|line| line.trim().to_owned()).collect();
         assert_eq!(lines, ["one", "two"]);
         assert_eq!(child.stderr_text(), "");
+    }
+
+    #[test]
+    fn binary_output_comes_whole() {
+        // 8 MB of every byte value, through a program that copies a file to its output.
+        let dir = std::env::temp_dir().join(format!("gezik-spawn-binary-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("data.bin");
+        let data: Vec<u8> = (0..8 * 1024 * 1024).map(|i: u32| (i % 251) as u8).collect();
+        std::fs::write(&file, &data).unwrap();
+        let file_arg = file.to_str().unwrap();
+        let (program, args): (&str, Vec<&str>) =
+            if cfg!(windows) { ("cmd", vec!["/c", "type", file_arg]) } else { ("cat", vec![file_arg]) };
+        let (mut child, stdin, mut stdout) = ChildProcess::spawn_binary(Path::new(program), args).unwrap();
+        drop(stdin);
+        let mut got = Vec::new();
+        stdout.read_to_end(&mut got).unwrap();
+        assert!(got == data, "{} of {} bytes, or not the same", got.len(), data.len());
+        assert!(child.wait_or_stop(|| false).unwrap().unwrap().success());
+        assert_eq!(child.stdout_lines().next(), None, "no lines: the output was raw");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn binary_input_reaches_the_program() {
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/c", "set /p L=& call echo got %L%"])
+        } else {
+            ("sh", &["-c", "read L; echo got $L"])
+        };
+        let (mut child, mut stdin, mut stdout) = ChildProcess::spawn_binary(Path::new(program), args).unwrap();
+        stdin
+            .write_all(
+                b"page 3
+",
+            )
+            .unwrap();
+        drop(stdin);
+        let mut got = String::new();
+        stdout.read_to_string(&mut got).unwrap();
+        assert_eq!(got.trim(), "got page 3");
+        assert!(child.wait_or_stop(|| false).unwrap().unwrap().success());
     }
 
     #[test]

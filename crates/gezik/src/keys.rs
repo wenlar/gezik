@@ -912,6 +912,9 @@ mod tests {
                 | Action::JoinFiles
                 | Action::EditComment
                 | Action::CleanTagStore
+                | Action::PreviewHex
+                | Action::PreviewPlay
+                | Action::MoreColumns
                 | Action::EditShortcuts => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");

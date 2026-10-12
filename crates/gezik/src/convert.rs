@@ -1178,7 +1178,7 @@ fn commands() -> Vec<CommandSpec> {
     SETTINGS.with(|s| s.borrow().1.clone())
 }
 
-fn configured_ffmpeg() -> Option<PathBuf> {
+pub(crate) fn configured_ffmpeg() -> Option<PathBuf> {
     SETTINGS.with(|s| s.borrow().0.ffmpeg.clone()).map(PathBuf::from)
 }
 

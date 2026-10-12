@@ -14,8 +14,8 @@ use gezik_config::settings::{BatchRenameState, RenamePreset};
 use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_core::Entry;
 use gezik_core::batch::case::{CaseMode, Lang};
-use gezik_core::batch::date::DateParts;
 use gezik_core::batch::rules::{ExtensionRule, NumberAt, Rule, RuleEntry};
+use gezik_core::fields::{self as f, FieldSet, Fields};
 use gezik_core::ops::names::NameRules;
 use gezik_core::selection::Selection;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
@@ -46,9 +46,11 @@ pub struct Rules {
     pub new: Vec<String>,
     pub statuses: Vec<Status>,
     pub rule_errors: Vec<Option<String>>,
-    /// Some rule uses `{taken}` (set by `recompute`).
-    pub needs_taken: bool,
-    /// The photo dates are still being read: no renaming yet.
+    /// The fields the rules use, `{taken}` and `{artist}` (set by `recompute`).
+    pub needs: FieldSet,
+    /// Those used without a `|` text: an item without a value is warned about.
+    pub bare: FieldSet,
+    /// The fields are still being read: no renaming yet.
     pub waiting: bool,
 }
 
@@ -74,7 +76,8 @@ impl Rules {
         };
         self.statuses = check(&items, &new, &existing, NameRules::current(), IGNORE_CASE);
         self.rule_errors = compiled.errors().to_vec();
-        self.needs_taken = compiled.needs_taken();
+        self.needs = compiled.needs_fields();
+        self.bare = compiled.bare_fields();
         self.new = new;
     }
 
@@ -149,7 +152,7 @@ impl Rules {
             parts.push("reading the folders…".to_owned());
         }
         if self.waiting {
-            parts.push("reading photo dates…".to_owned());
+            parts.push("reading properties…".to_owned());
         }
         let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
         let duplicates = count(|s| *s == Status::Duplicate);
@@ -163,6 +166,11 @@ impl Rules {
         let invalid = count(|s| matches!(s, Status::Invalid(_)));
         if invalid > 0 {
             parts.push(plural(invalid, "invalid name", "invalid names"));
+        }
+        let empty =
+            if self.waiting { 0 } else { (0..self.order.len()).filter(|&p| self.empty_field(p).is_some()).count() };
+        if empty > 0 {
+            parts.push(plural(empty, "name with an empty field", "names with an empty field"));
         }
         if self.rule_errors.iter().any(Option::is_some) {
             parts.push("a rule has an error".to_owned());
@@ -207,6 +215,16 @@ impl Rules {
             self.rules.remove(at);
         }
         self.selected_rule = if self.rules.is_empty() { None } else { Some(at.min(self.rules.len() - 1)) };
+    }
+
+    /// `{key}` at the end of the selected template (the Fields ▾ menu; Slint does not say where
+    /// the caret is).
+    pub fn add_field(&mut self, key: &str) {
+        if let Some(RuleEntry { rule: Rule::Template(text), .. }) =
+            self.selected_rule.and_then(|i| self.rules.get_mut(i))
+        {
+            text.push_str(&format!("{{{key}}}"));
+        }
     }
 
     /// A text option of the selected rule changed (`key` as in `RuleOptions`).
@@ -342,12 +360,23 @@ impl Rules {
             .collect()
     }
 
+    /// The first field the item at display position `position` has no value for, of those used
+    /// without a `|` text (`{artist}` of a song without one): its name says so.
+    fn empty_field(&self, position: usize) -> Option<&'static str> {
+        let item = self.items.get(*self.order.get(position)?)?;
+        f::all().filter(|id| self.bare.has(*id)).find(|id| item.fields.get(*id).is_none()).map(|id| id.def().key)
+    }
+
     pub fn preview_row(&self, position: usize, selected: bool) -> Option<RenamePreviewRow> {
         let i = *self.order.get(position)?;
         let status = self.statuses.get(position)?;
+        let empty = || match self.empty_field(position) {
+            Some(key) if !self.waiting => format!("no {key}"),
+            _ => String::new(),
+        };
         let (code, note) = match status {
-            Status::Unchanged => (0, String::new()),
-            Status::Changed => (1, String::new()),
+            Status::Unchanged => (0, empty()),
+            Status::Changed => (1, empty()),
             Status::Duplicate => (2, "Another item gets this name".to_owned()),
             Status::Exists => (3, "Something in the folder already has this name".to_owned()),
             Status::Invalid(err) => (4, err.to_string()),
@@ -379,9 +408,10 @@ struct Inner {
     shown_rule: Cell<Option<(usize, usize)>>,
     /// Load the texts on the next `show_rules` (a preset or a mode replaced the rule).
     reload_texts: Cell<bool>,
-    /// The photo dates are being read (or were) for this opening.
+    /// Fields are being read for this opening.
     reading: Cell<bool>,
-    taken_ready: Cell<bool>,
+    /// The fields read for this opening.
+    fields_read: Cell<FieldSet>,
     /// Counts openings and closings: dates read for an earlier opening are dropped, and the
     /// reader stops once it changes.
     opening: Arc<AtomicU64>,
@@ -409,7 +439,7 @@ impl BatchRename {
             shown_rule: Default::default(),
             reload_texts: Default::default(),
             reading: Default::default(),
-            taken_ready: Default::default(),
+            fields_read: Default::default(),
             opening: Default::default(),
             name_shown: Default::default(),
         }));
@@ -537,7 +567,7 @@ impl BatchRename {
                 folder: folder_of(path),
                 size: if entry.is_dir { 0 } else { entry.size },
                 modified: entry.modified.and_then(gezik_platform::local_date_parts),
-                taken: None,
+                fields: Fields::default(),
             })
             .collect();
         {
@@ -568,7 +598,7 @@ impl BatchRename {
         self.0.shown_rule.set(None);
         self.0.reload_texts.set(true);
         self.0.reading.set(false);
-        self.0.taken_ready.set(false);
+        self.0.fields_read.set(FieldSet::NONE);
         self.0.opening.fetch_add(1, Ordering::Relaxed);
         *self.0.selection.borrow_mut() = Selection::new(count);
         self.0.shown.borrow_mut().clear();
@@ -650,14 +680,15 @@ impl BatchRename {
 
     /// New names, rules and preview; the name field is left as typed.
     fn update(&self) {
-        let needs_taken = {
+        let missing = {
             let mut r = self.0.rules.borrow_mut();
             r.recompute();
-            r.waiting = r.needs_taken && !self.0.taken_ready.get();
-            r.needs_taken
+            let read = self.0.fields_read.get();
+            r.waiting = !read.covers(r.needs);
+            r.needs.without(read)
         };
-        if needs_taken && self.0.open.get() {
-            self.read_taken();
+        if !missing.is_empty() && self.0.open.get() {
+            self.read_fields(missing);
         }
         self.show_rules();
         self.refresh();
@@ -734,35 +765,33 @@ impl BatchRename {
         }
     }
 
-    /// Reads the photo dates on another thread, once per opening; `{taken}` falls back to
-    /// the modified date (and Rename waits) until they are in.
-    fn read_taken(&self) {
+    /// Reads fields `want` of the files on another thread, each field once per opening (only
+    /// the readers of a file's extension that give one run); until they are in, `{taken}` falls
+    /// back to the modified date, the others are empty, and Rename waits. A field the rules
+    /// start using later is read then.
+    fn read_fields(&self, want: FieldSet) {
         if self.0.reading.replace(true) {
             return;
         }
         let paths: Vec<(usize, PathBuf)> = {
             let r = self.0.rules.borrow();
-            r.paths
-                .iter()
-                .enumerate()
-                .filter(|&(i, p)| {
-                    !r.items[i].is_dir
-                        && p.file_name().is_some_and(|n| gezik_batch::exif::may_have_exif(&n.to_string_lossy()))
-                })
-                .map(|(i, p)| (i, p.clone()))
-                .collect()
+            r.paths.iter().enumerate().filter(|&(i, _)| !r.items[i].is_dir).map(|(i, p)| (i, p.clone())).collect()
         };
         let counter = self.0.opening.clone();
         let opening = counter.load(Ordering::Relaxed);
         let window_id = crate::windows::current();
         std::thread::spawn(move || {
-            let mut dates: Vec<(usize, DateParts)> = Vec::new();
+            // Closed or opened again: these fields are not wanted any more.
+            let stop = || counter.load(Ordering::Relaxed) != opening;
+            let mut read: Vec<(usize, Fields)> = Vec::new();
             for (i, path) in paths {
-                // Closed or opened again: these dates are not wanted any more.
-                if counter.load(Ordering::Relaxed) != opening {
+                if stop() {
                     return;
                 }
-                dates.extend(gezik_batch::exif::taken(&path).map(|d| (i, d)));
+                let fields = gezik_batch::fields::read(&path, want, &stop);
+                if !fields.is_empty() {
+                    read.push((i, fields));
+                }
             }
             crate::windows::post(window_id, move || {
                 with_current(|layer| {
@@ -771,13 +800,15 @@ impl BatchRename {
                     }
                     {
                         let mut r = layer.0.rules.borrow_mut();
-                        for (i, date) in dates {
+                        for (i, fields) in read {
                             if let Some(item) = r.items.get_mut(i) {
-                                item.taken = Some(date);
+                                let both = item.fields.iter().chain(fields.iter());
+                                item.fields = Fields::new(both.map(|(id, v)| (id, v.clone())).collect());
                             }
                         }
                     }
-                    layer.0.taken_ready.set(true);
+                    layer.0.fields_read.set(layer.0.fields_read.get().with(want));
+                    layer.0.reading.set(false);
                     layer.recompute();
                 });
             });
@@ -968,6 +999,12 @@ impl BatchRename {
 
     pub fn add_rule(&self, kind: &str) {
         self.edit(|r| r.add_rule(kind), true);
+    }
+
+    /// The Fields ▾ menu's field, put into the template.
+    pub fn add_field(&self, key: &str) {
+        self.0.reload_texts.set(true);
+        self.edit(|r| r.add_field(key), true);
     }
 
     /// The saved set called `name`, if it is still there.
@@ -1245,7 +1282,22 @@ mod tests {
         m.waiting = true;
         m.recompute();
         assert!(!m.can_rename());
-        assert!(m.footer().starts_with("reading photo dates"), "{}", m.footer());
+        assert!(m.footer().starts_with("reading properties"), "{}", m.footer());
+    }
+
+    #[test]
+    fn names_with_an_empty_field_say_so() {
+        let mut m = model(&["a.mp3", "b.mp3"], &[]);
+        m.add_rule("template");
+        m.set_text("text", "{title|x}");
+        m.add_field("artist");
+        m.items[0].fields = Fields::new(vec![(f::ARTIST, gezik_core::fields::Value::Text("A".into()))]);
+        m.recompute();
+        assert_eq!((m.needs, m.bare), (FieldSet::of(&[f::ARTIST, f::TITLE]), FieldSet::of(&[f::ARTIST])));
+        assert_eq!(m.new, ["xA.mp3", "x.mp3"]);
+        assert_eq!(m.preview_row(0, false).unwrap().note, "");
+        assert_eq!(m.preview_row(1, false).unwrap().note, "no artist");
+        assert!(m.footer().contains("1 name with an empty field"), "{}", m.footer());
     }
 
     #[test]

@@ -64,6 +64,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         }
         Action::ToggleTabLock => nav.toggle_tab_lock(nav.active_index()),
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
+        Action::MoreColumns => crate::field_picker::with_current(|p| p.open(crate::field_picker::Purpose::Columns)),
         Action::ClearHistory => {
             crate::panes::with_active(|p| p.path_box.forget(true));
         }
@@ -174,6 +175,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         | Action::ViewGrid
         | Action::ViewColumns
         | Action::TogglePreview
+        | Action::PreviewHex
+        | Action::PreviewPlay
         | Action::QuickLook
         | Action::Share
         | Action::Copy

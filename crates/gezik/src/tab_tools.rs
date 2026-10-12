@@ -94,6 +94,9 @@ impl TabTools {
             if crate::integration::is_open() {
                 return;
             }
+            if crate::field_picker::is_open() {
+                return crate::field_picker::with_current(|p| p.edited(&query));
+            }
             if crate::palette::is_open() {
                 crate::palette::with_current(|p| p.edited(&query));
             } else if crate::tags::is_open() {
@@ -108,6 +111,9 @@ impl TabTools {
             let Ok(row) = usize::try_from(row) else { return };
             if crate::integration::is_open() {
                 return crate::integration::with_current(|i| i.chosen(row));
+            }
+            if crate::field_picker::is_open() {
+                return crate::field_picker::with_current(|p| p.chosen(row));
             }
             if crate::palette::is_open() {
                 return crate::palette::with_current(|p| p.chosen(row));

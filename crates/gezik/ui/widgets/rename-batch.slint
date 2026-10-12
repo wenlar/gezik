@@ -99,6 +99,8 @@ export component RenameBatch inherits Rectangle {
     property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
 
     callback add-rule(length, length, length, length);
+    // The template's Fields ▾ menu (spec 13 §9.2).
+    callback fields(length, length, length, length);
     callback select-rule(int);
     callback toggle-rule(int);
     callback move-rule(int);   // -1 up, +1 down
@@ -321,10 +323,18 @@ export component RenameBatch inherits Rectangle {
                     }
                     if root.options.kind == "template": VerticalLayout {
                         spacing: Theme.spacing;
-                        Labeled { label: "Name"; TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } } }
+                        Labeled {
+                            label: "Name";
+                            TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } }
+                            TextButton {
+                                text: "Fields";
+                                icon: root.menu-arrow;
+                                clicked => { root.fields(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
+                            }
+                        }
                         // Line breaks between fields only: a field split in two reads wrong.
                         Text {
-                            text: "{name} {ext} {n:03} {parent} {size}\n{date:%Y-%m-%d} {taken:%Y-%m-%d}";
+                            text: "{name} {ext} {n:03} {parent} {size}\n{date:%Y-%m-%d} {taken:%Y-%m-%d}\n{track:02} {artist|Unknown} {duration}";
                             color: Theme.foreground-muted;
                             overflow: elide;
                         }
@@ -406,7 +416,8 @@ export component RenameBatch inherits Rectangle {
                                         commands: "M 1.5 10.5 L 2 8 L 8 2 L 10 4 L 4 10 Z M 7 3 L 9 5";
                                     }
                                     if !row.manual: Text {
-                                        text: row.status >= 2 ? "⚠" : "≡";
+                                        // A name with an empty field (`no artist`) is marked too, not red.
+                                        text: row.status >= 2 || row.note != "" ? "⚠" : "≡";
                                         color: row.status >= 2 ? Theme.danger : Theme.foreground-muted;
                                         vertical-alignment: center;
                                         height: parent.height;

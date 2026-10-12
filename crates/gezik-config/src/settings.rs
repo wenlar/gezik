@@ -274,7 +274,7 @@ pub struct SavedSearch {
 pub const SEARCHES_MAX: usize = 30;
 /// A saved search's folder that is the place shown when it runs.
 pub const HERE: &str = "{here}";
-const SEARCH_KEYS: [&str; 18] = [
+const SEARCH_KEYS: [&str; 19] = [
     "name",
     "folder",
     "pattern",
@@ -286,6 +286,7 @@ const SEARCH_KEYS: [&str; 18] = [
     "size-max",
     "modified",
     "type",
+    "where",
     "hidden",
     "skipped",
     "duplicates",
@@ -379,6 +380,8 @@ pub struct Settings {
     pub sidebar_tree_follow: bool,
     /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
     pub panes_confirm: bool,
+    /// `[preview] properties`: the preview reads and shows the file's metadata (spec 13 §7.4).
+    pub preview_properties: bool,
     pub terminal: TerminalSettings,
     pub search: SearchSettings,
     /// Tab sets (`[[tab-sets]]`); invalid ones are left out.
@@ -430,6 +433,7 @@ impl Default for Settings {
             sidebar_tags: true,
             sidebar_tree_follow: false,
             panes_confirm: true,
+            preview_properties: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
             tab_sets: Vec::new(),
@@ -696,6 +700,23 @@ impl Settings {
                 None => warnings.push(Warning::new(file, format!("panes: expected a table, got {value}"))),
             },
         }
+        match table.get("preview") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(preview) => {
+                    if let Some(value) = preview.get("properties") {
+                        match value.as_bool() {
+                            Some(on) => settings.preview_properties = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                format!("preview.properties: expected true or false, got {value}"),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, format!("preview: expected a table, got {value}"))),
+            },
+        }
         match table.get("tags") {
             None => {}
             Some(value) => match value.as_table() {
@@ -848,7 +869,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     {
         out.view.mode = mode;
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\" or \"rating\"";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)";
     // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
     let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
     if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
@@ -861,7 +882,8 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
         out.view.grid_size = size;
     }
-    let groups = "\"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\"";
+    let groups =
+        "\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)";
     if let Some(group) = view_choice(table, "group", groups, GroupBy::parse, file, warnings) {
         out.view.group = group;
     }
@@ -1032,6 +1054,9 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
     if spec.kind != KindFilter::Any {
         table.insert("type".into(), text(spec.kind.as_str()));
     }
+    if !spec.fields.trim().is_empty() {
+        table.insert("where".into(), text(spec.fields.trim()));
+    }
     if !spec.tags.is_empty() {
         table.insert("tags".into(), toml::Value::Array(spec.tags.iter().map(|tag| text(tag)).collect()));
     }
@@ -1114,6 +1139,10 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
                 "type: expected files, folders, pictures, videos, audio, documents, archives or code, got \"{kind}\""
             )
         })?;
+    }
+    if let Some(words) = text("where")? {
+        gezik_core::field_filter::parse_where(words).map_err(|err| format!("where: {err}"))?;
+        spec.fields = words.trim().to_owned();
     }
     Ok(spec)
 }
@@ -1718,6 +1747,12 @@ pub struct State {
     pub preview_open: bool,
     /// Preview pane width in logical pixels (200–600).
     pub preview_width: Option<u32>,
+    /// The preview wraps text and code (`[preview] wrap-text`, `wrap-code`; spec 13 §4.2);
+    /// `None` until first changed (text wraps, code does not).
+    pub preview_wrap: Option<(bool, bool)>,
+    /// The preview player's volume 0–100 and mute (`[preview] volume`, `muted`; spec 13
+    /// §6.2); `None` until first changed (80, not muted).
+    pub preview_volume: Option<(u8, bool)>,
     /// The operations panel is folded into the status bar.
     pub operations_collapsed: bool,
     /// The first close with the tray icon on said once that Gezik keeps running (9b9).
@@ -1894,6 +1929,19 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (200..=600).contains(w));
+        let wrap = |key: &str| preview.and_then(|p| p.get(key)).and_then(|v| v.as_bool());
+        let preview_wrap = match (wrap("wrap-text"), wrap("wrap-code")) {
+            (None, None) => None,
+            (text, code) => Some((text.unwrap_or(true), code.unwrap_or(false))),
+        };
+        let volume = preview.and_then(|p| p.get("volume")).and_then(|v| v.as_integer());
+        let preview_volume = match (volume, wrap("muted")) {
+            (None, None) => None,
+            (volume, muted) => Some((
+                volume.and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 100).unwrap_or(80),
+                muted.unwrap_or(false),
+            )),
+        };
         let operations_collapsed = table
             .get("operations")
             .and_then(|v| v.as_table())
@@ -2001,6 +2049,8 @@ impl State {
             result_columns,
             preview_open,
             preview_width,
+            preview_wrap,
+            preview_volume,
             operations_collapsed,
             tray_told,
             tags_used: table
@@ -2067,11 +2117,23 @@ impl State {
         if let Some(columns) = &self.result_columns {
             root.insert("result-columns".into(), columns_toml(columns));
         }
-        if self.preview_open || self.preview_width.is_some() {
+        if self.preview_open
+            || self.preview_width.is_some()
+            || self.preview_wrap.is_some()
+            || self.preview_volume.is_some()
+        {
             let mut preview = toml::Table::new();
             preview.insert("open".into(), toml::Value::Boolean(self.preview_open));
             if let Some(width) = self.preview_width {
                 preview.insert("width".into(), toml::Value::Integer(width.into()));
+            }
+            if let Some((text, code)) = self.preview_wrap {
+                preview.insert("wrap-text".into(), toml::Value::Boolean(text));
+                preview.insert("wrap-code".into(), toml::Value::Boolean(code));
+            }
+            if let Some((volume, muted)) = self.preview_volume {
+                preview.insert("volume".into(), toml::Value::Integer(volume.into()));
+                preview.insert("muted".into(), toml::Value::Boolean(muted));
             }
             root.insert("preview".into(), toml::Value::Table(preview));
         }
@@ -2642,8 +2704,9 @@ width = 900
         assert!(messages[0].starts_with("view.mode:") && messages[0].contains("\"tiles\""));
         assert!(messages[1].starts_with("view.sort-dir:"));
         assert!(
-            messages[2]
-                .starts_with("view.group: expected \"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\""),
+            messages[2].starts_with(
+                "view.group: expected \"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property"
+            ),
             "{messages:?}"
         );
         assert!(messages[3].starts_with("view.thumbnails:"));
@@ -2662,6 +2725,43 @@ width = 900
         let back = State::parse(&state.to_toml());
         assert_eq!(back, state);
         assert_eq!(back.columns.unwrap()[3].key, ColumnKey::Size);
+    }
+
+    #[test]
+    fn field_columns_round_trip_in_the_state() {
+        use gezik_core::view::{ColumnKey, default_columns, show_field};
+        let mut columns = default_columns();
+        show_field(&mut columns, gezik_core::fields::ARTIST);
+        let state = State { columns: Some(columns.clone()), ..State::default() };
+        assert!(state.to_toml().contains("key = \"artist\""), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()).columns, Some(columns));
+        let unknown = State::parse(
+            "[[columns]]
+key = \"artsit\"
+width = 100
+",
+        )
+        .columns
+        .unwrap();
+        assert!(unknown.iter().all(|c| !matches!(c.key, ColumnKey::Field(_))), "an unknown name is left out");
+    }
+
+    #[test]
+    fn preview_wrap_round_trips() {
+        let state = State { preview_wrap: Some((false, true)), ..State::default() };
+        assert!(state.to_toml().contains("wrap-text = false\nwrap-code = true"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(State::parse("[preview]\nwrap-code = true\n").preview_wrap, Some((true, true)));
+        assert_eq!(State::parse("[preview]\nopen = true\n").preview_wrap, None);
+    }
+
+    #[test]
+    fn preview_volume_round_trips() {
+        let state = State { preview_volume: Some((35, true)), ..State::default() };
+        assert!(state.to_toml().contains("volume = 35\nmuted = true"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(State::parse("[preview]\nvolume = 300\n").preview_volume, Some((80, false)), "out of range");
+        assert_eq!(State::parse("[preview]\nopen = true\n").preview_volume, None);
     }
 
     #[test]
@@ -3582,6 +3682,25 @@ content = true
     }
 
     #[test]
+    fn the_preview_shows_properties_unless_told_not_to() {
+        assert!(Settings::default().preview_properties, "spec 13 decision 29");
+        let (settings, warnings) = parse(
+            "[preview]
+properties = false
+",
+        );
+        assert!(!settings.preview_properties && warnings.is_empty());
+        let (settings, warnings) = parse(
+            "[preview]
+properties = 1
+",
+        );
+        assert!(settings.preview_properties, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "preview.properties: expected true or false, got 1");
+        assert!(parse(include_str!("../templates/settings.toml")).0.preview_properties);
+    }
+
+    #[test]
     fn the_panes_ask_unless_told_not_to_and_the_f3_hint_is_kept() {
         assert!(Settings::default().panes_confirm, "spec 10 §10.1: asks by default");
         let (settings, warnings) = parse("[panes]\nconfirm = false\n");
@@ -3960,9 +4079,11 @@ tags = [\"a,b\"]")
         spec.size.min = Some(500 * 1024 * 1024);
         spec.modified = DateRange::Between(Day { year: 2026, month: 1, day: 1 }, Day { year: 2026, month: 6, day: 30 });
         spec.kind = KindFilter::Videos;
+        spec.fields = "artist:tarkan duration>3m".into();
         spec.hidden = HiddenRule::Include;
         spec.skipped = true;
         let table = search_to_toml(&spec);
+        assert_eq!(table.get("where").and_then(|v| v.as_str()), Some("artist:tarkan duration>3m"));
         assert_eq!(table.get("size-min").and_then(|v| v.as_str()), Some("500 MB"));
         assert_eq!(table.get("type").and_then(|v| v.as_str()), Some("videos"));
         assert_eq!(search_from_toml(&table), Ok(spec));
@@ -3973,6 +4094,8 @@ tags = [\"a,b\"]")
         assert!(search_from_toml(&bad).unwrap_err().contains("not a full path"));
         let bad: toml::Table = "folder = \"drives\"\nmodified = \"soon\"".parse().unwrap();
         assert!(search_from_toml(&bad).unwrap_err().starts_with("modified: "));
+        let bad: toml::Table = "folder = \"drives\"\nwhere = \"duration>3x\"".parse().unwrap();
+        assert!(search_from_toml(&bad).unwrap_err().starts_with("where: duration>3x: "));
         assert_eq!(search_from_toml(&toml::Table::new()).unwrap_err(), "folder is missing");
     }
 
