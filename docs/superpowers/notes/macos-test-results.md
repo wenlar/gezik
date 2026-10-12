@@ -1359,3 +1359,71 @@ Not changed:
 - 141: macOS 26 refuses `public.folder` (-50) for any third-party bundle. This needs a decision (for example, keep only `NSFileViewer`, or say so in the confirmation).
 - 54: `{files}` passes full paths as the spec says.
 - 26/40: the native drop menu and Commands submenu not taking synthetic clicks. To be tried with a real mouse first.
+
+## Run 3 (release check)
+
+- Date: 2026-10-12
+- Branch: `master` at `14036ca` (results on `test/macos-run3`)
+- Machine: MacBook Pro, Apple M2 Pro (Mac14,10)
+- macOS 26.5.1 (25F80). System languages en-TR, tr-TR. Keyboard layout Turkish-QWERTY-PC. Appearance: Dark.
+- Toolchain: rustc 1.99.0 (b940084d7 2026-09-28)
+- Exe: `target/release/gezik` 24,836,272 bytes
+- Run by Claude Code on the Mac, at the maintainer's request. Window driven with synthetic CGEvents, checked with `screencapture` and the file system.
+- Run: `PATH=/usr/bin:/bin:/usr/sbin:/sbin GEZIK_CONFIG_DIR=/tmp/gezik-cfg ./target/release/gezik /tmp/gezik-rel`, from an empty `/tmp/gezik-cfg`. The repo was used where it is (`~/Work/gezik`), not cloned to `~/gezik`.
+- Rules the maintainer added for this run: only `/tmp` test folders and the `GEZIK_CONFIG_DIR` config; `~/Library/Application Support/gezik`, system settings, the keyboard layout and login items are not touched; whatever an item changes (PATH, links, Finder tags) is undone when the item ends; bugs are recorded, not fixed. So `~/GezikReleaseTest`, `~/gezik-tag-probe.txt` and `~/Downloads` are not used: the sub-steps that need them are NOT TESTED, and R52 (writes the real config) is NOT TESTED. Screenshots are in `/tmp/gezik-run3/` (not committed).
+- A Gezik from Run 2 (pid 96680, started 2026-10-10 on `/private/tmp/gezik-test`) was still running and was left alone.
+- `~/Library/Application Support/gezik` did not exist before the run (fingerprint empty). `mdfind 'kMDItemUserTags == "*"'` listed 0 files before the run. `~/.local/bin` did not exist.
+- HEIC made with sips.
+
+### Items
+
+#### R1 [Run 2 build] Workspace tests: FAIL
+- `cargo test --workspace` stops at the `gezik` crate (759 passed, 6 failed), so it was rerun with `--no-fail-fast`: **2771 passed, 16 failed, 23 ignored**. Log: `/tmp/gezik-run3/r1b.log`.
+- `gezik`: `admin::tests::folders_are_resolved_before_the_prompt_the_item_is_not` (left `"\\?\/C:\Program Files\x"`, right `"C:\Program Files\x"`); `integration::tests::the_default_row_says_what_it_does` (detail does not end with `(another file manager answers "Show in folder")`); `settings_window::shortcuts::tests::rows_show_every_action_and_command` (`"Win+T"` vs `"Ctrl+T"`), `a_commands_key_goes_to_its_entry`, `a_pressed_key_is_waited_for_written_or_asked_about` ("its key already"), `reset_asks_when_another_has_the_default_key` (Write instead of Ask "Ctrl+W is used by New Tab"). These look like Windows/Linux expectations (Ctrl, `C:\`) running on macOS.
+- `gezik-config`: `settings::tests::hotkey_settings_warn` ("bad values keep the defaults", settings.rs:4182).
+- `gezik-core`: `elevated::tests::system_folders_and_homes_are_refused_themselves` (`C:\Users\teo` gives `Ok(())`); `highlight::tests::a_row_takes_well_under_a_microsecond_per_rule_set` (136.976 µs; timing, ran in parallel with a release Gezik).
+- `gezik-ops`: `engine::tests::a_move_whose_copy_differs_twice_fails_and_keeps_the_source`, `engine::tests::a_replace_whose_copy_does_not_verify_puts_the_old_file_back`, `task::tests::a_copy_that_differs_twice_fails_with_where_and_leaves_nothing` (`unwrap_err` on `Ok`), `task::tests::a_verified_copy_counts_its_bytes_twice`, `task::tests::a_limited_copy_hears_a_cancel_at_once`, `tasks::sync::tests::a_verified_copy_that_differs_fails_and_holds_back_the_trash`. The verify-copy tests see no difference and count 0, so the test hook that corrupts the copy does not take effect on macOS.
+- `gezik-platform`: `fs::secure::tests::a_name_is_a_name` (`"sub\\x"` accepted as a name).
+- Crash: none.
+
+#### R2 [340–342] Tag storage on a real Mac: PASS (tests); Finder probe NOT TESTED
+- `cargo test -p gezik-core meta`: 34 passed. `-p gezik-platform meta`: 9 passed, 3 ignored. `-p gezik-ops meta`: 21 passed, 2 ignored. `-p gezik-ops tags`: 12 passed, 1 ignored.
+- `meta::tests::finder_probe` and `finder_wrote_green` were not run: they write `~/gezik-tag-probe.txt` in the home folder, which this run may not use.
+
+#### R3 [343] exFAT keeps tags: PASS
+- `hdiutil create -size 200m -fs ExFAT -volname GZEXFAT /tmp/gzexfat.dmg`, attached at `/Volumes/GZEXFAT`. `GEZIK_TEST_TAG_DIR=/Volumes/GZEXFAT cargo test -p gezik-platform meta::tests::a_copy_to_an_exfat_disk_keeps_its_tags -- --ignored`: 1 passed. Detached and deleted afterwards.
+
+#### R4 [13a–13f, 14e] Part tests: PASS (pdfium part NOT TESTED)
+- `-p gezik-core syntax` 7 passed; `-p gezik preview::` 66 passed, 1 ignored; `-p gezik-core pdf_view` 7 passed; `-p gezik-batch fields` 38 passed; `-p gezik-core fields` 14 passed; `-p gezik field` 19 passed; `-p gezik-core template` 9 passed; `-p gezik-search properties` 2 passed; `-p gezik-config paths` 18 passed; `-p gezik-platform audio` matches only 1 ignored test (0 run).
+- The `GEZIK_TEST_PDFIUM=… --test pdf_view --test pdf_worker --test pdf_tasks` run needs the pdfium that R26 downloads through the window; R26 was not reached, so it was not run.
+
+#### R5 [1] Start: PASS
+- Gezik opened on `/tmp/gezik-rel` with no error line (the Terminal printed only `Slint: long callback/instantiation chain detected`). `/tmp/gezik-cfg` held only `state.toml` and an empty `themes/` (no `settings.toml` was written at start).
+- `theme = "light"` written to `/tmp/gezik-cfg/settings.toml` (given through the `/tmp` link): light within 2.5 s; `theme = "dark"`: dark; then `auto`. So Run 2's live reload fix works through the `/tmp` link. Screenshots: `/tmp/gezik-run3/r5-start.png`, `r5-light.png`, `r5-dark.png`.
+
+#### R6–R51: NOT TESTED
+- These need clicks and keys in Gezik's window. The synthetic-input helper (CGEvents, as in Run 2) was refused by Claude Code's permission check on this machine, twice, so the window could not be driven. They are left for a person, or for a rerun once that permission is given.
+- The test data of §3 was made in `/tmp/gezik-rel` (without `~/GezikReleaseTest` and without the ffmpeg media, which waited for R30's download).
+
+#### R52 [14e 375] App Translocation: NOT TESTED
+- It writes `~/Library/Application Support/gezik`, which this run may not touch (and it needs a person for Gatekeeper).
+
+#### R53 Clean-up record: PASS
+- The test Gezik (pid 17964) was stopped with `kill` (TERM): no new `gezik*.ips` in `~/Library/Logs/DiagnosticReports`. Run 2's Gezik (pid 96680) is still running, untouched.
+- `GZEXFAT` detached (`GZPORT` was never made); `hdiutil info | grep -c GZ`: 0. `/tmp/gezik-rel` removed. `~/GezikReleaseTest` and `~/gezik-tag-probe.txt` were never made; no Gezik.app copies, so nothing to unregister.
+- `ls -la ~/.local/bin`: "No such file or directory".
+- Application Support fingerprint: `diff /tmp/as-before.txt /tmp/as-after.txt` printed nothing (the folder still does not exist).
+- `mdfind 'kMDItemUserTags == "*"' | wc -l`: 0, the same as before.
+
+### Summary
+
+| Item | Result | Note |
+|---|---|---|
+| R1 [build] | FAIL | 2771 passed, 16 failed (gezik 6, gezik-config 1, gezik-core 2, gezik-ops 6, gezik-platform 1) |
+| R2 [340–342] | PASS | tests pass; Finder probe NOT TESTED (writes to home) |
+| R3 [343] | PASS | exFAT image keeps tags |
+| R4 [13a–13f, 14e] | PASS | pdfium tests NOT TESTED (need R26) |
+| R5 [1] | PASS | live theme reload works through `/tmp` |
+| R6–R51 | NOT TESTED | synthetic input to the window refused by the permission check |
+| R52 [14e 375] | NOT TESTED | writes the real config; needs Gatekeeper |
+| R53 | PASS | clean-up checks all clean |
