@@ -2925,3 +2925,34 @@ Screenshots: %TEMP%\gezik-gui-13\shots\13d\.
    09-w200-bottom-zoom.png). Same at 420 px when the window is short. Needs a clip and/or a scroll for the info area.
 
 - Gözden geçirme ve ekran testi düzeltmeleri: HEIF EXIF okumasından önce `ftyp`/`meta` kutularının boyutu denetlenir (dosya sonuna uzanan `meta` büyük dosyayı belleğe almaz; kamadak-exif onları bütün okur); belge etiket bulucusu ad için en çok 128, varlık için 11 karakter bakar (256 KB `<`/`&` doğrusal); düz AIFF `COMM` 18 bayt okunur (kodek artık `SSND` değil `PCM`); önizlemede başlık, bilgi ve özellikler kayan, bölme kenarında kesilen bir alanda (dar bölmede ve kısa pencerede teker çalışır). Sürüm exe'si **27.790.336 B** (taban 27.596.288 B, **+194.048 B**). Yapı `t13d-fix.exe`; ekranda yeniden denenmedi.
+
+### Yeniden test (düzeltmeler sonrası)
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d-fix.exe (commit 72c3983). Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on),
+data = the `tests/data/fields` fixtures. Screenshots: %TEMP%\gezik-gui-13\shots\13dfix\.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1a | width 200, 1600×900, photo.jpg: rows cut at the pane edge, nothing over the border | PASS (01-w200-photo) |
+| 1b | width 200, 1600×900: wheel scrolls to Location | FAIL: no scroll at all (3 points, 5-15 notches each); Exposure..Location still unreachable (03, 04, 15) |
+| 2 | width 420, 1000×450, photo.jpg: cut at the edge, wheel scrolls to Location | PASS (05-short-photo, 07-short-wheel-end); also video.mkv, plain.aiff (10b, 12b) |
+| 3 | Image area ≥ 80 px | PASS: ~95 px at 1000×450, ~430 px at width 200 |
+| 4 | Right-click Lens value → Copy Value | PASS: clipboard = "iPhone 15 Pro back camera 6.86mm f/1.78", status "Copied the value"; clipboard restored |
+| 5 | plain.aiff codec | PASS: Audio Codec = PCM |
+| 6a | Fast arrows (4 rounds: 15 down @60 ms, 15 up @15 ms, 7 down @15 ms) | PASS: 12/12 pane title = selected row; facts scroll back to top on file change |
+| 6b | Quick Look (photo.jpg) rows | PASS, and the wheel scrolls to Location inside Quick Look (13, 14) |
+
+## Failure
+
+1b. Repro: state.toml `[preview] width = 200`, window 1600×900, select `photo.jpg`. The facts block gets ~300 px
+(y 558-858), which is its unwrapped height; the values wrap to 2-5 lines, so Lens ends at the pane bottom and
+Exposure/Aperture/ISO/Focal Length/Location are clipped away with no scroll range. Likely cause: in
+`preview-pane.slint` the Flickable's `preferred-height`/`max-height`/`content-height` all bind to
+`facts-text.preferred-height`, which does not reflect the word-wrapped height at the narrow width, so the
+layout caps the Flickable at the single-line height and the content equals the viewport (nothing to scroll),
+while the image takes the spare space. At 420 px (no wrapping) the same code works.
+
+Note: UIA focus reports the main Window (not the list) after a row click in this build; arrow keys still go to the list.
+
+- Yeniden testin tek notu düzeltildi (fix2): satırdaki değer yatay düzende satırın genişliğiyle ölçülüyordu, 200 px bölmede liste olduğundan kısa çıkıp kaymıyordu; etiket ve değer artık elle yerleşiyor, değer kendi genişliğiyle ölçülüyor. Sürüm exe'si **27.784.704 B** (+188.416 B). Yapı `t13d-fix2.exe`; ekranda yeniden denenmedi.
