@@ -5,7 +5,7 @@ import { CrumbItem } from "widgets/breadcrumb.slint";
 import { TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
 import { PreviewPane, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow } from "widgets/preview-pane.slint";
-import { FileRow, ItemRow } from "widgets/file-view.slint";
+import { FileRow, ItemRow, FieldColumn } from "widgets/file-view.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
 import { DropStack, StackRow } from "widgets/drop-stack.slint";
 import { Dialog } from "widgets/dialog.slint";
@@ -26,7 +26,7 @@ import { ColumnItem } from "widgets/column-view.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
-export { Theme, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
+export { Theme, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, FieldColumn, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, PaneGeometry, PaneFocus, ColumnItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -136,7 +136,10 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Type"; activated => { root.menu-command("group-type"); } }
                 MenuItem { title: "Date"; activated => { root.menu-command("group-date"); } }
                 MenuItem { title: "Size"; activated => { root.menu-command("group-size"); } }
+                MenuItem { title: "Property…"; activated => { root.menu-command("group-property"); } }
             }
+            MenuItem { title: "Sort by Property…"; activated => { root.menu-command("sort-property"); } }
+            MenuItem { title: "More Columns…"; activated => { root.menu-command("more-columns"); } }
             MenuItem { title: "Collapse All Groups"; activated => { root.menu-command("collapse-groups"); } }
             MenuItem { title: "Expand All Groups"; activated => { root.menu-command("expand-groups"); } }
             MenuSeparator { }
@@ -455,6 +458,7 @@ export component AppWindow inherits Window {
     callback list-group-menu(int, length, length);
     // A column edge was released: Rust reads the widths.
     callback columns-resized(int);
+    callback field-resized(int, int, length);
     // A rubber-band drag in the file view; see FileView.
     callback marquee(int, length, length, length, length, bool);
     callback marquee-done(int);
@@ -1068,6 +1072,7 @@ export component AppWindow inherits Window {
                             header-clicked(p, c) => { root.header-clicked(p, c); }
                             header-menu(p, x, y) => { root.header-menu(p, x, y); }
                             columns-resized(p) => { root.columns-resized(p); }
+                            field-resized(p, i, w) => { root.field-resized(p, i, w); }
                             rename-accepted(p, t) => { root.rename-accepted(p, t); }
                             rename-cancelled(p) => { root.rename-cancelled(p); }
                             rename-tab(p, t, back) => { root.rename-tab(p, t, back); }

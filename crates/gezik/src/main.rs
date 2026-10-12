@@ -22,6 +22,7 @@ mod dual;
 mod eject;
 mod elevated;
 mod export;
+mod field_picker;
 mod filter;
 mod finder_menu;
 mod folder_sizes;
@@ -298,6 +299,7 @@ fn perform(
         | Action::TabLast
         | Action::ReopenTab
         | Action::TabPicker
+        | Action::MoreColumns
         | Action::ToggleTabLock
         | Action::ClearHistory
         | Action::OpenTerminal
@@ -458,6 +460,8 @@ fn handle_key(
         if let Some(chord) = &chord {
             if integration::is_open() {
                 integration::with_current(|i| used = i.chord(chord));
+            } else if field_picker::is_open() {
+                field_picker::with_current(|p| used = p.chord(chord));
             } else if palette::is_open() {
                 palette::with_current(|p| used = p.chord(chord));
             } else {

@@ -81,6 +81,19 @@ mod tests {
         ];
         assert_eq!(parse_views(&views_to_toml(&folders)).unwrap(), folders);
         assert_eq!(parse_views(&views_to_toml(&[])).unwrap(), []);
+        // A property's sort and group (spec 13 §8.2) by its key.
+        use gezik_core::fields::{ARTIST, DURATION};
+        let music = FolderView {
+            view: ViewSettings {
+                sort: SortSpec { key: SortKey::Field(DURATION), dir: SortDir::Desc },
+                group: GroupBy::Field(ARTIST),
+                ..ViewSettings::default()
+            },
+            ..folder("/m", ViewMode::List, 1)
+        };
+        let text = views_to_toml(std::slice::from_ref(&music));
+        assert!(text.contains("sort = \"duration\"") && text.contains("group = \"artist\""), "{text}");
+        assert_eq!(parse_views(&text).unwrap(), [music]);
     }
 
     #[test]

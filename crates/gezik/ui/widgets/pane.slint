@@ -4,7 +4,7 @@ import { ToolButton } from "button.slint";
 import { TextButton } from "text-button.slint";
 import { Breadcrumb, CrumbItem } from "breadcrumb.slint";
 import { TabBar, TabItem } from "tab-bar.slint";
-import { FileView, ItemRow } from "file-view.slint";
+import { FileView, ItemRow, FieldColumn } from "file-view.slint";
 import { FilterBar } from "filter-bar.slint";
 import { ColumnView, ColumnItem } from "column-view.slint";
 import { PreviewInfo } from "preview-pane.slint";
@@ -37,6 +37,10 @@ export struct PaneData {
     // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 6 Match) and direction.
     sort-column: int,
     sort-desc: bool,
+    // The field columns' headers (view/mod.rs `set_field_columns`), their widths' sum and count.
+    field-columns: [FieldColumn],
+    field-width: length,
+    field-count: int,
     // Bumped whenever the groups change (FileView `groups-version`).
     groups-version: int,
     // Renaming in place (view/mod.rs, operations.rs): a new `rename-generation` puts
@@ -222,6 +226,8 @@ export component PaneView inherits Rectangle {
     callback header-clicked(int, int);
     callback header-menu(int, length, length);
     callback columns-resized(int);
+    // A field column's edge dragged in pane `index`: column, new width.
+    callback field-resized(int, int, length);
     callback rename-accepted(int, string);
     callback rename-cancelled(int);
     callback rename-tab(int, string, bool);
@@ -727,6 +733,10 @@ export component PaneView inherits Rectangle {
                                 root.header-menu(root.index, x, y);
                             }
                             columns-resized => { root.columns-resized(root.index); }
+                            field-columns: root.data.field-columns;
+                            field-width: root.data.field-width;
+                            field-count: root.data.field-count;
+                            field-resized(i, w) => { root.field-resized(root.index, i, w); }
                             item-pressed(i, ctrl, shift) => { root.item-pressed(root.index, i, ctrl, shift); }
                             item-down(i, x, y, right, can-drag) => { root.item-down(root.index, i, x, y, right, can-drag); }
                             item-drag(x, y, shift, ctrl, alt) => { root.item-drag(x, y, shift, ctrl, alt); }

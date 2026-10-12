@@ -16,6 +16,16 @@ impl FieldId {
         // Ids are only made from `FIELDS`' own indexes.
         &FIELDS[usize::from(self.0)]
     }
+
+    /// Its place in the registry (menu ids, column numbers).
+    pub fn number(self) -> i32 {
+        i32::from(self.0)
+    }
+
+    /// The field at place `n` of the registry.
+    pub fn from_number(n: i64) -> Option<FieldId> {
+        u8::try_from(n).ok().filter(|n| usize::from(*n) < FIELDS_LEN).map(FieldId)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -122,13 +132,18 @@ fields! {
     WORDS "words" "Words" Document Int 70 false;
 }
 
+/// Every field, in the registry's order.
+pub fn all() -> impl Iterator<Item = FieldId> {
+    (0..FIELDS_LEN as u8).map(FieldId)
+}
+
 /// The field with this key.
 pub fn by_key(key: &str) -> Option<FieldId> {
     FIELDS.iter().position(|f| f.key == key).and_then(|i| u8::try_from(i).ok()).map(FieldId)
 }
 
 /// Which fields a consumer needs.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
 pub struct FieldSet(u64);
 
 impl FieldSet {
@@ -161,6 +176,21 @@ impl FieldSet {
     #[must_use]
     pub const fn with(self, other: FieldSet) -> FieldSet {
         FieldSet(self.0 | other.0)
+    }
+
+    /// The fields in both.
+    #[must_use]
+    pub const fn and(self, other: FieldSet) -> FieldSet {
+        FieldSet(self.0 & other.0)
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Whether every field of `other` is in it.
+    pub fn covers(self, other: FieldSet) -> bool {
+        other.0 & !self.0 == 0
     }
 }
 
@@ -210,6 +240,14 @@ impl Fields {
             return Some(format!("{w} × {h}"));
         }
         Some(text(id, value))
+    }
+}
+
+/// A group header's text for `value` (spec 13 §8.2): the value as shown, a date by its year.
+pub fn group_text(id: FieldId, value: &Value) -> String {
+    match value {
+        Value::Date(d) => d.year.to_string(),
+        _ => text(id, value),
     }
 }
 
@@ -441,6 +479,11 @@ pub static READERS: [ReaderDef; 6] = [
     ReaderDef { reader: Reader::Pdf, exts: &["pdf"], provides: FieldSet::of(&[TITLE, AUTHOR, SUBJECT, PAGES]) },
 ];
 
+/// The fields some reader of extension `ext` (lower case) can give: none, nothing is read.
+pub fn provided(ext: &str) -> FieldSet {
+    READERS.iter().filter(|r| r.exts.contains(&ext)).fold(FieldSet::NONE, |set, r| set.with(r.provides))
+}
+
 /// The readers to run for a file with extension `ext` (lower case) when `want` is needed:
 /// none when no reader of that extension gives any of them (nothing is read then).
 pub fn readers_for(ext: &str, want: FieldSet) -> impl Iterator<Item = Reader> {
@@ -560,5 +603,8 @@ mod tests {
         assert_eq!(run("mkv", FieldSet::of(&[TITLE])), [Reader::Video]);
         assert_eq!(run("docx", FieldSet::of(&[TITLE, PAGES])), [Reader::Document]);
         assert_eq!(run("pdf", FieldSet::ALL), [Reader::Pdf]);
+        assert!(provided("txt").is_empty() && provided("mp3").has(ARTIST) && !provided("mp3").has(WIDTH));
+        assert!(FieldSet::ALL.covers(provided("jpg")) && !provided("jpg").covers(FieldSet::ALL));
+        assert_eq!(FieldSet::of(&[ARTIST, WIDTH]).and(provided("mp3")), FieldSet::of(&[ARTIST]));
     }
 }

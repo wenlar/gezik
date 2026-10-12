@@ -2,6 +2,7 @@
 //! Navigation hands it each loaded listing and takes the selection back as a `ViewState`.
 
 mod columns;
+mod folder_fields;
 mod listing;
 mod model;
 
@@ -43,7 +44,7 @@ use slint::{ComponentHandle, ModelRc};
 use crate::media::{Media, Ready};
 use crate::panes::PaneId;
 use crate::{AppWindow, Theme};
-use listing::{filtered_listing, filtered_results, name_taken};
+use listing::{filtered_results, name_taken};
 use model::{ItemsModel, ViewData, hide_collapsed};
 
 /// How long after showing a listing (or a far jump) its scroll offset is applied again:
@@ -57,6 +58,12 @@ const MAX_REMEMBERED: usize = 1000;
 /// views.toml's key for the search results' and the flat view's view (spec 4.4).
 pub const RESULTS_KEY: &str = "<results>";
 
+/// Sorting, grouping and filtering by a property in search results (plan 13e sapma 3).
+pub const FIELDS_IN_FOLDERS: &str = "Properties sort, group and filter folders, not search results";
+
+/// A ninth field column (spec 13 §8.1, decision 24).
+pub const TOO_MANY_FIELD_COLUMNS: &str = "At most 8 property columns: hide one first";
+
 /// views.toml's key for the trash's view (spec 7.1).
 pub const TRASH_KEY: &str = "<trash>";
 
@@ -65,6 +72,9 @@ pub const TRASH_KEY: &str = "<trash>";
 pub fn header_sort(column: i32) -> Option<SortKey> {
     match column {
         0 => Some(SortKey::Name),
+        i if i >= gezik_core::view::FIELD_INDEX => {
+            gezik_core::fields::FieldId::from_number(i64::from(i - gezik_core::view::FIELD_INDEX)).map(SortKey::Field)
+        }
         i => ColumnKey::RESULTS.into_iter().find(|k| k.index() == i && *k != ColumnKey::Match).map(ColumnKey::sort_key),
     }
 }
@@ -154,6 +164,14 @@ struct Inner {
     /// The shown folder's own mode, before the columns or the list forced another (what a
     /// change of its sort or picture size keeps in views.toml).
     own_mode: Cell<ViewMode>,
+    /// The folder's fields read whole (spec 13 §7.5): the read going on, the last one's number,
+    /// and how far it got (the status line).
+    field_run: RefCell<Option<folder_fields::FieldRun>>,
+    field_runs: Cell<u64>,
+    field_progress: RefCell<Option<String>>,
+    /// The field columns' headers (spec 13 §8.1), one model the pane keeps: a dragged edge
+    /// changes its row in place.
+    field_model: Rc<slint::VecModel<crate::FieldColumn>>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -161,6 +179,8 @@ struct Inner {
 struct FilterState {
     text: String,
     pattern: Pattern,
+    /// Its property words (spec 13 §8.3).
+    fields: Vec<gezik_core::field_filter::FieldTerm>,
     error: Option<String>,
 }
 
@@ -168,11 +188,13 @@ impl FilterState {
     /// `text` compiled; a text with an error keeps `before`'s pattern (the list does not
     /// jump while a part is half typed).
     fn new(text: &str, before: Option<&FilterState>) -> FilterState {
-        match Pattern::compile(text) {
-            Ok(pattern) => FilterState { text: text.to_owned(), pattern, error: None },
+        match gezik_core::field_filter::split(text).and_then(|(names, fields)| Ok((Pattern::compile(&names)?, fields)))
+        {
+            Ok((pattern, fields)) => FilterState { text: text.to_owned(), pattern, fields, error: None },
             Err(error) => FilterState {
                 text: text.to_owned(),
                 pattern: before.map(|b| b.pattern.clone()).unwrap_or_default(),
+                fields: before.map(|b| b.fields.clone()).unwrap_or_default(),
                 error: Some(error),
             },
         }
@@ -300,7 +322,11 @@ impl View {
             ..ViewData::default()
         }));
         let model = Rc::new(ItemsModel::new(data.clone()));
-        crate::panes::edit(id, |d| d.items = ModelRc::from(model.clone()));
+        let field_model = Rc::new(slint::VecModel::default());
+        crate::panes::edit(id, |d| {
+            d.items = ModelRc::from(model.clone());
+            d.field_columns = ModelRc::from(field_model.clone());
+        });
         let view = View(Rc::new(Inner {
             id,
             window,
@@ -342,6 +368,10 @@ impl View {
             rule_columns: Cell::new(None),
             miller: RefCell::default(),
             own_mode: Cell::new(defaults.view.mode),
+            field_run: RefCell::new(None),
+            field_runs: Cell::new(0),
+            field_progress: RefCell::new(None),
+            field_model,
         }));
         // Weak: the media client lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -478,6 +508,9 @@ impl View {
     /// `place`: where it is, for the view rules (spec 10 §8).
     pub fn show(&self, listing: Listing, state: &ViewState, note: Option<String>, place: Place) {
         let results = matches!(listing, Listing::Results(_));
+        // Files may have changed (a reload, a job, another program): rows read their fields
+        // again, drawing the old ones until then (spec 13 §7.5).
+        self.0.media.forget_fields();
         let folder = match &listing {
             Listing::Results(set) => Some(if set.is_trash() { TRASH_KEY } else { RESULTS_KEY }.to_owned()),
             _ => listing.folder().map(|p| p.display().to_string()),
@@ -537,7 +570,7 @@ impl View {
                     state.filter.as_deref().map(|text| FilterState::new(text, None))
                 };
                 let (shown, rows) = match &filter {
-                    Some(filter) => filtered_listing(&dir, &full, &filter.pattern),
+                    Some(filter) => self.filter_files(&dir, &full, &filter.pattern, &filter.fields),
                     None => (Listing::Files(dir, full.clone()), None),
                 };
                 *self.0.filter.borrow_mut() = filter;
@@ -612,6 +645,8 @@ impl View {
         if results {
             self.sort_results();
         }
+        // Files may have changed: a folder read whole for its fields is read again.
+        self.sync_folder_fields(true);
     }
 
     /// The entry being renamed after the rows changed: found again by its key, or the rename ends.
@@ -834,11 +869,21 @@ impl View {
             self.0.filter.borrow_mut().take();
             return self.sync_filter_bar(&window);
         }
-        let old_pattern = self.0.filter.borrow().as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
-        let next = text.map(|text| FilterState::new(text, self.0.filter.borrow().as_ref()));
-        let new_pattern = next.as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let patterns = |f: Option<&FilterState>| f.map(|f| (f.pattern.clone(), f.fields.clone())).unwrap_or_default();
+        let old_pattern = patterns(self.0.filter.borrow().as_ref());
+        let mut next = text.map(|text| FilterState::new(text, self.0.filter.borrow().as_ref()));
+        // Results: property words are not read (plan 13e sapma 3).
+        if let Some(f) = next.as_mut().filter(|f| results.is_some() && !f.fields.is_empty()) {
+            f.fields.clear();
+            f.error.get_or_insert_with(|| FIELDS_IN_FOLDERS.to_owned());
+        }
+        let new_pattern = patterns(next.as_ref());
         let closing = next.is_none();
         *self.0.filter.borrow_mut() = next;
+        // Property words need the folder's fields (none in the results).
+        if results.is_none() {
+            self.sync_folder_fields(false);
+        }
         // The same entries show (the bar opens empty, a space is added, a part is half typed):
         // the list, its selection and scroll stay.
         if new_pattern != old_pattern {
@@ -849,8 +894,8 @@ impl View {
             let full = self.0.data.borrow().full.clone();
             let full_len = results.as_ref().map_or(full.len(), |set| set.len());
             let (shown, rows) = match &results {
-                Some(set) => filtered_results(set, &new_pattern),
-                None => filtered_listing(&dir, &full, &new_pattern),
+                Some(set) => filtered_results(set, &new_pattern.0),
+                None => self.filter_files(&dir, &full, &new_pattern.0, &new_pattern.1),
             };
             // What was selected and still shows stays selected, carried by position through
             // the full list (no names: Ctrl+A in 100k entries, then typing, stays fast). Closing
@@ -1019,6 +1064,7 @@ impl View {
                     Column::Shown(ColumnKey::Modified) => date(entry.as_deref().and_then(|e| e.modified)),
                     Column::Shown(ColumnKey::Created) => date(entry.as_deref().and_then(|e| e.created)),
                     Column::Shown(ColumnKey::Type) => model::type_name_for(&data, i),
+                    Column::Shown(ColumnKey::Field(id)) => model::known_field(&data, i, *id),
                 };
             }
             each(&cells)
@@ -1541,6 +1587,13 @@ impl View {
     /// Sorts by `spec`, keeping the selection, focus and its visibility; the folder
     /// remembers it.
     pub fn set_sort(&self, spec: SortSpec) {
+        if let SortKey::Field(id) = spec.key {
+            if self.shows_results() {
+                return self.note(FIELDS_IN_FOLDERS.to_owned());
+            }
+            // Its column shows, so a header carries the sort's arrow.
+            self.show_field_column(id);
+        }
         self.change_view(|v| v.sort = spec);
     }
 
@@ -1893,7 +1946,7 @@ impl View {
         if self.0.searching.get() {
             return;
         }
-        let by = if full.is_duplicates() { GroupBy::Duplicates } else { self.0.current.get().group };
+        let by = if full.is_duplicates() { GroupBy::Duplicates } else { results_group(self.0.current.get().group) };
         let (spec, folders_first) = (self.sort(), self.0.options.get().folders_first);
         // shortcut: a single result is never sorted, so it shows without its group's header.
         if full.len() < 2 || full.sorted_by() == Some((spec, folders_first, by)) {
@@ -1910,7 +1963,7 @@ impl View {
                 |e: &Entry| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir));
             let dup_key = |i: usize| full.dup_key(i);
             let row: Option<&dyn Fn(usize) -> Option<GroupKey>> = full.is_duplicates().then_some(&dup_key);
-            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row };
+            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row, field: None };
             let order = full.sort_order(spec, folders_first, plain, (by != GroupBy::None).then_some(&grouping));
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
@@ -2089,7 +2142,7 @@ impl View {
     /// What the filter lets through of `full`, the entries of `dir`, and where they are in it.
     fn filtered(&self, dir: &Path, full: &Rc<Vec<Entry>>) -> (Listing, Option<Vec<usize>>) {
         match self.0.filter.borrow().as_ref() {
-            Some(filter) => filtered_listing(dir, full, &filter.pattern),
+            Some(filter) => self.filter_files(dir, full, &filter.pattern, &filter.fields),
             None => (Listing::Files(dir.to_path_buf(), full.clone()), None),
         }
     }
@@ -2175,7 +2228,9 @@ impl View {
 
     /// How the rows are grouped: not in the columns (spec 10 §7.3, the setting is kept).
     fn group_by(&self) -> GroupBy {
-        grouped_by(&self.0.current.get())
+        let results = self.0.data.try_borrow().is_ok_and(|d| d.results.is_some());
+        let by = grouped_by(&self.0.current.get());
+        if results { results_group(by) } else { by }
     }
 
     /// Mode, picture size and entries per line, from the current view.
@@ -2280,6 +2335,8 @@ impl View {
                 ColumnKey::Size => window.get_col_size(),
                 ColumnKey::Folder => window.get_col_folder(),
                 ColumnKey::Match => window.get_col_match(),
+                // Kept as dragged (`field_resized`).
+                ColumnKey::Field(_) => continue,
             };
             column.width = (width.round().max(0.0) as u32).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
         }
@@ -2294,11 +2351,47 @@ impl View {
         {
             let mut columns = self.active_columns().borrow_mut();
             *columns = shown;
-            if let Some(column) = columns.iter_mut().find(|c| c.key == key) {
-                column.visible = !column.visible;
+            match key {
+                // A field column comes and goes (at most 8 are kept, spec 13 §8.1).
+                ColumnKey::Field(id) if columns.iter().any(|c| c.key == key && c.visible) => {
+                    gezik_core::view::hide_field(&mut columns, id);
+                }
+                ColumnKey::Field(id) => {
+                    if !gezik_core::view::show_field(&mut columns, id) {
+                        drop(columns);
+                        return self.note(TOO_MANY_FIELD_COLUMNS.to_owned());
+                    }
+                }
+                _ => {
+                    if let Some(column) = columns.iter_mut().find(|c| c.key == key) {
+                        column.visible = !column.visible;
+                    }
+                }
             }
         }
         self.sync_columns();
+    }
+
+    /// Field `id`'s column shows (Show Column, a sort by it); already there, nothing changes.
+    pub fn show_field_column(&self, id: gezik_core::fields::FieldId) {
+        if !self.columns_shown().iter().any(|c| c.key == ColumnKey::Field(id) && c.visible) {
+            self.toggle_column(ColumnKey::Field(id));
+        }
+    }
+
+    /// A field column's edge is dragged: its header takes `width` at once (the rows follow it),
+    /// and the list keeps it (a rule's column the list lacks keeps its default).
+    pub fn field_resized(&self, index: usize, width: f32) {
+        use slint::Model;
+        let width = width.clamp(MIN_COLUMN_WIDTH as f32, MAX_COLUMN_WIDTH as f32);
+        if let Some(mut column) = self.0.field_model.row_data(index) {
+            column.width = width;
+            self.0.field_model.set_row_data(index, column);
+        }
+        let Some(id) = self.0.data.borrow().field_columns.get(index).copied() else { return };
+        if let Some(c) = self.active_columns().borrow_mut().iter_mut().find(|c| c.key == ColumnKey::Field(id)) {
+            c.width = width.round() as u32;
+        }
     }
 
     /// The columns as shown: with a rule's `columns`, which of them show (spec 10 §8.1).
@@ -2332,8 +2425,51 @@ impl View {
         window.set_col_size(width(ColumnKey::Size));
         window.set_col_folder(width(ColumnKey::Folder));
         window.set_col_match(width(ColumnKey::Match));
+        drop(columns);
+        // The field columns (spec 13 §8.1), with a rule's the list lacks: their headers, and the
+        // rows on screen read them.
+        let fields: Vec<(gezik_core::fields::FieldId, u32)> = shown_columns(&self.active_columns().borrow(), rule)
+            .into_iter()
+            .filter(|c| c.visible)
+            .filter_map(|c| match c.key {
+                ColumnKey::Field(id) => Some((id, c.width)),
+                _ => None,
+            })
+            .collect();
+        self.set_field_columns(&fields);
         let trash = self.shows_trash();
         crate::panes::edit(self.0.id, |d| d.trash_shown = trash);
+    }
+
+    /// The field columns shown, with their widths: the pane's headers, the rows' cells; rows on
+    /// screen read the ones newly shown.
+    fn set_field_columns(&self, fields: &[(gezik_core::fields::FieldId, u32)]) {
+        use slint::Model;
+        let ids: Vec<gezik_core::fields::FieldId> = fields.iter().map(|(id, _)| *id).collect();
+        let headers: Vec<crate::FieldColumn> = fields
+            .iter()
+            .map(|(id, width)| crate::FieldColumn {
+                title: id.def().label.into(),
+                width: *width as f32,
+                right: id.def().right_align(),
+                index: ColumnKey::Field(*id).index(),
+            })
+            .collect();
+        let same = self.0.field_model.row_count() == headers.len()
+            && self.0.field_model.iter().zip(&headers).all(|(a, b)| a == *b);
+        if !same {
+            self.0.field_model.set_vec(headers);
+        }
+        let total: f32 = fields.iter().map(|(_, w)| *w as f32).sum();
+        let count = i32::try_from(fields.len()).unwrap_or(0);
+        crate::panes::edit(self.0.id, |d| {
+            d.field_width = total;
+            d.field_count = count;
+        });
+        let old = std::mem::replace(&mut self.0.data.borrow_mut().field_columns, ids.clone());
+        if old != ids {
+            self.redraw_visible();
+        }
     }
 
     fn sync_header(&self) {
@@ -2345,6 +2481,7 @@ impl View {
             SortKey::Type => ColumnKey::Type.index(),
             SortKey::Size => ColumnKey::Size.index(),
             SortKey::Folder => ColumnKey::Folder.index(),
+            SortKey::Field(id) => ColumnKey::Field(id).index(),
         };
         crate::panes::edit(self.0.id, |d| {
             d.sort_column = column;
@@ -2362,7 +2499,8 @@ impl View {
                     && self.0.options.get().folders_first
                     && self.group_by() == GroupBy::None) =>
             {
-                Listing::Files(dir, self.sort_now(entries).0)
+                let sorted = self.sort_now(&dir, entries).0;
+                Listing::Files(dir, sorted)
             }
             other => other,
         }
@@ -2370,7 +2508,7 @@ impl View {
 
     /// `entries` in the current sort order (copied only if shared), and where each came from
     /// (`sort_entries`).
-    fn sort_now(&self, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
+    fn sort_now(&self, dir: &Path, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
         let (view, by) = (self.0.current.get(), self.group_by());
         if view.sort.key == SortKey::Type || by == GroupBy::Type {
             self.request_type_names(&entries);
@@ -2378,12 +2516,22 @@ impl View {
         let folders_first = self.0.options.get().folders_first;
         let mut entries = Rc::unwrap_or_clone(entries);
         let type_name = |e: &Entry| self.type_name_of(e);
-        let order = if by == GroupBy::None {
+        // A sort by a field that is not grouped goes through a grouping by nothing (its values).
+        let by_field = matches!(view.sort.key, SortKey::Field(_)) || matches!(by, GroupBy::Field(_));
+        let order = if by == GroupBy::None && !by_field {
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, None)
         } else {
             let dates = self.fresh_dates();
-            let grouping =
-                Grouping { by, spec: view.sort, folders_first, dates: &dates, type_name: &type_name, row: None };
+            let look = self.field_look(dir);
+            let grouping = Grouping {
+                by,
+                spec: view.sort,
+                folders_first,
+                dates: &dates,
+                type_name: &type_name,
+                row: None,
+                field: Some(&look),
+            };
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, Some(&grouping))
         };
         (Rc::new(entries), order)
@@ -2412,6 +2560,8 @@ impl View {
             }
             return self.sort_results();
         }
+        // A sort or grouping by a field needs the folder's fields (a change to one starts their read).
+        self.sync_folder_fields(false);
         let scroll = self.list_scroll();
         let (listing, full, old_rows, selection) = self.take_listing();
         // The full list is sorted (no longer shared with the shown one, so not copied), then
@@ -2420,7 +2570,7 @@ impl View {
             Listing::Files(dir, shown) => {
                 drop(shown);
                 let full_len = full.len();
-                let (full, order) = self.sort_now(full);
+                let (full, order) = self.sort_now(&dir, full);
                 let in_full = carry(&selection, old_rows.as_deref(), full_len, Some(&order));
                 let (shown, rows) = self.filtered(&dir, &full);
                 let selection = carry(&in_full, None, full.len(), rows.as_deref());
@@ -2487,6 +2637,10 @@ impl View {
                     if matches!(data.listing, Listing::Results(_)) { &plain } else { &own };
                 let dates = self.0.dates.borrow();
                 let dup_key = |i: usize| dups.and_then(|set| set.dup_key(i));
+                let look = match &data.listing {
+                    Listing::Files(dir, _) if matches!(by, GroupBy::Field(_)) => Some(self.field_look(dir)),
+                    _ => None,
+                };
                 let grouping = Grouping {
                     by,
                     spec: self.sort(),
@@ -2494,6 +2648,7 @@ impl View {
                     dates: &dates,
                     type_name,
                     row: dups.is_some().then_some(&dup_key as &dyn Fn(usize) -> Option<GroupKey>),
+                    field: look.as_ref().map(|l| l as &gezik_core::group::FieldLook<'_>),
                 };
                 let collapsed = self.0.collapsed.borrow();
                 let listing = &data.listing;
@@ -2563,6 +2718,9 @@ impl View {
 
     /// Group by ▸ (spec 10 §6.2); the folder remembers it.
     pub fn set_group(&self, by: GroupBy) {
+        if matches!(by, GroupBy::Field(_)) && self.shows_results() {
+            return self.note(FIELDS_IN_FOLDERS.to_owned());
+        }
         self.change_view(|v| v.group = by);
     }
 
@@ -2682,6 +2840,9 @@ impl View {
             window.set_status(note.into());
             return;
         }
+        if let Some(progress) = self.0.field_progress.borrow().clone() {
+            return window.set_status(progress.into());
+        }
         let standing = self.0.results_status.borrow().clone();
         if self.0.data.borrow().selection.count() == 0
             && let Some(text) = standing
@@ -2726,6 +2887,11 @@ impl View {
 }
 
 /// How `view` groups the rows: not in the columns (spec 10 §7.3, the setting is kept).
+/// Search results are not grouped by a field (plan 13e sapma 3): their rows are not read whole.
+fn results_group(by: GroupBy) -> GroupBy {
+    if matches!(by, GroupBy::Field(_)) { GroupBy::None } else { by }
+}
+
 fn grouped_by(view: &ViewSettings) -> GroupBy {
     if view.mode == ViewMode::Columns { GroupBy::None } else { view.group }
 }
@@ -3155,7 +3321,8 @@ mod tests {
         {
             let mut data = view.0.data.borrow_mut();
             // The filter shows the pictures, in the list's order.
-            let (listing, rows) = filtered_listing(Path::new("/x"), &full, &Pattern::compile("*.png").unwrap());
+            let (listing, rows) =
+                listing::filtered_with(Path::new("/x"), &full, &Pattern::compile("*.png").unwrap(), None);
             (data.listing, data.rows, data.full) = (listing, rows, full);
             data.selection = Selection::from_indices(2, [1], Some(1));
         }

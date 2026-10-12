@@ -17,6 +17,8 @@ pub enum SortKey {
     Size,
     /// The search results' own sort (a result's folder), not a folder's.
     Folder,
+    /// A metadata field (spec 13 §8.2): from `Grouping::field`, rows without a value last.
+    Field(crate::fields::FieldId),
 }
 
 impl SortKey {
@@ -31,12 +33,17 @@ impl SortKey {
             SortKey::Type => "type",
             SortKey::Size => "size",
             SortKey::Folder => "folder",
+            SortKey::Field(id) => id.def().key,
         }
     }
 
-    /// `ALL` and `Folder` (the search results' own sort, spec 4.5).
+    /// `ALL`, `Folder` (the search results' own sort, spec 4.5) and a field's key (`duration`).
     pub fn parse(text: &str) -> Option<SortKey> {
-        SortKey::ALL.into_iter().chain([SortKey::Folder]).find(|k| k.as_str() == text)
+        SortKey::ALL
+            .into_iter()
+            .chain([SortKey::Folder])
+            .find(|k| k.as_str() == text)
+            .or_else(|| crate::fields::by_key(text).map(SortKey::Field))
     }
 }
 
@@ -408,18 +415,26 @@ pub fn sort_rows_grouped<'e, 'a>(
         }
         (start, buf.len() as u32)
     };
-    // Folders whose size is on their way go last in either direction (spec 6.3).
+    // Folders whose size is on their way go last in either direction (spec 6.3); so do rows
+    // whose field is on its way or has no value (spec 13 §8.2).
     let last = |e: &Entry| spec.key == SortKey::Size && e.size_pending();
-    let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder);
+    let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder | SortKey::Field(_));
+    let field = match spec.key {
+        SortKey::Field(id) => Some((id, group.and_then(|g| g.field))),
+        _ => None,
+    };
+    let mut values: Vec<Option<crate::fields::Value>> = Vec::with_capacity(if field.is_some() { len } else { 0 });
     // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
     // column's value when it is not the row's text.
     let mut kinds: Vec<(bool, bool)> = Vec::with_capacity(len);
     let mut keys: Vec<Primary> = Vec::with_capacity(if keyed { len } else { 0 });
     for i in 0..len {
         let e = entry(i);
-        kinds.push((e.is_dir, last(&e)));
+        let value = field.map(|(id, look)| look.and_then(|look| look(&e, id)).flatten());
+        kinds.push((e.is_dir, last(&e) || value.as_ref().is_some_and(Option::is_none)));
+        values.extend(value);
         keys.extend(match spec.key {
-            SortKey::Name | SortKey::Folder => None,
+            SortKey::Name | SortKey::Folder | SortKey::Field(_) => None,
             SortKey::Modified => Some(Primary::Time(e.modified)),
             SortKey::Created => Some(Primary::Time(e.created)),
             // A file's size, a folder's worked-out total; a folder without one as 0 (as before).
@@ -439,6 +454,7 @@ pub fn sort_rows_grouped<'e, 'a>(
             let primary = match spec.key {
                 SortKey::Name => Ordering::Equal,
                 SortKey::Folder => key_cmp(folder(i), folder(j)),
+                SortKey::Field(_) => crate::fields::compare(values[i].as_ref(), values[j].as_ref()),
                 _ => match (&keys[i], &keys[j]) {
                     (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
                         span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))

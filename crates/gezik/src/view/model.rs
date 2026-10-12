@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
+use gezik_core::fields::{FieldId, FieldSet, Fields};
 use gezik_core::group::GroupKey;
 use gezik_core::kind::{IconLookup, fallback_type_name, icon_lookup, own_type_name};
 use gezik_core::layout::{Line, Lines, Span};
@@ -52,6 +53,11 @@ pub struct ViewData {
     pub groups: Vec<Span>,
     /// Each group's key, as `groups`.
     pub group_keys: Vec<GroupKey>,
+    /// The field columns shown (spec 13 §8.1), in their order: rows on screen read them.
+    pub field_columns: Vec<FieldId>,
+    /// The folder's fields read whole (spec 13 §7.5): only while a sort, grouping or filter
+    /// needs them.
+    pub folder_fields: Option<Rc<super::folder_fields::FolderFields>>,
 }
 
 pub struct ItemsModel {
@@ -240,11 +246,65 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         icon: icon.unwrap_or_default(),
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),
-        cut: entries && listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)),
+        cut: entries && (listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)) || waiting(data)),
         cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
+        fields: field_cells(data, i),
     }
+}
+
+/// Whether a property filter waits for the folder's fields: the rows it lets through meanwhile
+/// are drawn faint (spec 13 §8.3).
+fn waiting(data: &ViewData) -> bool {
+    data.folder_fields.as_ref().is_some_and(|f| f.faint.get() && !f.complete)
+}
+
+/// Entry `i`'s field cells while field columns show in the list (spec 13 §8.1): asked for only
+/// here, so only for rows on screen; empty until read.
+fn field_cells(data: &ViewData, i: usize) -> ModelRc<slint::SharedString> {
+    if data.field_columns.is_empty() || data.mode != ViewMode::List {
+        return ModelRc::default();
+    }
+    let values = row_fields(data, i, true);
+    let cells: Vec<slint::SharedString> = data
+        .field_columns
+        .iter()
+        .map(|id| values.as_ref().and_then(|v| v.text(*id)).unwrap_or_default().into())
+        .collect();
+    ModelRc::new(VecModel::from(cells))
+}
+
+/// Field `id` of entry `i` as far as known (an export: nothing is read for it).
+pub fn known_field(data: &ViewData, i: usize, id: FieldId) -> String {
+    row_fields(data, i, false).and_then(|v| v.text(id)).unwrap_or_default()
+}
+
+/// Entry `i`'s field values as far as known: from the folder read whole, else from the rows'
+/// cache; with `ask`, the fields of the columns its readers give and not read yet are asked for
+/// (a `.txt` asks nothing). Folders have none.
+fn row_fields(data: &ViewData, i: usize, ask: bool) -> Option<Rc<Fields>> {
+    if matches!(data.listing, Listing::Drives(_)) || data.listing.is_dir(i) {
+        return None;
+    }
+    let want = FieldSet::of(&data.field_columns);
+    if let (Listing::Files(dir, entries), Some(f)) = (&data.listing, &data.folder_fields)
+        && f.dir == *dir
+        && f.read.covers(want)
+        && let Some(values) = entries.get(i).and_then(|e| f.of(&e.name))
+    {
+        return Some(values);
+    }
+    let (path, _) = data.listing.path_at(i)?;
+    if !ask {
+        return data.media.known_fields(&path);
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let want = want.and(gezik_core::fields::provided(&ext));
+    if want.is_empty() {
+        return None;
+    }
+    data.media.fields(path, want, i)
 }
 
 /// The cloud state of entry `i` when its folder is under a cloud root (spec 9 §7.3): from the
@@ -635,5 +695,47 @@ mod tests {
         #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
         let all = [0..100_000];
         assert_eq!(notify_plan(&all, 1, &s), Plan::Reset);
+    }
+
+    #[test]
+    fn field_columns_ask_only_rows_drawn_and_only_fields_not_read() {
+        use gezik_core::fields::{ALBUM, ARTIST, DURATION, Value};
+        let names = ["a.mp3", "b.txt", "c.mp3"];
+        let entries: Vec<Entry> = names
+            .iter()
+            .map(|n| Entry { name: (*n).into(), is_dir: false, flags: 0, size: 1, modified: None, created: None })
+            .collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\m" } else { "/m" });
+        let mut data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        let asked = |data: &ViewData| data.media.pending();
+        (0..3).for_each(|i| drop(file_row(&data, i)));
+        let none = asked(&data);
+        assert_eq!(file_row(&data, 0).fields.row_count(), 0, "no field column: no cells");
+        data.field_columns = vec![ARTIST, DURATION];
+        let row = file_row(&data, 0);
+        assert_eq!(row.fields.row_count(), 2, "one cell a column, empty until read");
+        assert_eq!(asked(&data), none + 1, "the row drawn asks");
+        drop(file_row(&data, 1));
+        assert_eq!(asked(&data), none + 1, "a .txt has no reader: nothing asked");
+        // Read: shown; a wider set asks only for the field missing.
+        let path = dir.join("a.mp3");
+        let key = MediaKey::Fields { path: path.clone(), want: FieldSet::of(&[ARTIST, DURATION]) };
+        let values = Fields::new(vec![(ARTIST, Value::Text("Tarkan".into())), (DURATION, Value::Duration(205_000))]);
+        data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Fields(values));
+        let pending = asked(&data);
+        let cells: Vec<String> = file_row(&data, 0).fields.iter().map(|c| c.to_string()).collect();
+        assert_eq!(cells, ["Tarkan", "3:25"]);
+        assert_eq!(asked(&data), pending, "known: nothing asked");
+        data.field_columns.push(ALBUM);
+        drop(file_row(&data, 0));
+        assert_eq!(asked(&data), pending + 1);
+        assert!(data.media.is_pending(&MediaKey::Fields { path: path.clone(), want: FieldSet::of(&[ALBUM]) }));
+        assert_eq!(known_field(&data, 0, ARTIST), "Tarkan");
+        data.mode = ViewMode::Grid;
+        assert_eq!(file_row(&data, 2).fields.row_count(), 0, "the grid has no columns");
     }
 }

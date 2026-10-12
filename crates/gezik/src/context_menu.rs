@@ -265,6 +265,36 @@ pub const PREVIEW_FORWARD: u32 = 2613;
 pub const PREVIEW_MUTE: u32 = 2614;
 /// A property row's value to the clipboard (13d).
 pub const PREVIEW_COPY: u32 = 2615;
+/// A property row's Show Column (13e).
+pub const PREVIEW_SHOW_COLUMN: u32 = 2616;
+// The field columns (spec 13 §10.3): More Columns… 2620, a field column off 2630 + its place in
+// the registry, Sort by property… 2700, Group by ▸ a field 2710 + its place among those that
+// group.
+pub const COLUMNS_MORE: u32 = 2620;
+pub const FIELD_COLUMN_FIRST: u32 = 2630;
+const FIELD_COLUMN_LAST: u32 = 2693;
+pub const SORT_BY_MORE: u32 = 2700;
+pub const GROUP_BY_FIELD_FIRST: u32 = 2710;
+const GROUP_BY_FIELD_LAST: u32 = 2739;
+
+/// The fields Group by ▸ lists, in its order.
+fn groupable_fields() -> impl Iterator<Item = gezik_core::fields::FieldId> {
+    gezik_core::fields::all().filter(|id| id.def().groupable)
+}
+
+/// The header menu's field items: Hide for each field column shown, then More Columns….
+fn field_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = columns
+        .iter()
+        .filter(|c| c.visible)
+        .filter_map(|c| match c.key {
+            ColumnKey::Field(id) => Some((FIELD_COLUMN_FIRST + id.number() as u32, format!("Hide {}", id.def().label))),
+            _ => None,
+        })
+        .collect();
+    out.push((COLUMNS_MORE, "More Columns…".to_owned()));
+    out
+}
 
 /// Right-click on the preview: a PDF's pages and the zoom (`surface` 4 a PDF, 5 a picture), the
 /// player (6), the bar's `link`, hex or back, and wrap for text.
@@ -319,6 +349,7 @@ pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
             (RESULT_COLUMN_FIRST + i as u32, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
         })
         .collect();
+    out.extend(field_header_items(columns));
     out.push((RESULT_COLUMNS_RESET, "Reset columns".to_owned()));
     out
 }
@@ -327,10 +358,11 @@ pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
 pub const TOGGLE_COLUMN_FIRST: u32 = 20;
 pub const RESET_COLUMNS: u32 = 24;
 
-/// The column header's menu: show or hide each column, reset all.
-pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
-    let mut out: Vec<(u32, &'static str)> = columns
+/// The column header's menu: show or hide each column, the field columns, reset all.
+pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
+    let mut out: Vec<(u32, String)> = columns
         .iter()
+        .filter(|c| !matches!(c.key, ColumnKey::Field(_)))
         .map(|c| {
             let id = TOGGLE_COLUMN_FIRST + u32::try_from(c.key.index() - 1).unwrap_or(0);
             let title = match (c.key, c.visible) {
@@ -346,11 +378,13 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
                 (ColumnKey::Folder, false) => "Show Folder",
                 (ColumnKey::Match, true) => "Hide Match",
                 (ColumnKey::Match, false) => "Show Match",
+                (ColumnKey::Field(_), _) => "",
             };
-            (id, title)
+            (id, title.to_owned())
         })
         .collect();
-    out.push((RESET_COLUMNS, "Reset columns"));
+    out.extend(field_header_items(columns));
+    out.push((RESET_COLUMNS, "Reset columns".to_owned()));
     out
 }
 
@@ -940,6 +974,11 @@ pub fn view_items(
     for (id, key, title) in sorts {
         out.push((id, mark(view.sort.key == key, title)));
     }
+    let by_field = match view.sort.key {
+        SortKey::Field(id) => format!("Sort by {}…", id.def().label.to_lowercase()),
+        _ => "Sort by property…".to_owned(),
+    };
+    out.push((SORT_BY_MORE, mark(matches!(view.sort.key, SortKey::Field(_)), &by_field)));
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
@@ -1001,6 +1040,11 @@ pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
         .into_iter()
         .zip(GroupBy::ALL)
         .map(|(id, by)| (id, mark(by == current, by.title()), true))
+        .chain(
+            groupable_fields()
+                .zip(GROUP_BY_FIELD_FIRST..)
+                .map(|(field, id)| (id, mark(current == GroupBy::Field(field), field.def().label), true)),
+        )
         .collect();
     Submenu { title: "Group by".to_owned(), at, items }
 }
@@ -1163,7 +1207,8 @@ enum Subject {
     /// The preview's viewer.
     Preview,
     /// A property row of the preview, by its value.
-    PreviewValue(String),
+    /// A property row's value, and its field when the row is one (Show Column).
+    PreviewValue(String, Option<gezik_core::fields::FieldId>),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -1647,7 +1692,7 @@ impl Menus {
         } else {
             header_items(&crate::panes::active_view().columns_shown())
                 .into_iter()
-                .map(|(id, t)| (id, t.to_owned(), true))
+                .map(|(id, t)| (id, t, true))
                 .collect()
         };
         let at = items.len();
@@ -1918,10 +1963,15 @@ impl Menus {
         self.open_slint_entries(&preview_items(hex, file, wrap, surface), Vec::new(), at);
     }
 
-    /// Right-click on a property row of the preview (13d): Copy Value.
-    pub fn preview_value_menu(&self, value: String, at: Anchor) {
-        *self.subject.borrow_mut() = Some(Subject::PreviewValue(value));
-        self.open_slint_entries(&[(PREVIEW_COPY, "Copy Value".to_owned(), true)], Vec::new(), at);
+    /// Right-click on a property row of the preview (13d): Copy Value; Show Column (13e).
+    pub fn preview_value_menu(&self, label: &str, value: String, at: Anchor) {
+        let field = gezik_core::fields::all().find(|id| id.def().label == label);
+        *self.subject.borrow_mut() = Some(Subject::PreviewValue(value, field));
+        let mut items = vec![(PREVIEW_COPY, "Copy Value".to_owned(), true)];
+        if field.is_some() {
+            items.push((PREVIEW_SHOW_COLUMN, "Show Column".to_owned(), true));
+        }
+        self.open_slint_entries(&items, Vec::new(), at);
     }
 
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
@@ -2044,6 +2094,21 @@ impl Menus {
             (id, _) if (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id) => {
                 crate::panes::active_view().set_group(GroupBy::ALL[(id - GROUP_BY_NONE) as usize]);
             }
+            (id, _) if (GROUP_BY_FIELD_FIRST..=GROUP_BY_FIELD_LAST).contains(&id) => {
+                if let Some(field) = groupable_fields().nth((id - GROUP_BY_FIELD_FIRST) as usize) {
+                    crate::panes::active_view().set_group(GroupBy::Field(field));
+                }
+            }
+            (COLUMNS_MORE, _) => crate::field_picker::with_current(|p| p.open(crate::field_picker::Purpose::Columns)),
+            (SORT_BY_MORE, _) => crate::field_picker::with_current(|p| p.open(crate::field_picker::Purpose::Sort)),
+            (id, Subject::Header) if (FIELD_COLUMN_FIRST..=FIELD_COLUMN_LAST).contains(&id) => {
+                if let Some(field) = gezik_core::fields::FieldId::from_number(i64::from(id - FIELD_COLUMN_FIRST)) {
+                    crate::panes::active_view().toggle_column(ColumnKey::Field(field));
+                }
+            }
+            (PREVIEW_SHOW_COLUMN, Subject::PreviewValue(_, Some(field))) => {
+                crate::panes::active_view().show_field_column(field);
+            }
             (COLLAPSE_GROUPS, _) => crate::panes::active_view().collapse_all(true),
             (EXPAND_GROUPS, _) => crate::panes::active_view().collapse_all(false),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
@@ -2127,7 +2192,7 @@ impl Menus {
             (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
             (PREVIEW_HEX | PREVIEW_TEXT, Subject::Preview) => _ = self.preview.toggle_hex(),
             (PREVIEW_WRAP, Subject::Preview) => self.preview.toggle_wrap(),
-            (PREVIEW_COPY, Subject::PreviewValue(value)) => {
+            (PREVIEW_COPY, Subject::PreviewValue(value, _)) => {
                 crate::panes::active_view().note(match gezik_platform::clipboard::write_text(&value) {
                     Ok(()) => "Copied the value".to_owned(),
                     Err(gezik_platform::clipboard::ClipboardError::Unsupported) => {
@@ -2570,6 +2635,7 @@ fn from_submenu(id: u32) -> bool {
         || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id)
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
         || (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id)
+        || (GROUP_BY_FIELD_FIRST..=GROUP_BY_FIELD_LAST).contains(&id)
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
@@ -2635,10 +2701,10 @@ mod tests {
     fn the_results_header_menu_has_its_own_ids() {
         let items = result_header_items(&gezik_core::view::default_result_columns());
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
-        assert_eq!(ids, [1550, 1551, 1552, 1553, 1554, 1555, RESULT_COLUMNS_RESET]);
+        assert_eq!(ids, [1550, 1551, 1552, 1553, 1554, 1555, COLUMNS_MORE, RESULT_COLUMNS_RESET]);
         assert_eq!(items[0].1, "Hide Folder");
         assert_eq!(items[3].1, "Show Created");
-        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "8a's range");
+        assert!(ids.iter().all(|id| (1500..1600).contains(id) || *id == COLUMNS_MORE), "8a's range, and 13e's");
     }
 
     #[test]
@@ -2942,7 +3008,11 @@ mod tests {
         let sub = group_by_sub(GroupBy::Date, 3);
         assert_eq!((sub.title.as_str(), sub.at), ("Group by", 3));
         let ids: Vec<u32> = sub.items.iter().map(|(id, _, _)| *id).collect();
-        assert_eq!(ids, [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]);
+        assert_eq!(&ids[..4], [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]);
+        assert_eq!(ids.len(), 4 + groupable_fields().count(), "then the fields that group (spec 13 §8.2)");
+        assert_eq!(sub.items[4].1, "    Date Taken");
+        let artist = group_by_sub(GroupBy::Field(gezik_core::fields::ARTIST), 0);
+        assert!(artist.items.iter().any(|(id, t, _)| *id >= GROUP_BY_FIELD_FIRST && t == "• Artist"));
         let marked: Vec<&str> =
             sub.items.iter().filter(|(_, t, _)| t.starts_with("• ")).map(|(_, t, _)| t.as_str()).collect();
         assert_eq!(marked, ["• Date"]);
@@ -3094,6 +3164,9 @@ mod tests {
             TOOLS_MOVE_TO,
             TOOLS_SPLIT,
             TOOLS_JOIN,
+            PREVIEW_SHOW_COLUMN,
+            COLUMNS_MORE,
+            SORT_BY_MORE,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
@@ -3124,7 +3197,11 @@ mod tests {
             WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX,
             JOB_SPEED_FIRST..JOB_SPEED_FIRST + JOB_SPEEDS.len() as u32,
             crate::size_map::MAP_OPEN..crate::size_map::MAP_COPY_PATH + 1,
+            FIELD_COLUMN_FIRST..FIELD_COLUMN_LAST + 1,
+            GROUP_BY_FIELD_FIRST..GROUP_BY_FIELD_LAST + 1,
         ]);
+        assert!(gezik_core::fields::all().count() <= (FIELD_COLUMN_LAST - FIELD_COLUMN_FIRST + 1) as usize);
+        assert!(groupable_fields().count() <= (GROUP_BY_FIELD_LAST - GROUP_BY_FIELD_FIRST + 1) as usize);
         assert!(JOB_SPEED_FIRST + (JOB_SPEEDS.len() as u32) <= 2340, "the job menu keeps to 2320-2339");
         for (i, a) in ranges.iter().enumerate() {
             assert!(a.start >= 1 && a.end <= GEZIK_IDS_END, "{a:?}: 1..4096 (0 is a heading, 4096 on the Shell's)");
@@ -3414,7 +3491,9 @@ mod tests {
     #[test]
     fn header_menu_toggles_each_column_and_resets() {
         use gezik_core::view::default_columns;
-        let got = header_items(&default_columns());
+        let shown = |columns: &[ColumnState]| -> Vec<(u32, String)> { header_items(columns) };
+        let got = shown(&default_columns());
+        let got: Vec<(u32, &str)> = got.iter().map(|(id, t)| (*id, t.as_str())).collect();
         assert_eq!(
             got,
             [
@@ -3422,9 +3501,18 @@ mod tests {
                 (TOGGLE_COLUMN_FIRST + 1, "Show Created"),
                 (TOGGLE_COLUMN_FIRST + 2, "Hide Type"),
                 (TOGGLE_COLUMN_FIRST + 3, "Hide Size"),
+                (COLUMNS_MORE, "More Columns…"),
                 (RESET_COLUMNS, "Reset columns"),
             ]
         );
+        // A field column shown: Hide it, before More Columns… (spec 13 §8.1).
+        let mut columns = default_columns();
+        gezik_core::view::show_field(&mut columns, gezik_core::fields::ARTIST);
+        let got = shown(&columns);
+        let field = FIELD_COLUMN_FIRST + gezik_core::fields::ARTIST.number() as u32;
+        assert_eq!(got[got.len() - 3], (field, "Hide Artist".to_owned()));
+        let results = result_header_items(&columns);
+        assert!(results.iter().any(|(id, t)| *id == field && t == "Hide Artist"), "results too");
     }
 
     #[test]
@@ -3528,6 +3616,7 @@ mod tests {
                 SORT_BY_CREATED,
                 SORT_BY_TYPE,
                 SORT_BY_SIZE,
+                SORT_BY_MORE,
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,
@@ -3554,6 +3643,12 @@ mod tests {
         );
         assert_eq!(VIEW_COLUMNS, 2040, "spec 10 §10.3");
         assert_eq!(list.last().map(|(id, _)| *id), Some(REVEAL_IN_TREE));
+        let by_duration = ViewSettings {
+            sort: SortSpec { key: SortKey::Field(gezik_core::fields::DURATION), dir: SortDir::Asc },
+            ..ViewSettings::default()
+        };
+        let items = view_items(by_duration, false, false, ViewOptions::default(), false);
+        assert!(items.contains(&(SORT_BY_MORE, "• Sort by duration…".to_owned())));
         let grid = ViewSettings {
             mode: ViewMode::Grid,
             sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
@@ -3602,7 +3697,7 @@ mod tests {
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[15..],
+            &ids[16..],
             [
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
@@ -3615,9 +3710,9 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(items[15].1.starts_with("• ") && items[16].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[17].1.starts_with("• "));
-        assert_eq!(items[18].1.starts_with("• "), options.show_hidden);
+        assert!(items[16].1.starts_with("• ") && items[17].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[18].1.starts_with("• "));
+        assert_eq!(items[19].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");

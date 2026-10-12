@@ -73,6 +73,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::dual::DUAL.with(|s| s.forget(id)),
     |id| crate::info::CURRENT.with(|s| s.forget(id)),
     |id| crate::integration::CURRENT.with(|s| s.forget(id)),
+    |id| crate::field_picker::CURRENT.with(|s| s.forget(id)),
     |id| crate::operations::PARTS.with(|s| s.forget(id)),
     |id| crate::palette::CURRENT.with(|s| s.forget(id)),
     |id| crate::panes::PANES.with(|s| s.forget(id)),
@@ -931,6 +932,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let _saved_searches = saved_searches::SavedSearches::new(dialogs.clone(), config.clone());
     let _tab_tools = tab_tools::TabTools::new(&window);
     let _integration = integration::Integration::new(&window);
+    let _field_picker = crate::field_picker::FieldPicker::new(&window);
     let _select_tools =
         select_tools::SelectTools::new(dialogs.clone(), config.clone(), state.selection.last_pattern.clone());
     let ops = process.ops.clone();
@@ -1157,6 +1159,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         let preview = preview.clone();
         move || preview.schedule()
     });
+    window.on_field_resized(|pane, column, width| {
+        if let (Some(p), Ok(column)) = (crate::pick(pane), usize::try_from(column)) {
+            p.view.field_resized(column, width);
+        }
+    });
     // The columns are every pane's (spec 10 §3.3).
     window.on_columns_resized(|_pane| {
         for p in panes::all() {
@@ -1319,7 +1326,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     });
     window.global::<crate::PreviewActions>().on_value_menu({
         let menus = menus.clone();
-        move |value, x, y| menus.preview_value_menu(value.into(), popup::Anchor::point(x, y))
+        move |label, value, x, y| menus.preview_value_menu(&label, value.into(), popup::Anchor::point(x, y))
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu({

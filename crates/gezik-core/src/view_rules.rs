@@ -219,21 +219,31 @@ impl Counts {
 /// The columns a rule shows (`columns = [...]`): which, not in what order (the list's order is
 /// fixed) nor how wide (the list's widths).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Columns(u8);
+pub struct Columns(u128);
 
 impl Columns {
     pub fn of(keys: &[ColumnKey]) -> Columns {
-        Columns(keys.iter().fold(0, |bits, key| bits | 1u8 << key.index()))
+        Columns(keys.iter().fold(0, |bits, key| bits | 1u128 << key.index()))
     }
 
     pub fn has(self, key: ColumnKey) -> bool {
-        self.0 & (1u8 << key.index()) != 0
+        self.0 & (1u128 << key.index()) != 0
     }
 }
 
-/// `columns` as shown: with a rule's `set`, its visibility (spec 10 §8.1, §17 decision 36).
+/// `columns` as shown: with a rule's `set`, its visibility (spec 10 §8.1, §17 decision 36);
+/// the rule's field columns the list lacks come last, at their default widths (spec 13 §8.2).
 pub fn shown_columns(columns: &[ColumnState], set: Option<Columns>) -> Vec<ColumnState> {
-    columns.iter().map(|c| ColumnState { visible: set.map_or(c.visible, |set| set.has(c.key)), ..*c }).collect()
+    let mut out: Vec<ColumnState> =
+        columns.iter().map(|c| ColumnState { visible: set.map_or(c.visible, |set| set.has(c.key)), ..*c }).collect();
+    if let Some(set) = set {
+        for id in crate::fields::all() {
+            if set.has(ColumnKey::Field(id)) {
+                crate::view::show_field(&mut out, id);
+            }
+        }
+    }
+    out
 }
 
 /// What a rule sets; what it leaves out stays `[view]`'s.
@@ -632,6 +642,11 @@ mod tests {
             shown_columns(&columns, Some(results)).iter().all(|c| !c.visible),
             "results' columns are not a folder's"
         );
+        let artist = ColumnKey::Field(crate::fields::ARTIST);
+        let music = shown_columns(&columns, Some(Columns::of(&[ColumnKey::Size, artist])));
+        let visible: Vec<ColumnKey> = music.iter().filter(|c| c.visible).map(|c| c.key).collect();
+        assert_eq!(visible, [ColumnKey::Size, artist], "a rule's field column comes last (spec 13 §8.2)");
+        assert_eq!(music.last().map(|c| c.width), Some(150));
     }
 
     #[test]

@@ -900,7 +900,8 @@ mod tests {
                 | Action::SplitFile
                 | Action::JoinFiles
                 | Action::PreviewHex
-                | Action::PreviewPlay => continue,
+                | Action::PreviewPlay
+                | Action::MoreColumns => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }
