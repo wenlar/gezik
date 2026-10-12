@@ -176,10 +176,8 @@ export component ColumnView inherits Rectangle {
                                 overflow: elide;
                                 color: row.file.selected ? Theme.selection-foreground : Theme.foreground;
                             }
-                            if row.file.tags.length > 0 || row.file.more > 0: TagDots {
-                                colors: row.file.tags;
-                                more: row.file.more;
-                                selected: row.file.selected;
+                            if row.file.dots > 0: TagDots {
+                                file: row.file;
                             }
                             if row.file.is-dir: VerticalLayout {
                                 alignment: center;

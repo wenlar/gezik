@@ -1757,7 +1757,7 @@ impl Operations {
         }
         // An archive that needs 7-Zip, a download that is done, a conversion that needs ffmpeg.
         if report.kind == TaskKind::Tags {
-            crate::tags::job_done();
+            crate::tags::job_done(id);
         }
         crate::archives::with_current(|archives| archives.job_finished(id, &report));
         crate::convert::with_current(|convert| convert.job_finished(id, &report));

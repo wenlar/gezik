@@ -867,6 +867,11 @@ impl Action {
         })
     }
 
+    /// `tags`, `tag-1…7` and `clear-tags`: they act on the selection's tags.
+    pub fn is_tag_action(self) -> bool {
+        matches!(self, Action::Tags | Action::ClearTags) || self.tag_number().is_some()
+    }
+
     /// The place in `[tags] list` a `tag-N` action toggles (1-based): `Tag1` → 1 … `Tag7` → 7.
     pub fn tag_number(self) -> Option<usize> {
         Some(match self {

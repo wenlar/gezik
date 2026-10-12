@@ -217,7 +217,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let finder = (cfg!(target_os = "macos") && is_dir && entries)
         .then(|| listing.path_at(i).and_then(|(path, _)| gezik_platform::finder::finder_name(&path)))
         .flatten();
-    let (tags, more, tag_names) = row_tags(data, i);
+    let ([dot1, dot2, dot3], dots, more, tag_names) = row_tags(data, i);
     let (folder, found) = match listing {
         Listing::Results(set) => (
             set.shown_folder(i).unwrap_or_default().into(),
@@ -245,23 +245,31 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
-        tags,
+        dot1,
+        dot2,
+        dot3,
+        dots,
         more,
         tag_names: tag_names.into(),
     }
 }
 
 /// Entry `i`'s tag dots while dots show (spec 12 §5.4): asked for only here, so only for rows
-/// on screen; until they are read, none.
-fn row_tags(data: &ViewData, i: usize) -> (ModelRc<slint::Color>, i32, String) {
+/// on screen; until they are read, none. Cloud folders are read only with `dots = true`.
+fn row_tags(data: &ViewData, i: usize) -> ([slint::Color; 3], i32, i32, String) {
     if matches!(data.listing, Listing::Drives(_)) || !crate::tags::dots_on() {
         return Default::default();
     }
     let Some((path, _)) = data.listing.path_at(i) else { return Default::default() };
+    if !crate::tags::dots_forced() && crate::cloud::root_of(&path).is_some() {
+        return Default::default();
+    }
     match data.media.tags(path, i) {
         Some(tags) if !tags.is_empty() => {
             let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&tags, list));
-            (ModelRc::new(VecModel::from(colors)), more, names)
+            let mut dots = [slint::Color::default(); 3];
+            dots.iter_mut().zip(&colors).for_each(|(dot, color)| *dot = *color);
+            (dots, i32::try_from(colors.len()).unwrap_or(3), more, names)
         }
         _ => Default::default(),
     }
@@ -695,10 +703,17 @@ mod tests {
         let tags = vec![red, Tag::new("Mine", TagColor::None)].into_boxed_slice();
         data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Tags(tags));
         let row = file_row(&data, 0);
-        assert_eq!(row.tags.row_count(), 2);
-        assert_eq!(row.tags.row_data(0), Some(crate::tags::color_of(TagColor::Red)), "the list's colour");
+        assert_eq!(row.dots, 2);
+        assert_eq!(row.dot1, crate::tags::color_of(TagColor::Red), "the list's colour");
         assert_eq!((row.more, row.tag_names.as_str()), (0, "Red, Mine"));
+        // Files changed (a listing shown): read again, the old dots drawn until then.
+        data.media.new_generation();
+        draw(0..1);
+        let before = data.media.pending();
+        data.media.forget_tags();
+        assert_eq!(file_row(&data, 0).dots, 2, "no flicker");
+        assert_eq!(data.media.pending(), before + 1, "asked again");
         crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
-        assert_eq!(file_row(&data, 0).tags.row_count(), 0, "dots off: none drawn");
+        assert_eq!(file_row(&data, 0).dots, 0, "dots off: none drawn");
     }
 }

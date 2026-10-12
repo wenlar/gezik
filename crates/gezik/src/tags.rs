@@ -6,6 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use gezik_config::shortcuts::{Action, Chord, Key, Platform};
@@ -52,6 +53,7 @@ pub fn set_settings(settings: TagsSettings) {
     let list_changed = STATE.with(|s| {
         let mut s = s.borrow_mut();
         let changed = s.settings.list != settings.list;
+        FORCED.store(settings.dots == Dots::On, Ordering::Relaxed);
         s.settings = settings;
         changed
     });
@@ -87,9 +89,40 @@ pub fn dots_shown(dots: Dots, used: bool, mac: bool) -> bool {
     }
 }
 
-/// A row's tags, on the icon worker (media.rs); a file that cannot be read has none.
+/// `[tags] dots = true` (not `auto`): network and cloud folders are read too.
+static FORCED: AtomicBool = AtomicBool::new(false);
+
+pub fn dots_forced() -> bool {
+    FORCED.load(Ordering::Relaxed)
+}
+
+thread_local! {
+    /// The icon worker's last folder and whether it is on a network drive (asked once a folder).
+    static NETWORK: RefCell<Option<(PathBuf, bool)>> = const { RefCell::new(None) };
+}
+
+/// A row's tags, on the icon worker (media.rs); a file that cannot be read has none, nor one on
+/// a network drive unless dots are forced on (each read would cross the network).
 pub fn read_for_rows(path: &Path) -> Box<[Tag]> {
+    if !dots_forced() && on_network(path) {
+        return Box::default();
+    }
     STORE.get().and_then(|store| store.read(path).ok()).map(|meta| meta.tags.into_boxed_slice()).unwrap_or_default()
+}
+
+fn on_network(path: &Path) -> bool {
+    let folder = path.parent().unwrap_or(path);
+    NETWORK.with(|n| {
+        let mut n = n.borrow_mut();
+        match &*n {
+            Some((known, network)) if known == folder => *network,
+            _ => {
+                let network = gezik_platform::fs::is_network(folder).unwrap_or(false);
+                *n = Some((folder.to_path_buf(), network));
+                network
+            }
+        }
+    })
 }
 
 /// Finder's colours, the same in light and dark themes; no colour: transparent (a ring).
@@ -155,6 +188,7 @@ pub fn toggle_dots() {
     let config = STATE.with(|s| {
         let mut s = s.borrow_mut();
         s.settings.dots = dots;
+        FORCED.store(dots == Dots::On, Ordering::Relaxed);
         s.config.clone()
     });
     redraw_all();
@@ -184,12 +218,46 @@ fn targets(view: &View) -> Option<Vec<PathBuf>> {
 }
 
 /// Reads `paths`' tags on a thread, then runs `then` with them in this window.
+/// The tag jobs sent and not finished yet, with what they do: a read before one of them writes
+/// sees its edits too (a tag key pressed twice quickly takes the tag off again).
+type InFlight = Vec<(gezik_ops::JobId, Vec<PathBuf>, Vec<MetaEdit>)>;
+
+thread_local! {
+    static IN_FLIGHT: RefCell<InFlight> = const { RefCell::new(Vec::new()) };
+}
+
+/// `metas` (of `paths`) as they will be once the jobs in `jobs` have written: each job's edits
+/// on the paths it has, in the order the jobs were sent. The edits are idempotent, so a job that
+/// wrote before the read counts once all the same.
+pub fn with_in_flight(paths: &[PathBuf], metas: &mut [Meta], jobs: &InFlight) {
+    for (_, job_paths, edits) in jobs {
+        for (path, meta) in paths.iter().zip(metas.iter_mut()) {
+            if job_paths.contains(path) {
+                edits.iter().for_each(|edit| meta.apply(edit));
+            }
+        }
+    }
+}
+
 fn read_then(paths: Vec<PathBuf>, then: impl FnOnce(Vec<PathBuf>, Vec<Meta>) + Send + 'static) {
     let Some(store) = STORE.get().cloned() else { return };
     let id = crate::windows::current();
+    // The jobs in flight now may finish before the read: their edits count either way.
+    let mut jobs = IN_FLIGHT.with(|f| f.borrow().clone());
     let spawned = std::thread::Builder::new().name("gezik-tags".into()).spawn(move || {
         let metas = paths.iter().map(|path| store.read(path).unwrap_or_default()).collect();
-        crate::windows::post(id, move || then(paths, metas));
+        crate::windows::post(id, move || {
+            let mut metas: Vec<Meta> = metas;
+            IN_FLIGHT.with(|f| {
+                for job in f.borrow().iter() {
+                    if !jobs.iter().any(|(id, _, _)| *id == job.0) {
+                        jobs.push(job.clone());
+                    }
+                }
+            });
+            with_in_flight(&paths, &mut metas, &jobs);
+            then(paths, metas)
+        });
     });
     if let Err(err) = spawned {
         eprintln!("gezik: cannot start the tags thread: {err}");
@@ -202,9 +270,10 @@ fn submit(paths: Vec<PathBuf>, edits: Vec<MetaEdit>) {
         return;
     }
     let adds = edits.iter().any(|e| matches!(e, MetaEdit::AddTags(_)));
-    let task = Box::new(gezik_ops::TagsTask::new(paths, edits));
+    let task = Box::new(gezik_ops::TagsTask::new(paths.clone(), edits.clone()));
     crate::operations::with_current(|ops| {
-        ops.submit(task, None, crate::operations::After::Nothing);
+        let job = ops.submit(task, None, crate::operations::After::Nothing);
+        IN_FLIGHT.with(|f| f.borrow_mut().push((job, paths, edits)));
     });
     if adds && !STATE.with(|s| s.borrow().used) {
         let before = dots_on();
@@ -271,7 +340,8 @@ pub fn open_picker(view: &View) {
 }
 
 /// A tag job (or its undo) ended: rows read their tags again.
-pub fn job_done() {
+pub fn job_done(job: gezik_ops::JobId) {
+    IN_FLIGHT.with(|f| f.borrow_mut().retain(|(id, _, _)| *id != job));
     forget_rows();
 }
 
@@ -630,18 +700,19 @@ pub fn key_label(list: &[Tag], name: &str) -> String {
 
 /// Puts `tag` at the end of `[tags] list` (shown at once, written to settings.toml).
 fn add_to_list(tag: Tag) {
-    let (list, config) = STATE.with(|s| {
+    let added = STATE.with(|s| {
         let mut s = s.borrow_mut();
-        if !s.settings.list.iter().any(|t| same_name(&t.name, &tag.name))
-            && s.settings.list.len() < gezik_config::tags::TAGS_MAX
-        {
-            s.settings.list.push(tag);
+        let new = !s.settings.list.iter().any(|t| same_name(&t.name, &tag.name))
+            && s.settings.list.len() < gezik_config::tags::TAGS_MAX;
+        if new {
+            s.settings.list.push(tag.clone());
         }
-        (s.settings.list.clone(), s.config.clone())
+        new.then(|| (s.settings.list.clone(), s.config.clone()))
     });
-    if let Some(config) = config {
+    if let Some((list, Some(config))) = added {
         let id = crate::windows::current();
-        config.write_settings(gezik_config::settings_writer::SettingsChange::TagList(list), move |result| {
+        let change = gezik_config::settings_writer::SettingsChange::TagAdded(tag, list);
+        config.write_settings(change, move |result| {
             if let Err(warning) = result {
                 crate::windows::post(id, move || crate::panes::active_view().note(warning.to_string()));
             }
@@ -720,6 +791,22 @@ mod tests {
         assert_eq!(edits.to_edits(), [MetaEdit::AddTags(vec![tag("Red", TagColor::Red)])]);
         edits.toggle(&tag("Red", TagColor::Red), None);
         assert_eq!(edits.to_edits(), [], "a second click takes the addition back, removes nothing");
+    }
+
+    #[test]
+    fn a_second_press_sees_the_first_job_not_yet_written() {
+        let paths = [PathBuf::from("a"), PathBuf::from("b")];
+        let red = tag("Red", TagColor::Red);
+        let mut metas = [with(&[]), with(&["Blue"])];
+        let jobs: InFlight = vec![(7, paths.to_vec(), vec![MetaEdit::AddTags(vec![red.clone()])])];
+        with_in_flight(&paths, &mut metas, &jobs);
+        assert!(all_have(&metas, "Red"), "the second press takes Red off");
+        // The read came after the job wrote: the same once applied again.
+        with_in_flight(&paths, &mut metas, &jobs);
+        assert_eq!(metas[1].tags.iter().filter(|t| &*t.name == "Red").count(), 1);
+        let mut other = [with(&[])];
+        with_in_flight(&[PathBuf::from("c")], &mut other, &jobs);
+        assert!(other[0].tags.is_empty(), "another file is not in that job");
     }
 
     #[test]

@@ -585,10 +585,17 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
     Submenu { title: "Tools".to_owned(), at, items }
 }
 
-/// `Tags ▸` for `paths` right after `Tools ▸` (which drives and the trash have not: no tags there).
-fn add_tags(subs: &mut Vec<Submenu>, paths: &[PathBuf]) {
-    if let Some(at) = subs.iter().find(|sub| sub.title == "Tools").map(|sub| sub.at) {
-        subs.push(crate::tags::menu_sub(paths, at));
+/// `Tags ▸` for `paths` right after `Tools ▸` (which drives and the trash have not: no tags
+/// there). Gezik's own menus have `MAX_SUBMENUS` places: there the tags go at the end of Tools ▸,
+/// under a greyed "Tags" (plan 12b sapma 11).
+fn add_tags(subs: &mut Vec<Submenu>, paths: &[PathBuf], native: bool) {
+    let Some(tools) = subs.iter_mut().find(|sub| sub.title == "Tools") else { return };
+    let tags = crate::tags::menu_sub(paths, tools.at);
+    if native {
+        subs.push(tags);
+    } else {
+        tools.items.push((HEADING, "Tags".to_owned(), false));
+        tools.items.extend(tags.items);
     }
 }
 
@@ -611,8 +618,8 @@ pub const GEZIK_IDS_END: u32 = 4096;
 #[cfg(windows)]
 const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
 /// Most submenus a menu shows: app.slint and popup-menu.slint have this many places (a macOS
-/// row: Open With, Copy path as, Commands, Tools, Tags, Quick Actions).
-pub const MAX_SUBMENUS: usize = 6;
+/// row: Open With, Copy path as, Commands, Tools, Quick Actions; Tags go inside Tools there).
+pub const MAX_SUBMENUS: usize = 5;
 
 /// A submenu among a menu's items ("Commands ▸"): its title, its place among the items (0:
 /// first), and its items (id, title, enabled).
@@ -1256,7 +1263,7 @@ impl Menus {
             let services = self.add_finder_extras(&list, &mut subs, &rows);
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
-            add_tags(&mut subs, &paths);
+            add_tags(&mut subs, &paths, native);
             list.extend(self.file_extras(false, false, native));
             let in_cloud = paths.iter().all(|p| crate::cloud::root_of(p).is_some());
             list.extend(cloud_items(in_cloud, native, cfg!(target_os = "macos")));
@@ -1295,7 +1302,7 @@ impl Menus {
         let services = self.add_finder_extras(&list, &mut subs, &[(path.clone(), is_dir)]);
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
-        add_tags(&mut subs, std::slice::from_ref(&path));
+        add_tags(&mut subs, std::slice::from_ref(&path), native);
         list.extend(self.file_extras(true, is_dir, native));
         list.extend(cloud_items(crate::cloud::root_of(&path).is_some(), native, cfg!(target_os = "macos")));
         // Not asked on Windows: Explorer's menu has Eject, and asking a fixed drive's bus costs a query.
@@ -2596,8 +2603,8 @@ mod tests {
         assert!(before.is_empty());
         let shown: Vec<(&str, Vec<&str>)> = parts.iter().map(|(s, after)| (s.title.as_str(), after.clone())).collect();
         assert_eq!(shown, [("First", vec!["a", "b"]), ("Mid", vec!["c", "d"]), ("Late", vec![])]);
-        // Seven submenus, some at one place: the last is left out.
-        let many: Vec<Submenu> = [0, 1, 2, 2, 3, 3, 3].into_iter().map(|at| sub("S", at, 1)).collect();
+        // Six submenus, two pairs at one place: the last is left out.
+        let many: Vec<Submenu> = [0, 1, 2, 2, 3, 3].into_iter().map(|at| sub("S", at, 1)).collect();
         let (_, parts) = split_menu(&items, &many);
         assert_eq!(parts.len(), MAX_SUBMENUS);
         assert_eq!(parts.last().unwrap().1, ["d"], "the items after one left out stay");
@@ -2830,7 +2837,7 @@ mod tests {
     }
 
     #[test]
-    fn a_macos_row_keeps_all_six_submenus() {
+    fn a_macos_row_keeps_all_five_submenus() {
         let list: Vec<(u32, String)> = (0..10).map(|i| (i + 100, String::new())).collect();
         let sub = |title: &str, at: usize| Submenu { title: title.into(), at, items: vec![(1, String::new(), true)] };
         let subs = [
@@ -2838,7 +2845,6 @@ mod tests {
             sub("Copy path as", 4),
             sub("Commands", 6),
             tools_sub(6, false, &[], false),
-            sub("Tags", 6),
             sub("Quick Actions", 10),
         ];
         let (_, parts) = split_menu(&list, &subs);

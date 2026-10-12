@@ -532,16 +532,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::MoveTo
             | Action::SplitFile
             | Action::JoinFiles
-            | Action::Tags
-            | Action::Tag1
-            | Action::Tag2
-            | Action::Tag3
-            | Action::Tag4
-            | Action::Tag5
-            | Action::Tag6
-            | Action::Tag7
-            | Action::ClearTags
-    )
+    ) || action.is_tag_action()
 }
 
 /// Shortcuts left to the path box and the filter bar while either has the keyboard: the
@@ -579,19 +570,10 @@ pub fn needs_list(action: Action) -> bool {
             | Action::MoveTo
             | Action::SplitFile
             | Action::JoinFiles
-            | Action::Tags
-            | Action::Tag1
-            | Action::Tag2
-            | Action::Tag3
-            | Action::Tag4
-            | Action::Tag5
-            | Action::Tag6
-            | Action::Tag7
-            | Action::ClearTags
             | Action::FocusOtherPane
             | Action::CopyToOtherPane
             | Action::MoveToOtherPane
-    )
+    ) || action.is_tag_action()
 }
 
 #[cfg(test)]
