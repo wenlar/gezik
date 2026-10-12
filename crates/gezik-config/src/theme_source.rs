@@ -47,8 +47,10 @@ pub fn resolve(address: &str) -> Result<Fetch, &'static str> {
         && !host.starts_with('.')
         && host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
-    // `..` would leave the folder asked for once the server resolves it.
-    if !host_ok || parts.iter().any(|p| *p == "." || *p == "..") {
+    // `..` (written plainly or as `%2e`) would leave the folder asked for once the server
+    // resolves it.
+    let dots = |p: &&str| matches!(p.to_ascii_lowercase().replace("%2e", ".").as_str(), "." | "..");
+    if !host_ok || parts.iter().any(dots) {
         return Err(WHAT);
     }
     let toml = parts.last().is_some_and(|p| p.to_ascii_lowercase().ends_with(".toml"));
@@ -58,7 +60,8 @@ pub fn resolve(address: &str) -> Result<Fetch, &'static str> {
             [owner, repo, ..] => (*owner, repo.strip_suffix(".git").unwrap_or(repo)),
             _ => return Err(WHAT),
         };
-        if !name_ok(owner) || !name_ok(repo) {
+        // No escapes in a branch or a path: what GitHub decodes is not what was checked.
+        if !name_ok(owner) || !name_ok(repo) || parts.iter().any(|p| p.contains('%')) {
             return Err(WHAT);
         }
         let zipball = format!("https://api.github.com/repos/{owner}/{repo}/zipball");
@@ -163,7 +166,12 @@ pub fn file_id(stem: &str) -> String {
     if id.is_empty() {
         id = "theme".to_owned();
     }
-    if id == "auto" || crate::theme::BUILTIN_THEMES.contains(&id.as_str()) {
+    // Windows cannot make a file of a device's name (`nul.toml` is the device).
+    let device = matches!(id.as_str(), "con" | "nul" | "aux" | "prn")
+        || ["com", "lpt"].iter().any(|d| {
+            id.strip_prefix(d).is_some_and(|n| matches!(n, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
+        });
+    if id == "auto" || device || crate::theme::BUILTIN_THEMES.contains(&id.as_str()) {
         id.push_str("-theme");
     }
     id
@@ -249,6 +257,10 @@ mod tests {
             "https://example.org:8443/nord.toml",
             "https://example.org/../nord.toml",
             "https://github.com/arc/nord/tree/main/../x",
+            "https://github.com/arc/nord/blob/%2e%2e/%2E%2e/x.toml",
+            "https://github.com/arc/nord/tree/ma%2Fin",
+            "https://example.org/a/%2e%2E/x.toml",
+            "https://example.org/.%2e/x.toml",
             "https://example.org/a b.toml",
             "https://example.org/a\n.toml",
             "C:\\themes\\nord.toml",
@@ -300,6 +312,12 @@ mod tests {
         assert_eq!(file_id("..."), "theme");
         assert_eq!(file_id("Dark"), "dark-theme", "a built-in is not shadowed");
         assert_eq!(file_id("auto"), "auto-theme", "reserved");
+        for device in ["con", "NUL", "Aux.toml", "prn", "com1", "LPT9"] {
+            let id = file_id(device.strip_suffix(".toml").unwrap_or(device));
+            assert!(id.ends_with("-theme"), "{device}: {id}");
+        }
+        assert_eq!(file_id("aux toml"), "aux-toml", "with something after it, not the device");
+        assert_eq!(file_id("com10"), "com10");
         assert_eq!(file_id(&"a".repeat(100)).len(), 48);
         assert_eq!(free_id("nord", |id| id == "nord" || id == "nord-2"), "nord-3");
         assert_eq!(free_id("nord", |_| false), "nord");

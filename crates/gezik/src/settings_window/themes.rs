@@ -217,6 +217,19 @@ pub(super) fn source_page(address: &str) -> Option<String> {
     Some(if address.contains("://") { address.to_owned() } else { format!("https://{address}") })
 }
 
+/// Theme `id`'s file in `dir`: the one the store reads it from (`Nord.toml` for `nord`, which
+/// matters where names are case-sensitive), else `<id>.toml`. Reads the folder: not on the UI
+/// thread.
+pub(super) fn theme_path(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
+    let found = std::fs::read_dir(dir).ok().and_then(|entries| {
+        entries.filter_map(Result::ok).map(|e| e.path()).find(|path| {
+            path.extension().and_then(|e| e.to_str()) == Some("toml")
+                && path.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s.to_lowercase() == id)
+        })
+    });
+    found.unwrap_or_else(|| dir.join(format!("{id}.toml")))
+}
+
 /// Stops the download under way, if any.
 pub(super) fn stop() {
     TURN.fetch_add(1, Ordering::SeqCst);
@@ -254,10 +267,19 @@ fn download(
     progress: &mut dyn FnMut(u64),
     stop: &dyn Fn() -> bool,
 ) -> Result<Vec<Candidate>, String> {
-    let temp = std::env::temp_dir().join(format!("gezik-theme-{}-{turn}.download", std::process::id()));
-    let downloaded = gezik_platform::http::download(&fetch.url, &temp, source::MAX_DOWNLOAD, false, progress, stop);
+    // A folder of its own, made new (another user's planted one makes this fail), private on Unix.
+    let folder = std::env::temp_dir().join(format!("gezik-theme-{}-{turn}", std::process::id()));
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    let temp = folder.join("download");
+    let downloaded = builder
+        .create(&folder)
+        .and_then(|()| gezik_platform::http::download(&fetch.url, &temp, source::MAX_DOWNLOAD, false, progress, stop));
     let bytes = downloaded.and_then(|()| std::fs::read(&temp));
     let _ = std::fs::remove_file(&temp);
+    let _ = std::fs::remove_dir(&folder);
     let bytes = bytes.map_err(|err| download_error(fetch, &err))?;
     candidates(fetch, &bytes)
 }
@@ -400,6 +422,19 @@ mod tests {
         let repo = source::resolve("https://github.com/a/b").unwrap();
         assert!(candidates(&repo, &repo_zip(&[("r/readme.md", "")])).unwrap_err().starts_with("No .toml file"));
         assert!(candidates(&repo, b"<html>").is_err());
+    }
+
+    #[test]
+    fn a_theme_file_is_found_whatever_its_case() {
+        let dir = std::env::temp_dir().join(format!("gezik-theme-path-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Nord.toml"), "").unwrap();
+        std::fs::write(dir.join("frost.TOML"), "").unwrap();
+        let name = |id| theme_path(&dir, id).file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(name("nord"), "Nord.toml", "the file the store read, not a second one beside it");
+        assert_eq!(name("frost"), "frost.toml", "the store does not read .TOML");
+        assert_eq!(name("new"), "new.toml");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
