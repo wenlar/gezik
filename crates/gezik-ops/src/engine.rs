@@ -70,6 +70,10 @@ pub struct Settings {
     pub verify: bool,
     /// New copies and moves go at most this many bytes a second (spec 11 §5.2).
     pub max_speed: Option<u64>,
+    /// Gezik's tag store (`config/tags-store.tsv`; spec 12 §4.4); `None`: tags stay in files.
+    pub tags_store: Option<PathBuf>,
+    /// Tags never go into files, only into the store (`[tags] write-to-files = false`).
+    pub tags_store_only: bool,
     /// Tests: how many of a new copy's files get one byte changed before they are verified.
     #[cfg(test)]
     pub spoil: u32,
@@ -142,6 +146,9 @@ pub struct Report {
     /// Items left out on purpose (the user gave no password, a link Gezik does not make):
     /// notes, not failures.
     pub skipped: Vec<Failure>,
+    /// What the user should know about items that were done (their tags went to Gezik's
+    /// store): neither failures nor skips.
+    pub notes: Vec<Failure>,
     /// Items an undo left alone because they changed since.
     pub skipped_changed: usize,
     /// Items not trashed because their drive has no trash: the UI offers to delete them.
@@ -217,6 +224,7 @@ pub(crate) struct Acc {
     pub outcomes: Vec<Outcome>,
     pub failures: Vec<Failure>,
     pub skipped: Vec<Failure>,
+    pub notes: Vec<Failure>,
     pub skipped_changed: usize,
     pub no_trash: Vec<PathBuf>,
     pub unchecked: Vec<PathBuf>,
@@ -263,6 +271,10 @@ impl Job {
 
     pub fn skip(&self, path: &Path, why: &io::Error) {
         lock(&self.acc).skipped.push(Failure { path: path.to_path_buf(), message: fs::describe(why), denied: false });
+    }
+
+    pub fn note(&self, path: &Path, message: &str) {
+        lock(&self.acc).notes.push(Failure { path: path.to_path_buf(), message: message.to_owned(), denied: false });
     }
 
     pub fn skipped_changed(&self) {
@@ -328,6 +340,8 @@ pub(crate) struct Shared {
     reporter: AtomicBool,
     next_id: AtomicU64,
     pub pending: Option<Arc<PendingDeletes>>,
+    /// Where tags are read and written; reads nothing until asked.
+    pub meta: Arc<crate::meta::MetaStore>,
     history: Mutex<UndoStack<Record>>,
     /// How administrator operations run (`Engine::set_elevator`).
     pub(crate) elevator: Mutex<Option<Arc<dyn crate::tasks::Elevator>>>,
@@ -439,6 +453,16 @@ impl Shared {
                 pending.remove(&dir);
             }
         }
+        // The tag store follows what the job moved and deleted, and is saved once (spec 12 §4.4).
+        {
+            let acc = lock(&job.acc);
+            let mut flat = Vec::new();
+            crate::inverse::flatten(&acc.outcomes, &mut flat);
+            self.meta.follow(&flat);
+        }
+        if let Err(err) = self.meta.flush() {
+            job.fail(self.meta.file().unwrap_or(Path::new("tags-store.tsv")), &err);
+        }
         let acc = std::mem::take(&mut *lock(&job.acc));
         // A move that replaced its target is `Several` (the target trashed, then the move).
         let mut flat = Vec::new();
@@ -488,6 +512,7 @@ impl Shared {
             cancelled,
             failures: acc.failures,
             skipped: acc.skipped,
+            notes: acc.notes,
             skipped_changed: acc.skipped_changed,
             no_trash: acc.no_trash,
             unchecked: acc.unchecked,
@@ -562,6 +587,7 @@ impl Engine {
     /// `notify` is called (on any thread) whenever events are waiting in [`Engine::drain`].
     pub fn new(settings: Settings, notify: impl Fn() + Send + Sync + 'static) -> Engine {
         let pending = settings.pending_deletes.clone().map(|file| Arc::new(PendingDeletes::new(file)));
+        let meta = Arc::new(crate::meta::MetaStore::new(settings.tags_store.clone(), settings.tags_store_only));
         Engine(Arc::new(Shared {
             settings: Mutex::new(settings),
             jobs: Mutex::default(),
@@ -572,11 +598,17 @@ impl Engine {
             reporter: AtomicBool::new(false),
             next_id: AtomicU64::new(0),
             pending,
+            meta,
             history: Mutex::new(UndoStack::new(HISTORY)),
             elevator: Mutex::default(),
             #[cfg(test)]
             drive_query_hook: Mutex::default(),
         }))
+    }
+
+    /// Where tags are read and written (spec 12 §3.3).
+    pub fn meta(&self) -> Arc<crate::meta::MetaStore> {
+        self.0.meta.clone()
     }
 
     /// The list instant deletes note their hidden folders in (`None`: deletes run in place).

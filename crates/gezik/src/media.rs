@@ -18,6 +18,8 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
+
+use crate::tags::RowMeta;
 use std::time::SystemTime;
 
 use gezik_platform::{IconTarget, Rgba};
@@ -31,6 +33,8 @@ pub const MAX_PATH_ICONS: usize = 512;
 const MISSING_COST: usize = 64;
 /// Folders found to have no custom icon; forgotten wholesale beyond this many.
 const MAX_PLAIN_FOLDERS: usize = 10_000;
+/// Rows whose tags are known; forgotten wholesale beyond this many.
+const MAX_TAGGED: usize = 50_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MediaKey {
@@ -62,6 +66,11 @@ pub enum MediaKey {
         modified: Option<SystemTime>,
         px: u32,
     },
+    /// A row's tags, rating and comment, for its dots and columns (spec 12 §3.4): only rows on
+    /// screen ask, only while dots or a meta column show.
+    Tags {
+        path: PathBuf,
+    },
 }
 
 impl MediaKey {
@@ -76,6 +85,7 @@ pub enum Outcome {
     Picture(SharedPixelBuffer<Rgba8Pixel>),
     /// A folder without a custom icon: the generic folder icon applies.
     PlainFolder,
+    Tags(Arc<RowMeta>),
     Nothing,
 }
 
@@ -109,6 +119,8 @@ fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
         }
         MediaKey::PathIcon { path, px } => picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px)),
         MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
+        MediaKey::Tags { path } if wanted() => Outcome::Tags(Arc::new(crate::tags::read_for_rows(path))),
+        MediaKey::Tags { .. } => Outcome::Nothing,
     }
 }
 
@@ -203,6 +215,9 @@ impl<K: Eq + Hash + Clone, V: Clone> ByteLru<K, V> {
     }
 }
 
+/// A row's meta and the generation it was read in.
+type ReadTags = (u64, Arc<RowMeta>);
+
 type ReadyListener = Rc<dyn Fn(&[usize], Ready)>;
 
 struct Inner {
@@ -218,6 +233,10 @@ struct Inner {
     paths: RefCell<ByteLru<MediaKey, Option<Image>>>,
     thumbnails: RefCell<ByteLru<MediaKey, Option<Image>>>,
     plain_folders: RefCell<HashSet<PathBuf>>,
+    /// Each row's tags once read (empty: none), by path, with the generation they were read in:
+    /// an older one is still drawn (no flicker) but read again.
+    tags: RefCell<HashMap<PathBuf, ReadTags>>,
+    tags_generation: Cell<u64>,
     /// The keys queued or loading, each with its job's flag.
     pending: RefCell<HashMap<MediaKey, Wanted>>,
     clients: RefCell<Vec<Weak<Client>>>,
@@ -269,6 +288,8 @@ impl Media {
                 paths: RefCell::new(ByteLru::new(PATH_ICON_BUDGET, MAX_PATH_ICONS)),
                 thumbnails: RefCell::new(ByteLru::new(THUMBNAIL_BUDGET, usize::MAX)),
                 plain_folders: RefCell::default(),
+                tags: RefCell::default(),
+                tags_generation: Cell::new(0),
                 pending: RefCell::default(),
                 clients: RefCell::default(),
             }),
@@ -365,8 +386,44 @@ impl Media {
             MediaKey::ExtIcon { .. } | MediaKey::GenericFolder { .. } => self.shared.shared.borrow().get(key).cloned(),
             MediaKey::FolderIcon { .. } | MediaKey::PathIcon { .. } => self.shared.paths.borrow_mut().get(key),
             MediaKey::Thumbnail { .. } => self.shared.thumbnails.borrow_mut().get(key),
-            MediaKey::TypeName { .. } => None,
+            MediaKey::TypeName { .. } | MediaKey::Tags { .. } => None,
         }
+    }
+
+    /// `path`'s meta, if read; otherwise it is asked for and entry `entry` is redrawn when it
+    /// arrives. What was read before the last [`forget_tags`] is drawn until the new one lands.
+    pub fn tags(&self, path: PathBuf, entry: usize) -> Option<Arc<RowMeta>> {
+        let found = self.shared.tags.borrow().get(&path).cloned();
+        match found {
+            Some((generation, meta)) if generation == self.shared.tags_generation.get() => Some(meta),
+            Some((_, old)) => {
+                self.request(MediaKey::Tags { path }, Some(entry));
+                Some(old)
+            }
+            None => {
+                self.request(MediaKey::Tags { path }, Some(entry));
+                None
+            }
+        }
+    }
+
+    /// Only what is already known; asks for nothing (menus).
+    pub fn known_tags(&self, path: &std::path::Path) -> Option<Arc<RowMeta>> {
+        self.shared.tags.borrow().get(path).map(|(_, meta)| meta.clone())
+    }
+
+    /// Every row's tags read again when next drawn (a listing shown, a tag job ended, F5);
+    /// those already old once are dropped, so the cache holds two listings' at most.
+    pub fn forget_tags(&self) {
+        let generation = self.shared.tags_generation.get();
+        self.shared.tags.borrow_mut().retain(|_, (g, _)| *g == generation);
+        self.shared.tags_generation.set(generation + 1);
+    }
+
+    /// How many requests are queued or loading (tests).
+    #[cfg(test)]
+    pub fn pending(&self) -> usize {
+        self.shared.pending.borrow().len()
     }
 
     fn store(&self, key: MediaKey, picture: Option<Image>, bytes: usize) {
@@ -378,7 +435,7 @@ impl Media {
                 self.shared.paths.borrow_mut().insert(key, picture, bytes)
             }
             MediaKey::Thumbnail { .. } => self.shared.thumbnails.borrow_mut().insert(key, picture, bytes),
-            MediaKey::TypeName { .. } => {}
+            MediaKey::TypeName { .. } | MediaKey::Tags { .. } => {}
         }
     }
 
@@ -457,6 +514,14 @@ impl Media {
                 };
                 self.shared.type_names.borrow_mut().insert((ext.clone(), *is_dir), name);
                 Ready::TypeName
+            }
+            (MediaKey::Tags { path }, Outcome::Tags(tags)) => {
+                let mut known = self.shared.tags.borrow_mut();
+                if known.len() >= MAX_TAGGED {
+                    known.clear();
+                }
+                known.insert(path.clone(), (self.shared.tags_generation.get(), tags));
+                Ready::Picture
             }
             (MediaKey::FolderIcon { path, .. }, Outcome::PlainFolder) => {
                 let mut plain = self.shared.plain_folders.borrow_mut();

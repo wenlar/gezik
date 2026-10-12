@@ -532,7 +532,7 @@ pub fn acts_on_selection(action: Action) -> bool {
             | Action::MoveTo
             | Action::SplitFile
             | Action::JoinFiles
-    )
+    ) || action.is_tag_action()
 }
 
 /// Shortcuts left to the path box and the filter bar while either has the keyboard: the
@@ -573,7 +573,7 @@ pub fn needs_list(action: Action) -> bool {
             | Action::FocusOtherPane
             | Action::CopyToOtherPane
             | Action::MoveToOtherPane
-    )
+    ) || action.is_tag_action()
 }
 
 #[cfg(test)]
@@ -846,6 +846,16 @@ mod tests {
                 Action::ToggleDualPane => "f3",
                 Action::SwapPanes => "ctrl+u",
                 Action::Compare => "shift+f2",
+                // Shift makes the digit `!`, `@` …: the key still counts (spec 12 §5.2).
+                Action::Tags => "ctrl+shift+l",
+                Action::Tag1 => "alt+shift+1",
+                Action::Tag2 => "alt+shift+2",
+                Action::Tag3 => "alt+shift+3",
+                Action::Tag4 => "alt+shift+4",
+                Action::Tag5 => "alt+shift+5",
+                Action::Tag6 => "alt+shift+6",
+                Action::Tag7 => "alt+shift+7",
+                Action::ClearTags => "alt+shift+0",
                 Action::FocusOtherPane | Action::CopyToOtherPane | Action::MoveToOtherPane => {
                     let text = match action {
                         Action::FocusOtherPane => "tab",
@@ -899,6 +909,8 @@ mod tests {
                 | Action::MoveTo
                 | Action::SplitFile
                 | Action::JoinFiles
+                | Action::EditComment
+                | Action::CleanTagStore
                 | Action::PreviewHex
                 | Action::PreviewPlay => continue,
             };

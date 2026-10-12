@@ -12,7 +12,7 @@ use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{cover, path_key};
 
 use crate::task::{Outcome, Task};
-use crate::tasks::{ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, TrashTask};
+use crate::tasks::{ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, TagsTask, TrashTask};
 
 /// Files are checked before undo touches them; folders are not (they change as files land).
 fn expect(facts: &Facts) -> Option<Facts> {
@@ -59,6 +59,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut moved: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut attrs: Vec<Wanted> = Vec::new();
+    let mut metas = Vec::new();
     let mut admin = Vec::new();
     let mut flat = Vec::new();
     flatten(outcomes, &mut flat);
@@ -82,6 +83,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
             Outcome::AttributesChanged { path, id, before, after } => {
                 attrs.push(Wanted { path: path.clone(), id: *id, from: *after, to: *before })
             }
+            Outcome::MetaChanged { path, before, after } => metas.push((path.clone(), after.clone(), before.clone())),
             Outcome::AsAdmin { undo } => admin.push(undo.clone()),
             Outcome::Deleted { .. } | Outcome::Nothing | Outcome::Several(_) => {}
         }
@@ -150,6 +152,10 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     // A job of its own: no other outcome comes with it.
     if !attrs.is_empty() {
         tasks.push(Arc::new(SetAttributesTask::new(attrs)));
+    }
+    // A job of its own too: tags back to what they were where they are still as it left them.
+    if !metas.is_empty() {
+        tasks.push(Arc::new(TagsTask::restore(metas)));
     }
     // The administrator's list goes back as one list, last first, behind one new prompt.
     if !admin.is_empty() {
@@ -283,6 +289,20 @@ mod tests {
         assert_eq!(tasks[0].kind(), TaskKind::Elevated);
         assert_eq!(tasks[0].count(), 2);
         assert_eq!(tasks[0].title(), "2 changes as administrator");
+    }
+
+    #[test]
+    fn changed_tags_go_back_as_one_tag_job() {
+        use gezik_core::meta::Meta;
+        let rated = Meta { rating: 4, ..Meta::default() };
+        let outcomes = vec![
+            Outcome::MetaChanged { path: "/a".into(), before: Meta::default(), after: rated.clone() },
+            Outcome::MetaChanged { path: "/b".into(), before: rated.clone(), after: Meta::default() },
+        ];
+        let tasks = build(&outcomes);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].kind(), TaskKind::Tags);
+        assert_eq!(tasks[0].count(), 2);
     }
 
     #[test]

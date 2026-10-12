@@ -59,6 +59,7 @@ mod system_changes;
 mod tab_drag;
 mod tab_sets;
 mod tab_tools;
+mod tags;
 mod templates;
 mod terminal;
 mod theme_bridge;
@@ -159,6 +160,8 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     saved_searches::set_settings(loaded.settings.searches.clone());
     sync::set_profiles(loaded.settings.sync_profiles.clone());
     terminal::set_settings(loaded.settings.terminal.command.clone());
+    tags::set_settings(loaded.settings.tags.clone());
+    tags::set_highlights(loaded.settings.highlight_rules.clone(), loaded.theme.as_ref().map(|t| &t.colors));
     // Every window shows them alike (spec 9.3, decision 46).
     windows::for_each(|window| {
         dual::set_restore(loaded.settings.session.restore);
@@ -196,6 +199,7 @@ fn apply_to_window(window: &AppWindow, loaded: &Loaded) {
     sidebar::with_current(|sidebar| sidebar.set_pinned(loaded.settings.pinned.clone()));
     sidebar::with_current(sidebar::Sidebar::relabel);
     sidebar::with_current(|s| s.set_show_cloud(loaded.settings.sidebar_cloud));
+    sidebar::with_current(|s| s.set_show_tags(loaded.settings.sidebar_tags));
     sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
     view_options::sync(window, view_options::current());
     window.set_mono_font(mono_font().into());
@@ -205,6 +209,8 @@ fn apply_to_window(window: &AppWindow, loaded: &Loaded) {
     menu_bar::set_commands(window, &loaded.settings.commands);
     #[cfg(target_os = "macos")]
     menu_bar::set_tab_sets(window, &tab_sets::names());
+    #[cfg(target_os = "macos")]
+    menu_bar::set_tags(window, &loaded.settings.tags.list);
 }
 
 /// Closes tab `index` once the current event is fully handled (the last tab closes the
@@ -253,7 +259,11 @@ fn perform(
             panes::with_active(|p| p.path_box.reset());
             panes::edit(view.pane_id(), |d| panes::path_editing(d, true))
         }
-        Action::Refresh => nav.reload(),
+        Action::Refresh => {
+            // F5 reads the rows' tags again too (spec 12 §3.4).
+            tags::forget_rows();
+            nav.reload()
+        }
         Action::SelectAll => view.select_all(),
         Action::ViewList => view.set_mode(gezik_core::view::ViewMode::List),
         Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
@@ -329,6 +339,7 @@ fn perform(
         | Action::PutBack
         | Action::EmptyTrash
         | Action::SystemIntegration
+        | Action::CleanTagStore
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow
@@ -363,7 +374,17 @@ fn perform(
         | Action::CopyTo
         | Action::MoveTo
         | Action::SplitFile
-        | Action::JoinFiles => return actions::run(action, nav, view),
+        | Action::JoinFiles
+        | Action::Tags
+        | Action::Tag1
+        | Action::Tag2
+        | Action::Tag3
+        | Action::Tag4
+        | Action::Tag5
+        | Action::Tag6
+        | Action::Tag7
+        | Action::ClearTags
+        | Action::EditComment => return actions::run(action, nav, view),
     }
     true
 }
@@ -460,6 +481,8 @@ fn handle_key(
                 integration::with_current(|i| used = i.chord(chord));
             } else if palette::is_open() {
                 palette::with_current(|p| used = p.chord(chord));
+            } else if tags::is_open() {
+                tags::with_current(|p| used = p.chord(chord));
             } else {
                 tab_tools::with_current(|t| used = t.chord(chord));
             }
@@ -1118,6 +1141,9 @@ fn main() -> Result<(), slint::PlatformError> {
         pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
         verify: initial_settings.files.verify,
         max_speed: initial_settings.files.max_speed,
+        tags_store: config.as_ref().map(|store| store.dir().join("tags-store.tsv")),
+        // `[tags] write-to-files` (spec 12 §4.5), read once: the store keeps it (plan 12b sapma 5).
+        tags_store_only: !initial_settings.tags.write_to_files,
     };
     let ops = operations::Operations::new(
         &window,
@@ -1128,6 +1154,7 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     connect::install(config.clone(), saved_state.servers_recent.clone());
+    tags::install(ops.tag_store(), config.clone(), saved_state.tags_used);
     // Deletes cut short last time finish in the background once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), {
         let ops = ops.clone();

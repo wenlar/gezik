@@ -91,12 +91,177 @@ pub fn with_panes_confirm(text: &str, on: bool) -> Result<String, String> {
     edit_table(text, "panes", vec![("confirm", on.into())])
 }
 
+/// Adds an empty `[name]` at the end. Comments after the file's last value are the document's
+/// trailing part, which toml_edit writes after every table: they go before the new table, so
+/// they stay where they were.
+fn add_table(doc: &mut toml_edit::DocumentMut, name: &str) {
+    let trailing = doc.trailing().as_str().unwrap_or_default().to_owned();
+    doc.set_trailing("");
+    let mut table = toml_edit::Table::new();
+    table.decor_mut().set_prefix(trailing);
+    doc[name] = toml_edit::Item::Table(table);
+}
+
+/// Returns `text` with `[tags] key` set (the list, the dots).
+pub fn with_tags(text: &str, key: &str, value: toml_edit::Value) -> Result<String, String> {
+    edit_table(text, "tags", vec![(key, value)])
+}
+
+/// Returns `text` with `tag` at the end of `[tags] list`: only that entry is added, so the
+/// list's comments and the entries Gezik left out stay. With no `list` there, `list` (the one in
+/// effect, the defaults and the new tag) is written.
+pub fn with_tag_added(
+    text: &str,
+    tag: &gezik_core::meta::Tag,
+    list: &[gezik_core::meta::Tag],
+) -> Result<String, String> {
+    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+    if doc.get("tags").is_none() {
+        add_table(&mut doc, "tags");
+    }
+    let Some(table) = doc["tags"].as_table_like_mut() else { return Err("tags must be a table".to_owned()) };
+    match table.get_mut("list").and_then(|item| item.as_value_mut()) {
+        Some(toml_edit::Value::Array(array)) => {
+            let toml_edit::Value::Array(one) = crate::tags::list_value(std::slice::from_ref(tag)) else {
+                unreachable!("a list is an array")
+            };
+            // A list one tag a line: the old last line's comment (the array's trailing part)
+            // stays on that line, the new tag goes on its own. An inline list stays inline.
+            let trailing = array.trailing().as_str().unwrap_or_default().to_owned();
+            let one_a_line = trailing.contains('\n');
+            array.set_trailing_comma(true);
+            array.extend(one);
+            if let Some(last) = array.iter_mut().last() {
+                last.decor_mut().set_prefix(if one_a_line { format!("{trailing}  ") } else { " ".to_owned() });
+            }
+            if one_a_line {
+                array.set_trailing("\n");
+            }
+        }
+        Some(_) => return Err("tags.list must be a list".to_owned()),
+        None => {
+            table.insert("list", toml_edit::Item::Value(crate::tags::list_value(list)));
+        }
+    }
+    Ok(doc.to_string())
+}
+
+/// Returns `text` with `edit` made to `[tags] list` (spec 12 §7.3): the entry is found by its
+/// name and changed where it is, so the list's comments, its layout and the entries Gezik left
+/// out stay. With no `list` there, the list in effect (`list`) with the edit is written.
+pub fn with_tag_list_edit(
+    text: &str,
+    edit: &crate::tags::TagListEdit,
+    list: &[gezik_core::meta::Tag],
+) -> Result<String, String> {
+    use crate::tags::{TagListEdit, color_name, entry_name};
+    use gezik_core::meta::same_name;
+    let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
+    if doc.get("tags").is_none() {
+        add_table(&mut doc, "tags");
+    }
+    let Some(table) = doc["tags"].as_table_like_mut() else { return Err("tags must be a table".to_owned()) };
+    let array = match table.get_mut("list").and_then(|item| item.as_value_mut()) {
+        Some(toml_edit::Value::Array(array)) => array,
+        Some(_) => return Err("tags.list must be a list".to_owned()),
+        None => {
+            let edited = crate::tags::edited(list, edit);
+            table.insert("list", toml_edit::Item::Value(crate::tags::list_value(&edited)));
+            return Ok(doc.to_string());
+        }
+    };
+    let find = |array: &toml_edit::Array, name: &str| {
+        array.iter().position(|value| entry_name(value).is_some_and(|n| same_name(n, name)))
+    };
+    let Some(at) = find(array, edit.name()) else {
+        return Err(format!("tags.list has no tag \"{}\"", edit.name()));
+    };
+    // A new value in an old one's place keeps its decor (the line and the comment before it).
+    let put = |array: &mut toml_edit::Array, at: usize, mut value: toml_edit::Value| {
+        if let Some(old) = array.get_mut(at) {
+            *value.decor_mut() = old.decor().clone();
+            *old = value;
+        }
+    };
+    let entry = array.get(at).cloned().unwrap_or_else(|| toml_edit::Value::from(""));
+    match edit {
+        TagListEdit::Rename(_, to) => {
+            let value = match entry {
+                toml_edit::Value::InlineTable(mut inline) => {
+                    if let Some(name) = inline.get_mut("name") {
+                        let decor = name.decor().clone();
+                        *name = (**to).into();
+                        *name.decor_mut() = decor;
+                    }
+                    toml_edit::Value::InlineTable(inline)
+                }
+                _ => (**to).into(),
+            };
+            put(array, at, value);
+        }
+        TagListEdit::Color(_, color) => {
+            let mut inline = match entry {
+                toml_edit::Value::InlineTable(inline) => inline,
+                other => {
+                    let mut inline = toml_edit::InlineTable::new();
+                    inline.insert("name", entry_name(&other).unwrap_or_default().into());
+                    inline
+                }
+            };
+            match inline.get_mut("color") {
+                Some(old) => {
+                    let decor = old.decor().clone();
+                    *old = color_name(*color).into();
+                    *old.decor_mut() = decor;
+                }
+                None => {
+                    inline.insert("color", color_name(*color).into());
+                }
+            }
+            put(array, at, toml_edit::Value::InlineTable(inline));
+        }
+        TagListEdit::Move(name, up) => {
+            // Its neighbour in the list in effect (the file may hold entries Gezik left out).
+            let k = list.iter().position(|t| same_name(&t.name, name));
+            let neighbour = k.and_then(|k| if *up { k.checked_sub(1) } else { Some(k + 1) }).and_then(|k| list.get(k));
+            let Some(other) = neighbour.and_then(|t| find(array, &t.name)) else { return Ok(doc.to_string()) };
+            let (mine, theirs) = (entry, array.get(other).cloned().unwrap_or_else(|| toml_edit::Value::from("")));
+            // Each slot keeps the end of the line before it (a comment on the previous entry's
+            // line); the comment lines above an entry go with it.
+            let parts = |value: &toml_edit::Value| -> (String, String) {
+                let prefix = value.decor().prefix().and_then(|p| p.as_str()).unwrap_or_default().to_owned();
+                match prefix.find('\n') {
+                    Some(end) => (prefix[..=end].to_owned(), prefix[end + 1..].to_owned()),
+                    None => (prefix, String::new()),
+                }
+            };
+            let ((mine_head, mine_tail), (their_head, their_tail)) = (parts(&mine), parts(&theirs));
+            let moved = |mut value: toml_edit::Value, head: &str, tail: &str| {
+                value.decor_mut().set_prefix(format!("{head}{tail}"));
+                value
+            };
+            let (to_at, to_other) =
+                (moved(theirs.clone(), &mine_head, &their_tail), moved(mine.clone(), &their_head, &mine_tail));
+            if let Some(slot) = array.get_mut(at) {
+                *slot = to_at;
+            }
+            if let Some(slot) = array.get_mut(other) {
+                *slot = to_other;
+            }
+        }
+        TagListEdit::Remove(_) => {
+            array.remove(at);
+        }
+    }
+    Ok(doc.to_string())
+}
+
 /// Sets `entries` in `[name]` (adding the table and the missing keys), keeping each old value's
 /// decor so inline comments (`# list | grid`) survive.
 fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) -> Result<String, String> {
     let mut doc = text.parse::<toml_edit::DocumentMut>().map_err(|err| err.to_string().trim().to_owned())?;
     if doc.get(name).is_none() {
-        doc[name] = toml_edit::table();
+        add_table(&mut doc, name);
     }
     let Some(table) = doc[name].as_table_like_mut() else { return Err(format!("{name} must be a table")) };
     for (key, value) in entries {
@@ -810,6 +975,100 @@ pattern = \"y\"
         let fresh = with_system("pinned = []\n", "tray", true.into()).unwrap();
         assert!(fresh.contains("[system]\ntray = true"), "{fresh}");
         assert!(with_system("system = 3\n", "tray", true.into()).is_err());
+    }
+
+    #[test]
+    fn the_tag_list_and_dots_are_written_into_tags() {
+        let text = "[tags]\n# yours\ndots = \"auto\"   # auto, true or false\n";
+        let list = vec![gezik_core::meta::Tag::new("Work", gezik_core::meta::TagColor::Blue)];
+        let written = with_tag_added(text, &list[0], &list).unwrap();
+        let off = with_tags(&written, "dots", crate::tags::dots_value(crate::tags::Dots::Off)).unwrap();
+        assert!(off.contains("# yours\ndots = false   # auto, true or false\n"), "{off}");
+        let mut warnings = Vec::new();
+        let settings = crate::settings::Settings::parse("settings.toml", &off, &mut warnings);
+        assert!(warnings.is_empty(), "{warnings:?}\n{off}");
+        assert_eq!(settings.tags.list, list);
+        assert_eq!(settings.tags.dots, crate::tags::Dots::Off);
+    }
+
+    #[test]
+    fn a_new_tags_table_goes_after_the_files_last_comment() {
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "[panes]\nconfirm = true\n\n# my notes at the end\n";
+        let list = [Tag::new("Proj", TagColor::None)];
+        let added = with_tag_added(text, &list[0], &list).unwrap();
+        let comment = added.find("# my notes at the end").unwrap();
+        let table = added.find("[tags]").unwrap();
+        assert!(comment < table, "{added}");
+        assert!(added.contains("[panes]\nconfirm = true\n"), "{added}");
+        let dots = with_tags(text, "dots", crate::tags::dots_value(crate::tags::Dots::On)).unwrap();
+        assert!(dots.find("# my notes").unwrap() < dots.find("[tags]").unwrap(), "{dots}");
+    }
+
+    #[test]
+    fn list_edits_keep_the_comments_and_what_gezik_left_out() {
+        use crate::tags::TagListEdit;
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "# my settings\n[tags]\nlist = [\n  # mine first\n  { name = \"Work\", color = \"blue\" },   # the job\n  { name = \"a,b\" },   # broken, left out\n  \"Home\",\n  { name = \"Late\", color = \"red\" },\n]\ndots = \"auto\"   # auto, true or false\n";
+        let list =
+            vec![Tag::new("Work", TagColor::Blue), Tag::new("Home", TagColor::None), Tag::new("Late", TagColor::Red)];
+        let read = |text: &str| {
+            let table: toml::Table = text.parse().unwrap();
+            let mut warnings = Vec::new();
+            crate::tags::parse(table["tags"].as_table().unwrap(), "s", &mut warnings).list
+        };
+        let names = |text: &str| read(text).iter().map(|t| t.name.to_string()).collect::<Vec<_>>();
+        let renamed = with_tag_list_edit(text, &TagListEdit::Rename("work".into(), "Job".into()), &list).unwrap();
+        assert_eq!(names(&renamed), ["Job", "Home", "Late"]);
+        let colored = with_tag_list_edit(&renamed, &TagListEdit::Color("Home".into(), TagColor::Green), &list).unwrap();
+        assert_eq!(read(&colored)[1].color, TagColor::Green, "a bare name becomes a table");
+        let effect = read(&colored);
+        let moved = with_tag_list_edit(&colored, &TagListEdit::Move("Home".into(), true), &effect).unwrap();
+        assert_eq!(names(&moved), ["Home", "Job", "Late"], "past the entry Gezik left out");
+        let removed = with_tag_list_edit(&moved, &TagListEdit::Remove("Late".into()), &list).unwrap();
+        assert_eq!(names(&removed), ["Home", "Job"]);
+        for kept in
+            ["# my settings", "# mine first", "# broken, left out", "{ name = \"a,b\" }", "# auto, true or false"]
+        {
+            assert!(removed.contains(kept), "{kept:?} in {removed}");
+        }
+        assert!(with_tag_list_edit(text, &TagListEdit::Remove("Nope".into()), &list).is_err());
+        // No list in the file: the list in effect, edited.
+        let fresh = with_tag_list_edit("[tags]\n", &TagListEdit::Remove("Home".into()), &list).unwrap();
+        assert_eq!(names(&fresh), ["Work", "Late"]);
+    }
+
+    #[test]
+    fn a_moved_tag_takes_its_comment_lines_along() {
+        use crate::tags::TagListEdit;
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "[tags]\nlist = [\n  # work first\n  { name = \"Work\", color = \"blue\" },\n  # home stuff\n  # more\n  { name = \"Home\" },\n]\n";
+        let list = vec![Tag::new("Work", TagColor::Blue), Tag::new("Home", TagColor::None)];
+        let moved = with_tag_list_edit(text, &TagListEdit::Move("Home".into(), true), &list).unwrap();
+        let home = moved.find("# home stuff").unwrap();
+        assert!(home < moved.find("# more").unwrap() && moved.find("# more").unwrap() < moved.find("Home").unwrap());
+        assert!(moved.find("Home").unwrap() < moved.find("# work first").unwrap(), "{moved}");
+        assert!(moved.find("# work first").unwrap() < moved.find("Work").unwrap(), "{moved}");
+        let back =
+            with_tag_list_edit(&moved, &TagListEdit::Move("Home".into(), false), &[list[1].clone(), list[0].clone()])
+                .unwrap();
+        assert_eq!(back, text, "and back as it was");
+    }
+
+    #[test]
+    fn a_new_tag_is_added_and_the_rest_of_the_list_stays_as_written() {
+        use gezik_core::meta::{Tag, TagColor};
+        let text = "[tags]\nlist = [\n  # mine first\n  { name = \"Work\", color = \"blue\" },\n  { name = \"a,b\" },   # broken, left out\n]\n";
+        let added = with_tag_added(text, &Tag::new("Proj", TagColor::None), &[]).unwrap();
+        assert!(added.contains("  # mine first\n  { name = \"Work\", color = \"blue\" },\n"), "{added}");
+        assert!(added.contains("{ name = \"a,b\" },   # broken, left out"), "{added}");
+        assert!(added.contains("{ name = \"Proj\", color = \"none\" }"), "{added}");
+        let mut warnings = Vec::new();
+        let settings = crate::settings::Settings::parse("settings.toml", &added, &mut warnings);
+        let names: Vec<&str> = settings.tags.list.iter().map(|t| &*t.name).collect();
+        assert_eq!(names, ["Work", "Proj"]);
+        assert_eq!(warnings.len(), 1, "the broken entry is still there: {warnings:?}");
+        assert!(with_tag_added("[tags]\nlist = 3\n", &Tag::new("X", TagColor::None), &[]).is_err());
     }
 
     #[test]
