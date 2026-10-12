@@ -118,15 +118,15 @@ pub fn read(path: &Path) -> io::Result<Own> {
 pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
     use gezik_core::meta::{decode_baloo_rating, encode_baloo_rating, encode_xdg_tags};
     let path = existing(path)?;
-    let tags = (!meta.tags.is_empty()).then(|| encode_xdg_tags(&meta.tags));
-    set(&path, names::TAGS, tags.as_deref().map(str::as_bytes))?;
+    let tags = (!meta.tags.is_empty()).then(|| encode_xdg_tags(&meta.tags).into_bytes());
+    let comment = (!meta.comment.is_empty()).then(|| meta.comment.as_bytes().to_vec());
+    let mut changes = vec![(names::TAGS, tags), (names::COMMENT, comment)];
     // Baloo keeps half stars: a 7 Dolphin wrote stays 7 unless the stars change.
     let now = get(&path, names::RATING)?.map_or(0, |v| decode_baloo_rating(&String::from_utf8_lossy(&v)));
     if now != meta.rating {
-        let rating = (meta.rating > 0).then(|| encode_baloo_rating(meta.rating));
-        set(&path, names::RATING, rating.as_deref().map(str::as_bytes))?;
+        changes.push((names::RATING, (meta.rating > 0).then(|| encode_baloo_rating(meta.rating).into_bytes())));
     }
-    set(&path, names::COMMENT, (!meta.comment.is_empty()).then_some(meta.comment.as_bytes()))
+    super::set_all(changes, |name| get(&path, name), |name, value| set(&path, name, value))
 }
 
 #[cfg(target_os = "macos")]
@@ -195,24 +195,20 @@ pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
         })
         .collect();
     let tags = (!strings.is_empty()).then(|| encode_strings(&strings));
-    set(&path, names::TAGS, tags.as_deref())?;
     // Finder keeps the last coloured tag's colour in the FinderInfo too; its other bytes stay.
     let info = get(&path, names::FINDER_INFO)?;
     let new_info = with_finder_info_color(info.as_deref(), label_color(&meta.tags));
-    if new_info != info {
-        set(&path, names::FINDER_INFO, new_info.as_deref())?;
-    }
+    let comment = (!meta.comment.is_empty()).then(|| encode_string(&meta.comment));
+    let mut changes = vec![(names::TAGS, tags), (names::FINDER_INFO, new_info), (names::COMMENT, comment)];
     // Left as it is unless the stars change.
     let now = match get(&path, names::RATING)?.map(|data| gezik_core::meta::bplist::decode(&data)) {
         Some(Some(gezik_core::meta::bplist::Value::Int(stars))) => stars,
         _ => 0,
     };
     if now != i64::from(meta.rating) {
-        let rating = (meta.rating > 0).then(|| encode_int(i64::from(meta.rating.min(5))));
-        set(&path, names::RATING, rating.as_deref())?;
+        changes.push((names::RATING, (meta.rating > 0).then(|| encode_int(i64::from(meta.rating.min(5))))));
     }
-    let comment = (!meta.comment.is_empty()).then(|| encode_string(&meta.comment));
-    set(&path, names::COMMENT, comment.as_deref())
+    super::set_all(changes, |name| get(&path, name), |name, value| set(&path, name, value))
 }
 
 /// File systems whose files hold no extended attributes Gezik can use (statfs's f_type).
