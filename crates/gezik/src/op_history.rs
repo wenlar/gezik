@@ -131,6 +131,7 @@ mod tests {
             cancelled: false,
             failures: Vec::new(),
             skipped: Vec::new(),
+            notes: Vec::new(),
             skipped_changed: 0,
             no_trash: Vec::new(),
             unchecked: Vec::new(),

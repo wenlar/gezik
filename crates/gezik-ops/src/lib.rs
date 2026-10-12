@@ -6,6 +6,7 @@ mod engine;
 pub mod hash;
 mod inverse;
 mod journal;
+pub mod meta;
 pub mod pending;
 mod run;
 mod task;
@@ -27,6 +28,6 @@ pub use task::{
 pub use tasks::{
     CANCELLED, CloudPinTask, CopyTask, DeleteTask, ElevatedTask, Elevator, GroupTask, HashResults, HashRow, HashTask,
     LinkTask, MAX_CHECKSUM_FILE, MaterializeTask, MoveTask, NEEDS_ADMIN, NOT_AVAILABLE, NOT_SO, NewTask, Pick,
-    RenameTask, RestoreTask, RowState, Seen, SetAttributesTask, SharedResults, SyncStep, SyncTask, TrashTask,
+    RenameTask, RestoreTask, RowState, Seen, SetAttributesTask, SharedResults, SyncStep, SyncTask, TagsTask, TrashTask,
     UNCHECKED, Verdict, in_a_bin_folder, sync_label, trash_path,
 };

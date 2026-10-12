@@ -518,6 +518,7 @@ mod tests {
                 message: "Changed after the compare; left alone".into(),
                 denied: false,
             }],
+            notes: Vec::new(),
             skipped_changed: 0,
             no_trash: Vec::new(),
             unchecked: Vec::new(),
