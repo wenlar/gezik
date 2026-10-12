@@ -1,5 +1,7 @@
 # Gezik on Linux: portable build and manual test
 
+> **New parts don't append here.** Each step writes its checklist items to `docs/superpowers/notes/checklists/<step>-linux.md` (one file per step, so feature branches don't conflict). The items below stay where they are.
+
 So far Gezik has run on Linux only in a container: Xvfb and a headless sway, driven by `scripts/linux/test.sh` and `gui.sh` (see `2026-10-06-linux-ekran-testi.md`). It has never run on a real desktop, with Nautilus or Dolphin, a real compositor, a portal, HiDPI or a real trash. This file is for a person testing the state after sub-project 5 (5a-5d) on a real Linux desktop, from the portable build.
 
 Write the results into `docs/superpowers/notes/linux-test-results.md`, in the same style as `macos-test-results.md`:

@@ -1,5 +1,7 @@
 # Gezik on macOS: build and manual test
 
+> **New parts don't append here.** Each step writes its checklist items to `docs/superpowers/notes/checklists/<step>-macos.md` (one file per step, so feature branches don't conflict). The items below stay where they are.
+
 Run 1 (2026-10-06, `feat/batch-ops-5c`) covered items 1-22; its fixes are on master. Everything since (items 23-152: 5c, 5d, 6a, 7a-7c, 8a-8b, the design rounds and step 9 parts 9a1-9a3, 9b1-9b6) has never run on a Mac.
 
 **Run 2 is one run on `master`** (all of these are merged). Write it as a new section **"Run 2 (master)"** in `macos-test-results.md`, below Run 1, and don't change Run 1. Where an item compares two branches (exe size items 93, 100, 109), just write today's `ls -l target/release/gezik`.
