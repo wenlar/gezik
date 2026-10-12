@@ -73,10 +73,9 @@ export component AppWindow inherits Window {
     in property <[MenuEntry]> bar-tab-sets;
     // The Window menu's list of the open windows (10g): choosing one brings it forward.
     in property <[MenuEntry]> bar-windows;
-    // File ▸ Tags (spec 12 §5.3): the names of `[tags] list`, the first seven with their keys;
-    // the rest (id: the place in the list) without.
-    in property <[string]> bar-tags;
-    in property <[MenuEntry]> bar-tags-more;
+    // File ▸ Tags (spec 12 §5.3): the tags of `[tags] list` (id: the place in the list; the
+    // first seven's keys ⌃1…⌃7 in the title: the window takes them).
+    in property <[MenuEntry]> bar-tags;
     // View ▸ Tag Dots' mark.
     in-out property <bool> view-tag-dots;
     callback menu-command(string);
@@ -102,14 +101,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Eject"; shortcut: root.menu-keys ? @keys(Control + E) : @keys(); activated => { root.menu-command("eject"); } }
             Menu {
                 title: "Tags";
-                if root.bar-tags.length > 0: MenuItem { title: root.bar-tags[0]; shortcut: root.menu-keys ? @keys(Meta + "1") : @keys(); activated => { root.menu-command("tag-1"); } }
-                if root.bar-tags.length > 1: MenuItem { title: root.bar-tags[1]; shortcut: root.menu-keys ? @keys(Meta + "2") : @keys(); activated => { root.menu-command("tag-2"); } }
-                if root.bar-tags.length > 2: MenuItem { title: root.bar-tags[2]; shortcut: root.menu-keys ? @keys(Meta + "3") : @keys(); activated => { root.menu-command("tag-3"); } }
-                if root.bar-tags.length > 3: MenuItem { title: root.bar-tags[3]; shortcut: root.menu-keys ? @keys(Meta + "4") : @keys(); activated => { root.menu-command("tag-4"); } }
-                if root.bar-tags.length > 4: MenuItem { title: root.bar-tags[4]; shortcut: root.menu-keys ? @keys(Meta + "5") : @keys(); activated => { root.menu-command("tag-5"); } }
-                if root.bar-tags.length > 5: MenuItem { title: root.bar-tags[5]; shortcut: root.menu-keys ? @keys(Meta + "6") : @keys(); activated => { root.menu-command("tag-6"); } }
-                if root.bar-tags.length > 6: MenuItem { title: root.bar-tags[6]; shortcut: root.menu-keys ? @keys(Meta + "7") : @keys(); activated => { root.menu-command("tag-7"); } }
-                for entry in root.bar-tags-more: MenuItem {
+                for entry in root.bar-tags: MenuItem {
                     title: entry.title;
                     activated => { root.menu-command("tag:" + entry.id); }
                 }

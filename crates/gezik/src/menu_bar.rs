@@ -104,21 +104,22 @@ pub fn set_tab_sets(window: &AppWindow, names: &[String]) {
     window.set_bar_tab_sets(ModelRc::new(VecModel::from(entries)));
 }
 
-/// File ▸ Tags: the list's first seven names (with their keys there), the rest by place.
+/// File ▸ Tags: the list's tags; the first seven say their `tag-N` keys (⌃1…⌃7 by default).
 pub fn set_tags(window: &AppWindow, list: &[gezik_core::meta::Tag]) {
-    let names: Vec<slint::SharedString> = list.iter().take(7).map(|t| (*t.name).into()).collect();
-    let more: Vec<MenuEntry> = list
+    let entries: Vec<MenuEntry> = list
         .iter()
         .enumerate()
-        .skip(7)
-        .map(|(i, t)| MenuEntry {
-            id: i32::try_from(i).unwrap_or(-1),
-            title: crate::context_menu::menu_title(&t.name).into(),
-            enabled: true,
+        .map(|(i, t)| {
+            let keys = crate::tags::key_label(list, &t.name);
+            let title = if keys.is_empty() { t.name.to_string() } else { format!("{}    {keys}", t.name) };
+            MenuEntry {
+                id: i32::try_from(i).unwrap_or(-1),
+                title: crate::context_menu::menu_title(&title).into(),
+                enabled: true,
+            }
         })
         .collect();
-    window.set_bar_tags(ModelRc::new(VecModel::from(names)));
-    window.set_bar_tags_more(ModelRc::new(VecModel::from(more)));
+    window.set_bar_tags(ModelRc::new(VecModel::from(entries)));
 }
 
 /// Presses and releases `chord`'s keys in the window, as the keyboard would.
