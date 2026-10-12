@@ -122,6 +122,12 @@ impl Shown {
         self.rows.len() + self.key_rows.len()
     }
 
+    /// The window row of backup row `row`, if shown.
+    fn backup_index(&self, row: backup::Row) -> Option<usize> {
+        let at = self.backup_rows.iter().position(|r| *r == row)?;
+        Some(self.locked_rows() + self.theme_rows.len() + at)
+    }
+
     /// The backup row of window row `row` (they come after the theme rows).
     fn backup_of(&self, row: usize) -> Option<backup::Row> {
         self.backup_rows.get(row.checked_sub(self.locked_rows() + self.theme_rows.len())?).copied()
@@ -162,7 +168,8 @@ impl Shown {
             },
             title: field.title().into(),
             key: field.path().into(),
-            description: described.description.as_str().into(),
+            // The bundled font has no ▸ (the template's "Group by ▸ Type").
+            description: described.description.replace('▸', ">").into(),
             value: self.values[i].as_deref().unwrap_or(&described.default).into(),
             is_default: self.values[i].is_none(),
             default: described.default.as_str().into(),
@@ -218,6 +225,8 @@ struct Open {
     rows: Rc<VecModel<SettingItem>>,
     /// Counts the theme previews: a revert waits and goes only if no newer one came.
     previews: Cell<u64>,
+    /// The status the rows last asked for (to tell it from an outcome said since).
+    auto_status: RefCell<String>,
 }
 
 thread_local! {
@@ -283,6 +292,7 @@ pub fn open() {
         shown: RefCell::new(shown),
         rows: Rc::new(VecModel::default()),
         previews: Cell::new(0),
+        auto_status: RefCell::default(),
     });
     open.window.set_rows(ModelRc::from(open.rows.clone()));
     show_rows(&open, true);
@@ -316,6 +326,11 @@ pub fn open_backup(import: bool) {
     if let Some(open) = open_at(Page::SyncAndBackup) {
         let row = if import { "Import Settings" } else { "Export Settings" };
         say(&open, &format!("Type the zip's path in {row} and press Enter"));
+        let wanted = if import { backup::Row::Import } else { backup::Row::Export };
+        let at = open.shown.borrow().backup_index(wanted);
+        if let Some(at) = at {
+            focus_row(&open, at);
+        }
     }
 }
 
@@ -323,7 +338,9 @@ pub fn open_backup(import: bool) {
 fn focus_row(open: &Open, row: usize) {
     open.window.set_focus_row(-1);
     let row = i32::try_from(row).unwrap_or(-1);
-    slint::Timer::single_shot(Duration::ZERO, move || {
+    // After a frame, not on the next turn: the -1 must be seen (the same row asked for again
+    // is a change then), and a row just added must exist and be laid out.
+    slint::Timer::single_shot(Duration::from_millis(50), move || {
         if let Some(open) = current() {
             open.window.set_focus_row(row);
         }
@@ -400,8 +417,11 @@ fn show_rows(open: &Open, new: bool) {
     let (status, bad) = shown.status();
     let list = shown.backup_rows.contains(&backup::Row::Restore) && shown.backup.backups.is_none();
     drop(shown);
-    // A reload keeps what the status line says (an import's outcome) unless it is a problem.
-    if new || bad || open.window.get_status_bad() {
+    // A reload keeps what the status line says (an import's outcome) unless it is a new
+    // problem; the rows' own earlier status (a problem now fixed) is replaced.
+    let before = open.auto_status.replace(status.clone());
+    let ours = open.window.get_status().as_str() == before;
+    if new || ours || (bad && status != before) {
         open.window.set_status(status.into());
         open.window.set_status_bad(bad);
     }
@@ -630,9 +650,14 @@ fn bind(open: &Rc<Open>) {
     });
 }
 
-/// Opens the config folder in a new tab of the window last used.
+/// Opens the config folder (settings.toml's) in a new tab of the window last used.
 fn open_folder() {
-    let Some(dir) = crate::windows::config().map(|store| store.dir().to_owned()) else { return };
+    open_folder_of(ConfigStore::shared_dir);
+}
+
+/// Opens one of the store's folders in a new tab of the window last used.
+fn open_folder_of(which: fn(&ConfigStore) -> &std::path::Path) {
+    let Some(dir) = crate::windows::config().map(|store| which(&store).to_owned()) else { return };
     crate::windows::with_focused(|_| {
         crate::panes::with_active(|p| p.nav.open_tab(Location::Path(dir), true));
     });
@@ -669,7 +694,7 @@ fn note(text: String) {
 
 /// Opens settings.toml with the system's editor for it.
 fn edit_file() {
-    let Some(path) = crate::windows::config().map(|store| store.dir().join("settings.toml")) else { return };
+    let Some(path) = crate::windows::config().map(|store| store.shared_dir().join("settings.toml")) else { return };
     if let Err(err) = open::that_detached(&path) {
         let text = format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err));
         match current() {
@@ -692,7 +717,7 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
             let Some((id, contents)) = shown.got.install(i, text == themes::KEEP_BOTH, &date) else { return };
             let name = shown.got.found[i].name.clone();
             drop(shown);
-            let Some(dir) = crate::windows::config().map(|store| store.dir().join("themes")) else { return };
+            let Some(dir) = crate::windows::config().map(|store| store.shared_dir().join("themes")) else { return };
             say(open, &format!("Installing {name}…"));
             // Off the UI thread; the config watcher's reload then shows it installed.
             std::thread::spawn(move || {
@@ -734,7 +759,7 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                     _ => say_bad(open, &format!("Cannot open {address}")),
                 },
                 themes::DELETE => {
-                    let Some(dir) = crate::windows::config().map(|s| s.dir().join("themes")) else { return };
+                    let Some(dir) = crate::windows::config().map(|s| s.shared_dir().join("themes")) else { return };
                     // The real file name is read off the UI thread.
                     std::thread::spawn(move || {
                         let path = themes::theme_path(&dir, &id);
@@ -803,6 +828,12 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
     let mut shown = open.shown.borrow_mut();
     let state = &mut shown.backup;
     match row {
+        Row::Portable => {
+            if text == backup::OPEN_DATA {
+                drop(shown);
+                return open_folder_of(ConfigStore::local_dir);
+            }
+        }
         Row::Templates => state.without_templates = !on,
         Row::Views => state.with_views = on,
         Row::Group(group) => {
@@ -826,10 +857,12 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
-                crate::settings_backup::export(store.dir(), &out, &groups).map(|n| (n, out))
+                crate::settings_backup::export(store.shared_dir(), &out, &groups).map(|n| (n, out))
             };
             return work(open, &saying, job, |open, result| match (open, result) {
-                (Some(open), Ok((n, out))) => say(open, &format!("Exported {n} files to {}", out.display())),
+                (Some(open), Ok((n, out))) => {
+                    say(open, &format!("Exported {n} {} to {}", if n == 1 { "file" } else { "files" }, out.display()))
+                }
                 (Some(open), Err(why)) => say_bad(open, &why),
                 (None, _) => {}
             });
@@ -838,7 +871,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let from = match row {
                 Row::Import => path(),
                 _ => match crate::windows::config() {
-                    Some(store) => store.dir().join("backups").join(text),
+                    Some(store) => store.shared_dir().join("backups").join(text),
                     None => return,
                 },
             };
@@ -854,7 +887,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let saying = format!("Reading {}…", from.display());
             // Gezik's own backups are not checked: a broken settings.toml comes back as it was.
             let check = row == Row::Import;
-            let job = move |store: &ConfigStore| crate::settings_backup::preview(store.dir(), &from, check);
+            let job = move |store: &ConfigStore| crate::settings_backup::preview(store.shared_dir(), &from, check);
             return work(open, &saying, job, |open, result| {
                 let Some(open) = open else { return };
                 let programs = match result {
@@ -867,8 +900,14 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 };
                 open.shown.borrow_mut().pick_rows();
                 show_rows(open, false);
+                // The Import or Cancel row is below the fold at the window's first size.
+                let confirm = open.shown.borrow().backup_index(backup::Row::Confirm);
+                if let Some(confirm) = confirm {
+                    focus_row(open, confirm);
+                }
                 match programs {
                     0 => say(open, "Untick what not to import, then choose Import in the last of these rows"),
+                    1 => say_bad(open, "1 setting in it runs programs (the red row): import only files you trust"),
                     n => say_bad(
                         open,
                         &format!("{n} settings in it run programs (the red row): import only files you trust"),
@@ -899,7 +938,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
-                crate::settings_backup::import(store.dir(), chosen, &crate::settings_backup::stamp(), &discard)
+                crate::settings_backup::import(store.shared_dir(), chosen, &crate::settings_backup::stamp(), &discard)
             };
             return work(open, "Backing up, then importing…", job, |open, result| {
                 imported(open, result, "Imported: Undo Import puts the files back");
@@ -915,7 +954,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
-                crate::settings_backup::undo(store.dir(), &last, &crate::settings_backup::stamp(), &discard)
+                crate::settings_backup::undo(store.shared_dir(), &last, &crate::settings_backup::stamp(), &discard)
             };
             return work(open, "Undoing the import…", job, |open, result| {
                 imported(open, result, "Undone: the files are as they were before the import");
@@ -1003,7 +1042,7 @@ fn list_backups(open: &Open) {
         return;
     }
     std::thread::spawn(move || {
-        let names = crate::settings_backup::backups(store.dir());
+        let names = crate::settings_backup::backups(store.shared_dir());
         let _ = slint::invoke_from_event_loop(move || {
             let Some(open) = current() else { return };
             open.shown.borrow_mut().backup.listing = false;

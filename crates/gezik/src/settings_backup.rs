@@ -2,6 +2,9 @@
 //! `gezik_config::bundle` says which files may come in and what they change; this reads and
 //! writes them. An import never merges: each file chosen replaces the one here, after every
 //! file it touches has gone into a backup zip in `backups/` (the last 10 are kept).
+//!
+//! shortcut: one folder (the store's shared one) holds views.toml and `backups/` here too; while
+//! shared and local are the same folder (no sync folder) that is right; 14f splits them.
 
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::Warning;
-use crate::paths::{config_dir, write_atomic};
+use crate::paths::{Dirs, location, write_atomic};
 use crate::pins::PinEntry;
 use crate::settings::{Density, Settings, State};
 use crate::settings_writer::{Done, SettingsChange, SettingsWriter};
@@ -36,46 +36,67 @@ pub struct ConfigFiles {
 /// `settings.toml` writer thread and one `views.toml` writer thread.
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
-    dir: PathBuf,
+    dirs: Dirs,
     state: Arc<StateCell>,
     settings: Arc<SettingsWriter>,
     views: Arc<ViewsWriter>,
 }
 
 impl ConfigStore {
+    /// A store in one folder.
     pub fn new(dir: PathBuf) -> Self {
-        let state = Arc::new(StateCell::new(dir.join("state.toml")));
-        let settings = Arc::new(SettingsWriter::new(dir.clone()));
-        let views = Arc::new(ViewsWriter::new(dir.join("views.toml")));
-        Self { dir, state, settings, views }
+        Self::with_dirs(Dirs::one(dir))
     }
 
-    /// The store in the standard per-user location, if the OS has one.
+    pub fn with_dirs(dirs: Dirs) -> Self {
+        let state = Arc::new(StateCell::new(dirs.local.join("state.toml")));
+        let settings = Arc::new(SettingsWriter::new(dirs.shared.clone()));
+        let views = Arc::new(ViewsWriter::new(dirs.local.join("views.toml")));
+        Self { dirs, state, settings, views }
+    }
+
+    /// The store where [`location`] says (portable or the per-user folder), if there is one.
     pub fn system() -> Option<Self> {
-        config_dir().map(Self::new)
+        location().dirs.clone().map(Self::with_dirs)
     }
 
-    pub fn dir(&self) -> &Path {
-        &self.dir
+    /// settings.toml, the themes and the templates.
+    pub fn shared_dir(&self) -> &Path {
+        &self.dirs.shared
+    }
+
+    /// This machine's files: state, views, tags, backups, tools, system changes.
+    pub fn local_dir(&self) -> &Path {
+        &self.dirs.local
+    }
+
+    pub fn is_portable(&self) -> bool {
+        self.dirs.portable
+    }
+
+    /// The folder downloaded tools go in: `tools/`, or in portable mode `tools/<os>-<arch>/`
+    /// (one drive can be used on three systems; spec 14 §9.2).
+    pub fn tools_dir(&self) -> PathBuf {
+        tools_dir(&self.dirs)
     }
 
     fn settings_path(&self) -> PathBuf {
-        self.dir.join("settings.toml")
+        self.dirs.shared.join("settings.toml")
     }
 
     fn themes_dir(&self) -> PathBuf {
-        self.dir.join("themes")
+        self.dirs.shared.join("themes")
     }
 
     /// The user's templates for New ▸ (spec 8.1).
     pub fn templates_dir(&self) -> PathBuf {
-        self.dir.join("templates")
+        self.dirs.shared.join("templates")
     }
 
     /// Whether `path` is the templates folder or in it: New ▸ reads the folder again (and
     /// settings are not reloaded for it).
     pub fn is_template_path(&self, path: &Path) -> bool {
-        path.strip_prefix(&self.dir)
+        path.strip_prefix(&self.dirs.shared)
             .is_ok_and(|rest| rest.components().next().is_some_and(|first| first.as_os_str() == "templates"))
     }
 
@@ -83,8 +104,11 @@ impl ConfigStore {
     /// the config folder does not exist yet. Later runs never recreate files the user
     /// deleted.
     pub fn ensure_initialized(&self) -> io::Result<()> {
-        let first_run = !self.dir.exists();
+        let first_run = !self.dirs.shared.exists();
         std::fs::create_dir_all(self.themes_dir())?;
+        if self.dirs.local != self.dirs.shared {
+            std::fs::create_dir_all(&self.dirs.local)?;
+        }
         if first_run {
             std::fs::create_dir_all(self.templates_dir())?;
             write_if_missing(&self.settings_path(), SETTINGS_TEMPLATE)?;
@@ -125,7 +149,7 @@ impl ConfigStore {
     }
 
     fn views_path(&self) -> PathBuf {
-        self.dir.join("views.toml")
+        self.dirs.local.join("views.toml")
     }
 
     /// The last state: read from `state.toml` the first time (at start), then kept in memory.
@@ -242,7 +266,7 @@ impl ConfigStore {
     /// Whether a change to `path` should reload the config: `settings.toml` or a theme
     /// file, but not `state.toml` or editor temp files.
     pub fn is_config_file(&self, path: &Path) -> bool {
-        let Ok(relative) = path.strip_prefix(&self.dir) else { return false };
+        let Ok(relative) = path.strip_prefix(&self.dirs.shared) else { return false };
         let parts: Vec<String> = relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         match parts.as_slice() {
             [name] => name == "settings.toml",
@@ -250,6 +274,12 @@ impl ConfigStore {
             _ => false,
         }
     }
+}
+
+/// [`ConfigStore::tools_dir`].
+fn tools_dir(dirs: &Dirs) -> PathBuf {
+    let tools = dirs.local.join("tools");
+    if dirs.portable { tools.join(format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)) } else { tools }
 }
 
 /// Everything the UI needs after (re)loading the config folder.
@@ -316,9 +346,42 @@ mod tests {
     }
 
     fn write(store: &ConfigStore, relative: &str, text: &str) {
-        let path = store.dir().join(relative);
+        let path = store.shared_dir().join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn one_folder_keeps_every_file_where_it_was_and_portable_tools_go_by_system() {
+        let store = store("one-folder");
+        assert_eq!(store.shared_dir(), store.local_dir());
+        assert_eq!(store.tools_dir(), store.local_dir().join("tools"), "as before 14e: no move");
+        assert!(!store.is_portable());
+        store.save_state(&State::default()).unwrap();
+        store.save_views(&ViewMemory::default()).unwrap();
+        store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
+        for name in ["state.toml", "views.toml", "settings.toml"] {
+            assert!(store.shared_dir().join(name).is_file(), "{name}");
+        }
+        let data = PathBuf::from("/usb/gezik-data");
+        let portable = ConfigStore::with_dirs(Dirs { portable: true, ..Dirs::one(data.clone()) });
+        let system = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+        assert_eq!(portable.tools_dir(), data.join("tools").join(system));
+    }
+
+    #[test]
+    fn a_split_store_puts_each_file_in_its_folder() {
+        let root = crate::test_dir("split");
+        let dirs = Dirs { shared: root.join("shared"), local: root.join("local"), portable: false };
+        let store = ConfigStore::with_dirs(dirs);
+        store.ensure_initialized().unwrap();
+        store.save_state(&State::default()).unwrap();
+        store.save_views(&ViewMemory::default()).unwrap();
+        assert!(root.join("shared/settings.toml").is_file() && root.join("shared/themes/example.toml").is_file());
+        assert!(root.join("local/state.toml").is_file() && root.join("local/views.toml").is_file());
+        assert!(!root.join("shared/state.toml").exists() && !root.join("local/settings.toml").exists());
+        assert!(store.is_config_file(&root.join("shared/settings.toml")));
+        assert!(!store.is_config_file(&root.join("local/settings.toml")));
     }
 
     #[test]
@@ -334,7 +397,7 @@ mod tests {
     #[test]
     fn recognizes_template_paths() {
         let store = store("templates-watch");
-        let root = store.dir();
+        let root = store.shared_dir();
         assert!(store.is_template_path(&root.join("templates")));
         assert!(store.is_template_path(&root.join("templates").join("Report.docx")));
         assert!(store.is_template_path(&root.join("templates").join("Project").join("a.txt")));
@@ -347,16 +410,16 @@ mod tests {
     fn first_run_creates_starter_files_once() {
         let store = fresh_store("init");
         store.ensure_initialized().unwrap();
-        assert!(store.dir().join("settings.toml").is_file());
-        assert!(store.dir().join("themes/example.toml").is_file());
+        assert!(store.shared_dir().join("settings.toml").is_file());
+        assert!(store.shared_dir().join("themes/example.toml").is_file());
 
-        std::fs::remove_file(store.dir().join("themes/example.toml")).unwrap();
+        std::fs::remove_file(store.shared_dir().join("themes/example.toml")).unwrap();
         store.ensure_initialized().unwrap();
-        assert!(!store.dir().join("themes/example.toml").exists(), "deleted starter file came back");
+        assert!(!store.shared_dir().join("themes/example.toml").exists(), "deleted starter file came back");
 
         write(&store, "settings.toml", "theme = \"light\"\n");
         store.ensure_initialized().unwrap();
-        assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), "theme = \"light\"\n");
+        assert_eq!(std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap(), "theme = \"light\"\n");
     }
 
     #[test]
@@ -448,19 +511,19 @@ mod tests {
         store.save_state(&state).unwrap();
         assert_eq!(store.load_state(), state);
         // Read again from the file by a new store; a change written by the writer thread.
-        let again = ConfigStore::new(store.dir().to_path_buf());
+        let again = ConfigStore::new(store.shared_dir().to_path_buf());
         assert_eq!(again.load_state(), state);
         again.update_state(|state| state.preview_open = true);
         again.flush_state();
-        assert!(ConfigStore::new(store.dir().to_path_buf()).load_state().preview_open);
-        let names: Vec<_> = std::fs::read_dir(store.dir()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert!(ConfigStore::new(store.shared_dir().to_path_buf()).load_state().preview_open);
+        let names: Vec<_> = std::fs::read_dir(store.shared_dir()).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, ["state.toml"]);
     }
 
     #[test]
     fn recognizes_config_files() {
         let store = store("watch");
-        let root = store.dir();
+        let root = store.shared_dir();
         assert!(store.is_config_file(&root.join("settings.toml")));
         assert!(store.is_config_file(&root.join("themes").join("nord.toml")));
         assert!(!store.is_config_file(&root.join("state.toml")));
@@ -477,7 +540,7 @@ mod tests {
         let store = store("pin-save");
         write(&store, "settings.toml", "# mine\ntheme = \"dark\"\n");
         store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
-        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        let text = std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap();
         assert!(text.contains("# mine"));
         let loaded = resolve(&store.read_files(), true);
         assert_eq!(crate::pins::paths(&loaded.settings.pinned), ["/a"]);
@@ -498,7 +561,7 @@ mod tests {
         write(&store, "settings.toml", "theme = \n");
         let err = store.save_pinned(&[PinEntry::plain("/a")]).unwrap_err();
         assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
-        assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), "theme = \n");
+        assert_eq!(std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap(), "theme = \n");
     }
 
     #[test]
@@ -507,7 +570,7 @@ mod tests {
         write(&store, "settings.toml", "\u{feff}# mine\ntheme = \"dark\"\n");
         store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
         // Read raw file to verify no BOM is written
-        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        let text = std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap();
         assert!(!text.starts_with('\u{feff}'), "BOM should not be written");
         assert!(text.contains("# mine"), "user comment should be kept");
         let loaded = resolve(&store.read_files(), true);
@@ -523,7 +586,10 @@ mod tests {
         assert!(err.message.starts_with("Fix settings.toml first"), "{}", err.message);
         assert!(err.message.contains("pinned must be a list"), "{}", err.message);
         // File must not be modified
-        assert_eq!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap(), "pinned = \"not a list\"\n");
+        assert_eq!(
+            std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap(),
+            "pinned = \"not a list\"\n"
+        );
     }
 
     #[test]
@@ -571,11 +637,11 @@ mod tests {
         store.save_views(&memory).unwrap();
         store.update_state(|state| state.preview_open = true);
         store.flush_state();
-        assert_eq!(std::fs::read_to_string(store.dir().join("views.toml")).unwrap(), "");
-        assert_eq!(std::fs::read_to_string(store.dir().join("state.toml")).unwrap(), "");
+        assert_eq!(std::fs::read_to_string(store.shared_dir().join("views.toml")).unwrap(), "");
+        assert_eq!(std::fs::read_to_string(store.shared_dir().join("state.toml")).unwrap(), "");
         // settings.toml is still written (merged), as for the first window.
         store.save_pinned(&[PinEntry::plain("/a")]).unwrap();
-        assert!(std::fs::read_to_string(store.dir().join("settings.toml")).unwrap().contains("/a"));
+        assert!(std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap().contains("/a"));
     }
 
     #[test]
@@ -595,7 +661,7 @@ mod tests {
         let store = store("view-defaults");
         write(&store, "settings.toml", "# mine\ntheme = \"dark\"\n");
         store.save_view_defaults(&ViewSettings { mode: ViewMode::Grid, ..ViewSettings::default() }).unwrap();
-        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        let text = std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap();
         assert!(text.contains("# mine"));
         assert_eq!(resolve(&store.read_files(), true).settings.view.view.mode, ViewMode::Grid);
         write(&store, "settings.toml", "theme = \n");
@@ -606,7 +672,7 @@ mod tests {
     #[test]
     fn views_file_is_not_a_config_file() {
         let store = store("views-watch");
-        assert!(!store.is_config_file(&store.dir().join("views.toml")));
+        assert!(!store.is_config_file(&store.shared_dir().join("views.toml")));
     }
 
     #[test]
@@ -622,7 +688,7 @@ theme = \"dark\"
         );
         let filter = SavedFilter { name: "Resimler".into(), pattern: "*.jpg;*.png".into() };
         store.save_filters(std::slice::from_ref(&filter)).unwrap();
-        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        let text = std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap();
         assert!(text.contains("# mine"));
         assert_eq!(resolve(&store.read_files(), true).settings.filters, [filter]);
         write(
@@ -643,7 +709,7 @@ theme = \"dark\"
         let set =
             TabSet { name: "Release".into(), tabs: vec!["{downloads}".into(), "drives".into()], right: Vec::new() };
         store.save_tab_sets(std::slice::from_ref(&set)).unwrap();
-        let text = std::fs::read_to_string(store.dir().join("settings.toml")).unwrap();
+        let text = std::fs::read_to_string(store.shared_dir().join("settings.toml")).unwrap();
         assert!(text.contains("# mine"));
         assert_eq!(resolve(&store.read_files(), true).settings.tab_sets, [set]);
         store.save_tab_sets(&[]).unwrap();

@@ -68,6 +68,88 @@ pub fn register_app(app: &Path) {
     let _ = app;
 }
 
+/// This computer's name (`COMPUTERNAME` on Windows, the host name elsewhere), if known.
+pub fn machine_name() -> Option<String> {
+    #[cfg(windows)]
+    {
+        std::env::var("COMPUTERNAME").ok().filter(|n| !n.is_empty())
+    }
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        // SAFETY: the buffer is writable for its whole length; the name is NUL-ended within it.
+        if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } != 0 {
+            return None;
+        }
+        let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        // "mac.local" and "mac" are one machine.
+        let name = String::from_utf8_lossy(&buf[..end]);
+        name.split('.').next().filter(|n| !n.is_empty()).map(str::to_owned)
+    }
+}
+
+/// A stable id of this computer, read only: Windows' `MachineGuid`, macOS' `IOPlatformUUID`,
+/// Linux' machine-id. It stays when the computer is renamed or gets another network name.
+pub fn machine_id() -> Option<String> {
+    #[cfg(windows)]
+    {
+        machine_guid()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("/usr/sbin/ioreg")
+            .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        platform_uuid(&String::from_utf8_lossy(&out.stdout))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        ["/etc/machine-id", "/var/lib/dbus/machine-id"]
+            .iter()
+            .find_map(|path| std::fs::read_to_string(path).ok().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()))
+    }
+}
+
+/// `HKLM\SOFTWARE\Microsoft\Cryptography` `MachineGuid` (the 64-bit view), read only. Not in
+/// `windows.rs`, which names HKCU alone.
+#[cfg(windows)]
+fn machine_guid() -> Option<String> {
+    use ::windows::Win32::Foundation::ERROR_SUCCESS;
+    use ::windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RRF_SUBKEY_WOW6464KEY, RegGetValueW};
+    use ::windows::core::w;
+    let mut buf = [0u16; 128];
+    let mut size = (buf.len() * 2) as u32;
+    // SAFETY: `buf` holds `size` bytes; the names are NUL-ended literals.
+    let code = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            w!(r"SOFTWARE\Microsoft\Cryptography"),
+            w!("MachineGuid"),
+            RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+            None,
+            Some(buf.as_mut_ptr().cast()),
+            Some(&mut size),
+        )
+    };
+    if code != ERROR_SUCCESS {
+        return None;
+    }
+    let units = &buf[..(size as usize / 2).min(buf.len())];
+    let end = units.iter().position(|&c| c == 0).unwrap_or(units.len());
+    String::from_utf16(&units[..end]).ok().filter(|id| !id.trim().is_empty())
+}
+
+/// `"IOPlatformUUID" = "…"` in `ioreg`'s output.
+#[cfg(any(target_os = "macos", test))]
+fn platform_uuid(text: &str) -> Option<String> {
+    let line = text.lines().find(|line| line.contains("\"IOPlatformUUID\""))?;
+    let value = line.split_once('=')?.1.trim().trim_matches('"').trim();
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
 /// This Gezik's exe; on macOS and Linux the real file (a link Gezik makes points to it).
 pub fn exe() -> io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
@@ -112,6 +194,25 @@ pub fn environment_changed() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_platform_uuid_is_read_from_ioreg() {
+        let out = "+-o J314sAP  <class IOPlatformExpertDevice>\n    {\n      \"IOPlatformSerialNumber\" = \"X\"\n      \"IOPlatformUUID\" = \"1A2B-3C\"\n    }\n";
+        assert_eq!(platform_uuid(out).as_deref(), Some("1A2B-3C"));
+        assert_eq!(platform_uuid("nothing"), None);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn this_machine_has_an_id() {
+        assert!(machine_id().is_some_and(|id| !id.is_empty()));
+    }
+
+    #[test]
+    fn this_machine_has_a_name() {
+        let name = machine_name().expect("a name");
+        assert!(!name.is_empty() && !name.contains('.'), "{name}");
+    }
 
     #[test]
     fn only_an_empty_place_or_our_own_link_is_replaced() {

@@ -216,6 +216,12 @@ component SettingLine inherits Rectangle {
                 color: root.item.kind == 7 ? Theme.danger : Theme.foreground;
                 font-weight: 600;
                 vertical-alignment: center;
+                // A long title (Portable's folder) wraps, and is cut at the end, rather than push
+                // the control past the window's edge.
+                horizontal-stretch: 1;
+                min-width: 0px;
+                wrap: word-wrap;
+                overflow: elide;
             }
             Rectangle {
                 width: 240px;
@@ -320,7 +326,8 @@ component SettingLine inherits Rectangle {
                     width: parent.width;
                     enabled: !root.read-only;
                     text: root.value;
-                    accessible-label: root.spoken;
+                    // Named by its title; its value is its text (spoken, the value as last written).
+                    accessible-label: root.item.title;
                     accepted(text) => { root.write(text); }
                     changed has-focus => {
                         if !self.has-focus && self.visible && self.text != root.value {
@@ -534,6 +541,8 @@ export component SettingsWindow inherits Window {
                 content-height: column.preferred-height;
                 column := VerticalLayout {
                     width: parent.width;
+                    // Clear of the scroll bar, which lies over the right edge (the on/off boxes are there).
+                    padding-right: Theme.spacing * 2;
                     spacing: 2px;
                     for row[i] in root.rows: SettingLine {
                         item: row;

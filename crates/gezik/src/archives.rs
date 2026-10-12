@@ -646,10 +646,10 @@ impl Archives {
         window.on_cp_add_existing(move || t.ask_existing());
     }
 
-    /// Where downloaded tools go: `<config dir>/tools/` (next to settings.toml and the
-    /// pending deletes); without a config folder, a folder in the temporary one.
+    /// Where downloaded tools go: the local config folder's `tools/` (by system in portable
+    /// mode); without a config folder, a folder in the temporary one.
     fn data_dir(&self) -> PathBuf {
-        self.0.store.as_ref().map_or_else(|| std::env::temp_dir().join("gezik"), |store| store.dir().to_path_buf())
+        self.0.store.as_ref().map_or_else(|| std::env::temp_dir().join("gezik").join("tools"), ConfigStore::tools_dir)
     }
 
     /// The format used last (zip at first).

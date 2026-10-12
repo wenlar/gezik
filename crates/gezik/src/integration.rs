@@ -701,7 +701,11 @@ fn confirm(action: RowAction) {
             default_add.as_deref(),
             risky.as_deref(),
             login_add.as_deref(),
-        );
+        )
+        .map(|message| match changes::portable_note() {
+            Some(note) => format!("{note}\n\n{message}"),
+            None => message,
+        });
         crate::windows::post(window_id, move || {
             let (title, button) = words(action);
             match asked {

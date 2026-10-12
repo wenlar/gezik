@@ -67,9 +67,9 @@ fn media_path(target: &Target) -> Option<PathBuf> {
 /// How often the bar's time moves while playing.
 const TICK: Duration = Duration::from_millis(250);
 
-/// Where downloaded tools are (as `archives.rs` says): next to settings.toml.
+/// Where downloaded tools are (as `archives.rs` says).
 fn data_dir() -> PathBuf {
-    crate::windows::config().map_or_else(|| std::env::temp_dir().join("gezik"), |store| store.dir().to_path_buf())
+    crate::windows::config().map_or_else(|| std::env::temp_dir().join("gezik").join("tools"), |store| store.tools_dir())
 }
 
 /// How much of a text file is shown.

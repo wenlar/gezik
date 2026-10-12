@@ -1226,8 +1226,27 @@ pub fn snapshot(file: Option<&JournalFile>, access: &dyn Access, places: &Places
     }
 }
 
+/// The journal in the local config folder; in portable mode one per machine (spec 14 §9.2).
 fn journal_file() -> Option<JournalFile> {
-    gezik_config::paths::config_dir().map(JournalFile::new)
+    let dirs = gezik_config::paths::location().dirs.as_ref()?;
+    if !dirs.portable {
+        return Some(JournalFile::new(dirs.local.clone()));
+    }
+    // By the computer's stable id (a new host name must not lose the journal), read once.
+    static MACHINE: std::sync::OnceLock<(Option<String>, Option<String>)> = std::sync::OnceLock::new();
+    let (id, host) =
+        MACHINE.get_or_init(|| (gezik_platform::system::machine_id(), gezik_platform::system::machine_name()));
+    Some(JournalFile::portable(dirs.local.clone(), id.as_deref(), host.as_deref()))
+}
+
+/// Said first in every question of the System Integration page in portable mode (spec 14 §9.2).
+pub fn portable_note() -> Option<String> {
+    let dirs = gezik_config::paths::location().dirs.as_ref().filter(|d| d.portable)?;
+    let from = dirs.local.parent().unwrap_or(&dirs.local);
+    Some(format!(
+        "Gezik is running in portable mode from {}. These stop working when the drive is removed.",
+        from.display()
+    ))
 }
 
 fn exe_text() -> Result<String, String> {

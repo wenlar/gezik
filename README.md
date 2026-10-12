@@ -77,6 +77,8 @@ Themes from GitHub install from Settings ▸ Appearance ▸ Get Theme: paste a r
 
 Settings move as one zip: Settings ▸ Sync and Backup ▸ Export Settings, then Import Settings on the other computer. The import shows what changes, warns about settings that run programs, backs up first and can be undone. [More](docs/configuration.md#backup-and-moving)
 
+Portable mode: put an empty file named `gezik-portable` next to Gezik (next to `Gezik.app` on macOS, next to the AppImage on Linux) and everything Gezik keeps goes into `gezik-data/` beside it, so Gezik runs from a USB drive next to an installed copy. [More](docs/configuration.md#portable-mode)
+
 → [Configuration](docs/configuration.md) · [Writing a theme](docs/themes.md) · [Keyboard shortcuts](docs/shortcuts.md)
 
 ## Build

@@ -982,13 +982,27 @@ fn main() -> Result<(), slint::PlatformError> {
     let config = ConfigStore::system();
     templates::set_dir(config.as_ref().map(ConfigStore::templates_dir));
     view_options::install(config.clone());
-    let init_error = config.as_ref().and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
+    let location = gezik_config::paths::location();
+    // A read-only portable data folder (spec 14 §9.3): read, never written (nor made).
+    if location.read_only
+        && let Some(store) = &config
+    {
+        store.keep_state_unwritten();
+    }
+    let init_error = config
+        .as_ref()
+        .filter(|_| !location.read_only)
+        .and_then(|store| store.ensure_initialized().err().map(|e| (store, e)));
     let mut files = config.as_ref().map(ConfigStore::read_files).unwrap_or_default();
+    if let Some(note) = &location.note {
+        files.warnings.push(Warning::new("portable", note.clone()));
+    }
     if let Some((store, err)) = init_error {
         let why = gezik_platform::fs::describe(&err);
-        files
-            .warnings
-            .push(Warning::new(store.dir().display().to_string(), format!("cannot create config folder: {why}")));
+        files.warnings.push(Warning::new(
+            store.shared_dir().display().to_string(),
+            format!("cannot create config folder: {why}"),
+        ));
     }
     // Release builds hide stderr, so config problems also go to the status bar.
     if config.is_none() {
@@ -1134,7 +1148,7 @@ fn main() -> Result<(), slint::PlatformError> {
             },
         )
         .map_err(|err| {
-            eprintln!("gezik: cannot watch {}: {err}", store.dir().display());
+            eprintln!("gezik: cannot watch {}: {err}", store.shared_dir().display());
             let warning = Warning::new("config", format!("cannot watch the config folder for changes: {err}"));
             let mut current = files_for_warning.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             current.warnings.push(warning);
@@ -1151,10 +1165,10 @@ fn main() -> Result<(), slint::PlatformError> {
     slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
-        pending_deletes: config.as_ref().map(|store| store.dir().join("pending-deletes")),
+        pending_deletes: config.as_ref().map(|store| store.local_dir().join("pending-deletes")),
         verify: initial_settings.files.verify,
         max_speed: initial_settings.files.max_speed,
-        tags_store: config.as_ref().map(|store| store.dir().join("tags-store.tsv")),
+        tags_store: config.as_ref().map(|store| store.local_dir().join("tags-store.tsv")),
         // `[tags] write-to-files` (spec 12 §4.5), read once: the store keeps it (plan 12b sapma 5).
         tags_store_only: !initial_settings.tags.write_to_files,
     };

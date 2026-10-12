@@ -9,7 +9,8 @@ Gezik keeps its settings in a plain-text folder:
 | macOS | `~/Library/Application Support/gezik` |
 | Linux | `~/.config/gezik` |
 
-Set the `GEZIK_CONFIG_DIR` environment variable to use another folder.
+Set the `GEZIK_CONFIG_DIR` environment variable to use another folder; a `gezik-portable` file
+next to Gezik keeps everything next to it instead (see [Portable mode](#portable-mode)).
 
 - `settings.toml` — your preferences. Portable: copy it to another computer, on any OS. Every
   key is listed there with a comment.
@@ -23,7 +24,11 @@ Set the `GEZIK_CONFIG_DIR` environment variable to use another folder.
 - `pending-deletes` — permanent deletes not finished yet (Gezik finishes them on start).
   Local to this machine; not meant to be copied.
 - `system-changes.toml` — the changes Gezik made to the system on your command (see
-  [System integration](features.md#system-integration)). Written only by Gezik.
+  [System integration](features.md#system-integration)). Written only by Gezik. In portable
+  mode one per computer: `system-changes-<computer id>.toml`, named by a short hash of the
+  computer's id, with the computer's name inside.
+- `tools/` — programs Gezik downloaded on your command (7-Zip, ffmpeg, pdfium). In portable mode
+  one folder per system, `tools/<os>-<arch>/` (say `windows-x86_64`), so one drive serves three.
 
 The top of `settings.toml` holds:
 
@@ -118,6 +123,40 @@ moves your settings to another computer, or to the same one after a reinstall.
   and names Windows cannot hold are left out (the Import row lists them). A zip whose
   `settings.toml` or `views.toml` does not read is refused with the line. Paths written with a
   token (`{home}`, `{documents}`…) work on the other system; others may not exist there.
+
+## Portable mode
+
+Put a file named `gezik-portable` (empty; its contents do not matter) next to Gezik:
+
+| OS | Next to |
+|---|---|
+| Windows | `gezik.exe` |
+| macOS | `Gezik.app` (not inside it: that would break its signature) |
+| Linux | the `gezik` program, or the `.AppImage` file |
+
+Gezik then keeps everything (settings, themes, templates, state, views, tags, backups,
+downloaded tools, the system changes) in `gezik-data/` next to that file, made on the first start
+with the starter files. Nothing goes to the folder in the table above, and the portable Gezik
+runs as a separate instance next to an installed one. Settings ▸ Sync and Backup shows
+"Portable: settings are kept in …" with **Open Data Folder**.
+
+- `GEZIK_CONFIG_DIR` still comes first.
+- To move your current settings in: Export Settings in the installed Gezik, Import Settings in
+  the portable one (see [Backup and moving](#backup-and-moving)). To stop: delete
+  `gezik-portable`; `gezik-data/` stays.
+- System integration (default file manager, PATH, the tray at sign-in, the global shortcut)
+  still works, but each question first says that it stops working when the drive is removed.
+  Its list of changes is kept per computer (`system-changes-<computer id>.toml`; the id stays when
+  the computer is renamed or gets another network name), so a drive
+  used on several computers never undoes another computer's changes.
+- If `gezik-data/` cannot be written (a read-only drive or CD, `Program Files`), Gezik still
+  opens with its settings, writes nothing, and the status bar says "Portable data folder is
+  read-only: changes are not saved". If `gezik-data/` is not there and cannot be made, Gezik uses
+  the usual folder and says so.
+- macOS: a downloaded `Gezik.app` started from where it was unpacked may be run from a hidden,
+  read-only copy (App Translocation), where the marker cannot be seen; Gezik then uses the usual
+  folder and says "Move Gezik.app out of Downloads (or open it once from Finder after moving) to
+  use portable mode".
 
 ## Views
 

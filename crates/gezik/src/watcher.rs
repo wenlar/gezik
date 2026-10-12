@@ -19,15 +19,15 @@ pub fn watch_config(
 ) -> notify::Result<RecommendedWatcher> {
     let (tx, rx) = mpsc::channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(tx)?;
-    watcher.watch(store.dir(), RecursiveMode::Recursive)?;
+    watcher.watch(store.shared_dir(), RecursiveMode::Recursive)?;
 
     let store = store.clone();
     // FSEvents names the real folder (`/private/tmp/…` for `/tmp/…` on macOS): its events are
     // read back as under the folder as it was given.
-    let real = std::fs::canonicalize(store.dir()).ok().filter(|real| real != store.dir());
+    let real = std::fs::canonicalize(store.shared_dir()).ok().filter(|real| real != store.shared_dir());
     std::thread::spawn(move || {
         let as_given = |path: &std::path::Path| match real.as_deref().and_then(|real| path.strip_prefix(real).ok()) {
-            Some(rest) => store.dir().join(rest),
+            Some(rest) => store.shared_dir().join(rest),
             None => path.to_path_buf(),
         };
         // (settings or a theme, a template) a change touched.

@@ -3,13 +3,165 @@
 use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 
-/// The per-user config folder: `GEZIK_CONFIG_DIR` if set, otherwise e.g.
-/// `%APPDATA%\gezik` on Windows or `~/.config/gezik` on Linux.
+/// The folder for this machine's files ([`Dirs::local`]): `GEZIK_CONFIG_DIR` if set, else
+/// `gezik-data` next to a `gezik-portable` marker, else e.g. `%APPDATA%\gezik` on Windows or
+/// `~/.config/gezik` on Linux (spec 14 §3.1).
 pub fn config_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("GEZIK_CONFIG_DIR").filter(|d| !d.is_empty()) {
-        return Some(PathBuf::from(dir));
+    location().dirs.as_ref().map(|dirs| dirs.local.clone())
+}
+
+/// The file next to Gezik (next to `Gezik.app` on macOS) that turns on portable mode.
+pub const PORTABLE_MARKER: &str = "gezik-portable";
+/// The folder next to the marker that portable Gezik keeps everything in.
+pub const PORTABLE_DATA: &str = "gezik-data";
+
+/// The status bar note when the portable data folder cannot be written.
+pub const READ_ONLY_NOTE: &str = "Portable data folder is read-only: changes are not saved";
+/// The status bar note when macOS runs Gezik from a random read-only copy (App Translocation).
+pub const TRANSLOCATED_NOTE: &str =
+    "Move Gezik.app out of Downloads (or open it once from Finder after moving) to use portable mode";
+
+/// Where Gezik's files are (spec 14 §3.1): `shared` holds settings.toml, the themes and the
+/// templates; `local` this machine's files (state, views, tags, tools, backups, the system
+/// changes). The same folder until a sync folder (14f) is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dirs {
+    pub shared: PathBuf,
+    pub local: PathBuf,
+    /// In `gezik-data` next to a `gezik-portable` marker.
+    pub portable: bool,
+}
+
+impl Dirs {
+    /// One folder for everything.
+    pub fn one(dir: PathBuf) -> Dirs {
+        Dirs { shared: dir.clone(), local: dir, portable: false }
     }
-    dirs::config_dir().map(|dir| dir.join("gezik"))
+}
+
+/// Where the files go, before any folder is looked at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Choice {
+    /// `GEZIK_CONFIG_DIR`, or the system's config folder (none: no folder at all).
+    Plain(Option<PathBuf>),
+    /// A marker in this folder: everything in its `gezik-data`; the system's folder if that
+    /// cannot be made.
+    Portable { folder: PathBuf, system: Option<PathBuf> },
+    /// Started by macOS App Translocation, where no marker can be seen: the system's folder.
+    Translocated(Option<PathBuf>),
+}
+
+/// The folder a marker is looked for in: the AppImage's folder, the one holding a macOS
+/// `X.app` (inside the bundle would break its signature), else the exe's folder.
+pub fn marker_folder<'a>(exe: &'a Path, appimage: Option<&'a Path>) -> Option<&'a Path> {
+    if let Some(image) = appimage {
+        return image.parent();
+    }
+    let folder = exe.parent()?;
+    let bundle = folder
+        .parent()
+        .filter(|_| folder.file_name().is_some_and(|n| n == "MacOS"))
+        .filter(|contents| contents.file_name().is_some_and(|n| n == "Contents"))
+        .and_then(Path::parent)
+        .filter(|app| app.extension().is_some_and(|e| e == "app"));
+    match bundle {
+        Some(app) => app.parent(),
+        None => Some(folder),
+    }
+}
+
+/// The order of spec 14 §3.1 (pure): `GEZIK_CONFIG_DIR` (`env`), then a marker next to `exe`
+/// (`has_marker` asks the disk), then the system's folder.
+pub fn choose(
+    env: Option<PathBuf>,
+    exe: Option<&Path>,
+    appimage: Option<&Path>,
+    has_marker: impl Fn(&Path) -> bool,
+    system: Option<PathBuf>,
+) -> Choice {
+    if env.is_some() {
+        return Choice::Plain(env);
+    }
+    let Some(exe) = exe else { return Choice::Plain(system) };
+    if let Some(folder) = marker_folder(exe, appimage).filter(|f| has_marker(&f.join(PORTABLE_MARKER))) {
+        return Choice::Portable { folder: folder.to_path_buf(), system };
+    }
+    if exe.to_string_lossy().contains("/AppTranslocation/") {
+        return Choice::Translocated(system);
+    }
+    Choice::Plain(system)
+}
+
+/// Where the files are and what to say about it, worked out once at start.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Location {
+    pub dirs: Option<Dirs>,
+    /// The portable data folder cannot be written: nothing is written to it.
+    pub read_only: bool,
+    /// Said in the status bar at start.
+    pub note: Option<String>,
+}
+
+/// Looks at the disk for `choice`: a portable `gezik-data` that is there but cannot be
+/// written is used read-only; one that cannot be made falls back to the system's folder.
+/// The data folder itself is made by the store's first run (which writes the starter files).
+pub fn locate(choice: Choice, writable: impl Fn(&Path) -> bool) -> Location {
+    let plain =
+        |dir: Option<PathBuf>, note: Option<String>| Location { dirs: dir.map(Dirs::one), read_only: false, note };
+    match choice {
+        Choice::Plain(dir) => plain(dir, None),
+        Choice::Translocated(dir) => plain(dir, Some(TRANSLOCATED_NOTE.to_owned())),
+        Choice::Portable { folder, system } => {
+            let data = folder.join(PORTABLE_DATA);
+            let portable = || Some(Dirs { portable: true, ..Dirs::one(data.clone()) });
+            if data.is_dir() {
+                let read_only = !writable(&data);
+                Location { dirs: portable(), read_only, note: read_only.then(|| READ_ONLY_NOTE.to_owned()) }
+            } else if writable(&folder) {
+                Location { dirs: portable(), read_only: false, note: None }
+            } else {
+                let place = system.as_ref().map_or("the default settings".to_owned(), |s| s.display().to_string());
+                let note = format!("Portable mode: {} cannot be made (read-only?); using {place}", data.display());
+                plain(system, Some(note))
+            }
+        }
+    }
+}
+
+/// Whether a file can be made in `dir` (a probe file, removed at once).
+fn writable(dir: &Path) -> bool {
+    let probe = dir.join(format!(".gezik-probe-{}", std::process::id()));
+    let made = std::fs::File::create(&probe).is_ok();
+    let _ = std::fs::remove_file(&probe);
+    made
+}
+
+/// `\\?\C:\x` → `C:\x`, `\\?\UNC\server\share` → `\\server\share` (what `canonicalize` gives on
+/// Windows); anything else as it is.
+pub fn plain_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// This process's [`Location`]: one `metadata` call for the marker when there is none.
+pub fn location() -> &'static Location {
+    static LOCATION: std::sync::OnceLock<Location> = std::sync::OnceLock::new();
+    LOCATION.get_or_init(|| {
+        let env = std::env::var_os("GEZIK_CONFIG_DIR").filter(|d| !d.is_empty()).map(PathBuf::from);
+        // The real file (a link, junction or subst drive reaches the same folder, so the same
+        // single-instance key); on Windows without the `\\?\` the user would see.
+        let exe = std::env::current_exe().ok().map(|e| e.canonicalize().map(|real| plain_path(&real)).unwrap_or(e));
+        let appimage = std::env::var_os("APPIMAGE").filter(|_| cfg!(target_os = "linux")).map(PathBuf::from);
+        let system = dirs::config_dir().map(|dir| dir.join("gezik"));
+        let choice = choose(env, exe.as_deref(), appimage.as_deref(), |m| m.is_file(), system);
+        locate(choice, writable)
+    })
 }
 
 /// The `{token}`s [`KnownDirs::system`] knows, for settings that check a path's token.
@@ -213,6 +365,74 @@ mod tests {
     fn config_dir_ends_with_gezik() {
         // GEZIK_CONFIG_DIR is not set when tests run.
         assert!(config_dir().is_some_and(|dir| dir.ends_with("gezik")));
+    }
+
+    #[test]
+    fn the_marker_is_next_to_the_exe_the_bundle_or_the_appimage() {
+        let at =
+            |exe: &str, image: Option<&str>| marker_folder(Path::new(exe), image.map(Path::new)).map(Path::to_path_buf);
+        assert_eq!(at("/e/Gezik/gezik.exe", None), Some(PathBuf::from("/e/Gezik")));
+        assert_eq!(at("/v/X/Gezik.app/Contents/MacOS/gezik", None), Some(PathBuf::from("/v/X")), "beside the bundle");
+        assert_eq!(at("/v/X/Contents/MacOS/gezik", None), Some(PathBuf::from("/v/X/Contents/MacOS")), "not a bundle");
+        assert_eq!(at("/v/X/Gezik.app/Other/MacOS/gezik", None), Some(PathBuf::from("/v/X/Gezik.app/Other/MacOS")));
+        assert_eq!(at("/tmp/.mount_ab/usr/bin/gezik", Some("/usb/Gezik.AppImage")), Some(PathBuf::from("/usb")));
+    }
+
+    #[test]
+    fn the_config_dir_wins_then_the_marker_then_the_system() {
+        let system = Some(PathBuf::from("/home/a/.config/gezik"));
+        let exe = Path::new("/usb/Gezik/gezik");
+        let marker = |m: &Path| m == Path::new("/usb/Gezik/gezik-portable");
+        let none = |_: &Path| false;
+        let env = Some(PathBuf::from("/dev/conf"));
+        assert_eq!(choose(env.clone(), Some(exe), None, marker, system.clone()), Choice::Plain(env));
+        let portable = Choice::Portable { folder: PathBuf::from("/usb/Gezik"), system: system.clone() };
+        assert_eq!(choose(None, Some(exe), None, marker, system.clone()), portable);
+        assert_eq!(choose(None, Some(exe), None, none, system.clone()), Choice::Plain(system.clone()));
+        assert_eq!(choose(None, None, None, marker, system.clone()), Choice::Plain(system.clone()));
+        let image = Path::new("/usb/Gezik/Gezik.AppImage");
+        let mounted = Path::new("/tmp/.mount_x/usr/bin/gezik");
+        assert!(matches!(choose(None, Some(mounted), Some(image), marker, None), Choice::Portable { .. }));
+        let translocated =
+            Path::new("/private/var/folders/x/T/AppTranslocation/AB-12/d/Gezik.app/Contents/MacOS/gezik");
+        assert_eq!(choose(None, Some(translocated), None, none, system.clone()), Choice::Translocated(system));
+    }
+
+    #[test]
+    fn verbatim_prefixes_are_dropped() {
+        assert_eq!(plain_path(Path::new(r"\\?\E:\Gezik\gezik.exe")), Path::new(r"E:\Gezik\gezik.exe"));
+        assert_eq!(plain_path(Path::new(r"\\?\UNC\nas\usb\gezik.exe")), Path::new(r"\\nas\usb\gezik.exe"));
+        assert_eq!(plain_path(Path::new(r"\\?\Volume{1}\x")), Path::new(r"\\?\Volume{1}\x"));
+        assert_eq!(plain_path(Path::new("/usb/gezik")), Path::new("/usb/gezik"));
+    }
+
+    #[test]
+    fn a_portable_data_folder_is_used_read_only_or_left_for_the_system_one() {
+        let dir = crate::test_dir("portable");
+        let system = dir.join("system");
+        let choice = || Choice::Portable { folder: dir.clone(), system: Some(system.clone()) };
+        let data = dir.join(PORTABLE_DATA);
+        let portable = Some(Dirs { shared: data.clone(), local: data.clone(), portable: true });
+        // Not there yet: made by the first run, not here.
+        let first = locate(choice(), writable);
+        assert_eq!(first, Location { dirs: portable.clone(), read_only: false, note: None });
+        assert!(!data.exists());
+        let names: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert!(names.is_empty(), "the probe file is gone");
+        // A read-only folder (a CD) without gezik-data: the system's folder, said.
+        let fallback = locate(choice(), |_| false);
+        assert_eq!(fallback.dirs, Some(Dirs::one(system.clone())));
+        assert!(fallback.note.unwrap().contains("cannot be made"));
+        // gezik-data there but read-only: used, nothing written.
+        std::fs::create_dir(&data).unwrap();
+        let read_only = locate(choice(), |_| false);
+        assert_eq!(read_only, Location { dirs: portable, read_only: true, note: Some(READ_ONLY_NOTE.into()) });
+        // No marker: one folder as before, nothing said.
+        let plain = locate(Choice::Plain(Some(system.clone())), |_| false);
+        assert_eq!(plain, Location { dirs: Some(Dirs::one(system.clone())), read_only: false, note: None });
+        let moved = locate(Choice::Translocated(Some(system)), writable);
+        assert_eq!(moved.note.as_deref(), Some(TRANSLOCATED_NOTE));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
