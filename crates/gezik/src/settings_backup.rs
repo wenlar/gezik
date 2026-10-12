@@ -177,9 +177,10 @@ pub fn export(dir: &Path, out: &Path, groups: &[Group]) -> Result<usize, String>
 }
 
 /// The files of export `path` that may come in, the OS it was made on, and the entries left
-/// out. Read in memory, within the limits (300 MB, 4,096 files, 64 MB each); a zip with a
-/// settings.toml or views.toml that does not read is refused.
-pub fn read(path: &Path) -> Result<Read, String> {
+/// out. Read in memory, within the limits (300 MB, 4,096 files, 64 MB each). `check`: a zip
+/// from elsewhere, refused when its settings.toml or views.toml does not read; one of Gezik's
+/// own backups is not checked (it holds what was there, broken or not, byte for byte).
+pub fn read(path: &Path, check: bool) -> Result<Read, String> {
     let cannot = |err: std::io::Error| format!("Cannot read {}: {}", path.display(), describe(&err));
     let size = std::fs::metadata(path).map_err(cannot)?.len();
     if size > bundle::MAX_ZIP {
@@ -223,7 +224,7 @@ pub fn read(path: &Path) -> Result<Read, String> {
         }
     }
     let os = bundle::read_manifest(manifest.as_deref())?;
-    for (name, group, data) in &files {
+    for (name, group, data) in files.iter().filter(|_| check) {
         let text = || std::str::from_utf8(data).map_err(|_| format!("{name} is not text"));
         match group {
             Group::Settings => {
@@ -239,9 +240,9 @@ pub fn read(path: &Path) -> Result<Read, String> {
     Ok((os, files, left_out))
 }
 
-/// Export `path` compared with config folder `dir`.
-pub fn preview(dir: &Path, path: &Path) -> Result<Preview, String> {
-    let (os, entries, left_out) = read(path)?;
+/// Export `path` compared with config folder `dir` (`check`: see [`read`]).
+pub fn preview(dir: &Path, path: &Path, check: bool) -> Result<Preview, String> {
+    let (os, entries, left_out) = read(path, check)?;
     let mut files = Vec::new();
     for (name, group, data) in entries {
         let change = match read_if_there(&path_of(dir, &name))? {
@@ -315,11 +316,25 @@ pub fn import(dir: &Path, chosen: Vec<Incoming>, name: &str, discard: &dyn Fn(&P
     let chosen: Vec<Incoming> = chosen.into_iter().filter(|f| f.change != Change::Same).collect();
     let groups: Vec<Group> = chosen.iter().map(|f| f.group).collect();
     let (backup, before) = backup(dir, &groups, name, discard)?;
+    // Each file written over goes by its name on disk (`nord.toml` for the zip's `Nord.toml` on
+    // Windows and macOS), and must be in the backup: else nothing is written.
+    let mut targets = Vec::new();
+    for file in &chosen {
+        let there = path_of(dir, &file.name).symlink_metadata().is_ok();
+        let real = if there { real_name(dir, &file.name) } else { None };
+        if there && real.as_ref().is_none_or(|real| !before.iter().any(|(n, _)| n == real)) {
+            return Err(format!(
+                "Nothing imported: {} here is a link or has a name the backup cannot hold; move it away or leave \
+                 its kind of file out",
+                file.name
+            ));
+        }
+        targets.push(real);
+    }
     let mut undo = Undo { backup, replaced: Vec::new(), created: Vec::new() };
     let mut views = None;
-    for file in chosen {
-        let path = path_of(dir, &file.name);
-        let there = path.symlink_metadata().is_ok();
+    for (file, real) in chosen.into_iter().zip(targets) {
+        let path = path_of(dir, real.as_deref().unwrap_or(&file.name));
         let written =
             path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| write_atomic_bytes(&path, &file.data));
         if let Err(err) = written {
@@ -332,12 +347,33 @@ pub fn import(dir: &Path, chosen: Vec<Incoming>, name: &str, discard: &dyn Fn(&P
         if file.group == Group::Views {
             views = Some(String::from_utf8_lossy(&file.data).into_owned());
         }
-        match there {
-            true => undo.replaced.push(file.name),
-            false => undo.created.push(file.name),
+        match real {
+            Some(real) => undo.replaced.push(real),
+            None => undo.created.push(file.name),
         }
     }
     Ok(Done { undo, views })
+}
+
+/// `name`'s spelling on disk, folder by folder (the exact one first, else one that differs only
+/// in case), or `None` when a part is not there or not UTF-8.
+fn real_name(dir: &Path, name: &str) -> Option<String> {
+    let mut folder = dir.to_path_buf();
+    let mut parts = Vec::new();
+    for part in name.split('/') {
+        let names: Vec<String> = std::fs::read_dir(&folder)
+            .ok()?
+            .filter_map(Result::ok)
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        let found = names
+            .iter()
+            .find(|n| *n == part)
+            .or_else(|| names.iter().find(|n| n.to_lowercase() == part.to_lowercase()))?;
+        folder.push(found);
+        parts.push(found.clone());
+    }
+    Some(parts.join("/"))
 }
 
 /// Puts the files `undo` names back as `before` has them: those replaced written, those made
@@ -345,9 +381,11 @@ pub fn import(dir: &Path, chosen: Vec<Incoming>, name: &str, discard: &dyn Fn(&P
 fn put_back(dir: &Path, undo: &Undo, before: &[File]) -> Result<(), String> {
     let mut failed = None;
     for name in &undo.replaced {
-        if let Some((_, data)) = before.iter().find(|(n, _)| n == name)
-            && let Err(err) = write_atomic_bytes(&path_of(dir, name), data)
-        {
+        let Some((_, data)) = before.iter().find(|(n, _)| n == name) else {
+            failed = Some(format!("Cannot put back {name}: it is not in the backup"));
+            continue;
+        };
+        if let Err(err) = write_atomic_bytes(&path_of(dir, name), data) {
             failed = Some(format!("Cannot put back {name}: {}", describe(&err)));
         }
     }
@@ -365,7 +403,7 @@ fn put_back(dir: &Path, undo: &Undo, before: &[File]) -> Result<(), String> {
 /// Undoes an import: the files it replaced come back from its backup, byte for byte, and those
 /// it made go. What is there now is backed up first (Restore Backup has it).
 pub fn undo(dir: &Path, undo: &Undo, name: &str, discard: &dyn Fn(&Path)) -> Result<Done, String> {
-    let (_, files, _) = read(&undo.backup)?;
+    let (_, files, _) = read(&undo.backup, false)?;
     let before: Vec<File> = files.into_iter().map(|(name, _, data)| (name, data)).collect();
     let touched: Vec<Group> = undo.replaced.iter().chain(&undo.created).filter_map(|n| bundle::group_of(n)).collect();
     let (backup, _) = backup(dir, &touched, name, discard)?;
@@ -423,7 +461,7 @@ mod tests {
         let out = dir.join("out.zip");
         assert_eq!(export(&dir, &out, &[Group::Settings, Group::Themes, Group::Templates]), Ok(3));
         assert!(export(&dir, &out, &[Group::Settings]).unwrap_err().contains("there already"));
-        let (os, files, left_out) = read(&out).unwrap();
+        let (os, files, left_out) = read(&out, true).unwrap();
         assert_eq!(os, std::env::consts::OS);
         let names: Vec<&str> = files.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(names, ["settings.toml", "themes/nord.toml", "templates/work/Report.txt"]);
@@ -438,7 +476,7 @@ mod tests {
         let path = dir.join("in.zip");
         let read_zip = |entries: &[(&str, &[u8])]| {
             std::fs::write(&path, zip_of(entries)).unwrap();
-            read(&path)
+            read(&path, true)
         };
         let (os, files, left_out) = read_zip(&[
             (bundle::MANIFEST, manifest.as_bytes()),
@@ -466,7 +504,7 @@ mod tests {
         let refs: Vec<(&str, &[u8])> = many.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
         assert!(read_zip(&refs).unwrap_err().contains("4,096"));
         std::fs::write(&path, b"not a zip").unwrap();
-        assert!(read(&path).unwrap_err().contains("does not read as a zip"));
+        assert!(read(&path, true).unwrap_err().contains("does not read as a zip"));
     }
 
     #[test]
@@ -485,7 +523,7 @@ mod tests {
         let zip = source.join("out.zip");
         export(&source, &zip, &[Group::Settings, Group::Themes, Group::Templates]).unwrap();
 
-        let shown = preview(&dir, &zip).unwrap();
+        let shown = preview(&dir, &zip, true).unwrap();
         let changes: Vec<(&str, Change)> = shown.files.iter().map(|f| (f.name.as_str(), f.change)).collect();
         assert_eq!(
             changes,
@@ -504,7 +542,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path_of(&dir, "templates/a/b.txt")).unwrap(), "b");
         assert_eq!(done.undo.replaced, ["settings.toml", "themes/nord.toml"]);
         assert_eq!(done.undo.created, ["themes/frost.toml", "templates/a/b.txt"]);
-        let (_, backed_up, _) = read(&done.undo.backup).unwrap();
+        let (_, backed_up, _) = read(&done.undo.backup, false).unwrap();
         let backed_up: Vec<&str> = backed_up.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(backed_up, ["settings.toml", "themes/mine.toml", "themes/nord.toml"], "as they were");
 
@@ -513,6 +551,68 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("themes/nord.toml")).unwrap(), "old nord");
         assert!(!dir.join("themes/frost.toml").exists() && !path_of(&dir, "templates/a/b.txt").exists());
         assert_eq!(backups(&dir), ["gezik-settings-2.zip", "gezik-settings-1.zip"]);
+    }
+
+    #[test]
+    fn a_broken_settings_file_comes_back_on_undo() {
+        let dir = scratch("broken");
+        let broken = "theme = \"dark\"\n[layout\n";
+        put(&dir, "settings.toml", broken);
+        let source = scratch("broken-source");
+        put(&source, "settings.toml", SETTINGS);
+        let zip = source.join("out.zip");
+        export(&source, &zip, &[Group::Settings]).unwrap();
+        let shown = preview(&dir, &zip, true).unwrap();
+        let done = import(&dir, shown.files, "gezik-settings-1.zip", &|_| {}).unwrap();
+        assert!(read(&done.undo.backup, true).is_err(), "checked, the backup would be refused");
+        assert!(preview(&dir, &done.undo.backup, false).is_ok(), "Restore Backup reads it");
+        undo(&dir, &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("settings.toml")).unwrap(), broken);
+    }
+
+    #[test]
+    fn a_file_is_put_back_under_its_name_on_disk() {
+        let dir = scratch("case");
+        put(&dir, "themes/nord.toml", "old nord");
+        let source = scratch("case-source");
+        put(&source, "themes/Nord.toml", "new nord");
+        let zip = source.join("out.zip");
+        export(&source, &zip, &[Group::Themes]).unwrap();
+        let shown = preview(&dir, &zip, true).unwrap();
+        let done = import(&dir, shown.files, "gezik-settings-1.zip", &|_| {}).unwrap();
+        let insensitive = dir.join("themes/NORD.toml").exists();
+        if insensitive {
+            assert_eq!(done.undo.replaced, ["themes/nord.toml"], "the name on disk, as the backup has it");
+            assert_eq!(std::fs::read_to_string(dir.join("themes/nord.toml")).unwrap(), "new nord");
+        } else {
+            assert_eq!(done.undo.created, ["themes/Nord.toml"], "another file where case counts");
+        }
+        undo(&dir, &done.undo, "gezik-settings-2.zip", &|_| {}).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("themes/nord.toml")).unwrap(), "old nord");
+
+        let missing =
+            Undo { backup: PathBuf::new(), replaced: vec!["themes/gone.toml".to_owned()], created: Vec::new() };
+        assert_eq!(
+            put_back(&dir, &missing, &[]),
+            Err("Cannot put back themes/gone.toml: it is not in the backup".to_owned())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_template_stops_the_import() {
+        let dir = scratch("link");
+        put(&dir, "elsewhere.txt", "mine");
+        std::fs::create_dir_all(dir.join("templates")).unwrap();
+        std::os::unix::fs::symlink(dir.join("elsewhere.txt"), dir.join("templates/a.txt")).unwrap();
+        let source = scratch("link-source");
+        put(&source, "templates/a.txt", "new");
+        let zip = source.join("out.zip");
+        export(&source, &zip, &[Group::Templates]).unwrap();
+        let shown = preview(&dir, &zip, true).unwrap();
+        let refused = import(&dir, shown.files, "gezik-settings-1.zip", &|_| {}).unwrap_err();
+        assert!(refused.starts_with("Nothing imported: templates/a.txt"), "{refused}");
+        assert_eq!(std::fs::read_to_string(dir.join("elsewhere.txt")).unwrap(), "mine");
     }
 
     #[test]

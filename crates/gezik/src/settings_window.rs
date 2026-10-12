@@ -852,7 +852,9 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 return;
             }
             let saying = format!("Reading {}…", from.display());
-            let job = move |store: &ConfigStore| crate::settings_backup::preview(store.dir(), &from);
+            // Gezik's own backups are not checked: a broken settings.toml comes back as it was.
+            let check = row == Row::Import;
+            let job = move |store: &ConfigStore| crate::settings_backup::preview(store.dir(), &from, check);
             return work(open, &saying, job, |open, result| {
                 let Some(open) = open else { return };
                 let programs = match result {
@@ -893,6 +895,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 flush_views();
             }
             show_rows(open, false);
+            // The flushes are channel round trips to the writer threads (no UI, no watcher): safe here.
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
