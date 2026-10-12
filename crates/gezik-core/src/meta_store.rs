@@ -255,6 +255,58 @@ impl Store {
             .take(64)
             .find(|record| gone(&record.path))
     }
+
+    /// [`Store::refind`] for a whole folder listed at once (spec 12 §4.4): which of `files`
+    /// (name, size, modification time) in `folder` (in `volume`) are records whose path is gone.
+    /// Only files without a record of their own count, and only records of their size are
+    /// looked at, so a folder of 10,000 files against 20,000 records costs one pass; at most 64
+    /// paths are asked about. `id_of` gives file `i`'s id (asked only where the name differs).
+    /// Each found record's path, with the file it is.
+    pub fn refind_in(
+        &self,
+        volume: &str,
+        folder: &str,
+        files: &[(&str, u64, i64)],
+        mut id_of: impl FnMut(usize) -> Option<u64>,
+        mut gone: impl FnMut(&str) -> bool,
+    ) -> Vec<(Box<str>, usize)> {
+        const TOLERANCE_NS: i64 = 2_000_000_000;
+        let mut by_size: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        for (i, (name, size, _)) in files.iter().enumerate() {
+            if self.get(volume, &join(folder, name)).is_none() {
+                by_size.entry(*size).or_default().push(i);
+            }
+        }
+        let (mut found, mut asked) = (Vec::new(), 0);
+        if by_size.is_empty() {
+            return found;
+        }
+        let from = (Box::<str>::from(volume), Box::<str>::from(""));
+        for (_, record) in self.records.range(from..).take_while(|((v, _), _)| &**v == volume) {
+            let Some(candidates) = by_size.get(&record.size) else { continue };
+            let base = key_path(record.path.rsplit('/').next().unwrap_or(&record.path));
+            let hit = candidates.iter().copied().find(|&i| {
+                let (name, _, mtime) = files[i];
+                !found.iter().any(|(_, j)| *j == i)
+                    && (record.mtime_ns - mtime).abs() <= TOLERANCE_NS
+                    && (key_path(name) == base || matches!((record.file_id, id_of(i)), (Some(a), Some(b)) if a == b))
+            });
+            let Some(i) = hit else { continue };
+            if asked == 64 {
+                break;
+            }
+            asked += 1;
+            if gone(&record.path) {
+                found.push((record.path.clone(), i));
+            }
+        }
+        found
+    }
+}
+
+/// `name` in `folder` (both in a volume, with `/`).
+pub fn join(folder: &str, name: &str) -> String {
+    if folder.is_empty() { name.to_owned() } else { format!("{folder}/{name}") }
 }
 
 fn parse_line(line: &str) -> Option<(Box<str>, Record)> {
@@ -422,6 +474,41 @@ mod tests {
         assert!(store.refind("v", "renamed.bin", 1, 2, Some(99), gone).is_none(), "an id alone is not enough");
         let renamed = store.refind("v", "renamed.bin", 10, 1_000_000_000_000, Some(99), gone);
         assert_eq!(&*renamed.unwrap().path, "old/b.bin");
+    }
+
+    #[test]
+    fn a_folder_listed_whole_finds_files_moved_into_it() {
+        let mut store = Store::default();
+        store.set("v", record("old/a.txt", "Red")).unwrap();
+        store.set("v", record("still/b.txt", "Blue")).unwrap();
+        let mut by_id = record("old/c.bin", "Green");
+        by_id.file_id = Some(99);
+        store.set("v", by_id).unwrap();
+        store.set("v", record("new/own.txt", "Gray")).unwrap();
+        let t = 1_000_000_000_000;
+        let files = [("a.txt", 10, t + 1_500_000_000), ("b.txt", 10, t), ("renamed.bin", 10, t), ("own.txt", 10, t)];
+        let ids = [None, None, Some(99), None];
+        let gone = |path: &str| path.starts_with("old/");
+        let found = store.refind_in("v", "new", &files, |i| ids[i], gone);
+        assert_eq!(found, [(Box::from("old/a.txt"), 0), (Box::from("old/c.bin"), 2)], "b.txt is still in its place");
+        assert!(store.refind_in("w", "new", &files, |i| ids[i], gone).is_empty(), "only on its volume");
+        let late = [("a.txt", 10, t + 3_000_000_000)];
+        assert!(store.refind_in("v", "new", &late, |_| None, gone).is_empty(), "past FAT's 2 s");
+        let mut asked = 0;
+        for i in 0..100 {
+            store.set("v", record(&format!("x/{i}/a.txt"), "Red")).unwrap();
+        }
+        store.refind_in(
+            "v",
+            "new",
+            &[("a.txt", 10, t)],
+            |_| None,
+            |_| {
+                asked += 1;
+                false
+            },
+        );
+        assert_eq!(asked, 64, "at most 64 paths are asked about");
     }
 
     #[test]
