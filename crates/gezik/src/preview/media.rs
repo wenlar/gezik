@@ -240,9 +240,9 @@ pub struct Control {
 impl Control {
     fn new(sound: bool, paused: bool) -> Control {
         let mut clock = Clock::new(sound, Instant::now());
-        if paused {
-            clock.pause(Instant::now());
-        }
+        // Without sound the wall clock starts with the first frame (`first_frame`), not while
+        // ffmpeg starts: else the first frames would come late and be dropped.
+        clock.pause(Instant::now());
         Control { shared: Mutex::new(Shared { paused, stop: false, clock }), changed: Condvar::new() }
     }
 
@@ -261,6 +261,14 @@ impl Control {
             if paused { shared.clock.pause(Instant::now()) } else { shared.clock.resume(Instant::now()) }
         }
         self.changed.notify_all();
+    }
+
+    /// The first frame is here: a wall clock starts now (unless paused).
+    fn first_frame(&self) {
+        let mut shared = self.lock();
+        if !shared.paused {
+            shared.clock.resume(Instant::now());
+        }
     }
 
     fn stop(&self) {
@@ -411,6 +419,9 @@ fn video_loop(
         let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(w, h);
         if input.read_exact(buffer.make_mut_bytes()).is_err() {
             break;
+        }
+        if count == 0 {
+            control.first_frame();
         }
         match control.wait_for(count as f64 * frame, frame, count == 0) {
             None => break,
@@ -903,6 +914,58 @@ mod tests {
         let held = silent.played_frames();
         std::thread::sleep(Duration::from_millis(30));
         assert_eq!(silent.played_frames(), held);
+    }
+
+    /// ffmpeg on PATH: a one-second test video plays through both processes to its end.
+    #[test]
+    #[ignore = "needs ffmpeg on PATH"]
+    fn a_real_video_plays_to_its_end() {
+        let dir = std::env::temp_dir().join(format!("gezik-play-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("t.mp4");
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:duration=1"])
+            .args(["-f", "lavfi", "-i", "sine=duration=1", "-shortest"])
+            .arg(&file)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let start = Start {
+            ffmpeg: "ffmpeg".into(),
+            file: file.clone(),
+            at: 0.0,
+            video: Some(((160, 160), 25.0)),
+            audio: true,
+        };
+        let session = Session::start(start, Arc::new(AtomicU32::new(65_536)), || Ok(Box::new(Silent::new())), {
+            move |_, event| {
+                let event = match event {
+                    Event::Frame(frame) => format!("frame {}x{}", frame.width(), frame.height()),
+                    Event::VideoEnd(n) => format!("video {n}"),
+                    Event::AudioEnd(n) => format!("audio {n}"),
+                    Event::NoSound(why) => why,
+                };
+                let _ = tx.lock().unwrap().send(event);
+            }
+        })
+        .unwrap();
+        let mut seen = Vec::new();
+        while !(seen.iter().any(|e: &String| e.starts_with("video")) && seen.iter().any(|e| e.starts_with("audio"))) {
+            let event = rx.recv_timeout(Duration::from_secs(10)).expect("both ends within 10 s");
+            if event.starts_with("frame") {
+                session.in_flight.store(false, Ordering::SeqCst);
+            }
+            seen.push(event);
+        }
+        assert!(seen.contains(&"frame 160x120".to_owned()), "{seen:?}");
+        assert!(seen.contains(&"video 25".to_owned()), "{seen:?}");
+        let audio: u64 = seen.iter().find_map(|e| e.strip_prefix("audio ")).unwrap().parse().unwrap();
+        assert!((47_000..=49_500).contains(&audio), "{audio}");
+        assert!(session.position() >= 0.9, "{}", session.position());
+        drop(session);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
