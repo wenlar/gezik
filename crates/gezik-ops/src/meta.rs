@@ -581,6 +581,29 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A real drive without records (Linux checklist 251: a vfat USB stick):
+    /// `GEZIK_TEST_TAG_DIR=/media/$USER/STICK cargo test -p gezik-ops meta -- --ignored`. The
+    /// store is made, holds the file, and follows Gezik's rename.
+    #[test]
+    #[ignore]
+    fn the_store_on_a_drive_without_records() {
+        let Some(target) = std::env::var_os("GEZIK_TEST_TAG_DIR").map(PathBuf::from) else { return };
+        let dir = test_dir("meta-real-fat");
+        let tags = store(&dir);
+        let (a, b) = (target.join("gezik-tag-a.txt"), target.join("gezik-tag-b.txt"));
+        let _ = std::fs::remove_file(&b);
+        std::fs::write(&a, "x").unwrap();
+        assert!(matches!(tags.write(&a, &red()).unwrap(), Where::Store(_)), "this drive holds records");
+        std::fs::rename(&a, &b).unwrap();
+        let facts = gezik_core::ops::conflict::Facts::default();
+        tags.follow(&[&Outcome::Moved { from: a.clone(), to: b.clone(), facts }]);
+        tags.flush().unwrap();
+        assert!(std::fs::read_to_string(dir.join("config/tags-store.tsv")).unwrap().contains("gezik-tag-b.txt"));
+        assert_eq!(store(&dir).read(&b).unwrap(), red());
+        let _ = std::fs::remove_file(&b);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_paths_in_a_volume_use_slashes() {
         let root = if cfg!(windows) { Path::new(r"C:\") } else { Path::new("/mnt/usb") };

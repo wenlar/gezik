@@ -261,6 +261,27 @@ mod tests {
         assert!(own.meta.tags.iter().any(|t| t.color == TagColor::Green), "{:?}", own.meta.tags);
     }
 
+    /// A copy onto an exFAT or FAT disk keeps its tags (macOS checklist 343; macOS keeps them in
+    /// `._` files there): `GEZIK_TEST_TAG_DIR=/Volumes/STICK cargo test -p gezik-platform meta
+    /// -- --ignored`.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore]
+    fn a_copy_to_an_exfat_disk_keeps_its_tags() {
+        let Some(target) = std::env::var_os("GEZIK_TEST_TAG_DIR").map(std::path::PathBuf::from) else { return };
+        let dir = test_dir("exfat");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        write(&file, &sample()).unwrap();
+        let copy = target.join("gezik-tag-copy.txt");
+        let _ = std::fs::remove_file(&copy);
+        crate::fs::copy_file(&file, &copy, 1, &mut |_| true).unwrap();
+        let back = read(&copy).unwrap().meta;
+        let _ = std::fs::remove_file(&copy);
+        assert_eq!(back, sample());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Dolphin sees what Gezik wrote (Linux checklist 250): run with `--ignored`, then open
     /// `~/gezik-tag-probe.txt`'s Information panel in Dolphin.
     #[cfg(target_os = "linux")]
