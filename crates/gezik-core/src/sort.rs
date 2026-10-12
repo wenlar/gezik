@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::time::SystemTime;
 
 use crate::Entry;
+use crate::meta_filter::TagKey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SortKey {
@@ -17,11 +18,14 @@ pub enum SortKey {
     Size,
     /// The search results' own sort (a result's folder), not a folder's.
     Folder,
+    /// Each row's front tag (spec 12 §6.2): from `Grouping::tags`, none without it.
+    Tags,
 }
 
 impl SortKey {
     /// A folder's sort keys; `Folder` is the search results' own.
-    pub const ALL: [SortKey; 5] = [SortKey::Name, SortKey::Modified, SortKey::Created, SortKey::Type, SortKey::Size];
+    pub const ALL: [SortKey; 6] =
+        [SortKey::Name, SortKey::Modified, SortKey::Created, SortKey::Type, SortKey::Size, SortKey::Tags];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -31,6 +35,7 @@ impl SortKey {
             SortKey::Type => "type",
             SortKey::Size => "size",
             SortKey::Folder => "folder",
+            SortKey::Tags => "tags",
         }
     }
 
@@ -304,6 +309,9 @@ enum Primary {
     Size(u64),
     // Type name key, then the lowercase extension (spans of the key buffer: no string a row).
     Type((u32, u32), (u32, u32)),
+    // The front tag: its place (listed tags first, then unlisted by name, then untagged), and
+    // an unlisted one's name key.
+    Tag(u32, (u32, u32)),
 }
 
 /// Sorts `entries` by `spec` (see [`sort_order`]). Returns where each entry came from: entry
@@ -408,8 +416,12 @@ pub fn sort_rows_grouped<'e, 'a>(
         }
         (start, buf.len() as u32)
     };
-    // Folders whose size is on their way go last in either direction (spec 6.3).
-    let last = |e: &Entry| spec.key == SortKey::Size && e.size_pending();
+    // Folders whose size is on their way go last in either direction (spec 6.3); so do rows
+    // whose tags are (spec 12 §3.4).
+    let tags = group.and_then(|g| g.tags).filter(|_| spec.key == SortKey::Tags);
+    let last = |e: &Entry, key: Option<&TagKey>| {
+        (spec.key == SortKey::Size && e.size_pending()) || key == Some(&TagKey::Pending)
+    };
     let keyed = !matches!(spec.key, SortKey::Name | SortKey::Folder);
     // Per row: whether it is a folder and goes last (the comparison needs no entry), and the
     // column's value when it is not the row's text.
@@ -417,7 +429,8 @@ pub fn sort_rows_grouped<'e, 'a>(
     let mut keys: Vec<Primary> = Vec::with_capacity(if keyed { len } else { 0 });
     for i in 0..len {
         let e = entry(i);
-        kinds.push((e.is_dir, last(&e)));
+        let tag = tags.map(|key| key(&e));
+        kinds.push((e.is_dir, last(&e, tag.as_ref())));
         keys.extend(match spec.key {
             SortKey::Name | SortKey::Folder => None,
             SortKey::Modified => Some(Primary::Time(e.modified)),
@@ -427,6 +440,11 @@ pub fn sort_rows_grouped<'e, 'a>(
             SortKey::Type => {
                 Some(Primary::Type(push(&type_name(&e), false), push(&e.extension().to_lowercase(), true)))
             }
+            SortKey::Tags => Some(match tag.unwrap_or(TagKey::Untagged) {
+                TagKey::Listed { rank, .. } => Primary::Tag(rank, (0, 0)),
+                TagKey::Unlisted(name) => Primary::Tag(u32::MAX - 1, push(&name, false)),
+                TagKey::Untagged | TagKey::Pending => Primary::Tag(u32::MAX, (0, 0)),
+            }),
         });
     }
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];
@@ -443,6 +461,7 @@ pub fn sort_rows_grouped<'e, 'a>(
                     (Primary::Type(ta, xa), Primary::Type(tb, xb)) => {
                         span(*ta).cmp(span(*tb)).then_with(|| span(*xa).cmp(span(*xb)))
                     }
+                    (Primary::Tag(ra, na), Primary::Tag(rb, nb)) => ra.cmp(rb).then_with(|| span(*na).cmp(span(*nb))),
                     (pa, pb) => pa.cmp(pb),
                 },
             };

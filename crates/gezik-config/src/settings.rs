@@ -828,7 +828,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     {
         out.view.mode = mode;
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\" or \"size\"";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\" or \"tags\"";
     // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
     let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
     if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
@@ -841,7 +841,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
         out.view.grid_size = size;
     }
-    let groups = "\"none\", \"type\", \"date\" or \"size\"";
+    let groups = "\"none\", \"type\", \"date\", \"size\" or \"tag\"";
     if let Some(group) = view_choice(table, "group", groups, GroupBy::parse, file, warnings) {
         out.view.group = group;
     }
@@ -2585,7 +2585,7 @@ width = 900
     #[test]
     fn bad_view_values_keep_defaults_with_warnings() {
         let (settings, warnings) = parse(
-            "[view]\nmode = \"tiles\"\nsort-dir = 1\ngroup = \"tag\"\nthumbnails = \"yes\"\nicons = \"system\"\n",
+            "[view]\nmode = \"tiles\"\nsort-dir = 1\ngroup = \"label\"\nthumbnails = \"yes\"\nicons = \"system\"\n",
         );
         assert_eq!(settings.view, ViewDefaults::default());
         let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
@@ -2593,7 +2593,7 @@ width = 900
         assert!(messages[0].starts_with("view.mode:") && messages[0].contains("\"tiles\""));
         assert!(messages[1].starts_with("view.sort-dir:"));
         assert!(
-            messages[2].starts_with("view.group: expected \"none\", \"type\", \"date\" or \"size\""),
+            messages[2].starts_with("view.group: expected \"none\", \"type\", \"date\", \"size\" or \"tag\""),
             "{messages:?}"
         );
         assert!(messages[3].starts_with("view.thumbnails:"));
@@ -2621,7 +2621,7 @@ width = 900
              [[columns]]\nwidth = 100\n\n[preview]\nopen = true\nwidth = 9000\n",
         );
         let columns = state.columns.unwrap();
-        assert_eq!(columns.len(), 4);
+        assert_eq!(columns.len(), 5);
         assert_eq!((columns[3].width, columns[3].visible), (gezik_core::view::MIN_COLUMN_WIDTH, true));
         assert!(state.preview_open);
         assert_eq!(state.preview_width, None);

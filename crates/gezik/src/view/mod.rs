@@ -2,10 +2,12 @@
 //! Navigation hands it each loaded listing and takes the selection back as a `ViewState`.
 
 mod columns;
+mod folder_tags;
 mod listing;
 mod model;
 
 pub use columns::LIST_ONLY;
+use folder_tags::FolderTags;
 pub use listing::Listing;
 
 use std::borrow::Cow;
@@ -43,7 +45,7 @@ use slint::{ComponentHandle, ModelRc};
 use crate::media::{Media, Ready};
 use crate::panes::PaneId;
 use crate::{AppWindow, Theme};
-use listing::{filtered_listing, filtered_results, name_taken};
+use listing::{filtered_results, name_taken};
 use model::{ItemsModel, ViewData, hide_collapsed};
 
 /// How long after showing a listing (or a far jump) its scroll offset is applied again:
@@ -154,6 +156,11 @@ struct Inner {
     /// The shown folder's own mode, before the columns or the list forced another (what a
     /// change of its sort or picture size keeps in views.toml).
     own_mode: Cell<ViewMode>,
+    /// The folder's tags read whole (spec 12 §3.4): the read going on, the last one's number,
+    /// and how far it got (the status line).
+    tag_run: RefCell<Option<folder_tags::TagRun>>,
+    tag_runs: Cell<u64>,
+    tag_progress: RefCell<Option<String>>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -161,6 +168,8 @@ struct Inner {
 struct FilterState {
     text: String,
     pattern: Pattern,
+    /// Its `tag:` words (spec 12 §6.3).
+    tags: Vec<gezik_core::meta_filter::TagTerm>,
     error: Option<String>,
 }
 
@@ -168,11 +177,13 @@ impl FilterState {
     /// `text` compiled; a text with an error keeps `before`'s pattern (the list does not
     /// jump while a part is half typed).
     fn new(text: &str, before: Option<&FilterState>) -> FilterState {
-        match Pattern::compile(text) {
-            Ok(pattern) => FilterState { text: text.to_owned(), pattern, error: None },
+        let (names, tags) = gezik_core::meta_filter::split(text);
+        match Pattern::compile(&names) {
+            Ok(pattern) => FilterState { text: text.to_owned(), pattern, tags, error: None },
             Err(error) => FilterState {
                 text: text.to_owned(),
                 pattern: before.map(|b| b.pattern.clone()).unwrap_or_default(),
+                tags: before.map(|b| b.tags.clone()).unwrap_or_default(),
                 error: Some(error),
             },
         }
@@ -342,6 +353,9 @@ impl View {
             rule_columns: Cell::new(None),
             miller: RefCell::default(),
             own_mode: Cell::new(defaults.view.mode),
+            tag_run: RefCell::new(None),
+            tag_runs: Cell::new(0),
+            tag_progress: RefCell::new(None),
         }));
         // Weak: the media client lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -540,7 +554,7 @@ impl View {
                     state.filter.as_deref().map(|text| FilterState::new(text, None))
                 };
                 let (shown, rows) = match &filter {
-                    Some(filter) => filtered_listing(&dir, &full, &filter.pattern),
+                    Some(filter) => self.filter_files(&dir, &full, &filter.pattern, &filter.tags),
                     None => (Listing::Files(dir, full.clone()), None),
                 };
                 *self.0.filter.borrow_mut() = filter;
@@ -615,6 +629,8 @@ impl View {
         if results {
             self.sort_results();
         }
+        // Files may have changed: a folder read whole for its tags is read again.
+        self.sync_folder_tags(true);
     }
 
     /// The entry being renamed after the rows changed: found again by its key, or the rename ends.
@@ -837,11 +853,16 @@ impl View {
             self.0.filter.borrow_mut().take();
             return self.sync_filter_bar(&window);
         }
-        let old_pattern = self.0.filter.borrow().as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let patterns = |f: Option<&FilterState>| f.map(|f| (f.pattern.clone(), f.tags.clone())).unwrap_or_default();
+        let old_pattern = patterns(self.0.filter.borrow().as_ref());
         let next = text.map(|text| FilterState::new(text, self.0.filter.borrow().as_ref()));
-        let new_pattern = next.as_ref().map(|f| f.pattern.clone()).unwrap_or_default();
+        let new_pattern = patterns(next.as_ref());
         let closing = next.is_none();
         *self.0.filter.borrow_mut() = next;
+        // `tag:` words need the folder's tags (none in the results).
+        if results.is_none() {
+            self.sync_folder_tags(false);
+        }
         // The same entries show (the bar opens empty, a space is added, a part is half typed):
         // the list, its selection and scroll stay.
         if new_pattern != old_pattern {
@@ -852,8 +873,8 @@ impl View {
             let full = self.0.data.borrow().full.clone();
             let full_len = results.as_ref().map_or(full.len(), |set| set.len());
             let (shown, rows) = match &results {
-                Some(set) => filtered_results(set, &new_pattern),
-                None => filtered_listing(&dir, &full, &new_pattern),
+                Some(set) => filtered_results(set, &new_pattern.0),
+                None => self.filter_files(&dir, &full, &new_pattern.0, &new_pattern.1),
             };
             // What was selected and still shows stays selected, carried by position through
             // the full list (no names: Ctrl+A in 100k entries, then typing, stays fast). Closing
@@ -1022,6 +1043,7 @@ impl View {
                     Column::Shown(ColumnKey::Modified) => date(entry.as_deref().and_then(|e| e.modified)),
                     Column::Shown(ColumnKey::Created) => date(entry.as_deref().and_then(|e| e.created)),
                     Column::Shown(ColumnKey::Type) => model::type_name_for(&data, i),
+                    Column::Shown(ColumnKey::Tags) => model::known_tag_names(&data, i),
                 };
             }
             each(&cells)
@@ -1921,7 +1943,7 @@ impl View {
                 |e: &Entry| own_type_name(&e.name, e.is_dir).unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir));
             let dup_key = |i: usize| full.dup_key(i);
             let row: Option<&dyn Fn(usize) -> Option<GroupKey>> = full.is_duplicates().then_some(&dup_key);
-            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row };
+            let grouping = Grouping { by, spec, folders_first, dates: &dates, type_name: &plain, row, tags: None };
             let order = full.sort_order(spec, folders_first, plain, (by != GroupBy::None).then_some(&grouping));
             // Let go first: the UI thread then moves the set, no copy.
             drop(full);
@@ -2100,7 +2122,7 @@ impl View {
     /// What the filter lets through of `full`, the entries of `dir`, and where they are in it.
     fn filtered(&self, dir: &Path, full: &Rc<Vec<Entry>>) -> (Listing, Option<Vec<usize>>) {
         match self.0.filter.borrow().as_ref() {
-            Some(filter) => filtered_listing(dir, full, &filter.pattern),
+            Some(filter) => self.filter_files(dir, full, &filter.pattern, &filter.tags),
             None => (Listing::Files(dir.to_path_buf(), full.clone()), None),
         }
     }
@@ -2291,6 +2313,7 @@ impl View {
                 ColumnKey::Size => window.get_col_size(),
                 ColumnKey::Folder => window.get_col_folder(),
                 ColumnKey::Match => window.get_col_match(),
+                ColumnKey::Tags => window.get_col_tags(),
             };
             column.width = (width.round().max(0.0) as u32).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH);
         }
@@ -2343,6 +2366,14 @@ impl View {
         window.set_col_size(width(ColumnKey::Size));
         window.set_col_folder(width(ColumnKey::Folder));
         window.set_col_match(width(ColumnKey::Match));
+        let tags = width(ColumnKey::Tags);
+        window.set_col_tags(tags);
+        drop(columns);
+        // Rows read their tags while the column shows (spec 12 §6.1); shown now, they ask.
+        let was = std::mem::replace(&mut self.0.data.borrow_mut().tags_column, tags > 0.0);
+        if !was && tags > 0.0 {
+            self.redraw_visible();
+        }
         let trash = self.shows_trash();
         crate::panes::edit(self.0.id, |d| d.trash_shown = trash);
     }
@@ -2356,6 +2387,7 @@ impl View {
             SortKey::Type => ColumnKey::Type.index(),
             SortKey::Size => ColumnKey::Size.index(),
             SortKey::Folder => ColumnKey::Folder.index(),
+            SortKey::Tags => ColumnKey::Tags.index(),
         };
         crate::panes::edit(self.0.id, |d| {
             d.sort_column = column;
@@ -2373,7 +2405,8 @@ impl View {
                     && self.0.options.get().folders_first
                     && self.group_by() == GroupBy::None) =>
             {
-                Listing::Files(dir, self.sort_now(entries).0)
+                let sorted = self.sort_now(&dir, entries).0;
+                Listing::Files(dir, sorted)
             }
             other => other,
         }
@@ -2381,7 +2414,7 @@ impl View {
 
     /// `entries` in the current sort order (copied only if shared), and where each came from
     /// (`sort_entries`).
-    fn sort_now(&self, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
+    fn sort_now(&self, dir: &Path, entries: Rc<Vec<Entry>>) -> (Rc<Vec<Entry>>, Vec<usize>) {
         let (view, by) = (self.0.current.get(), self.group_by());
         if view.sort.key == SortKey::Type || by == GroupBy::Type {
             self.request_type_names(&entries);
@@ -2389,12 +2422,22 @@ impl View {
         let folders_first = self.0.options.get().folders_first;
         let mut entries = Rc::unwrap_or_clone(entries);
         let type_name = |e: &Entry| self.type_name_of(e);
-        let order = if by == GroupBy::None {
+        // A sort by tags that is not grouped goes through a grouping by nothing (its keys).
+        let by_tags = view.sort.key == SortKey::Tags || by == GroupBy::Tag;
+        let order = if by == GroupBy::None && !by_tags {
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, None)
         } else {
             let dates = self.fresh_dates();
-            let grouping =
-                Grouping { by, spec: view.sort, folders_first, dates: &dates, type_name: &type_name, row: None };
+            let tags = self.tag_keys(dir);
+            let grouping = Grouping {
+                by,
+                spec: view.sort,
+                folders_first,
+                dates: &dates,
+                type_name: &type_name,
+                row: None,
+                tags: Some(&tags),
+            };
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, Some(&grouping))
         };
         (Rc::new(entries), order)
@@ -2423,6 +2466,8 @@ impl View {
             }
             return self.sort_results();
         }
+        // A sort or grouping by tags needs the folder's tags (a change to one starts their read).
+        self.sync_folder_tags(false);
         let scroll = self.list_scroll();
         let (listing, full, old_rows, selection) = self.take_listing();
         // The full list is sorted (no longer shared with the shown one, so not copied), then
@@ -2431,7 +2476,7 @@ impl View {
             Listing::Files(dir, shown) => {
                 drop(shown);
                 let full_len = full.len();
-                let (full, order) = self.sort_now(full);
+                let (full, order) = self.sort_now(&dir, full);
                 let in_full = carry(&selection, old_rows.as_deref(), full_len, Some(&order));
                 let (shown, rows) = self.filtered(&dir, &full);
                 let selection = carry(&in_full, None, full.len(), rows.as_deref());
@@ -2498,6 +2543,10 @@ impl View {
                     if matches!(data.listing, Listing::Results(_)) { &plain } else { &own };
                 let dates = self.0.dates.borrow();
                 let dup_key = |i: usize| dups.and_then(|set| set.dup_key(i));
+                let tags = match &data.listing {
+                    Listing::Files(dir, _) if by == GroupBy::Tag => Some(self.tag_keys(dir)),
+                    _ => None,
+                };
                 let grouping = Grouping {
                     by,
                     spec: self.sort(),
@@ -2505,6 +2554,7 @@ impl View {
                     dates: &dates,
                     type_name,
                     row: dups.is_some().then_some(&dup_key as &dyn Fn(usize) -> Option<GroupKey>),
+                    tags: tags.as_ref().map(|t| t as &dyn Fn(&Entry) -> gezik_core::meta_filter::TagKey),
                 };
                 let collapsed = self.0.collapsed.borrow();
                 let listing = &data.listing;
@@ -2692,6 +2742,9 @@ impl View {
         if let Some(note) = self.0.note.borrow().clone() {
             window.set_status(note.into());
             return;
+        }
+        if let Some(progress) = self.0.tag_progress.borrow().clone() {
+            return window.set_status(progress.into());
         }
         let standing = self.0.results_status.borrow().clone();
         if self.0.data.borrow().selection.count() == 0
@@ -3166,7 +3219,8 @@ mod tests {
         {
             let mut data = view.0.data.borrow_mut();
             // The filter shows the pictures, in the list's order.
-            let (listing, rows) = filtered_listing(Path::new("/x"), &full, &Pattern::compile("*.png").unwrap());
+            let (listing, rows) =
+                listing::filtered_with(Path::new("/x"), &full, &Pattern::compile("*.png").unwrap(), None);
             (data.listing, data.rows, data.full) = (listing, rows, full);
             data.selection = Selection::from_indices(2, [1], Some(1));
         }

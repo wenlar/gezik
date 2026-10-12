@@ -676,6 +676,12 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 253. **Alt+Shift+1…7, Alt+Shift+0.** On GNOME and on KDE (X11 and Wayland): Alt+Shift+1 toggles Red on the selection (`Red added to 3 items`, then `Red removed from 3 items`), Alt+Shift+0 clears; write down any desktop that takes the keys itself (the picker's Ctrl+Shift+L still works).
 254. **Dots.** As macOS 348; a tag Dolphin gave (no colour in `user.xdg.tags`) shows gray unless your `[tags] list` names it; a vfat stick's tags (the store) show too.
 
+### 12c, Tags column, sort, group and filter
+
+255. **Column, sort and group.** As macOS 349–350 (the macOS View ▸ Group By ▸ Tag is the View button's Group by ▸ Tag here); tags Dolphin gave sort among the unlisted by name.
+256. **Filter, case.** As macOS 351; on ext4 with files `a.txt` and `A.txt`, `tag:red` finds Red on both (the tag's name ignores case, the file names do not).
+257. **A big folder.** As macOS 352 with `seq 1 100000 | xargs touch`; `strace -f -e trace=getxattr,lgetxattr -p $(pidof gezik)` shows no reads while scrolling with name sort, no Tags column and dots off.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.
