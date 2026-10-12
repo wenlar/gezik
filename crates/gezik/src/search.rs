@@ -674,7 +674,13 @@ impl Searches {
             (draft.pattern.clone(), draft.name_regex, draft.content.clone(), draft.content_regex, draft.match_case);
         let mut last = self.0.checked.borrow_mut();
         if last.as_ref().is_none_or(|(c, _, _)| *c != checked) {
-            let name_error = NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).err();
+            // `tag:` is no name to look for (12c); tags are searched from step 12e on.
+            let tag_word = !draft.name_regex && !gezik_core::meta_filter::split(&draft.pattern).1.is_empty();
+            let name_error = if tag_word {
+                Some("Search can't look for tags yet; filter a folder with tag: (Ctrl+F)".to_owned())
+            } else {
+                NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).err()
+            };
             let content_error = (!draft.content.is_empty())
                 .then(|| ContentMatcher::compile(&draft.content, draft.content_regex, draft.match_case, 0).err())
                 .flatten();

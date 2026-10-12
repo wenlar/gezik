@@ -59,6 +59,9 @@ const MAX_REMEMBERED: usize = 1000;
 /// views.toml's key for the search results' and the flat view's view (spec 4.4).
 pub const RESULTS_KEY: &str = "<results>";
 
+/// Sorting, grouping and filtering by tag in search results (plan 12c sapma 2).
+pub const TAGS_IN_FOLDERS: &str = "Tags sort, group and filter folders, not search results";
+
 /// views.toml's key for the trash's view (spec 7.1).
 pub const TRASH_KEY: &str = "<trash>";
 
@@ -161,6 +164,8 @@ struct Inner {
     tag_run: RefCell<Option<folder_tags::TagRun>>,
     tag_runs: Cell<u64>,
     tag_progress: RefCell<Option<String>>,
+    /// Tags changed (a tag job) while this pane was not on screen: read again when next needed.
+    tags_dirty: Cell<bool>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -356,6 +361,7 @@ impl View {
             tag_run: RefCell::new(None),
             tag_runs: Cell::new(0),
             tag_progress: RefCell::new(None),
+            tags_dirty: Cell::new(false),
         }));
         // Weak: the media client lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -855,7 +861,12 @@ impl View {
         }
         let patterns = |f: Option<&FilterState>| f.map(|f| (f.pattern.clone(), f.tags.clone())).unwrap_or_default();
         let old_pattern = patterns(self.0.filter.borrow().as_ref());
-        let next = text.map(|text| FilterState::new(text, self.0.filter.borrow().as_ref()));
+        let mut next = text.map(|text| FilterState::new(text, self.0.filter.borrow().as_ref()));
+        // Results: `tag:` is not a name to look for, and not read either (plan 12c sapma 2).
+        if let Some(f) = next.as_mut().filter(|f| results.is_some() && !f.tags.is_empty()) {
+            f.tags.clear();
+            f.error.get_or_insert_with(|| TAGS_IN_FOLDERS.to_owned());
+        }
         let new_pattern = patterns(next.as_ref());
         let closing = next.is_none();
         *self.0.filter.borrow_mut() = next;
@@ -1574,6 +1585,17 @@ impl View {
     /// Sorts by `spec`, keeping the selection, focus and its visibility; the folder
     /// remembers it.
     pub fn set_sort(&self, spec: SortSpec) {
+        if spec.key == SortKey::Tags && self.shows_results() {
+            return self.note(TAGS_IN_FOLDERS.to_owned());
+        }
+        // A sort by a hidden column shows it, so a header carries the sort's arrow (12c screen test).
+        let hidden = ColumnKey::ALL
+            .into_iter()
+            .find(|k| k.sort_key() == spec.key && spec.key != SortKey::Name)
+            .filter(|k| !self.columns_shown().iter().any(|c| c.key == *k && c.visible));
+        if let Some(key) = hidden.filter(|_| !self.shows_results()) {
+            self.toggle_column(key);
+        }
         self.change_view(|v| v.sort = spec);
     }
 
@@ -1926,7 +1948,7 @@ impl View {
         if self.0.searching.get() {
             return;
         }
-        let by = if full.is_duplicates() { GroupBy::Duplicates } else { self.0.current.get().group };
+        let by = if full.is_duplicates() { GroupBy::Duplicates } else { results_group(self.0.current.get().group) };
         let (spec, folders_first) = (self.sort(), self.0.options.get().folders_first);
         // shortcut: a single result is never sorted, so it shows without its group's header.
         if full.len() < 2 || full.sorted_by() == Some((spec, folders_first, by)) {
@@ -2208,7 +2230,9 @@ impl View {
 
     /// How the rows are grouped: not in the columns (spec 10 §7.3, the setting is kept).
     fn group_by(&self) -> GroupBy {
-        grouped_by(&self.0.current.get())
+        let results = self.0.data.try_borrow().is_ok_and(|d| d.results.is_some());
+        let by = grouped_by(&self.0.current.get());
+        if results { results_group(by) } else { by }
     }
 
     /// Mode, picture size and entries per line, from the current view.
@@ -2624,6 +2648,9 @@ impl View {
 
     /// Group by ▸ (spec 10 §6.2); the folder remembers it.
     pub fn set_group(&self, by: GroupBy) {
+        if by == GroupBy::Tag && self.shows_results() {
+            return self.note(TAGS_IN_FOLDERS.to_owned());
+        }
         self.change_view(|v| v.group = by);
     }
 
@@ -2790,6 +2817,11 @@ impl View {
 }
 
 /// How `view` groups the rows: not in the columns (spec 10 §7.3, the setting is kept).
+/// Search results are not grouped by tag (plan 12c sapma 2): their rows' tags are not read whole.
+fn results_group(by: GroupBy) -> GroupBy {
+    if by == GroupBy::Tag { GroupBy::None } else { by }
+}
+
 fn grouped_by(view: &ViewSettings) -> GroupBy {
     if view.mode == ViewMode::Columns { GroupBy::None } else { view.group }
 }
