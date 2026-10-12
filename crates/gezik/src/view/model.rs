@@ -52,6 +52,13 @@ pub struct ViewData {
     pub groups: Vec<Span>,
     /// Each group's key, as `groups`.
     pub group_keys: Vec<GroupKey>,
+    /// The folder's tags read whole (spec 12 §3.4): only while a sort, grouping or filter needs them.
+    pub folder_tags: Option<Rc<super::FolderTags>>,
+    /// The Tags column shows: rows on screen read their tags.
+    pub tags_column: bool,
+    /// The Rating and Comment columns show (spec 12 §8.2): rows on screen read their meta.
+    pub rating_column: bool,
+    pub comment_column: bool,
 }
 
 pub struct ItemsModel {
@@ -217,6 +224,8 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
     let finder = (cfg!(target_os = "macos") && is_dir && entries)
         .then(|| listing.path_at(i).and_then(|(path, _)| gezik_platform::finder::finder_name(&path)))
         .flatten();
+    let RowCells { dots: [dot1, dot2, dot3], count: dots, more, tag_names, rating, rating_faint, comment } =
+        row_meta(data, i);
     let (folder, found) = match listing {
         Listing::Results(set) => (
             set.shown_folder(i).unwrap_or_default().into(),
@@ -240,11 +249,113 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         icon: icon.unwrap_or_default(),
         selected: data.selection.is_selected(i),
         focused: data.selection.focus() == Some(i),
-        cut: entries && listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)),
+        cut: entries && (listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)) || waiting(data)),
         cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
+        dot1,
+        dot2,
+        dot3,
+        dots,
+        more,
+        tag_names: tag_names.into(),
+        rating: rating.into(),
+        rating_faint,
+        comment: comment.into(),
     }
+}
+
+/// Entry `i`'s Tags, Rating or Comment cell (`key`) as far as its meta is known (an export:
+/// nothing is read for it).
+pub fn known_meta_cell(data: &ViewData, i: usize, key: gezik_core::view::ColumnKey) -> String {
+    use gezik_core::view::ColumnKey;
+    let cell = |meta: &gezik_core::meta::Meta| match key {
+        ColumnKey::Tags => meta.tags.iter().map(|t| &*t.name).collect::<Vec<_>>().join(", "),
+        ColumnKey::Rating => gezik_core::meta::stars_text(meta.rating),
+        _ => meta.comment.to_string(),
+    };
+    match (&data.listing, &data.folder_tags) {
+        (Listing::Files(dir, entries), Some(f)) if f.dir == *dir => {
+            entries.get(i).and_then(|e| f.of(&e.name)).map(cell)
+        }
+        _ => data.listing.path_at(i).and_then(|(path, _)| data.media.known_tags(&path)).map(|row| cell(&row.meta)),
+    }
+    .unwrap_or_default()
+}
+
+/// Whether a `tag:` filter waits for the folder's tags: the rows it lets through meanwhile are
+/// drawn faint (spec 12 §6.3).
+fn waiting(data: &ViewData) -> bool {
+    data.folder_tags.as_ref().is_some_and(|f| f.faint.get() && !f.complete)
+}
+
+/// What a row shows of its meta: up to three dots, how many, how many more, the tags' names,
+/// the stars (faint: Explorer's), the comment.
+#[derive(Default)]
+struct RowCells {
+    dots: [slint::Color; 3],
+    count: i32,
+    more: i32,
+    tag_names: String,
+    rating: String,
+    rating_faint: bool,
+    comment: String,
+}
+
+/// Entry `i`'s tag dots while dots show (spec 12 §5.4), its tags' names while they or the Tags
+/// column show (§6.1), its stars and comment while their columns show (§8.2): asked for only
+/// here, so only for rows on screen; until read, none. A folder read whole answers without
+/// asking. Cloud folders are read only with `dots = true`. On Windows, with the Tags or Rating
+/// column, Explorer's Tags and stars of the kinds that keep them, in files not only in the
+/// cloud (§8.3): after Gezik's tags in brackets, and faint stars when Gezik has none.
+fn row_meta(data: &ViewData, i: usize) -> RowCells {
+    let dots_on = crate::tags::dots_on();
+    let columns = data.tags_column || data.rating_column || data.comment_column;
+    if matches!(data.listing, Listing::Drives(_)) || !(dots_on || columns) {
+        return RowCells::default();
+    }
+    let entry = data.listing.entry(i);
+    let explorer = cfg!(windows)
+        && (data.tags_column || data.rating_column)
+        && entry
+            .as_deref()
+            .is_some_and(|e| !e.is_dir && e.flags & Entry::CLOUD_ONLY == 0 && gezik_core::meta::explorer_kind(&e.name));
+    let whole = match (&data.listing, &data.folder_tags) {
+        (Listing::Files(dir, _), Some(f)) if f.dir == *dir => entry.as_deref().and_then(|e| f.of(&e.name)),
+        _ => None,
+    };
+    let path = (whole.is_none() || explorer).then(|| data.listing.path_at(i)).flatten().map(|(path, _)| path);
+    // Cloud folders are not read row by row (a folder read whole was asked for: it answers).
+    let cloud = path.as_ref().is_some_and(|p| !crate::tags::dots_forced() && crate::cloud::root_of(p).is_some());
+    let windows = path.as_deref().filter(|_| explorer && !cloud).and_then(crate::tags::explorer_of);
+    let row = match path {
+        Some(path) if whole.is_none() && !cloud => data.media.tags(path, i),
+        _ => None,
+    };
+    let Some(meta) = whole.or(row.as_deref().map(|r| &r.meta)) else { return RowCells::default() };
+    let windows = windows.as_ref();
+    let mut cells = RowCells::default();
+    if !meta.tags.is_empty() {
+        let (colors, more, names) = crate::tags::with_list(|list| crate::tags::dots_of(&meta.tags, list));
+        if dots_on {
+            cells.dots.iter_mut().zip(&colors).for_each(|(dot, color)| *dot = *color);
+            (cells.count, cells.more) = (i32::try_from(colors.len()).unwrap_or(3), more);
+        }
+        cells.tag_names = names;
+    }
+    if let Some(keywords) = windows.map(|w| &w.keywords).filter(|k| data.tags_column && !k.is_empty()) {
+        let gap = if cells.tag_names.is_empty() { "" } else { " " };
+        cells.tag_names = format!("{}{gap}({keywords})", cells.tag_names);
+    }
+    if data.rating_column {
+        let explorers = windows.map_or(0, |w| w.stars);
+        cells.rating_faint = meta.rating == 0 && explorers > 0;
+        cells.rating = gezik_core::meta::stars_text(if meta.rating > 0 { meta.rating } else { explorers });
+    }
+    if data.comment_column {
+        cells.comment = meta.comment.to_string();
+    }
+    cells
 }
 
 /// The cloud state of entry `i` when its folder is under a cloud root (spec 9 §7.3): from the
@@ -635,5 +746,173 @@ mod tests {
         #[allow(clippy::single_range_in_vec_init, reason = "one changed range of entries")]
         let all = [0..100_000];
         assert_eq!(notify_plan(&all, 1, &s), Plan::Reset);
+    }
+
+    #[test]
+    fn tags_are_asked_only_for_the_rows_drawn_and_only_with_dots() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::{Tag, TagColor};
+        let file = |i: usize| Entry {
+            name: format!("f{i}.txt"),
+            is_dir: false,
+            flags: 0,
+            size: 1,
+            modified: None,
+            created: None,
+        };
+        let entries: Vec<Entry> = (0..1000).map(file).collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\t" } else { "/t" });
+        let data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        let draw = |rows: std::ops::Range<usize>| rows.for_each(|i| drop(file_row(&data, i)));
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        draw(0..40);
+        let others = data.media.pending();
+        assert!(others <= 2, "a type name and an icon, no tags: {others}");
+        crate::tags::set_settings(TagsSettings { dots: Dots::On, ..TagsSettings::default() });
+        draw(0..40);
+        assert_eq!(data.media.pending(), others + 40, "the 40 rows on screen");
+        draw(0..40);
+        assert_eq!(data.media.pending(), others + 40, "asked once");
+        // Scrolled far: the oldest requests go (the queue keeps the newest).
+        draw(40..400);
+        assert!(data.media.pending() <= crate::media::MAX_QUEUED + others, "{}", data.media.pending());
+        // Once read, a row draws its dots; no colour is a ring.
+        let red = Tag::new("Red", TagColor::None);
+        let key = crate::media::MediaKey::Tags { path: dir.join("f0.txt") };
+        let meta = gezik_core::meta::Meta { tags: vec![red, Tag::new("Mine", TagColor::None)], ..Default::default() };
+        let row = crate::tags::RowMeta { meta };
+        data.media.finish(
+            &std::sync::atomic::AtomicBool::new(true),
+            key,
+            crate::media::Outcome::Tags(std::sync::Arc::new(row)),
+        );
+        let row = file_row(&data, 0);
+        assert_eq!(row.dots, 2);
+        assert_eq!(row.dot1, crate::tags::color_of(TagColor::Red), "the list's colour");
+        assert_eq!((row.more, row.tag_names.as_str()), (0, "Red, Mine"));
+        // Files changed (a listing shown): read again, the old dots drawn until then.
+        data.media.new_generation();
+        draw(0..1);
+        let before = data.media.pending();
+        data.media.forget_tags();
+        assert_eq!(file_row(&data, 0).dots, 2, "no flicker");
+        assert_eq!(data.media.pending(), before + 1, "asked again");
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        assert_eq!(file_row(&data, 0).dots, 0, "dots off: none drawn");
+    }
+
+    #[test]
+    fn the_rating_and_comment_columns_show_the_stars_and_the_comment() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::Meta;
+        let entries: Vec<Entry> = ["a.jpg", "b.txt"]
+            .iter()
+            .map(|n| Entry { name: (*n).into(), is_dir: false, flags: 0, size: 1, modified: None, created: None })
+            .collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\r" } else { "/r" });
+        let mut data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        drop(file_row(&data, 1));
+        let others = data.media.pending();
+        data.comment_column = true;
+        drop(file_row(&data, 1));
+        assert_eq!(data.media.pending(), others + 1, "the comment column asks");
+        let meta = Meta { rating: 0, comment: "Ready".into(), ..Meta::default() };
+        crate::tags::set_explorer_for_tests(
+            &dir.join("a.jpg"),
+            crate::tags::Explorer { keywords: "beach".into(), stars: 4 },
+        );
+        let key = crate::media::MediaKey::Tags { path: dir.join("a.jpg") };
+        let row = std::sync::Arc::new(crate::tags::RowMeta { meta });
+        data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Tags(row));
+        data.rating_column = true;
+        data.tags_column = true;
+        let row = file_row(&data, 0);
+        assert_eq!(row.comment.as_str(), "Ready");
+        if cfg!(windows) {
+            assert_eq!((row.rating.as_str(), row.rating_faint), ("★★★★☆", true), "Explorer's stars, faint");
+            assert_eq!(row.tag_names.as_str(), "(beach)", "Explorer's Tags in brackets");
+        } else {
+            assert_eq!(row.rating.as_str(), "", "no Explorer off Windows");
+        }
+        data.rating_column = false;
+        assert_eq!(file_row(&data, 0).rating.as_str(), "", "column hidden: no stars");
+    }
+
+    #[test]
+    fn a_cloud_folder_read_whole_keeps_its_stars_and_reads_nothing_more() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::Meta;
+        let root = std::env::temp_dir().join("gezik-12d").join(format!("cloud-{}", std::process::id()));
+        crate::cloud::set_roots(vec![gezik_platform::cloud::CloudRoot {
+            path: root.clone(),
+            label: "OneDrive".into(),
+            account: String::new(),
+        }]);
+        let entries =
+            vec![Entry { name: "a.jpg".into(), is_dir: false, flags: 0, size: 1, modified: None, created: None }];
+        let mut data = ViewData {
+            listing: Listing::Files(root.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            rating_column: true,
+            comment_column: true,
+            ..ViewData::default()
+        };
+        crate::tags::set_settings(TagsSettings { dots: Dots::Auto, ..TagsSettings::default() });
+        let known = Meta { rating: 3, comment: "Ready".into(), ..Meta::default() };
+        let tags = std::collections::HashMap::from([(Box::from("a.jpg"), known)]);
+        data.folder_tags = Some(Rc::new(super::super::FolderTags::read(root, tags)));
+        drop(file_row(&data, 0));
+        let pending = data.media.pending();
+        let row = file_row(&data, 0);
+        assert_eq!((row.rating.as_str(), row.comment.as_str()), ("★★★☆☆", "Ready"), "a picture keeps its stars");
+        assert_eq!(data.media.pending(), pending, "no row read, no Explorer read in the cloud");
+        crate::cloud::set_roots(Vec::new());
+    }
+
+    #[test]
+    fn the_tags_column_asks_for_the_rows_drawn_and_a_folder_read_whole_answers() {
+        use gezik_config::tags::{Dots, TagsSettings};
+        use gezik_core::meta::{Tag, TagColor};
+        let entries: Vec<Entry> = (0..100)
+            .map(|i| Entry {
+                name: format!("f{i}.txt"),
+                is_dir: false,
+                flags: 0,
+                size: 1,
+                modified: None,
+                created: None,
+            })
+            .collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\c" } else { "/c" });
+        let mut data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        crate::tags::set_settings(TagsSettings { dots: Dots::Off, ..TagsSettings::default() });
+        (0..20).for_each(|i| drop(file_row(&data, i)));
+        let others = data.media.pending();
+        assert!(others <= 2, "no column, no dots: a type name and an icon, no tags: {others}");
+        data.tags_column = true;
+        (0..20).for_each(|i| drop(file_row(&data, i)));
+        assert_eq!(data.media.pending(), others + 20, "the rows on screen");
+        // Read whole: answered from it, names without dots (they are off), nothing asked.
+        let red = gezik_core::meta::Meta { tags: vec![Tag::new("Red", TagColor::Red)], ..Default::default() };
+        let tags = std::collections::HashMap::from([(Box::from("f30.txt"), red)]);
+        data.folder_tags = Some(Rc::new(super::super::FolderTags::read(dir, tags)));
+        let pending = data.media.pending();
+        let row = file_row(&data, 30);
+        assert_eq!((row.dots, row.tag_names.as_str(), row.cut), (0, "Red", false));
+        assert_eq!(file_row(&data, 31).tag_names.as_str(), "");
+        assert_eq!(data.media.pending(), pending);
     }
 }

@@ -174,7 +174,9 @@ impl SyncTask {
             return self.leave(cx, to, NO_BIN, true);
         }
         let temp = cx.temp_file_for(to);
-        if let Err(err) = cx.copy_file(from, &temp, seen.size) {
+        // Its tags follow once it has its own name (a store entry under the temporary name
+        // would be left behind).
+        if let Err(err) = cx.copy_bytes(from, &temp, seen.size) {
             let _ = fs::delete(&temp);
             self.troubled.store(true, Ordering::SeqCst);
             return Err(err);
@@ -191,6 +193,7 @@ impl SyncTask {
                 // The old one is gone anyway (the trash deleted it): the new copy takes its
                 // place rather than being lost too, and the failure is said.
                 if std::fs::symlink_metadata(to).is_err() && fs::move_entry(&temp, to).is_ok() {
+                    cx.carry_tags(from, to);
                     if let Some((_, job)) = cx.job {
                         job.result(to.to_path_buf());
                         job.outcome(Outcome::Created {
@@ -215,6 +218,7 @@ impl SyncTask {
             self.troubled.store(true, Ordering::SeqCst);
             return Err(err);
         }
+        cx.carry_tags(from, to);
         Ok(Outcome::Several(vec![
             gone,
             Outcome::Created { path: to.to_path_buf(), facts: facts_after(to, false), from: None },
@@ -490,6 +494,32 @@ mod tests {
         assert_eq!(report.skipped.len(), 1);
         assert_eq!(report.skipped[0].message, HELD);
         assert_eq!(read(&r.join("old.txt")), "old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_replaced_file_takes_the_new_files_tags_under_its_own_name() {
+        use gezik_core::meta::{Meta, Tag, TagColor};
+        let dir = test_dir("sync-tags");
+        // The right side is on a drive without records (its path holds `fat`).
+        let (l, r) = (dir.join("L"), dir.join("fatR"));
+        write(&l.join("both.txt"), "left, newer");
+        write(&r.join("both.txt"), "right, older");
+        let settings =
+            crate::engine::Settings { tags_store: Some(dir.join("config/tags-store.tsv")), ..Default::default() };
+        let engine = crate::engine::Engine::new(settings, || {});
+        engine.meta().fake_holds(|path| !path.to_string_lossy().contains("fat"));
+        let blue = Meta { tags: vec![Tag::new("Blue", TagColor::Blue)], ..Meta::default() };
+        let red = Meta { tags: vec![Tag::new("Red", TagColor::Red)], ..Meta::default() };
+        engine.meta().write(&l.join("both.txt"), &blue).unwrap();
+        engine.meta().write(&r.join("both.txt"), &red).unwrap();
+        let task = SyncTask::new(l.clone(), r.clone(), vec![copy(l.join("both.txt"), r.join("both.txt"))], [false; 2]);
+        let (report, _) = finish(&engine, engine.submit_chain(vec![Box::new(task)], None), no_conflicts);
+        assert!(report.failures.is_empty() && report.notes.is_empty(), "{report:?}");
+        assert_eq!(read(&r.join("both.txt")), "left, newer");
+        assert_eq!(engine.meta().read(&r.join("both.txt")).unwrap(), blue, "the new file's tags, not the old one's");
+        let store = std::fs::read_to_string(dir.join("config/tags-store.tsv")).unwrap();
+        assert_eq!(store.lines().count(), 2, "one entry, none under a temporary name: {store}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -99,6 +99,8 @@ pub enum TaskKind {
     Checksum,
     /// A folder sync (spec 11 §8.2): copies both ways, replaced and trashed files, one undo.
     Sync,
+    /// Tags, rating or comment changed (spec 12 §3.5).
+    Tags,
 }
 
 impl TaskKind {
@@ -128,6 +130,7 @@ impl TaskKind {
             TaskKind::Elevated => "Do as administrator",
             TaskKind::Checksum => "Compute checksums of",
             TaskKind::Sync => "Synchronize",
+            TaskKind::Tags => "Change tags of",
         }
     }
 
@@ -322,6 +325,12 @@ pub enum Outcome {
         id: gezik_core::attrs::Identity,
         before: gezik_core::attrs::Attrs,
         after: gezik_core::attrs::Attrs,
+    },
+    /// Tags, rating or comment changed: undo writes `before` back if they are still `after`.
+    MetaChanged {
+        path: PathBuf,
+        before: gezik_core::meta::Meta,
+        after: gezik_core::meta::Meta,
     },
     /// Done by the administrator helper and seen on disk: undo runs `undo`, as administrator too.
     AsAdmin {
@@ -529,6 +538,19 @@ impl RunCx<'_> {
         }
     }
 
+    /// Notes something about `path` the user should know that is neither a failure nor a skip
+    /// (its tags went to Gezik's store).
+    pub fn note(&self, path: &Path, message: &str) {
+        if let Some((_, job)) = self.job {
+            job.note(path, message);
+        }
+    }
+
+    /// Where tags are read and written (`None` in tests that run an item alone).
+    pub fn meta(&self) -> Option<&crate::meta::MetaStore> {
+        self.job.map(|(shared, _)| &*shared.meta)
+    }
+
     /// A new hidden folder next to `near` to build things in. It is noted for removal if
     /// Gezik stops, and removed (with what is left in it) when the job ends.
     pub fn staging_dir(&self, near: &Path) -> io::Result<PathBuf> {
@@ -614,7 +636,27 @@ impl RunCx<'_> {
     /// verification on, every copy takes a temporary name and is checked before it takes its
     /// own (spec 11 §5.1): a copy that differs never stands under the final name. A link is
     /// copied as a link and not checked (reading it would read what it points to).
+    /// Its tags go along where the system does not take them (spec 12 §10): a failure there
+    /// is a note, the copy stands.
     pub fn copy_file(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
+        self.copy_bytes(from, to, size)?;
+        self.carry_tags(from, to);
+        Ok(())
+    }
+
+    /// After `from` was copied to `to` (under its final name): its tags go along where the
+    /// system did not take them; a failure is a note.
+    pub(crate) fn carry_tags(&self, from: &Path, to: &Path) {
+        if let Some(meta) = self.meta()
+            && let Err(err) = meta.carry(from, to)
+        {
+            self.note(to, &format!("Tags could not be carried: {}", gezik_platform::fs::describe(&err)));
+        }
+    }
+
+    /// [`copy_file`](Self::copy_file) without the tags, for a copy made under a temporary name
+    /// and renamed by its task: [`carry_tags`](Self::carry_tags) once it has its own name.
+    pub(crate) fn copy_bytes(&self, from: &Path, to: &Path, size: u64) -> io::Result<()> {
         let verify = self.control.verify.load(Ordering::Relaxed)
             && !std::fs::symlink_metadata(from).is_ok_and(|meta| meta.file_type().is_symlink());
         let temp =
@@ -986,6 +1028,7 @@ mod tests {
         assert_eq!(TaskKind::KeepOnDevice.label(1), "Keep 1 item on this device");
         assert_eq!(TaskKind::FreeUpSpace.label(2), "Free up space of 2 items");
         assert_eq!(TaskKind::Checksum.label(2), "Compute checksums of 2 items");
+        assert_eq!(TaskKind::Tags.label(1), "Change tags of 1 item");
     }
 
     #[test]

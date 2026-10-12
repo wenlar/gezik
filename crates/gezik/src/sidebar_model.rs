@@ -149,6 +149,7 @@ fn node_row(id: NodeId, node: &tree::Node, current: Option<&Path>) -> SidebarRow
         icon: ICON_FOLDER,
         depth: i32::from(node.depth),
         arrow: node.state.arrow(),
+        dot: Default::default(),
     }
 }
 
@@ -164,6 +165,7 @@ fn more_row(id: NodeId, node: &tree::Node) -> SidebarRow {
         icon: 0,
         depth: i32::from(node.depth) + 1,
         arrow: 0,
+        dot: Default::default(),
     }
 }
 
@@ -435,6 +437,7 @@ mod tests {
             icon: ICON_FOLDER,
             depth: 0,
             arrow: 0,
+            dot: Default::default(),
         }
     }
 
