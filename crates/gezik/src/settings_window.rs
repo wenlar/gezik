@@ -451,6 +451,12 @@ pub fn retheme(theme: &ResolvedTheme) {
 /// Puts the rows in the window: all new (a page or a search) or row by row, so a field being
 /// typed in keeps its text and the keyboard (rows that come or go are added or taken at the end).
 fn show_rows(open: &Open, new: bool) {
+    // What waits for the sync folder changes without a reload (a pin made meanwhile).
+    let unsaved = crate::windows::config().map_or(0, |store| store.unsaved());
+    open.shown.borrow_mut().backup.unsaved = unsaved;
+    if unsaved == 0 && gezik_config::settings_writer::says_kept(open.window.get_status().as_str()) {
+        say(open, "");
+    }
     let shown = open.shown.borrow();
     let keys = shown.key_rows.iter().map(|&k| shortcuts::item(&shown.keys[k], Platform::current()));
     let found = shown.theme_rows.iter().map(|&row| shown.got.item(row));
@@ -1256,7 +1262,8 @@ fn review(store: &ConfigStore, copy: String) -> Result<backup::Review, String> {
         None => (dir.clone(), copy.clone()),
     };
     let machines = gezik_config::sync_folder::machines(&dir);
-    let original = gezik_config::sync_folder::conflict_of(&name, &machines).ok_or("Not a conflicting copy")?;
+    let found = gezik_config::sync_folder::conflict_of(&name, &machines).ok_or("Not a conflicting copy")?;
+    let (original, numbered) = (found.original, found.numbered);
     let read = |name: &str| {
         std::fs::read_to_string(folder.join(name))
             .map(|text| text.trim_start_matches('\u{feff}').to_owned())
@@ -1266,7 +1273,7 @@ fn review(store: &ConfigStore, copy: String) -> Result<backup::Review, String> {
     let differences = gezik_config::sync_folder::differences(&this, &other)?;
     let take = vec![false; differences.len()];
     let original = if folder == dir { original } else { format!("themes/{original}") };
-    Ok(backup::Review { copy, original, other, differences, take })
+    Ok(backup::Review { copy, original, other, differences, take, numbered })
 }
 
 /// Writes the keys taken from the other copy into the file it is of (settings.toml through the
@@ -1279,7 +1286,10 @@ fn merge(store: &ConfigStore, review: &backup::Review) -> Result<String, String>
     if review.original == "settings.toml" {
         for difference in &taken {
             let change = SettingsChange::FromCopy { path: difference.path.clone(), other: review.other.clone() };
-            store.save_settings(&change).map_err(|w| format!("Not merged: {w}"))?;
+            match store.save_settings(&change) {
+                Err(w) if !gezik_config::settings_writer::kept(&w) => return Err(format!("Not merged: {w}")),
+                _ => {}
+            }
         }
     } else if !taken.is_empty() {
         let edit = |text: &str| {
@@ -1294,6 +1304,13 @@ fn merge(store: &ConfigStore, review: &backup::Review) -> Result<String, String>
         1 => "1 key".to_owned(),
         n => format!("{n} keys"),
     };
+    // A copy named only by a number (`settings (1).toml`) may be a file of the user's: it stays.
+    if review.numbered {
+        return Ok(format!(
+            "Merged {keys} into {}; {} stays where it is (it may be a file of yours): move it away to stop the note",
+            review.original, review.copy
+        ));
+    }
     match gezik_platform::fs::trash(&path_of(&review.copy)) {
         Ok(_) => Ok(format!("Merged {keys} into {}; the conflicting copy is in the trash", review.original)),
         Err(err) => Ok(format!(

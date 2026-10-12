@@ -529,6 +529,12 @@ pub fn start_sync(
             // Nothing there is written over.
             mine.retain(|(name, _)| path_of(folder, name).symlink_metadata().is_err());
         }
+        // This computer's [system] goes to settings.local.toml below, not to the other computers.
+        for (_, data) in mine.iter_mut().filter(|(name, _)| name == "settings.toml") {
+            if let Ok(shared) = sync_folder::without(&String::from_utf8_lossy(data), "system") {
+                *data = shared.into_bytes();
+            }
+        }
         write_into(folder, mine)?;
     }
     let local = folders.local.join(LOCAL_SETTINGS);
@@ -552,14 +558,22 @@ pub fn start_sync(
 /// copy when it is not there) are copied into this computer's folder after a backup of what is
 /// there, and `location.toml` goes. Nothing in the sync folder is touched. The backup's path.
 pub fn stop_sync(folders: &Folders, discard: &dyn Fn(&Path)) -> Result<PathBuf, String> {
-    use gezik_config::sync_folder::{CACHE, LOCATION_FILE};
+    use gezik_config::sync_folder::{self, CACHE, LOCATION_FILE};
     let there = folders.shared.join("settings.toml").is_file();
     let from = if there { folders.shared.clone() } else { folders.local.join(CACHE) };
     let source = Folders { shared: from, local: folders.local.clone() };
     let groups: &[Group] = if there { &[Group::Settings, Group::Themes, Group::Templates] } else { &Group::ALL[..2] };
-    let files = collect(&source, groups)?;
+    let mut files = collect(&source, groups)?;
     if !files.iter().any(|(name, _)| name == "settings.toml") {
         return Err("The settings folder is not available and no copy of it is here: nothing changed".to_owned());
+    }
+    // This computer's own values (its [system], Only on This Computer) stay this computer's.
+    if let Ok(local) = std::fs::read_to_string(folders.local.join(sync_folder::LOCAL_SETTINGS)) {
+        for (_, data) in files.iter_mut().filter(|(name, _)| name == "settings.toml") {
+            let layered = sync_folder::with_layer(&String::from_utf8_lossy(data), &local)
+                .map_err(|why| format!("{why}: nothing changed"))?;
+            *data = layered.into_bytes();
+        }
     }
     let mine = Folders::one(&folders.local);
     let (backup, _) = backup(&mine, &[], &stamp(), discard)?;
@@ -807,7 +821,8 @@ mod tests {
         assert!(backup.starts_with(local.join("backups")));
         assert_eq!(
             std::fs::read_to_string(folder.join("settings.toml")).unwrap(),
-            "theme = \"nord\"\n[system]\ntray = true\n"
+            "theme = \"nord\"\n",
+            "this computer's [system] is not the others'"
         );
         assert_eq!(std::fs::read_to_string(folder.join("themes/nord.toml")).unwrap(), "mine");
         assert_eq!(std::fs::read_to_string(folder.join("templates/a.txt")).unwrap(), "theirs", "never written over");
@@ -835,15 +850,20 @@ mod tests {
         // Leaving: the folder's files come here, after a backup; the folder is left as it is.
         let synced = Folders { shared: folder.clone(), local: local.clone() };
         put(&folder, "themes/frost.toml", "frost");
+        // This computer's own values come along: its [system] and what is Only on This Computer.
+        let here = std::fs::read_to_string(local.join(LOCAL_SETTINGS)).unwrap();
+        put(&local, LOCAL_SETTINGS, &format!("{here}[layout]\ndensity = \"compact\"\n"));
         stop_sync(&synced, &|_| {}).unwrap();
-        assert_eq!(std::fs::read_to_string(local.join("settings.toml")).unwrap(), "theme = \"dark\"\n");
+        let back = std::fs::read_to_string(local.join("settings.toml")).unwrap();
+        assert!(back.starts_with("theme = \"dark\"\n"), "{back}");
+        assert!(back.contains("tray = true") && back.contains("density = \"compact\""), "{back}");
         assert_eq!(std::fs::read_to_string(local.join("themes/frost.toml")).unwrap(), "frost");
         assert!(!local.join(LOCATION_FILE).exists() && folder.join("settings.toml").is_file());
         // The folder gone: its last copy; no copy either: nothing changes.
         put(&local, &format!("{CACHE}/settings.toml"), "theme = \"light\"\n");
         let gone = Folders { shared: root.join("gone"), local: local.clone() };
         stop_sync(&gone, &|_| {}).unwrap();
-        assert_eq!(std::fs::read_to_string(local.join("settings.toml")).unwrap(), "theme = \"light\"\n");
+        assert!(std::fs::read_to_string(local.join("settings.toml")).unwrap().starts_with("theme = \"light\"\n"));
         std::fs::remove_dir_all(local.join(CACHE)).unwrap();
         assert!(stop_sync(&gone, &|_| {}).unwrap_err().contains("nothing changed"));
     }

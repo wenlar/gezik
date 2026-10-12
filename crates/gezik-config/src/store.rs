@@ -24,7 +24,7 @@ const THEME_TEMPLATE: &str = include_str!("../templates/example.toml");
 
 /// Raw contents of the config folder. Reading does I/O, so it happens off the UI thread;
 /// resolving it ([`resolve`]) is cheap.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConfigFiles {
     pub settings: Option<String>,
     /// Lowercase theme id (file name without `.toml`) → TOML text.
@@ -169,6 +169,10 @@ impl ConfigStore {
             files.warnings.splice(0..0, warnings);
             files.warnings.push(Warning::new("sync", OFFLINE_NOTE));
             files.offline = true;
+            // With the changes made since (kept for the folder): as this computer last showed it.
+            if let Some(text) = self.settings.unsaved_text() {
+                files.settings = Some(text);
+            }
         }
         match read_text(&self.local.join(LOCAL_SETTINGS)) {
             Ok(text) => files.local_settings = Some(text),
@@ -339,12 +343,12 @@ fn read_folder(dir: &Path, machines: Option<&[String]>) -> ConfigFiles {
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
         Err(err) => files.warnings.push(Warning::new("settings.toml", format!("cannot read: {err}"))),
     }
-    let conflict = |name: &str, there: &dyn Fn(&str) -> bool| {
-        machines.and_then(|m| sync_folder::conflict_of(name, m)).is_some_and(|original| there(&original))
-    };
-    if let Some(entries) = machines.and_then(|_| std::fs::read_dir(dir).ok()) {
+    let conflict_of = |name: &str| machines.and_then(|m| sync_folder::conflict_of(name, m));
+    if let (Some(entries), Some(settings)) = (machines.and_then(|_| std::fs::read_dir(dir).ok()), &files.settings) {
         for name in entries.filter_map(Result::ok).filter_map(|e| e.file_name().into_string().ok()) {
-            if files.settings.is_some() && conflict(&name, &|original| original == "settings.toml") {
+            let Some(copy) = conflict_of(&name).filter(|c| c.original == "settings.toml") else { continue };
+            // Only a number in its name (`settings (1).toml`): a copy only when it differs.
+            if !copy.numbered || read_text(&dir.join(&name)).is_ok_and(|text| text != *settings) {
                 files.conflicts.push(name);
             }
         }
@@ -360,7 +364,9 @@ fn read_folder(dir: &Path, machines: Option<&[String]>) -> ConfigFiles {
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
         let file = format!("{stem}.toml");
-        if conflict(&file, &|original| stems.contains(&original.to_lowercase())) {
+        // A theme's copy only by a service's mark: `Dracula 2.toml` may be a theme of its own.
+        let copy = conflict_of(&file).filter(|c| !c.numbered && stems.contains(&c.original.to_lowercase()));
+        if copy.is_some() {
             files.conflicts.push(format!("themes/{file}"));
             continue;
         }
@@ -911,18 +917,31 @@ theme = \"dark\"
         write(&store, "settings-LAPTOP.toml", "theme = \"nord\"\n");
         write(&store, "settings-old.toml", "");
         write(&store, "themes/nord.toml", "");
+        write(&store, "themes/nord (Ann's conflicted copy 2026-10-12).toml", "");
         write(&store, "themes/nord (1).toml", "");
-        write(&store, "themes/solo (1).toml", "");
+        write(&store, "themes/Dracula.toml", "");
+        write(&store, "themes/Dracula 2.toml", "");
+        // Numbered only: a copy of settings.toml when it differs, never a theme's.
+        write(&store, "settings (1).toml", "theme = \"dark\"\n");
+        write(&store, "settings 2.toml", "theme = \"light\"\n");
         std::fs::create_dir_all(store.shared_dir().join("machines")).unwrap();
         let files = store.read_files();
-        assert_eq!(files.conflicts, ["settings (Ann's conflicted copy 2026-10-12).toml", "themes/nord (1).toml"]);
-        assert!(files.themes.contains_key("solo (1)"), "no original: a theme of its own");
-        assert!(!files.themes.contains_key("nord (1)"));
+        assert_eq!(
+            files.conflicts,
+            [
+                "settings (Ann's conflicted copy 2026-10-12).toml",
+                "settings 2.toml",
+                "themes/nord (Ann's conflicted copy 2026-10-12).toml"
+            ]
+        );
+        for theme in ["nord (1)", "dracula 2", "dracula"] {
+            assert!(files.themes.contains_key(theme), "{theme}: a theme of its own");
+        }
         let said: Vec<&Warning> = files.warnings.iter().filter(|w| w.message.contains("conflicting copy")).collect();
-        assert_eq!(said.len(), 2, "{:?}", files.warnings);
+        assert_eq!(said.len(), 3, "{:?}", files.warnings);
         // A computer that joined the folder: OneDrive's copy named by it is one too.
         crate::sync_folder::add_machine(&store.shared_dir(), "LAPTOP").unwrap();
-        assert_eq!(store.read_files().conflicts.len(), 3);
+        assert_eq!(store.read_files().conflicts.len(), 4);
         assert!(store.is_config_file(&store.shared_dir().join("settings (1).toml")));
         assert!(store.is_config_file(&store.shared_dir()), "the folder coming back");
         assert!(store.is_config_file(&root.join("local").join(LOCAL_SETTINGS)));

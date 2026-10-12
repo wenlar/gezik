@@ -9,7 +9,7 @@
 
 use std::fmt;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,6 +27,7 @@ use crate::settings_edit::{
     with_view_defaults, with_view_option,
 };
 use crate::store::{SETTINGS_TEMPLATE, read_text};
+use crate::sync_folder::three_way;
 
 /// How long a flush waits for the writer.
 const FLUSH_WAIT: Duration = Duration::from_secs(5);
@@ -103,7 +104,14 @@ impl SettingsChange {
             SettingsChange::TagList(edit, list) => with_tag_list_edit(text, edit, list),
             SettingsChange::Value { table, key, value } => with_value(text, table.as_deref(), key, value.as_deref()),
             SettingsChange::CommandShortcut { name, shortcut } => with_command_shortcut(text, name, shortcut),
-            SettingsChange::Local { table, key, value } => with_value(text, table.as_deref(), key, value.as_deref()),
+            SettingsChange::Local { table, key, value } => {
+                let edited = with_value(text, table.as_deref(), key, value.as_deref())?;
+                // Use the Shared Value took out the table's last key: no empty `[view]` left.
+                match table.as_deref().filter(|_| value.is_none()) {
+                    Some(table) => crate::sync_folder::without_empty(&edited, table),
+                    None => Ok(edited),
+                }
+            }
             SettingsChange::FromCopy { path, other } => crate::sync_folder::with_item_from(text, other, path),
         }?;
         // toml_edit writes every line break as \n: a file written with \r\n (Notepad) keeps
@@ -117,8 +125,19 @@ pub type Done = Box<dyn FnOnce(Result<(), Warning>) + Send>;
 
 enum Job {
     Write(SettingsChange, Done),
+    /// The changes not written yet, again ([`SettingsWriter::retry_unsaved`]).
+    Retry,
     /// Answered once every change sent before it is written.
     Flush(Sender<()>),
+}
+
+/// A change not written yet (spec 14 §8.4): the text of settings.toml it was made on, and that
+/// text with it. Made again on the file as it is when it can be written ([`three_way`]), so a
+/// list changed elsewhere meanwhile keeps the other computer's items.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    pub base: String,
+    pub ours: String,
 }
 
 /// What the writer and its thread share.
@@ -127,8 +146,9 @@ struct Inner {
     dirs: Arc<Mutex<Dirs>>,
     /// Held while the file is read, edited and written: one change at a time, whoever makes it.
     writing: Mutex<()>,
-    /// Changes not written yet: the sync folder was not there, or the file kept changing.
-    unsaved: Mutex<Vec<SettingsChange>>,
+    /// Changes not written yet, oldest first: the sync folder was not there, or the file kept
+    /// changing. Kept in `pending-settings.toml` too (a quit while the folder is away loses none).
+    unsaved: Mutex<Vec<Pending>>,
 }
 
 pub(crate) struct SettingsWriter {
@@ -144,8 +164,13 @@ impl fmt::Debug for SettingsWriter {
 }
 
 impl SettingsWriter {
+    /// With a sync folder, the changes a last run could not write are read back (one `open`).
     pub fn new(dirs: Arc<Mutex<Dirs>>) -> SettingsWriter {
-        let inner = Inner { dirs, writing: Mutex::new(()), unsaved: Mutex::new(Vec::new()) };
+        let unsaved = {
+            let dirs = lock(&dirs);
+            if dirs.synced { read_pending(&dirs.local.join(PENDING)) } else { Vec::new() }
+        };
+        let inner = Inner { dirs, writing: Mutex::new(()), unsaved: Mutex::new(unsaved) };
         SettingsWriter { inner: Arc::new(inner), queue: Mutex::new(None) }
     }
 
@@ -154,18 +179,29 @@ impl SettingsWriter {
         edit(&self.inner, change)
     }
 
-    /// Hands the changes not written yet to the writer thread again (a reload found the sync
-    /// folder there). Those that fail again are kept again.
+    /// Has the writer thread write the changes not written yet, oldest first, each made again on
+    /// the file as it is now (a reload found the sync folder there). Those that cannot be written
+    /// stay, in order.
     pub fn retry_unsaved(&self) {
-        let unsaved = std::mem::take(&mut *lock(&self.inner.unsaved));
-        for change in unsaved {
-            self.send(change, Box::new(|_| {}));
+        let mut queue = lock(&self.queue);
+        if queue.is_none() {
+            *queue = self.start();
+        }
+        if queue.as_ref().is_none_or(|sender| sender.send(Job::Retry).is_err()) {
+            drop(queue);
+            retry(&self.inner, &|| {});
         }
     }
 
     /// How many changes are not written yet.
     pub fn unsaved(&self) -> usize {
         lock(&self.inner.unsaved).len()
+    }
+
+    /// settings.toml as the changes not written yet make it (`None`: none waits): what this
+    /// computer shows while the sync folder is away.
+    pub fn unsaved_text(&self) -> Option<String> {
+        lock(&self.inner.unsaved).last().map(|p| p.ours.clone())
     }
 
     /// Has the writer thread make `change` after every change sent before it; `done` gets the
@@ -209,6 +245,7 @@ impl SettingsWriter {
                 for job in jobs {
                     match job {
                         Job::Write(change, done) => done(edit(&inner, &change)),
+                        Job::Retry => retry(&inner, &|| {}),
                         Job::Flush(done) => {
                             let _ = done.send(());
                         }
@@ -220,6 +257,46 @@ impl SettingsWriter {
     }
 }
 
+/// In the local folder: the settings changes not written yet ([`Pending`]).
+pub const PENDING: &str = "pending-settings.toml";
+
+fn read_pending(path: &Path) -> Vec<Pending> {
+    let Ok(text) = read_text(path) else { return Vec::new() };
+    let Ok(table) = text.parse::<toml::Table>() else { return Vec::new() };
+    let Some(list) = table.get("change").and_then(toml::Value::as_array) else { return Vec::new() };
+    list.iter()
+        .filter_map(|entry| {
+            let text = |key: &str| entry.get(key).and_then(toml::Value::as_str).map(str::to_owned);
+            Some(Pending { base: text("base")?, ours: text("ours")? })
+        })
+        .collect()
+}
+
+/// Keeps `unsaved` in the local folder (the file goes when none is left). A failure is not said:
+/// they are still in memory.
+fn keep_pending(inner: &Inner, unsaved: &[Pending]) {
+    let path = lock(&inner.dirs).local.join(PENDING);
+    if unsaved.is_empty() {
+        let _ = std::fs::remove_file(path);
+        return;
+    }
+    let list: Vec<toml::Value> = unsaved
+        .iter()
+        .map(|p| {
+            let mut entry = toml::Table::new();
+            entry.insert("base".into(), p.base.clone().into());
+            entry.insert("ours".into(), p.ours.clone().into());
+            toml::Value::Table(entry)
+        })
+        .collect();
+    let mut table = toml::Table::new();
+    table.insert("change".into(), toml::Value::Array(list));
+    if let Ok(text) = toml::to_string(&table) {
+        let _ =
+            write_atomic(&path, &format!("# Settings changes Gezik could not write yet; written when it can.\n{text}"));
+    }
+}
+
 /// Why [`rewrite`] wrote nothing.
 #[derive(Debug)]
 pub enum Failed {
@@ -227,8 +304,8 @@ pub enum Failed {
     /// The edit cannot be made (the file does not read).
     Edit(String),
     Write(io::Error),
-    /// The file changed between each read and write.
-    Changing,
+    /// The file changed between each read and write: the change, as last made, for later.
+    Changing(Pending),
 }
 
 impl Failed {
@@ -237,7 +314,7 @@ impl Failed {
             Failed::Read(err) => format!("cannot read: {err}"),
             Failed::Edit(err) => format!("Fix {file} first ({})", err.lines().next().unwrap_or_default()),
             Failed::Write(err) => format!("cannot write: {err}"),
-            Failed::Changing => KEPT_CHANGING.to_owned(),
+            Failed::Changing(_) => KEPT_CHANGING.to_owned(),
         };
         Warning::new(file, message)
     }
@@ -249,46 +326,94 @@ pub const RETRIES: usize = 3;
 pub const NOT_SAVED: &str = "the settings folder is not available: not saved yet (written when it is back)";
 const KEPT_CHANGING: &str =
     "kept changing while Gezik wrote it (a sync service?): the change is kept and written at the next reload";
+const WAITING: &str = "waits for the changes before it (written with them at the next reload)";
+/// Said when a key changed on another computer too: Gezik's own conflicting copy holds ours.
+pub const CONFLICTED: &str =
+    "changed on another computer too: your value is in a conflicting copy — Review it in Settings > Sync and Backup";
 
 /// Whether `warning` says a change was kept to be written later (it is not lost: what shows it
 /// may keep showing it).
 pub fn kept(warning: &Warning) -> bool {
-    warning.message == NOT_SAVED || warning.message == KEPT_CHANGING
+    [NOT_SAVED, KEPT_CHANGING, WAITING].contains(&warning.message.as_str())
 }
 
+/// Whether a status line says a change was kept (to clear it once none waits).
+pub fn says_kept(text: &str) -> bool {
+    [NOT_SAVED, KEPT_CHANGING, WAITING].iter().any(|said| text.contains(said))
+}
+
+type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
+
 /// The file's size and time, to tell whether it changed since.
-fn stamp(path: &Path) -> Option<(u64, Option<std::time::SystemTime>)> {
+fn stamp(path: &Path) -> Stamp {
     std::fs::metadata(path).ok().map(|meta| (meta.len(), meta.modified().ok()))
+}
+
+fn read_or(path: &Path, missing: &str) -> Result<String, Failed> {
+    match read_text(path) {
+        Ok(text) => Ok(text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(missing.to_owned()),
+        Err(err) => Err(Failed::Read(err)),
+    }
 }
 
 /// Rewrites `path` with `edit` made to its text (`missing`: the text when there is no file). If
 /// the file changed between the read and the write (another computer's change synced in), the
-/// edit is made again on the new text, up to [`RETRIES`] times: an edit is made key by key, so
-/// the other change stays. `between` runs before each write (tests stand for the syncer there).
+/// change is made again on the new text ([`three_way`]: key by key, lists item by item), up to
+/// [`RETRIES`] times. A key both changed stays as the file has it and ours goes to a conflicting
+/// copy next to it (its path is returned) for a Review. `between` runs before each write (tests
+/// stand for the syncer there).
 pub fn rewrite(
     path: &Path,
     missing: &str,
     edit: &dyn Fn(&str) -> Result<String, String>,
     between: &dyn Fn(),
-) -> Result<(), Failed> {
+) -> Result<Option<PathBuf>, Failed> {
+    let before = stamp(path);
+    let base = read_or(path, missing)?;
+    let ours = edit(&base).map_err(Failed::Edit)?;
+    put(path, Pending { base, ours }, before, between)
+}
+
+/// Writes `change.ours` to `path` if the file is still as `before`; else makes the change again on
+/// the new text, up to [`RETRIES`] times.
+fn put(path: &Path, change: Pending, mut before: Stamp, between: &dyn Fn()) -> Result<Option<PathBuf>, Failed> {
+    let Pending { mut base, mut ours } = change;
+    let mut copy = None;
     for _ in 0..=RETRIES {
-        let before = stamp(path);
-        let text = match read_text(path) {
-            Ok(text) => text,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => missing.to_owned(),
-            Err(err) => return Err(Failed::Read(err)),
-        };
-        let edited = edit(&text).map_err(Failed::Edit)?;
         between();
-        if stamp(path) != before {
-            continue;
+        let now = stamp(path);
+        if now == before {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(Failed::Write)?;
+            }
+            return write_atomic(path, &ours).map(|()| copy).map_err(Failed::Write);
         }
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(Failed::Write)?;
-        }
-        return write_atomic(path, &edited).map_err(Failed::Write);
+        let theirs = read_or(path, &base)?;
+        let merged = merge_onto(path, &base, &ours, &theirs)?;
+        copy = merged.1.or(copy);
+        (base, ours, before) = (theirs, merged.0, now);
     }
-    Err(Failed::Changing)
+    Err(Failed::Changing(Pending { base, ours }))
+}
+
+/// Our change (`base` → `ours`) made on `theirs`; a key both changed goes to a conflicting copy
+/// of `path` (written now, its path returned).
+fn merge_onto(path: &Path, base: &str, ours: &str, theirs: &str) -> Result<(String, Option<PathBuf>), Failed> {
+    let merged = three_way(base, ours, theirs).map_err(Failed::Edit)?;
+    if merged.conflicts.is_empty() {
+        return Ok((merged.text, None));
+    }
+    let copy_text = merged
+        .conflicts
+        .iter()
+        .try_fold(merged.text.clone(), |text, key| crate::sync_folder::with_item_from(&text, ours, key))
+        .map_err(Failed::Edit)?;
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let folder = path.parent().unwrap_or(Path::new("."));
+    let copy = folder.join(crate::sync_folder::copy_name(&name, |n| folder.join(n).exists()));
+    write_atomic(&copy, &copy_text).map_err(Failed::Write)?;
+    Ok((merged.text, Some(copy)))
 }
 
 /// Whether `change` goes to settings.local.toml (`local`) while a sync folder is used: "Only on
@@ -297,6 +422,7 @@ pub fn rewrite(
 fn goes_local(change: &SettingsChange, local: &Path) -> bool {
     match change {
         SettingsChange::Local { .. } | SettingsChange::System(_) => true,
+        SettingsChange::Value { table: Some(table), .. } if table == "system" => true,
         SettingsChange::Value { table, key, .. } => {
             let Ok(text) = read_text(local) else { return false };
             let Ok(file) = text.parse::<toml::Table>() else { return false };
@@ -312,7 +438,8 @@ fn goes_local(change: &SettingsChange, local: &Path) -> bool {
 
 /// Applies `change` to settings.toml (or, with a sync folder, settings.local.toml). Creates the
 /// file from the template if it does not exist; refuses to touch a broken file. With a sync
-/// folder that is not there, or a file that keeps changing, the change is kept for later.
+/// folder that is not there, a file that keeps changing, or changes still waiting before it,
+/// the change waits (in order) for the next reload.
 fn edit(inner: &Inner, change: &SettingsChange) -> Result<(), Warning> {
     edit_with(inner, change, &|| {})
 }
@@ -324,21 +451,66 @@ fn edit_with(inner: &Inner, change: &SettingsChange, between: &dyn Fn()) -> Resu
     let local = dirs.local.join(crate::sync_folder::LOCAL_SETTINGS);
     if dirs.synced && goes_local(change, &local) {
         let file = crate::sync_folder::LOCAL_SETTINGS;
-        return rewrite(&local, "", &apply, between).map_err(|failed| failed.warning(file));
+        return rewrite(&local, "", &apply, between).map(drop).map_err(|failed| failed.warning(file));
     }
     let path = dirs.shared.join("settings.toml");
-    // The sync folder (or its settings.toml) is not there: not written, nor made from the template.
-    if dirs.synced && !path.is_file() {
-        lock(&inner.unsaved).push(change.clone());
-        return Err(Warning::new("settings.toml", NOT_SAVED));
+    let there = path.is_file();
+    let mut unsaved = lock(&inner.unsaved);
+    // The sync folder (or its settings.toml) is not there, or older changes wait: this one waits
+    // behind them, made on the text they leave (not written, nor made from the template).
+    if !unsaved.is_empty() || (dirs.synced && !there) {
+        let base = match unsaved.last() {
+            Some(last) => last.ours.clone(),
+            None => read_text(&dirs.local.join(crate::sync_folder::CACHE).join("settings.toml"))
+                .unwrap_or_else(|_| SETTINGS_TEMPLATE.to_owned()),
+        };
+        let ours = apply(&base).map_err(|err| Failed::Edit(err).warning("settings.toml"))?;
+        unsaved.push(Pending { base, ours });
+        keep_pending(inner, &unsaved);
+        let why = if dirs.synced && !there { NOT_SAVED } else { WAITING };
+        return Err(Warning::new("settings.toml", why));
     }
+    drop(unsaved);
     match rewrite(&path, SETTINGS_TEMPLATE, &apply, between) {
-        Ok(()) => Ok(()),
-        Err(Failed::Changing) => {
-            lock(&inner.unsaved).push(change.clone());
-            Err(Failed::Changing.warning("settings.toml"))
+        Ok(None) => Ok(()),
+        Ok(Some(_)) => Err(Warning::new("settings.toml", CONFLICTED)),
+        Err(Failed::Changing(pending)) => {
+            let mut unsaved = lock(&inner.unsaved);
+            unsaved.push(pending);
+            keep_pending(inner, &unsaved);
+            Err(Warning::new("settings.toml", KEPT_CHANGING))
         }
         Err(failed) => Err(failed.warning("settings.toml")),
+    }
+}
+
+/// Writes the changes not written yet, oldest first, each made again on the file as it is now;
+/// stops at the first that cannot be written (the folder away, the file changing or broken).
+fn retry(inner: &Inner, between: &dyn Fn()) {
+    let _turn = lock(&inner.writing);
+    let path = lock(&inner.dirs).shared.join("settings.toml");
+    loop {
+        let Some(first) = lock(&inner.unsaved).first().cloned() else { return };
+        if !path.is_file() {
+            return;
+        }
+        let before = stamp(&path);
+        let written = read_or(&path, &first.base)
+            .and_then(|theirs| merge_onto(&path, &first.base, &first.ours, &theirs).map(|m| (theirs, m.0)))
+            .and_then(|(theirs, ours)| put(&path, Pending { base: theirs, ours }, before, between));
+        let mut unsaved = lock(&inner.unsaved);
+        match written {
+            Ok(_) => {
+                unsaved.remove(0);
+            }
+            Err(Failed::Changing(pending)) => {
+                unsaved[0] = pending;
+                keep_pending(inner, &unsaved);
+                return;
+            }
+            Err(_) => return,
+        }
+        keep_pending(inner, &unsaved);
     }
 }
 
@@ -509,8 +681,73 @@ mod tests {
         assert_eq!(tries.get(), RETRIES + 1, "made once and again three times");
         assert!(warning.message.contains("kept changing"), "{}", warning.message);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "max-fps = 600000\n", "theirs is not written over");
-        assert_eq!(*lock(&inner.unsaved), [ours]);
+        let waiting = lock(&inner.unsaved).clone();
+        assert_eq!(waiting.len(), 1);
+        assert!(waiting[0].ours.contains("density = \"compact\"") && waiting[0].ours.contains("600000"));
+
+        // A newer change waits behind it (not written before it), and both go in order.
+        let older = SettingsChange::Pinned(vec![PinEntry::plain("/a")]);
+        let newer = SettingsChange::Pinned(vec![PinEntry::plain("/a"), PinEntry::plain("/b")]);
+        let warning = edit_with(&inner, &older, &|| {}).unwrap_err();
+        assert!(kept(&warning), "{}", warning.message);
+        assert!(edit_with(&inner, &newer, &|| {}).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "max-fps = 600000\n", "nothing written out of order");
+        assert!(dir.join(PENDING).is_file(), "kept on disk too");
+        retry(&inner, &|| {});
+        assert!(lock(&inner.unsaved).is_empty() && !dir.join(PENDING).exists());
+        let settings = read(&dir);
+        assert_eq!(crate::pins::paths(&settings.pinned), ["/a", "/b"], "the newer list, not the older");
+        assert_eq!(settings.density, crate::settings::Density::Compact);
+        assert!(std::fs::read_to_string(&path).unwrap().contains("max-fps = 600000"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_pin_made_offline_keeps_the_pins_another_computer_made_meanwhile_even_after_a_restart() {
+        let root = crate::test_dir("settings-offline-merge");
+        let dirs = synced(&root);
+        let (shared, local) = (root.join("Dropbox"), root.join("local"));
+        // Computer A starts without the folder: its last copy has [x].
+        std::fs::create_dir_all(local.join(crate::sync_folder::CACHE)).unwrap();
+        std::fs::write(local.join(crate::sync_folder::CACHE).join("settings.toml"), "# mine\npinned = [\"/x\"]\n")
+            .unwrap();
+        let writer = SettingsWriter::new(dirs.clone());
+        let pins = |paths: &[&str]| SettingsChange::Pinned(paths.iter().map(|p| PinEntry::plain(*p)).collect());
+        assert!(writer.save(&pins(&["/x", "/w"])).is_err());
+        assert!(writer.unsaved_text().unwrap().contains("/w"));
+        // Gezik quits and starts again, still without the folder: the change is still there.
+        drop(writer);
+        let writer = SettingsWriter::new(dirs.clone());
+        assert_eq!(writer.unsaved(), 1);
+        // Meanwhile computer B pinned y and z; the folder comes back.
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("settings.toml"), "# mine\npinned = [\"/x\", \"/y\", \"/z\"]\n").unwrap();
+        writer.retry_unsaved();
+        writer.flush();
+        assert_eq!(writer.unsaved(), 0);
+        assert_eq!(crate::pins::paths(&read(&shared).pinned), ["/x", "/y", "/z", "/w"]);
+        assert!(!local.join(PENDING).exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_key_both_computers_changed_goes_to_a_conflicting_copy() {
+        let root = crate::test_dir("settings-offline-conflict");
+        let dirs = synced(&root);
+        let (shared, local) = (root.join("Dropbox"), root.join("local"));
+        std::fs::create_dir_all(local.join(crate::sync_folder::CACHE)).unwrap();
+        std::fs::write(local.join(crate::sync_folder::CACHE).join("settings.toml"), "theme = \"dark\"\n").unwrap();
+        let writer = SettingsWriter::new(dirs);
+        let theme = SettingsChange::Value { table: None, key: "theme".into(), value: Some("\"nord\"".into()) };
+        assert!(writer.save(&theme).is_err());
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(shared.join("settings.toml"), "theme = \"light\"\n").unwrap();
+        writer.retry_unsaved();
+        writer.flush();
+        assert_eq!(std::fs::read_to_string(shared.join("settings.toml")).unwrap(), "theme = \"light\"\n");
+        let copy = shared.join("settings (Gezik conflicted copy).toml");
+        assert_eq!(std::fs::read_to_string(copy).unwrap(), "theme = \"nord\"\n", "ours, for the Review");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -543,7 +780,12 @@ mod tests {
         writer
             .save(&SettingsChange::Local { table: Some("layout".into()), key: "sidebar".into(), value: None })
             .unwrap();
-        assert!(!std::fs::read_to_string(&local).unwrap().contains("sidebar"));
+        let local_text = std::fs::read_to_string(&local).unwrap();
+        assert!(!local_text.contains("sidebar") && !local_text.contains("[layout]"), "no empty table: {local_text}");
+        // Any [system] value from a row (quick look, Reset to Default) is this computer's too.
+        writer.save(&value(Some("system"), "quick-look", "\"gezik\"")).unwrap();
+        assert!(std::fs::read_to_string(&local).unwrap().contains("quick-look = \"gezik\""));
+        assert!(!std::fs::read_to_string(shared.join("settings.toml")).unwrap().contains("quick-look"));
         // Without a sync folder the local file is not used.
         lock(&dirs).synced = false;
         writer.save(&SettingsChange::System(SystemValue::Tray(false))).unwrap();

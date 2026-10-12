@@ -111,6 +111,8 @@ pub struct Review {
     pub differences: Vec<Difference>,
     /// Per difference: Other copy chosen.
     pub take: Vec<bool>,
+    /// Only a number in its name says it is a copy: Merge leaves it where it is.
+    pub numbered: bool,
 }
 
 impl Backup {
@@ -247,7 +249,12 @@ impl Backup {
                         },
                         format!(
                             "Merge writes the keys set to Other copy above into {original} (the rest stays as it \
-                             is) and moves the conflicting copy to the trash. Cancel leaves both as they are."
+                             is) and {}. Cancel leaves both as they are.",
+                            if review.is_some_and(|r| r.numbered) {
+                                "leaves the copy where it is (its name may be one of yours)"
+                            } else {
+                                "moves the conflicting copy to the trash"
+                            }
                         ),
                         vec![MERGE, "Cancel"],
                     )
@@ -381,7 +388,11 @@ impl Backup {
         };
         let (value, description) = if self.offline {
             (
-                "Not available",
+                match self.unsaved {
+                    0 => "Not available".to_owned(),
+                    1 => "Not available — 1 change waits".to_owned(),
+                    n => format!("Not available — {n} changes wait"),
+                },
                 format!(
                     "The folder cannot be read (a drive not plugged in, the sync app not running): the last copy \
                      is used and the settings are read-only.{waiting} Check Again looks once more."
@@ -389,7 +400,7 @@ impl Backup {
             )
         } else {
             (
-                "On",
+                "On".to_owned(),
                 "Shared by the computers that use this folder; this computer's own values are in \
                  settings.local.toml. Stop copies the folder's settings back here (after a backup) and leaves the \
                  folder as it is."
@@ -400,7 +411,7 @@ impl Backup {
         if self.offline {
             options.insert(1, CHECK_AGAIN);
         }
-        (1, format!("Settings are kept in {}", folder.display()), key, value.to_owned(), description, options)
+        (1, format!("Settings are kept in {}", folder.display()), key, value, description, options)
     }
 
     /// A kind of file in the zip: a box, or "The same" when every file of it is.
@@ -572,7 +583,7 @@ mod tests {
         assert!(!sync.options.iter().any(|o| o == CHECK_AGAIN));
         (backup.offline, backup.unsaved) = (true, 2);
         let sync = backup.item(Row::Sync);
-        assert_eq!(sync.value, "Not available");
+        assert_eq!(sync.value, "Not available — 2 changes wait");
         assert!(sync.options.iter().any(|o| o == CHECK_AGAIN) && sync.description.contains("2 changes wait"));
         assert_eq!(backup.rows("")[..2], [Row::Sync, Row::Conflict(0)]);
         assert_eq!(backup.item(Row::Conflict(0)).title, "Conflicting copy: settings (1).toml");
@@ -590,6 +601,7 @@ mod tests {
             other: String::new(),
             take: vec![false; differences.len()],
             differences,
+            numbered: true,
         });
         assert_eq!(backup.rows("")[..4], [Row::Sync, Row::Conflict(0), Row::Difference(0), Row::Merge]);
         let key = backup.item(Row::Difference(0));

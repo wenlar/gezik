@@ -1133,10 +1133,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 let fresh = reader.read_files();
                 // The sync folder is there (again): the changes kept meanwhile are written, and
                 // it is watched (spec 14 §8.4).
-                if reader.is_synced() && !fresh.offline {
+                if !fresh.offline {
                     reader.retry_unsaved();
                 }
                 let _ = watcher::follow();
+                let drained = reader.unsaved() == 0;
                 let templates = reader.templates_dir();
                 let files = files.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -1145,7 +1146,19 @@ fn main() -> Result<(), slint::PlatformError> {
                         templates::set_dir(Some(templates));
                         templates::load_in_background();
                     }
+                    // Every change kept for the sync folder is written: their notes go.
+                    if drained {
+                        windows::for_each(|window| {
+                            if gezik_config::settings_writer::says_kept(&window.get_status()) {
+                                window.set_status(Default::default());
+                            }
+                        });
+                    }
                     let mut current = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    // Nothing changed (a burst that read the same files): nothing to show again.
+                    if *current == fresh {
+                        return;
+                    }
                     settings_window::keep_last_good(&current);
                     *current = fresh;
                     let (_, plan) = apply_config_and_start(&mut current, &[], false, None);
@@ -1165,6 +1178,11 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     }
     apply_config(&files.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    // Changes a last run could not write to the sync folder (spec 14 §8.4), now that it is there.
+    let offline = files.lock().unwrap_or_else(std::sync::PoisonError::into_inner).offline;
+    if let Some(store) = config.as_ref().filter(|s| s.unsaved() > 0 && !offline) {
+        store.retry_unsaved();
+    }
     // One media and one folder view memory for the process; each view holds a client of the
     // media and the same memory (spec 10 §3.3).
     let media = media::Media::new();

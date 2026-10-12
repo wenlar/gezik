@@ -128,3 +128,44 @@ pub fn reload() {
     let Some(reload) = lock(&WATCH).as_ref().map(|w| w.reload.clone()) else { return };
     let _ = std::thread::Builder::new().name("gezik-config-reload".into()).spawn(move || reload());
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::*;
+
+    #[test]
+    fn a_reload_does_not_wake_the_watcher_again() {
+        let root = std::env::temp_dir().join(format!("gezik-watch-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (shared, local) = (root.join("Sync").join("Gezik"), root.join("local"));
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(shared.join("settings.toml"), "theme = \"dark\"\n").unwrap();
+        let dirs = gezik_config::paths::Dirs { shared: shared.clone(), local, portable: false, synced: true };
+        let store = ConfigStore::with_dirs(dirs);
+        let reloads = Arc::new(AtomicUsize::new(0));
+        let (count, reader) = (reloads.clone(), store.clone());
+        // As main's reload: read (keeping the last copy), write what waits, watch again.
+        watch_config(
+            &store,
+            move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                let _ = reader.read_files();
+                reader.retry_unsaved();
+                let _ = follow();
+            },
+            || {},
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        store.update_state(|state| state.preview_open = true);
+        store.flush_state();
+        std::fs::write(shared.join("settings.toml"), "theme = \"nord\"\n").unwrap();
+        std::thread::sleep(Duration::from_secs(2));
+        let seen = reloads.load(Ordering::SeqCst);
+        assert!((1..=2).contains(&seen), "{seen} reloads for one change");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
