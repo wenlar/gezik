@@ -69,4 +69,4 @@ jobs:
 
       # #[ignore]d tests (real devices, network, Everything, pdfium) stay out.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --no-fail-fast
