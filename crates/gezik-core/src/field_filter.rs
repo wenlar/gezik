@@ -105,6 +105,27 @@ pub fn split(text: &str) -> Result<(String, Vec<FieldTerm>), String> {
     Ok((rest, terms))
 }
 
+/// Property words alone (a search's Properties, `[[searches]] where`, spec 13 §9.1): anything
+/// that is not a word is the error.
+pub fn parse_where(text: &str) -> Result<Vec<FieldTerm>, String> {
+    let (rest, terms) = split(text)?;
+    match rest.split([' ', ';']).find(|word| !word.is_empty()) {
+        None => Ok(terms),
+        Some(word) => Err(format!("\"{word}\" is not a property word (artist:tarkan, duration>3m)")),
+    }
+}
+
+/// The keys the last word of `text` may become (`art` → `artist`, `album-artist`): none once it
+/// has an operator or is empty.
+pub fn complete(text: &str) -> Vec<&'static str> {
+    let last = text.rsplit([' ', ';']).next().unwrap_or_default();
+    if last.is_empty() || last.contains([':', '=', '<', '>']) {
+        return Vec::new();
+    }
+    let folded = last.to_ascii_lowercase();
+    fields::all().map(|id| id.def().key).filter(|key| key.contains(folded.as_str())).collect()
+}
+
 /// Whether a row with `values` passes every term.
 pub fn matches(terms: &[FieldTerm], values: &Fields) -> bool {
     terms.iter().all(|term| match term {
@@ -173,6 +194,20 @@ mod tests {
             ]
         );
         assert_eq!(split("artist:").unwrap().1, [], "half typed");
+    }
+
+    #[test]
+    fn a_where_holds_words_only_and_keys_complete() {
+        assert_eq!(parse_where(" artist:x  duration>3m ").unwrap().len(), 2);
+        assert_eq!(parse_where("").unwrap(), []);
+        assert_eq!(
+            parse_where("*.mp3 artist:x").unwrap_err(),
+            "\"*.mp3\" is not a property word (artist:tarkan, duration>3m)"
+        );
+        assert!(parse_where("duration>3x").is_err());
+        assert_eq!(complete("year<2000 art"), ["artist", "album-artist"]);
+        assert_eq!(complete("artist:"), Vec::<&str>::new());
+        assert_eq!(complete("artist:x "), Vec::<&str>::new());
     }
 
     #[test]

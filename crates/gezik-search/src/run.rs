@@ -13,7 +13,7 @@ use gezik_core::search::{HiddenRule, Scope, SearchSpec};
 use gezik_platform::fs::DirItem;
 
 use crate::content::Found;
-use crate::query::{Query, entry_of};
+use crate::query::{Query, entry_of, field_reader};
 use crate::results::{Batch, ResultSet};
 use crate::walk::{Problems, Visit, Walk, WalkRules, WalkStats, threads_for};
 
@@ -95,7 +95,11 @@ impl Visit for Matcher {
     fn folder(&self, dir: &Path, relative: &str, items: Vec<DirItem>) {
         let mut found = Vec::new();
         for item in &items {
-            if !self.query.passes(&item.name, item.is_dir, item.size, item.modified) {
+            if !self.query.passes(&item.name, item.is_dir, item.size, item.modified)
+                || !self.query.passes_fields(&item.name, item.is_dir, |want| {
+                    field_reader(&dir.join(&item.name), &self.cancel)(want)
+                })
+            {
                 continue;
             }
             let line = match self.query.content() {
@@ -345,6 +349,24 @@ mod tests {
         let (set, _, _) = search(&root, spec, 100);
         assert_eq!(keys(&set), ["a.txt"], "a picture is not read");
         assert_eq!(set.found(0).map(|f| (f.0, f.1.to_string())), Some((2, "two fatura".to_owned())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn properties_find_the_files_whose_fields_hold() {
+        let root = tree("fields");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gezik-batch/tests/data/fields/id3v24.mp3");
+        std::fs::copy(&fixture, root.join("song.mp3")).unwrap();
+        std::fs::copy(&fixture, root.join("other.mp3")).unwrap();
+        std::fs::write(root.join("notes.txt"), "artist:çiğdem").unwrap();
+        let mut spec = SearchSpec::new(Scope::Folder(root.clone()));
+        spec.pattern = "song".into();
+        spec.fields = "artist:çiğdem duration<1m".into();
+        let (set, _, _) = search(&root, spec.clone(), 100);
+        assert_eq!(keys(&set), ["song.mp3"]);
+        spec.pattern.clear();
+        spec.fields = "artist:tarkan".into();
+        assert!(search(&root, spec, 100).0.is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 

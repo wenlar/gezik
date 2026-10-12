@@ -300,6 +300,35 @@ pub fn duration_text(ms: u64) -> String {
     }
 }
 
+/// `value` in a name template (spec 13 §9.2), `arg` its format: a number zero-padded to `arg`
+/// digits (`{track:02}`), a date in the `arg` format (`{taken:%Y}`), a real number with `arg`
+/// decimals (`{aperture:1}`), a duration as `3m25s` (no `:` in names). Not yet name-safe:
+/// the template cleans it.
+pub fn name_text(id: FieldId, value: &Value, arg: Option<&str>) -> String {
+    let digits = arg.and_then(|a| a.trim().parse::<usize>().ok());
+    match value {
+        Value::Int(n) => match digits {
+            Some(width) if *n >= 0 => format!("{n:0width$}"),
+            _ => n.to_string(),
+        },
+        Value::Real(x) => match digits {
+            Some(places) => format!("{x:.places$}"),
+            None if id == EXPOSURE && *x > 0.0 && *x < 1.0 => format!("1-{}", (1.0 / x).round()),
+            None => trim(*x, 2),
+        },
+        Value::Duration(ms) => {
+            let s = ms / 1000;
+            match (s / 3600, s / 60 % 60, s % 60) {
+                (0, 0, s) => format!("{s}s"),
+                (0, m, s) => format!("{m}m{s:02}s"),
+                (h, m, s) => format!("{h}h{m:02}m{s:02}s"),
+            }
+        }
+        Value::Date(d) => crate::batch::date::format(arg.unwrap_or("%Y-%m-%d"), d),
+        _ => text(id, value),
+    }
+}
+
 /// Sorting order of two values of a field; a missing value comes last, text ignores case.
 pub fn compare(a: Option<&Value>, b: Option<&Value>) -> Ordering {
     match (a, b) {
@@ -542,6 +571,23 @@ mod tests {
         assert_eq!(text(EXPOSURE, &Value::Real(2.0)), "2 s");
         assert!(fields.text(ARTIST).is_none());
         assert_eq!(fields.iter().next().map(|(id, _)| id), Some(WIDTH), "sorted by field");
+    }
+
+    #[test]
+    fn values_in_names_take_their_format() {
+        assert_eq!(name_text(TRACK, &Value::Int(7), Some("02")), "07");
+        assert_eq!(name_text(TRACK, &Value::Int(7), None), "7");
+        assert_eq!(name_text(WIDTH, &Value::Int(4032), None), "4032", "no unit, no grouping");
+        assert_eq!(name_text(APERTURE, &Value::Real(2.8), Some("1")), "2.8");
+        assert_eq!(name_text(APERTURE, &Value::Real(2.0), None), "2");
+        assert_eq!(name_text(EXPOSURE, &Value::Real(0.004), None), "1-250");
+        assert_eq!(name_text(DURATION, &Value::Duration(205_400), None), "3m25s");
+        assert_eq!(name_text(DURATION, &Value::Duration(3_723_000), None), "1h02m03s");
+        assert_eq!(name_text(DURATION, &Value::Duration(9_000), None), "9s");
+        let day = Value::Date(DateParts { year: 2024, month: 7, day: 1, ..DateParts::default() });
+        assert_eq!(name_text(TAKEN, &day, Some("%Y")), "2024");
+        assert_eq!(name_text(TAKEN, &day, None), "2024-07-01");
+        assert_eq!(name_text(ARTIST, &Value::Text("Tarkan".into()), None), "Tarkan");
     }
 
     #[test]

@@ -274,7 +274,7 @@ pub struct SavedSearch {
 pub const SEARCHES_MAX: usize = 30;
 /// A saved search's folder that is the place shown when it runs.
 pub const HERE: &str = "{here}";
-const SEARCH_KEYS: [&str; 14] = [
+const SEARCH_KEYS: [&str; 15] = [
     "name",
     "folder",
     "pattern",
@@ -286,6 +286,7 @@ const SEARCH_KEYS: [&str; 14] = [
     "size-max",
     "modified",
     "type",
+    "where",
     "hidden",
     "skipped",
     "duplicates",
@@ -1022,6 +1023,9 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
     if spec.kind != KindFilter::Any {
         table.insert("type".into(), text(spec.kind.as_str()));
     }
+    if !spec.fields.trim().is_empty() {
+        table.insert("where".into(), text(spec.fields.trim()));
+    }
     table
 }
 
@@ -1075,6 +1079,10 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
                 "type: expected files, folders, pictures, videos, audio, documents, archives or code, got \"{kind}\""
             )
         })?;
+    }
+    if let Some(words) = text("where")? {
+        gezik_core::field_filter::parse_where(words).map_err(|err| format!("where: {err}"))?;
+        spec.fields = words.trim().to_owned();
     }
     Ok(spec)
 }
@@ -3974,9 +3982,11 @@ split = 0.2
         spec.size.min = Some(500 * 1024 * 1024);
         spec.modified = DateRange::Between(Day { year: 2026, month: 1, day: 1 }, Day { year: 2026, month: 6, day: 30 });
         spec.kind = KindFilter::Videos;
+        spec.fields = "artist:tarkan duration>3m".into();
         spec.hidden = HiddenRule::Include;
         spec.skipped = true;
         let table = search_to_toml(&spec);
+        assert_eq!(table.get("where").and_then(|v| v.as_str()), Some("artist:tarkan duration>3m"));
         assert_eq!(table.get("size-min").and_then(|v| v.as_str()), Some("500 MB"));
         assert_eq!(table.get("type").and_then(|v| v.as_str()), Some("videos"));
         assert_eq!(search_from_toml(&table), Ok(spec));
@@ -3987,6 +3997,8 @@ split = 0.2
         assert!(search_from_toml(&bad).unwrap_err().contains("not a full path"));
         let bad: toml::Table = "folder = \"drives\"\nmodified = \"soon\"".parse().unwrap();
         assert!(search_from_toml(&bad).unwrap_err().starts_with("modified: "));
+        let bad: toml::Table = "folder = \"drives\"\nwhere = \"duration>3x\"".parse().unwrap();
+        assert!(search_from_toml(&bad).unwrap_err().starts_with("where: duration>3x: "));
         assert_eq!(search_from_toml(&toml::Table::new()).unwrap_err(), "folder is missing");
     }
 

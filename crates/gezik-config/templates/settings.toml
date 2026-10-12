@@ -280,8 +280,9 @@ properties = true
 # keys are the search bar's: pattern (the filter's language), content (text in files),
 # name-regex, content-regex, match-case, hidden, skipped (true or false), size-min, size-max
 # ("500 MB"), modified (today | 7d | 30d | year | 2026-01-01..2026-06-30) and type (files |
-# folders | pictures | videos | audio | documents | archives | code). duplicates = true finds
-# duplicate files instead (Find Duplicates). At most 30.
+# folders | pictures | videos | audio | documents | archives | code). where takes property
+# words, as the filter bar does ("artist:tarkan duration>3m"; only files with a reader for a
+# field are read). duplicates = true finds duplicate files instead (Find Duplicates). At most 30.
 # [[searches]]
 # name = "Large videos"
 # folder = "{home}"

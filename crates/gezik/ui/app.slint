@@ -567,6 +567,7 @@ export component AppWindow inherits Window {
     property <int> rb-reveal-index;
     property <int> rb-reveal-seq;
     callback rb-add-rule(length, length, length, length);
+    callback rb-fields(length, length, length, length);
     callback rb-select-rule(int);
     callback rb-toggle-rule(int);
     callback rb-move-rule(int);
@@ -1486,6 +1487,7 @@ export component AppWindow inherits Window {
             name-text <=> root.rb-name-text;
             name-enabled: root.rb-name-enabled;
             add-rule(x, y, r, t) => { root.rb-add-rule(x, y, r, t); }
+            fields(x, y, r, t) => { root.rb-fields(x, y, r, t); }
             select-rule(i) => { root.rb-select-rule(i); }
             toggle-rule(i) => { root.rb-toggle-rule(i); }
             move-rule(d) => { root.rb-move-rule(d); }

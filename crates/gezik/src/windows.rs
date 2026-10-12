@@ -1260,6 +1260,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         let menus = menus.clone();
         move |left, bottom, right, top| menus.add_rule(popup::Anchor::below(left, top, right, bottom))
     });
+    window.on_rb_fields({
+        let menus = menus.clone();
+        move |left, bottom, right, top| menus.template_fields(popup::Anchor::below(left, top, right, bottom))
+    });
     window.on_rb_presets({
         let menus = menus.clone();
         move |left, bottom, right, top| menus.presets(popup::Anchor::below(left, top, right, bottom))

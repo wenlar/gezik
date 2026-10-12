@@ -323,6 +323,8 @@ pub struct SearchSpec {
     pub size: SizeRange,
     pub modified: DateRange,
     pub kind: KindFilter,
+    /// Property words (spec 13 §9.1): `artist:tarkan duration>3m`; empty: none.
+    pub fields: String,
     pub hidden: HiddenRule,
     /// Goes into the folders `[search] skip` names too.
     pub skipped: bool,
@@ -346,6 +348,7 @@ impl SearchSpec {
             size: SizeRange::default(),
             modified: DateRange::Any,
             kind: KindFilter::Any,
+            fields: String::new(),
             hidden: HiddenRule::FollowView,
             skipped: false,
             flat: false,
@@ -369,6 +372,7 @@ impl SearchSpec {
             || !self.size.is_any()
             || self.modified != DateRange::Any
             || self.kind != KindFilter::Any
+            || !self.fields.trim().is_empty()
     }
 
     /// The number on the Filters button: the criteria and options that are not as they start.
@@ -377,6 +381,7 @@ impl SearchSpec {
             !self.size.is_any(),
             self.modified != DateRange::Any,
             self.kind != KindFilter::Any,
+            !self.fields.trim().is_empty(),
             self.name_regex,
             self.content_regex,
             self.match_case,

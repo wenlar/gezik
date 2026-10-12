@@ -1,9 +1,13 @@
 //! A search compiled once (spec 3.1-3.3): the name matcher, the kind, the size, the time
-//! window and the content matcher, checked from the cheapest on.
+//! window, the properties (spec 13 §9.1) and the content matcher, checked from the cheapest on.
 
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use gezik_core::Entry;
+use gezik_core::field_filter::{self, FieldTerm};
+use gezik_core::fields::{self, FieldSet, Fields};
 use gezik_core::search::{Day, KindFilter, SearchSpec, SizeRange, TimeWindow, day_of, utc_offset};
 use gezik_platform::fs::DirItem;
 
@@ -37,6 +41,7 @@ impl QueryOptions {
 pub enum QueryError {
     Name(String),
     Content(String),
+    Fields(String),
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +51,7 @@ pub struct Query {
     size: SizeRange,
     window: TimeWindow,
     content: Option<ContentMatcher>,
+    fields: Vec<FieldTerm>,
     flat: bool,
     max_results: usize,
 }
@@ -60,12 +66,14 @@ impl Query {
             .transpose()
             .map_err(QueryError::Content)?
             .filter(|content| !content.matches_empty());
+        let fields = field_filter::parse_where(&spec.fields).map_err(QueryError::Fields)?;
         Ok(Query {
             name,
             kind: spec.kind,
             size: spec.size,
             window: spec.modified.window(options.now, options.today, options.utc_offset),
             content,
+            fields,
             flat: spec.flat,
             max_results: options.max_results,
         })
@@ -87,12 +95,38 @@ impl Query {
             && self.window.contains(modified)
     }
 
+    /// The properties, after every other criterion but the content: `read` gives the item's
+    /// fields among those asked. It is called only when the item is a file whose extension has
+    /// a reader for one of them; otherwise the words judge an item without values (`album:none`
+    /// passes a `.txt`, `duration>3m` does not), and with no words nothing is read.
+    pub fn passes_fields(&self, name: &str, is_dir: bool, read: impl FnOnce(FieldSet) -> Fields) -> bool {
+        if self.fields.is_empty() {
+            return true;
+        }
+        let want = field_filter::needed(&self.fields);
+        let ext = name.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()).unwrap_or_default();
+        let values = if !is_dir && fields::provided(&ext).meets(want) { read(want) } else { Fields::default() };
+        field_filter::matches(&self.fields, &values)
+    }
+
     pub fn content(&self) -> Option<&ContentMatcher> {
         self.content.as_ref()
     }
 
     pub fn max_results(&self) -> usize {
         self.max_results
+    }
+}
+
+/// Reads `path`'s fields for [`Query::passes_fields`]: only a regular file (never a FIFO or a
+/// device, which could block), never one only in the cloud (`fields::read`).
+pub fn field_reader<'a>(path: &'a Path, cancel: &'a AtomicBool) -> impl FnOnce(FieldSet) -> Fields + 'a {
+    move |want| {
+        if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file()) {
+            gezik_batch::fields::read(path, want, &|| cancel.load(Ordering::Relaxed))
+        } else {
+            Fields::default()
+        }
     }
 }
 
@@ -160,6 +194,33 @@ mod tests {
         let mut folders = spec();
         folders.kind = KindFilter::Folders;
         assert!(Query::compile(&folders, &options()).unwrap().passes("d", true, 0, None));
+    }
+
+    #[test]
+    fn properties_read_only_the_files_a_reader_knows() {
+        use gezik_core::fields::{DURATION, Value};
+        use std::cell::Cell;
+        let reads = Cell::new(0);
+        let song = |want: FieldSet| {
+            reads.set(reads.get() + 1);
+            assert_eq!(want, FieldSet::of(&[DURATION]), "only the fields asked");
+            Fields::new(vec![(DURATION, Value::Duration(200_000))])
+        };
+        let none = Query::compile(&spec(), &options()).unwrap();
+        assert!(none.passes_fields("a.mp3", false, song) && reads.get() == 0, "no words: nothing is read");
+        let mut s = spec();
+        s.fields = "duration>3m".into();
+        let q = Query::compile(&s, &options()).unwrap();
+        assert!(q.passes_fields("a.MP3", false, song) && reads.get() == 1);
+        assert!(!q.passes_fields("a.txt", false, song) && reads.get() == 1, "no reader: left out unread");
+        assert!(!q.passes_fields("music.mp3", true, song) && reads.get() == 1, "a folder is not read");
+        s.fields = "album:none".into();
+        let q = Query::compile(&s, &options()).unwrap();
+        assert!(q.passes_fields("a.txt", false, song) && reads.get() == 1, "no value: none holds");
+        s.fields = "duration>3x".into();
+        assert!(matches!(Query::compile(&s, &options()), Err(QueryError::Fields(_))));
+        s.fields = "*.mp3".into();
+        assert!(matches!(Query::compile(&s, &options()), Err(QueryError::Fields(_))));
     }
 
     #[test]
