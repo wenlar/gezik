@@ -675,7 +675,7 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 
 13b uses 268–270.
 
-268. **Pages and password.** As macOS 369 and 371 with Alt+P and Space (pdfium from the preview bar's `Download` or a PDF tool): `›`, Page Down/Up, Home/End, the page field and the wheel at a page's end; an encrypted PDF asks for its password.
+268. **Pages and password.** As macOS 369 and 371 with Alt+P and Space (pdfium from the preview bar's `Download` or a PDF tool): `›`, Page Down/Up, Home/End, Go to Page (click the page number) and the wheel at a page's end; an encrypted PDF asks for its password.
 269. **Zoom.** As macOS 370 with Ctrl+wheel (X11 and Wayland, 100% and 200% scaling): the text stays sharp at 400%, a drag moves it and the edges fill in after stopping; a photo zooms to `100%` and back.
 270. **The worker goes.** `pgrep -af -- --pdf-view` shows one process after 268; 10 s after selecting a text file none; selecting a PDF without touching its pages starts none.
 
