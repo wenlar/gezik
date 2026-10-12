@@ -3033,4 +3033,4 @@ Data regenerated: 24 MP3s (artists Ahmet Kaya, Cem Karaca, Çiğdem Talu, Ilgaz,
 | 4 | `duration>3x` | PASS: error `duration>3x: "3x" is not a duration (3m, 1:30)` shows, list stays 28 items (full). `*.mp3 duration>3x`: 24 items (the MP3s), same error text. |
 | 5 | Rule `columns = ["duration","track","artist","album"]` | PASS: headers Name, Duration, Track, Artist, Album in that order (f5). |
 
-- Fix2: alanla gruplamada `No Artist` ve `Reading properties…` grupları artık her iki yönde sonda (yön çevirmesinin dışında; azalan sıra testi eklendi).
+- Fix2: alanla gruplamada `No Artist` ve `Reading properties…` grupları artık her iki yönde sonda (yön çevirmesinin dışında; azalan sıra testi eklendi). Sürüm exe'si **27.911.168 B** (+120.832 B, 13d e5a0e48 tabanına göre); yapı `t13e-fix2.exe`.
