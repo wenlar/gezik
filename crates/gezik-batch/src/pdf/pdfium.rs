@@ -110,3 +110,18 @@ pub fn render_page(page: &PdfPage, dpi: u32, image: PageImage, path: &Path) -> i
     }
     Ok(size)
 }
+
+/// The `w` × `h` pixels at `x`, `y` of `page` drawn at `scale` pixels per point, as RGBA: one
+/// bitmap of that size, the page placed so only that part lands on it (the preview's zoomed
+/// view, spec 13 §5.2). The caller keeps `w` and `h` small (at most 4096).
+pub fn render_region(page: &PdfPage, scale: f32, (x, y, w, h): (u32, u32, u32, u32)) -> Result<Vec<u8>, String> {
+    let side = |n: u32| Pixels::try_from(n).map_err(|_| format!("{n} pixels is too large"));
+    let mut bmp = PdfBitmap::empty(side(w)?, side(h)?, PdfBitmapFormat::default()).map_err(|e| format!("{e:?}"))?;
+    let cfg = PdfRenderConfig::new().scale_page_by_factor(scale).set_origin(-side(x)?, -side(y)?);
+    page.render_into_bitmap_with_config(&mut bmp, &cfg).map_err(|e| format!("rendering failed: {e:?}"))?;
+    let rgba = bmp.as_rgba_bytes();
+    if rgba.len() != w as usize * h as usize * 4 {
+        return Err(format!("pdfium gave {} bytes for {w} × {h}", rgba.len()));
+    }
+    Ok(rgba)
+}
