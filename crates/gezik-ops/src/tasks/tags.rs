@@ -81,7 +81,7 @@ impl Task for TagsTask {
                 }
                 after
             }
-            Change::Set { expect, .. } if *expect != before => return Err(changed_since()),
+            Change::Set { expect, .. } if !expect.matches(&before) => return Err(changed_since()),
             Change::Set { to, .. } => to.clone(),
         };
         if after == before {

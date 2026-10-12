@@ -94,6 +94,17 @@ impl Meta {
         self.tags.iter().any(|tag| same_name(&tag.name, name))
     }
 
+    /// Whether `other` is the same record as far as every system keeps it: a colour counts
+    /// only where both have one (Linux keeps none).
+    pub fn matches(&self, other: &Meta) -> bool {
+        self.rating == other.rating
+            && self.comment == other.comment
+            && self.tags.len() == other.tags.len()
+            && self.tags.iter().zip(&other.tags).all(|(a, b)| {
+                a.name == b.name && (a.color == b.color || a.color == TagColor::None || b.color == TagColor::None)
+            })
+    }
+
     /// `edit` done to it.
     pub fn apply(&mut self, edit: &MetaEdit) {
         match edit {
@@ -328,6 +339,15 @@ mod tests {
         m.apply(&MetaEdit::Rating(0));
         m.apply(&MetaEdit::Comment("".into()));
         assert!(m.is_empty());
+    }
+
+    #[test]
+    fn records_match_where_a_system_keeps_no_colour() {
+        let red = meta(&[("Red", TagColor::Red)], 2, "x");
+        assert!(red.matches(&meta(&[("Red", TagColor::None)], 2, "x")));
+        assert!(!red.matches(&meta(&[("Red", TagColor::Blue)], 2, "x")));
+        assert!(!red.matches(&meta(&[("Red", TagColor::Red)], 3, "x")));
+        assert!(!red.matches(&meta(&[], 2, "x")));
     }
 
     #[test]
