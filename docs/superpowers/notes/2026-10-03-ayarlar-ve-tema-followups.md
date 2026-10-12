@@ -2757,6 +2757,7 @@ Scripts: scratchpad `m12g\12f\` (h.ps1, data.ps1). Colors are pixel samples of P
 - Ctrl+X did not put a file drop list on the system clipboard (internal cut); the clipboard text was saved and restored anyway.
 
 - Gözden geçirme düzeltmeleri: `[tags] dots = false` iken etiket/puan/yorum koşullu kural varsa etiket işinden sonra satırlar yeniden çizilir (`forget_rows`); açık temada adlı turuncu `#B85C00` (kırmızıdan ayrı) ve gri `#8E8E93` (ikincil sütun metninden belirgin soluk; beyazda 3,26:1), bütün adlı açık tonlar beyazda ≥ 3:1 (test). Uyarı numaraları öbür dizilerle aynı (1'den), değişmedi.
+- Düzeltmelerle sürüm exe'si 27.705.344 B (taban `t12e-fix.exe` 27.679.744 B, **+25.600 B**). Kopya `%TEMP%\gezik-gui-12\bin\t12f-fix.exe`. Not: `gezik-platform` `calls_left_behind_are_capped` (12d) bütün çalıştırmada iki kez düştü, tek başına geçiyor (5 ms zaman aşımlı, yük altında zamanlamaya bağlı; 12f'den bağımsız).
 
 ## Windows ekran testleri: 12e
 
