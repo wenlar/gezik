@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -18,12 +18,14 @@ use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 use crate::{AppWindow, PreviewActions, PreviewInfo};
 
 mod hex;
+mod media;
 mod pdf;
 mod scroller;
 mod text;
 mod viewer;
 mod zoom;
 
+use media::{Play, Player};
 use pdf::{PdfView, State};
 use viewer::{PictureView, Place, Room, Viewer};
 use zoom::{Fit, ZoomView};
@@ -46,6 +48,23 @@ fn pdf_path(target: &Target) -> Option<PathBuf> {
         _ => None,
     }
 }
+
+/// A `Kind` index of a video or sound file (what the player plays).
+pub fn media_kind(kind: i32) -> bool {
+    use gezik_core::kind::Kind;
+    kind == Kind::Video.index() || kind == Kind::Audio.index()
+}
+
+/// The video or sound file `target` is, if it is one.
+fn media_path(target: &Target) -> Option<PathBuf> {
+    match target {
+        Target::Entry { path, is_dir: false, kind, .. } if media_kind(*kind) => Some(path.clone()),
+        _ => None,
+    }
+}
+
+/// How often the bar's time moves while playing.
+const TICK: Duration = Duration::from_millis(250);
 
 /// Where downloaded tools are (as `archives.rs` says): next to settings.toml.
 fn data_dir() -> PathBuf {
@@ -409,13 +428,20 @@ struct Inner {
     /// A picture is being decoded at its own size, and the one to decode after it.
     decoding: Cell<bool>,
     decode_next: RefCell<Option<PathBuf>>,
+    /// The player's volume 0-100 and mute (`state.toml [preview] volume`, `muted`), and the
+    /// gain its sound threads read.
+    volume: Cell<(u8, bool)>,
+    gain: Arc<AtomicU32>,
+    /// Moves the bar's time while playing; ends a long pause's processes.
+    tick_timer: slint::Timer,
+    pause_timer: slint::Timer,
 }
 
 #[derive(Clone)]
 pub struct Preview(Rc<Inner>);
 
 impl Preview {
-    pub fn new(window: &AppWindow, wrap: (bool, bool)) -> Preview {
+    pub fn new(window: &AppWindow, wrap: (bool, bool), volume: (u8, bool)) -> Preview {
         let preview = Preview(Rc::new(Inner {
             window: window.as_weak(),
             pane_open: Cell::new(false),
@@ -439,6 +465,10 @@ impl Preview {
             turned: Cell::new(None),
             decoding: Cell::new(false),
             decode_next: RefCell::new(None),
+            volume: Cell::new(volume),
+            gain: Arc::new(AtomicU32::new(media::gain(volume.0, volume.1))),
+            tick_timer: slint::Timer::default(),
+            pause_timer: slint::Timer::default(),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
         // Its own preview, not the current window's: a viewer made while a frame is drawn says
@@ -598,15 +628,23 @@ impl Preview {
     }
 
     /// Shows `info`, in this window too unless `main` is false (quick look scrolled).
-    fn publish_to(&self, info: PreviewInfo, main: bool) {
+    fn publish_to(&self, mut info: PreviewInfo, main: bool) {
+        let (volume, muted) = self.0.volume.get();
+        (info.volume, info.muted) = (f32::from(volume) / 100.0, muted);
         // Kept without the viewer's part: the next fill starts from the file's own preview
         // (a zoomed picture's large copy is not held here once it is back to fit).
         let mut shown = info.clone();
         let quick = self.quick_look_open();
         let narrow = |cell: &Cell<(f32, f32)>| cell.get().0 < NARROW;
-        let tools = |info: &PreviewInfo, cell| viewer::bar_tools(info, narrow(cell));
+        // A narrow bar drops some buttons and the volume bar (the right-click menu has them).
+        let tools = |info: &mut PreviewInfo, cell| {
+            info.tools = viewer::bar_tools(info, narrow(cell));
+            if narrow(cell) {
+                info.volume = -1.0;
+            }
+        };
         self.0.viewer.borrow().fill(&mut shown, self.room(), true);
-        shown.tools = tools(&shown, if quick { &self.0.surface_quick } else { &self.0.surface });
+        tools(&mut shown, if quick { &self.0.surface_quick } else { &self.0.surface });
         // A picture over Gezik's limits says so before any zoom.
         if shown.bar == 5
             && shown.bar_note.is_empty()
@@ -620,7 +658,7 @@ impl Preview {
                 // quick look's size would show stretched there.
                 let mut pane = info.clone();
                 self.0.viewer.borrow().fill(&mut pane, self.room(), false);
-                pane.tools = tools(&pane, &self.0.surface);
+                tools(&mut pane, &self.0.surface);
                 window.set_preview(pane);
             } else {
                 window.set_preview(shown.clone());
@@ -749,6 +787,7 @@ impl Preview {
                 *self.0.quick_look.borrow_mut() = Some(quick_look);
                 self.refresh();
                 self.sync_view();
+                self.sync_frame();
             }
             Err(err) => window.set_status(format!("Cannot open quick look: {err}").into()),
         }
@@ -770,6 +809,7 @@ impl Preview {
         } else if self.0.viewer.borrow().shown() {
             // Back to this window's room.
             self.sync_view();
+            self.sync_frame();
             self.redraw();
         }
     }
@@ -937,9 +977,13 @@ impl Preview {
         (viewer.hex.is_some(), file, wrap)
     }
 
-    /// For the preview's menu: the zoom surface shown (4 a PDF, 5 a picture, 0 none) and the
-    /// bar's link ("Download", "Enter Password…"; "" none).
+    /// For the preview's menu: the zoom surface shown (4 a PDF, 5 a picture, 6 a player, 0
+    /// none) and the bar's link ("Download", "Enter Password…"; "" none).
     pub fn surface_state(&self) -> (i32, &'static str) {
+        if media_path(&self.0.viewer_target.borrow()).is_some() && self.0.viewer.borrow().hex.is_none() {
+            let link = self.0.viewer.borrow().media.as_ref().map_or("", |player| player.note().1);
+            return (6, link);
+        }
         if !self.surface_target() {
             return (0, "");
         }
@@ -968,7 +1012,15 @@ impl Preview {
             return false;
         }
         let pdf = self.0.viewer.borrow().hex.is_none() && pdf_path(&self.0.viewer_target.borrow()).is_some();
+        let media = self.0.viewer.borrow().hex.is_none() && media_path(&self.0.viewer_target.borrow()).is_some();
         match chord.key {
+            Key::Char('k') if media => self.play_pause(),
+            Key::Char('j') if media => self.skip(-media::SKIP),
+            Key::Char('l') if media => self.skip(media::SKIP),
+            Key::Char('m') if media => {
+                self.toggle_mute();
+                true
+            }
             Key::PageDown if pdf => self.pdf_step(1, true),
             Key::PageUp if pdf => self.pdf_step(-1, true),
             Key::Home if pdf => self.pdf_step(-PAGE_ENDS, true),
@@ -1022,11 +1074,17 @@ impl Preview {
             6 => self.pan(dx, dy),
             7 | 8 => self.wheel((dx, dy), what == 8, (x, y)),
             9 => self.bar_link(),
+            10 => _ = self.play_pause(),
+            11 => self.seek_fraction(x, true),
+            12 => self.seek_fraction(x, false),
+            13 => self.toggle_mute(),
+            14 => self.set_volume(x, dx > 0.0),
             _ => {}
         }
     }
 
-    /// The preview's menu: a PDF's page and the zoom (ids 2603–2610, `context_menu.rs`).
+    /// The preview's menu: a PDF's page and the zoom, the player (ids 2603–2614,
+    /// `context_menu.rs`).
     pub fn surface_menu(&self, id: u32) {
         match id {
             crate::context_menu::PREVIEW_PREVIOUS_PAGE => _ = self.pdf_step(-1, true),
@@ -1037,6 +1095,10 @@ impl Preview {
             crate::context_menu::PREVIEW_FIT => self.fit(),
             crate::context_menu::PREVIEW_ACTUAL_SIZE => _ = self.zoom_actual(None),
             crate::context_menu::PREVIEW_LINK => self.bar_link(),
+            crate::context_menu::PREVIEW_PLAY => _ = self.play_pause(),
+            crate::context_menu::PREVIEW_BACK => _ = self.skip(-media::SKIP),
+            crate::context_menu::PREVIEW_FORWARD => _ = self.skip(media::SKIP),
+            crate::context_menu::PREVIEW_MUTE => self.toggle_mute(),
             _ => {}
         }
     }
@@ -1065,6 +1127,13 @@ impl Preview {
         self.0.settle_timer.stop();
         if old.pdf.is_some() {
             self.park_pdf();
+        }
+        if old.media.is_some() {
+            // Its processes end with it (its session); its frames go too.
+            self.0.tick_timer.stop();
+            self.0.pause_timer.stop();
+            drop(old);
+            self.sync_frame();
         }
     }
 
@@ -1525,8 +1594,26 @@ impl Preview {
         self.redraw();
     }
 
-    /// The bar's link: download pdfium, or the PDF's password.
+    /// The bar's link: download pdfium or ffmpeg, or the PDF's password.
     fn bar_link(&self) {
+        let no_ffmpeg = self.0.viewer.borrow().media.as_ref().and_then(|player| match &player.state {
+            Play::NoFfmpeg(hint) => Some((player.path.clone(), hint.clone())),
+            _ => None,
+        });
+        if let Some((path, hint)) = no_ffmpeg {
+            // Downloaded: it plays at once.
+            let again = Rc::new(move || {
+                with_current(|p| {
+                    if let Some(player) = p.0.viewer.borrow_mut().media.as_mut().filter(|pl| pl.path == path) {
+                        player.state = Play::Stopped;
+                    }
+                    p.play_pause();
+                });
+            });
+            let need = crate::archives::Need::Playback;
+            crate::archives::with_current(|archives| archives.offer_ffmpeg(need, hint, again, None));
+            return;
+        }
         let (path, state) = {
             let v = self.0.viewer.borrow();
             let Some(pdf) = v.pdf.as_ref() else { return };
@@ -1566,6 +1653,380 @@ impl Preview {
             }
             _ => {}
         }
+    }
+}
+
+/// The player (spec 13 §6).
+impl Preview {
+    /// The shown video's or sound's player, made on its first use; false when the shown item is
+    /// none (or shows as hex).
+    fn media_ready(&self) -> bool {
+        if self.0.viewer.borrow().hex.is_some() {
+            return false;
+        }
+        if self.0.viewer.borrow().media.is_some() {
+            return true;
+        }
+        let Some(path) = media_path(&self.0.viewer_target.borrow()) else { return false };
+        if gezik_platform::only_in_cloud(&path) {
+            // Playing it would download it.
+            if let Some(window) = self.0.window.upgrade() {
+                window.set_status("This file is only in the cloud: it is not read".into());
+            }
+            return false;
+        }
+        self.0.viewer.borrow_mut().media = Some(Player::new(path));
+        true
+    }
+
+    /// Play or pause (`K`, the bar, a click, `preview-play`); whether the shown item plays.
+    fn play_pause(&self) -> bool {
+        if !self.media_ready() {
+            return false;
+        }
+        let (state, session) = {
+            let v = self.0.viewer.borrow();
+            let Some(player) = v.media.as_ref() else { return false };
+            (player.state.clone(), player.session.is_some())
+        };
+        match state {
+            Play::Playing => self.set_paused(true),
+            Play::Paused if session => self.set_paused(false),
+            Play::Finding => {}
+            Play::NoFfmpeg(_) => self.bar_link(),
+            Play::Stopped | Play::Paused | Play::Failed => self.media_start(),
+        }
+        self.redraw();
+        true
+    }
+
+    /// `preview-play`: the selected file plays or pauses (the pane opens if nothing shows the
+    /// preview).
+    pub fn play_action(&self) {
+        if !self.active() {
+            self.set_pane_open(true);
+        }
+        self.play_pause();
+    }
+
+    fn set_paused(&self, paused: bool) {
+        {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(player) = v.media.as_mut() else { return };
+            let Some(session) = player.session.as_ref() else {
+                // A seek waits to start it again: pausing just stays there.
+                if paused && player.state == Play::Playing {
+                    player.state = Play::Paused;
+                    self.0.pause_timer.stop();
+                    self.0.tick_timer.stop();
+                }
+                return;
+            };
+            session.set_paused(paused);
+            player.position = player.clamp(session.position());
+            player.state = if paused { Play::Paused } else { Play::Playing };
+        }
+        if !paused {
+            self.0.pause_timer.stop();
+            return self.start_tick();
+        }
+        self.0.tick_timer.stop();
+        // A long pause lets the processes go; the place and the last frame stay.
+        self.0.pause_timer.start(
+            slint::TimerMode::SingleShot,
+            media::PAUSE_LIMIT,
+            crate::windows::bind_mut(|| {
+                with_current(|p| {
+                    if let Some(player) = p.0.viewer.borrow_mut().media.as_mut().filter(|pl| pl.state == Play::Paused) {
+                        player.session = None;
+                    }
+                });
+            }),
+        );
+    }
+
+    fn start_tick(&self) {
+        self.0.tick_timer.start(
+            slint::TimerMode::Repeated,
+            TICK,
+            crate::windows::bind_mut(|| {
+                with_current(|p| {
+                    let moved = p.0.viewer.borrow_mut().media.as_mut().is_some_and(|player| {
+                        let at =
+                            player.session.as_ref().filter(|_| player.state == Play::Playing).map(|s| s.position());
+                        at.map(|at| player.position = player.clamp(at)).is_some()
+                    });
+                    if moved {
+                        p.redraw();
+                    }
+                });
+            }),
+        );
+    }
+
+    /// Plays from the player's place: looks for ffmpeg and probes the file first.
+    fn media_start(&self) {
+        let path = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(player) = v.media.as_mut() else { return };
+            if player.at_end {
+                (player.position, player.at_end) = (0.0, false);
+            }
+            if player.found.is_some() {
+                None
+            } else {
+                player.state = Play::Finding;
+                Some(player.path.clone())
+            }
+        };
+        let Some(path) = path else { return self.media_session() };
+        let (data, configured) = (data_dir(), crate::convert::configured_ffmpeg());
+        let window_id = crate::windows::current();
+        std::thread::spawn(move || {
+            use gezik_batch::convert::ffmpeg;
+            let found = ffmpeg::find_ffmpeg(&data, configured.as_deref());
+            let hint = if found.is_none() { gezik_platform::http::tool_missing_hint() } else { None };
+            let probe = found.as_ref().and_then(|ff| ffmpeg::probe(ff, &path));
+            let program = found.map(|ff| ff.ffmpeg);
+            crate::windows::post(window_id, move || {
+                with_current(|p| p.media_found(&path, program, probe, hint));
+            });
+        });
+    }
+
+    fn media_found(
+        &self,
+        path: &Path,
+        ffmpeg: Option<PathBuf>,
+        probe: Option<gezik_batch::convert::ffmpeg::Probe>,
+        hint: Option<String>,
+    ) {
+        let start = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(player) = v.media.as_mut().filter(|pl| pl.path == path && pl.state == Play::Finding) else {
+                return;
+            };
+            match ffmpeg {
+                None => {
+                    player.state = Play::NoFfmpeg(hint);
+                    false
+                }
+                Some(ffmpeg) => {
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let video_kind = gezik_core::kind::Kind::of(&name, false) == gezik_core::kind::Kind::Video;
+                    let (video, audio, fps) = probe.map_or((video_kind, true, 0.0), |p| (p.video, p.audio, p.fps));
+                    player.duration = probe.and_then(|p| p.duration_us).map(|us| us as f64 / 1e6);
+                    player.position = player.clamp(player.position);
+                    player.found = Some((ffmpeg, video, audio, fps));
+                    if !(video || audio) {
+                        player.state = Play::Failed;
+                    }
+                    video || audio
+                }
+            }
+        };
+        if start {
+            self.media_session();
+        }
+        self.redraw();
+    }
+
+    /// Starts the processes from the player's place.
+    fn media_session(&self) {
+        let box_ = media::frame_box(self.surface_px());
+        let window_id = crate::windows::current();
+        let deliver = move |id, event| {
+            crate::windows::post(window_id, move || {
+                with_current(|p| p.media_event(id, event));
+            });
+        };
+        let started = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(player) = v.media.as_mut() else { return };
+            let Some((ffmpeg, video, audio, fps)) = player.found.clone() else { return };
+            player.session = None;
+            player.ends = (None, None);
+            let start = media::Start {
+                ffmpeg,
+                file: player.path.clone(),
+                at: player.position,
+                video: video.then(|| (box_, media::frame_rate(fps))),
+                audio,
+            };
+            match media::Session::start(start, self.0.gain.clone(), media::open_device, deliver) {
+                Ok(session) => {
+                    player.session = Some(session);
+                    player.state = Play::Playing;
+                    true
+                }
+                Err(err) => {
+                    eprintln!("gezik: cannot start ffmpeg to play {}: {err}", player.path.display());
+                    player.state = Play::Failed;
+                    false
+                }
+            }
+        };
+        if started {
+            self.0.pause_timer.stop();
+            self.start_tick();
+        }
+    }
+
+    /// What a session's threads said: a frame, no sound, or that a part ended.
+    fn media_event(&self, id: u64, event: media::Event) {
+        let frame = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(player) = v.media.as_mut().filter(|pl| pl.session.as_ref().is_some_and(|s| s.id == id)) else {
+                return;
+            };
+            match event {
+                media::Event::Frame(buffer) => {
+                    let image = Image::from_rgba8(buffer);
+                    player.frame = Some(image.clone());
+                    if let Some(session) = &player.session {
+                        session.in_flight.store(false, Ordering::SeqCst);
+                    }
+                    Some(image)
+                }
+                media::Event::NoSound(why) => {
+                    eprintln!("gezik: {why}");
+                    player.no_sound = Some(why);
+                    None
+                }
+                ended => {
+                    if player.ended(&ended) {
+                        if player.nothing_came() {
+                            let why = player.session.as_mut().map(media::Session::error).unwrap_or_default();
+                            eprintln!("gezik: cannot play {}: {why}", player.path.display());
+                            player.state = Play::Failed;
+                        } else {
+                            let at = player.session.as_ref().map_or(player.position, |s| s.position());
+                            player.position = player.duration.unwrap_or(at);
+                            (player.state, player.at_end) = (Play::Stopped, true);
+                        }
+                        player.session = None;
+                        self.0.tick_timer.stop();
+                    }
+                    None
+                }
+            }
+        };
+        match frame {
+            Some(image) => self.show_frame(image),
+            None => self.redraw(),
+        }
+    }
+
+    /// A new frame, where the preview is seen (quick look while it is open).
+    fn show_frame(&self, image: Image) {
+        if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            quick_look.viewer_actions().set_frame(image);
+        } else if let Some(window) = self.0.window.upgrade() {
+            window.global::<PreviewActions>().set_frame(image);
+        }
+    }
+
+    /// The player's last frame in both places (none once it is gone): quick look opened or
+    /// closed, or the player went.
+    fn sync_frame(&self) {
+        let frame = self.0.viewer.borrow().media.as_ref().and_then(|player| player.frame.clone()).unwrap_or_default();
+        if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            quick_look.viewer_actions().set_frame(frame.clone());
+        }
+        if let Some(window) = self.0.window.upgrade() {
+            window.global::<PreviewActions>().set_frame(frame);
+        }
+    }
+
+    /// Goes to `to` seconds: playing, it starts again there once seeks rest for 150 ms (a held
+    /// `L` ends and starts no processes per press); paused, its processes go and Play starts them
+    /// there; at the end it stops.
+    fn seek(&self, to: f64) {
+        let restart = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(player) = v.media.as_mut() else { return };
+            let playing = player.state == Play::Playing;
+            if player.go_to(to) {
+                self.0.tick_timer.stop();
+                self.0.pause_timer.stop();
+                false
+            } else {
+                if player.state == Play::Paused {
+                    self.0.pause_timer.stop();
+                }
+                // Its processes go now; the new ones once the seeks rest.
+                player.session = None;
+                playing
+            }
+        };
+        if restart {
+            // The pause timer is idle while playing.
+            self.0.pause_timer.start(
+                slint::TimerMode::SingleShot,
+                SETTLE,
+                crate::windows::bind_mut(|| {
+                    with_current(|p| {
+                        let waiting =
+                            p.0.viewer
+                                .borrow()
+                                .media
+                                .as_ref()
+                                .is_some_and(|player| player.state == Play::Playing && player.session.is_none());
+                        if waiting {
+                            p.media_session();
+                        }
+                    });
+                }),
+            );
+        }
+        self.redraw();
+    }
+
+    /// `J`, `L`: `by` seconds from where it plays; whether the shown item plays.
+    fn skip(&self, by: f64) -> bool {
+        if !self.media_ready() {
+            return false;
+        }
+        let at = self.0.viewer.borrow().media.as_ref().map_or(0.0, |player| {
+            let playing = player.session.as_ref().filter(|_| player.state == Play::Playing);
+            playing.map_or(player.position, |s| s.position())
+        });
+        self.seek(at + by);
+        true
+    }
+
+    /// The seek bar at `x` (0–1 in px): dragged, the time shows; released, it goes there.
+    fn seek_fraction(&self, x: f32, done: bool) {
+        let to = {
+            let mut v = self.0.viewer.borrow_mut();
+            let Some(player) = v.media.as_mut() else { return };
+            let Some(duration) = player.duration else { return };
+            let to = f64::from(x.clamp(0.0, 1.0)) * duration;
+            if !done {
+                player.seeking = Some(to);
+            }
+            to
+        };
+        if done { self.seek(to) } else { self.redraw() }
+    }
+
+    fn toggle_mute(&self) {
+        let (volume, muted) = self.0.volume.get();
+        self.set_sound(volume, !muted, true);
+    }
+
+    /// The volume bar at `x` (0–1 in px); kept when `done`.
+    fn set_volume(&self, x: f32, done: bool) {
+        self.set_sound((x.clamp(0.0, 1.0) * 100.0).round() as u8, false, done);
+    }
+
+    fn set_sound(&self, volume: u8, muted: bool, keep: bool) {
+        self.0.volume.set((volume, muted));
+        self.0.gain.store(media::gain(volume, muted), Ordering::Relaxed);
+        if keep && let Some(store) = crate::windows::config() {
+            store.update_state(|state| state.preview_volume = Some((volume, muted)));
+        }
+        self.redraw();
     }
 }
 

@@ -1721,6 +1721,9 @@ pub struct State {
     /// The preview wraps text and code (`[preview] wrap-text`, `wrap-code`; spec 13 §4.2);
     /// `None` until first changed (text wraps, code does not).
     pub preview_wrap: Option<(bool, bool)>,
+    /// The preview player's volume 0–100 and mute (`[preview] volume`, `muted`; spec 13
+    /// §6.2); `None` until first changed (80, not muted).
+    pub preview_volume: Option<(u8, bool)>,
     /// The operations panel is folded into the status bar.
     pub operations_collapsed: bool,
     /// The first close with the tray icon on said once that Gezik keeps running (9b9).
@@ -1902,6 +1905,14 @@ impl State {
             (None, None) => None,
             (text, code) => Some((text.unwrap_or(true), code.unwrap_or(false))),
         };
+        let volume = preview.and_then(|p| p.get("volume")).and_then(|v| v.as_integer());
+        let preview_volume = match (volume, wrap("muted")) {
+            (None, None) => None,
+            (volume, muted) => Some((
+                volume.and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 100).unwrap_or(80),
+                muted.unwrap_or(false),
+            )),
+        };
         let operations_collapsed = table
             .get("operations")
             .and_then(|v| v.as_table())
@@ -2010,6 +2021,7 @@ impl State {
             preview_open,
             preview_width,
             preview_wrap,
+            preview_volume,
             operations_collapsed,
             tray_told,
             tags_used: table
@@ -2076,7 +2088,11 @@ impl State {
         if let Some(columns) = &self.result_columns {
             root.insert("result-columns".into(), columns_toml(columns));
         }
-        if self.preview_open || self.preview_width.is_some() || self.preview_wrap.is_some() {
+        if self.preview_open
+            || self.preview_width.is_some()
+            || self.preview_wrap.is_some()
+            || self.preview_volume.is_some()
+        {
             let mut preview = toml::Table::new();
             preview.insert("open".into(), toml::Value::Boolean(self.preview_open));
             if let Some(width) = self.preview_width {
@@ -2085,6 +2101,10 @@ impl State {
             if let Some((text, code)) = self.preview_wrap {
                 preview.insert("wrap-text".into(), toml::Value::Boolean(text));
                 preview.insert("wrap-code".into(), toml::Value::Boolean(code));
+            }
+            if let Some((volume, muted)) = self.preview_volume {
+                preview.insert("volume".into(), toml::Value::Integer(volume.into()));
+                preview.insert("muted".into(), toml::Value::Boolean(muted));
             }
             root.insert("preview".into(), toml::Value::Table(preview));
         }
@@ -2684,6 +2704,15 @@ width = 900
         assert_eq!(State::parse(&state.to_toml()), state);
         assert_eq!(State::parse("[preview]\nwrap-code = true\n").preview_wrap, Some((true, true)));
         assert_eq!(State::parse("[preview]\nopen = true\n").preview_wrap, None);
+    }
+
+    #[test]
+    fn preview_volume_round_trips() {
+        let state = State { preview_volume: Some((35, true)), ..State::default() };
+        assert!(state.to_toml().contains("volume = 35\nmuted = true"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(State::parse("[preview]\nvolume = 300\n").preview_volume, Some((80, false)), "out of range");
+        assert_eq!(State::parse("[preview]\nopen = true\n").preview_volume, None);
     }
 
     #[test]

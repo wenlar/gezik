@@ -284,6 +284,8 @@ pub enum Need {
     PdfiumFailed,
     /// pdfium, for the preview's PDF pages and zoom (spec 13 §5.1).
     PdfPages,
+    /// ffmpeg, to play video and sound in the preview (spec 13 §6.4): any version.
+    Playback,
 }
 
 impl Need {
@@ -371,6 +373,7 @@ pub fn tool_offer(
             return ("ffmpeg failed", message.to_owned(), vec!["OK"]);
         }
         Need::Media => "Video conversion needs ffmpeg",
+        Need::Playback => "Playing video and audio needs ffmpeg",
         Need::Pictures => "Converting to this format needs ffmpeg",
         Need::Heic => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer",
         Need::NewerFfmpeg => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found is older)",

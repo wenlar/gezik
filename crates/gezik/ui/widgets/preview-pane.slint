@@ -69,8 +69,15 @@ export struct PreviewInfo {
     zoom-text: string,
     // A button after the note ("Download", "Enter Password…"); "" for none.
     bar-link: string,
-    // A PDF's or picture's bar buttons (13b).
+    // A PDF's or picture's bar buttons (13b), a video's or sound's (13c).
     tools: [PreviewTool],
+    // A video's or sound's player (13c): the seek bar 0–1 (< 0: none), the volume 0–1 (< 0: no
+    // room for its bar), muted,
+    // and whether it plays (or is about to).
+    seek: float,
+    volume: float,
+    muted: bool,
+    playing: bool,
 }
 
 // The viewer's events, for Rust (one connection per window, not one per pane).
@@ -92,8 +99,47 @@ export global PreviewActions {
     // The zoom surface (spec 13 §5), one callback for all: what (0 its size x × y, 1 dx pages,
     // 2 "Go to Page…", 3 zoom dx steps around x, y (x < 0: the middle), 4 Fit, 5 100% around
     // x, y, 6 a drag by dx, dy, 7 the wheel dx, dy at x, y, 8 the same with Ctrl or ⌘, 9 the
-    // bar's link).
+    // bar's link; the player (13c): 10 play or pause, 11 seek to x (0–1 in px), 12 the seek bar
+    // dragged to x, 13 mute or not, 14 the volume x).
     callback surface(int, length, length, length, length);
+    // The player's frame (13c), apart from `PreviewInfo`: a new frame redraws only the picture.
+    in property <image> frame;
+}
+
+// A bar to drag along (the player's position and volume): `moved-to` gets 0–1, `done` on
+// release.
+component Track inherits TouchArea {
+    in property <float> value;
+    in property <string> label;
+    callback moved-to(float, bool);
+    min-width: 40px;
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-value: "\{round(root.value * 100)}%";
+    pointer-event(event) => {
+        if event.button == PointerEventButton.left && (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
+            root.moved-to(clamp(self.mouse-x / max(1px, self.width), 0, 1), event.kind == PointerEventKind.up);
+        }
+    }
+    moved => {
+        if self.pressed {
+            root.moved-to(clamp(self.mouse-x / max(1px, self.width), 0, 1), false);
+        }
+    }
+    Rectangle {
+        y: (parent.height - 4px) / 2;
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.scrollbar;
+    }
+    Rectangle {
+        x: 0;
+        y: (parent.height - 4px) / 2;
+        width: parent.width * clamp(root.value, 0, 1);
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.accent;
+    }
 }
 
 export component PreviewPane inherits Rectangle {
@@ -101,6 +147,8 @@ export component PreviewPane inherits Rectangle {
     // A fixed-width font for text files.
     in property <string> mono-font;
     property <bool> viewer: root.info.bar == 1 || root.info.bar == 2;
+    // A playing video's frame over its poster.
+    property <bool> frame-shown: root.info.bar == 6 && PreviewActions.frame.width > 0;
 
     background: Theme.surface;
     accessible-role: none;
@@ -238,21 +286,21 @@ export component PreviewPane inherits Rectangle {
             }
 
             // The picture fitted, or (zoomed, 13b) placed where Rust says and cut by the area.
-            if !root.viewer && root.info.has-picture: Rectangle {
+            if !root.viewer && (root.info.has-picture || root.frame-shown): Rectangle {
                 clip: true;
                 Image {
                     x: root.info.zoomed ? root.info.pic-x : 0;
                     y: root.info.zoomed ? root.info.pic-y : 0;
                     width: root.info.zoomed ? root.info.pic-w : parent.width;
                     height: root.info.zoomed ? root.info.pic-h : parent.height;
-                    source: root.info.picture;
+                    source: root.frame-shown ? PreviewActions.frame : root.info.picture;
                     image-fit: root.info.zoomed ? fill : contain;
                     accessible-role: image;
                     accessible-label: root.info.pages > 0 ? "Page \{root.info.page} of \{root.info.pages}" : root.info.title;
                 }
             }
 
-            if !root.viewer && root.info.kind != 0 && !root.info.has-picture: FileIcon {
+            if !root.viewer && root.info.kind != 0 && !root.info.has-picture && !root.frame-shown: FileIcon {
                 width: min(parent.width, parent.height, 96px);
                 height: self.width;
                 x: (parent.width - self.width) / 2;
@@ -260,8 +308,9 @@ export component PreviewPane inherits Rectangle {
                 kind: root.info.kind == 4 ? 0 : root.info.item-kind;
             }
 
-            // A PDF or a picture: drag, wheel, Ctrl+wheel and double click (spec 13 §5).
-            if root.info.bar == 4 || root.info.bar == 5: surface := TouchArea {
+            // A PDF or a picture: drag, wheel, Ctrl+wheel and double click (spec 13 §5); a video
+            // or sound: a click plays or pauses (spec 13 §6).
+            if root.info.bar >= 4: surface := TouchArea {
                 property <length> sx;
                 property <length> sy;
                 property <int> ask: PreviewActions.ask;
@@ -295,12 +344,34 @@ export component PreviewPane inherits Rectangle {
                         self.sy = self.mouse-y;
                     }
                 }
+                clicked => {
+                    if root.info.bar == 6 {
+                        PreviewActions.surface(10, -1px, -1px, 0, 0);
+                    }
+                }
                 double-clicked => {
                     PreviewActions.surface(5, self.mouse-x, self.mouse-y, 0, 0);
                 }
                 scroll-event(event) => {
                     PreviewActions.surface(event.modifiers.control || event.modifiers.meta ? 8 : 7, self.mouse-x, self.mouse-y, event.delta-x, event.delta-y);
                     accept
+                }
+            }
+
+            if root.info.bar == 6 && !root.info.playing: Rectangle {
+                width: 56px;
+                height: 56px;
+                border-radius: 28px;
+                background: #000000a0;
+                Text {
+                    width: parent.width;
+                    height: parent.height;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    text: "▶";
+                    font-size: 26px;
+                    color: #ffffff;
+                    accessible-role: none;
                 }
             }
 
@@ -321,7 +392,7 @@ export component PreviewPane inherits Rectangle {
         }
 
         // The viewer's bar: Text │ Hex, Wrap, a note and where it is; a PDF's pages and a
-        // zoom. In a narrow pane what does not fit gives way (the right-click menu has it all).
+        // zoom; the player's Play, position, time and volume. In a narrow pane what does not fit gives way (the right-click menu has it all).
         if root.info.bar != 0: HorizontalLayout {
             spacing: Theme.spacing;
             if root.info.bar == 1 || root.info.bar == 2: TextButton {
@@ -349,6 +420,8 @@ export component PreviewPane inherits Rectangle {
             for tool in root.info.tools: TextButton {
                 compact: true;
                 text: tool.text;
+                // The player's Pause: two bars (the UI font has no ❚❚).
+                icon: tool.what == 10 && tool.step == 1 ? "M2.5 1 L2.5 7 M5.5 1 L5.5 7" : "";
                 label: tool.label;
                 clicked => {
                     if tool.what < 0 {
@@ -367,9 +440,19 @@ export component PreviewPane inherits Rectangle {
                     PreviewActions.toggle-wrap();
                 }
             }
+            if root.info.bar == 6 && root.info.seek >= 0: Track {
+                horizontal-stretch: 1;
+                value: root.info.seek;
+                label: "Position";
+                moved-to(at, done) => {
+                    PreviewActions.surface(done ? 11 : 12, at * 1px, 0, 0, 0);
+                }
+            }
             Text {
                 text: root.info.bar-note;
-                horizontal-stretch: 1;
+                accessible-role: text;
+                accessible-label: root.info.bar-note;
+                horizontal-stretch: root.info.bar == 6 && root.info.seek >= 0 ? 0 : 1;
                 overflow: elide;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;
@@ -379,6 +462,23 @@ export component PreviewPane inherits Rectangle {
                 overflow: elide;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;
+            }
+            if root.info.bar == 6: TextButton {
+                compact: true;
+                text: "Mute";
+                label: root.info.muted ? "Mute, on" : "Mute, off";
+                checked: root.info.muted;
+                clicked => {
+                    PreviewActions.surface(13, 0, 0, 0, 0);
+                }
+            }
+            if root.info.bar == 6 && root.info.volume >= 0: Track {
+                width: 56px;
+                value: root.info.muted ? 0 : root.info.volume;
+                label: "Volume";
+                moved-to(at, done) => {
+                    PreviewActions.surface(14, at * 1px, 0, done ? 1px : 0, 0);
+                }
             }
         }
 

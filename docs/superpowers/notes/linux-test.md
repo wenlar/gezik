@@ -713,6 +713,11 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 268. **Pages and password.** As macOS 369 and 371 with Alt+P and Space (pdfium from the preview bar's `Download` or a PDF tool): `›`, Page Down/Up, Home/End, Go to Page (click the page number) and the wheel at a page's end; an encrypted PDF asks for its password.
 269. **Zoom.** As macOS 370 with Ctrl+wheel (X11 and Wayland, 100% and 200% scaling): the text stays sharp at 400%, a drag moves it and the edges fill in after stopping; a photo zooms to `100%` and back.
 270. **The worker goes.** `pgrep -af -- --pdf-view` shows one process after 268; 10 s after selecting a text file none; selecting a PDF without touching its pages starts none.
+271. **Play.** As macOS 373 with Alt+P and Space on PipeWire (and on PulseAudio if you have one): an MP4 plays with picture and sound in step after `▶` (ffmpeg from the bar's `Download` or the system's `apt install ffmpeg`); pause and play on; `K`, `M` and the volume bar (in a pane narrower than 300 px Hex and the volume bar drop, right-click has them).
+272. **Seek.** As macOS 374: the seek bar, `J`/`L`; after a minute's pause `pgrep -a ffmpeg` shows none and `K` goes on from the same place.
+273. **MKV.** An `.mkv` and a `.webm` play; an MP3 plays with its time and seek bar.
+274. **No sound server.** `systemctl --user stop pipewire-pulse.socket pipewire-pulse` (or `pulseaudio -k`), then play a video: it plays without sound at the right speed and the bar says `No sound: PulseAudio or PipeWire is not available`. Start the server again afterwards (`systemctl --user start pipewire-pulse`).
+275. **Processes go.** While a video plays select another file: within a second `pgrep -a ffmpeg` shows none.
 
 ## Known gaps (not bugs)
 

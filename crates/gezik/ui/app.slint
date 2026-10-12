@@ -173,6 +173,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Flat View"; shortcut: root.menu-keys ? @keys(Control + B) : @keys(); activated => { root.menu-command("flat-view"); } }
             MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
             MenuItem { title: "Show Preview as Hex"; activated => { root.menu-command("preview-hex"); } }
+            MenuItem { title: "Play/Pause Preview"; activated => { root.menu-command("preview-play"); } }
             MenuItem { title: "Two Panes"; checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? @keys(Control + Meta + P) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
             MenuItem { title: "Sync Browsing"; checkable: true; checked <=> root.view-sync; activated => { root.menu-command("sync-browsing"); } }
             MenuItem { title: "Swap Panes"; shortcut: root.menu-keys ? @keys(Control + Meta + U) : @keys(); activated => { root.menu-command("swap-panes"); } }

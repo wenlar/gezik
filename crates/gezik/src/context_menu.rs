@@ -271,11 +271,16 @@ pub const PREVIEW_ZOOM_IN: u32 = 2606;
 pub const PREVIEW_ZOOM_OUT: u32 = 2607;
 pub const PREVIEW_FIT: u32 = 2608;
 pub const PREVIEW_ACTUAL_SIZE: u32 = 2609;
-/// The bar's link: "Download pdfium…" or "Enter Password…".
+/// The bar's link: "Download pdfium…", "Download ffmpeg…" or "Enter Password…".
 pub const PREVIEW_LINK: u32 = 2610;
+// The player (13c); Play/Pause is View ▸ Play/Pause Preview too.
+pub const PREVIEW_PLAY: u32 = 2611;
+pub const PREVIEW_BACK: u32 = 2612;
+pub const PREVIEW_FORWARD: u32 = 2613;
+pub const PREVIEW_MUTE: u32 = 2614;
 
-/// Right-click on the preview: a PDF's pages and the zoom (`surface` 4 a PDF, 5 a picture, and
-/// the bar's `link`), hex or back, and wrap for text.
+/// Right-click on the preview: a PDF's pages and the zoom (`surface` 4 a PDF, 5 a picture), the
+/// player (6), the bar's `link`, hex or back, and wrap for text.
 pub fn preview_items(
     hex: bool,
     file: bool,
@@ -285,6 +290,7 @@ pub fn preview_items(
     let mut items = Vec::new();
     match link {
         "" => {}
+        "Download" if surface == 6 => items.push((PREVIEW_LINK, "Download ffmpeg…".to_owned(), true)),
         "Download" => items.push((PREVIEW_LINK, "Download pdfium…".to_owned(), true)),
         link => items.push((PREVIEW_LINK, link.to_owned(), true)),
     }
@@ -293,7 +299,13 @@ pub fn preview_items(
         items.push((PREVIEW_NEXT_PAGE, "Next Page".to_owned(), true));
         items.push((PREVIEW_GO_TO_PAGE, "Go to Page…".to_owned(), true));
     }
-    if surface >= 4 {
+    if surface == 6 {
+        items.push((PREVIEW_PLAY, "Play/Pause".to_owned(), true));
+        items.push((PREVIEW_BACK, "Back 10 Seconds".to_owned(), true));
+        items.push((PREVIEW_FORWARD, "Forward 10 Seconds".to_owned(), true));
+        items.push((PREVIEW_MUTE, "Mute/Unmute".to_owned(), true));
+    }
+    if surface == 4 || surface == 5 {
         items.push((PREVIEW_ZOOM_IN, "Zoom In".to_owned(), true));
         items.push((PREVIEW_ZOOM_OUT, "Zoom Out".to_owned(), true));
         items.push((PREVIEW_FIT, "Fit".to_owned(), true));
@@ -1057,6 +1069,7 @@ pub fn view_items(
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
     out.push((PREVIEW_HEX, "    Show Preview as Hex".to_owned()));
+    out.push((PREVIEW_PLAY, "    Play/Pause Preview".to_owned()));
     out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));
     out.push((SHOW_HISTORY, "    Operation history".to_owned()));
     out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
@@ -2256,7 +2269,7 @@ impl Menus {
             (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
             (PREVIEW_HEX | PREVIEW_TEXT, Subject::Preview) => _ = self.preview.toggle_hex(),
             (PREVIEW_WRAP, Subject::Preview) => self.preview.toggle_wrap(),
-            (PREVIEW_PREVIOUS_PAGE..=PREVIEW_LINK, Subject::Preview) => self.preview.surface_menu(id),
+            (PREVIEW_PREVIOUS_PAGE..=PREVIEW_MUTE, Subject::Preview) => self.preview.surface_menu(id),
             (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -2432,6 +2445,7 @@ impl Menus {
                 .set_sort(SortSpec { dir: SortDir::Desc, ..crate::panes::active_view().sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
             (PREVIEW_HEX, Subject::View) => self.preview.show_hex(),
+            (PREVIEW_PLAY, Subject::View) => self.preview.play_action(),
             (TWO_PANES, Subject::View) => crate::dual::toggle(),
             (SYNC_BROWSING, Subject::View) => crate::dual::toggle_sync(),
             (SWAP_PANES, Subject::View) => crate::dual::swap(),
@@ -2853,6 +2867,7 @@ mod tests {
             SORT_DESC,
             PREVIEW_PANE,
             PREVIEW_HEX,
+            PREVIEW_PLAY,
             TOGGLE_STACK,
             SHOW_HISTORY,
             APPLY_TO_ALL,
@@ -3117,6 +3132,7 @@ mod tests {
             SORT_DESC,
             PREVIEW_PANE,
             PREVIEW_HEX,
+            PREVIEW_PLAY,
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
@@ -3692,6 +3708,7 @@ mod tests {
                 SORT_DESC,
                 PREVIEW_PANE,
                 PREVIEW_HEX,
+                PREVIEW_PLAY,
                 TOGGLE_STACK,
                 SHOW_HISTORY,
                 HIDE_EXTENSIONS,
@@ -3934,7 +3951,14 @@ mod tests {
         assert_eq!(pdf[0].1, "Enter Password…");
         assert_eq!(preview_items(false, true, None, (4, "Download"))[0].1, "Download pdfium…");
         assert_eq!(ids(preview_items(false, true, None, (5, ""))).len(), 5, "a picture: zoom and Hex");
-        for id in [PREVIEW_HEX, PREVIEW_TEXT, PREVIEW_WRAP] {
+        let player = preview_items(false, true, None, (6, "Download"));
+        assert_eq!(
+            ids(player.clone()),
+            [PREVIEW_LINK, PREVIEW_PLAY, PREVIEW_BACK, PREVIEW_FORWARD, PREVIEW_MUTE, PREVIEW_HEX],
+            "a player: no zoom"
+        );
+        assert_eq!(player[0].1, "Download ffmpeg…");
+        for id in [PREVIEW_HEX, PREVIEW_TEXT, PREVIEW_WRAP, PREVIEW_PLAY, PREVIEW_MUTE] {
             assert!((2600..2620).contains(&id), "spec 13 §10.3");
         }
     }

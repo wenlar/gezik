@@ -266,6 +266,7 @@ dots = "auto"
 # edit-comment = ""        # Comment…: asks for the selection's comment (no key by default)
 # clean-tag-store = ""     # Clean Up Tag Store…: removes, when you say so, entries of files that are gone
 # preview-hex = ""  # Show Preview as Hex: the selected file's bytes in the preview, or back to its text or picture
+# preview-play = ""  # Play/Pause Preview: the selected video or sound file plays in the preview, or pauses
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.
