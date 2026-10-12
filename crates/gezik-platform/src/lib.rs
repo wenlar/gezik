@@ -1,6 +1,7 @@
 //! Platform-specific code for Gezik: drives, known folders, native menus, icons, thumbnails and dates. Everything else in the app is platform-independent.
 
 pub mod attrs;
+pub mod audio;
 pub mod clipboard;
 pub mod cloud;
 pub mod cloud_pin;
@@ -22,6 +23,7 @@ mod linux;
 mod locale;
 #[cfg(target_os = "macos")]
 mod mac;
+pub mod meta;
 pub mod network;
 pub mod open_with;
 mod picture;
@@ -58,7 +60,8 @@ pub use mac::reopen;
 #[cfg(target_os = "macos")]
 pub use mac::terminate;
 pub use picture::{
-    Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, only_in_cloud, thumbnail, thumbnail_while,
+    Decoded, MAX_DECODE_BYTES, MAX_DECODE_SIDE, can_decode, decode_image, decode_image_into, only_in_cloud,
+    picture_size, thumbnail, thumbnail_while,
 };
 pub use process::{ChildProcess, Lines, process_alive};
 pub use text::{ansi_code_page, decode_ansi};

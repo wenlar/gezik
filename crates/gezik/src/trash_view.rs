@@ -207,6 +207,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::ViewGrid
         | Action::ViewColumns
         | Action::TogglePreview
+        | Action::PreviewHex
+        | Action::PreviewPlay
         | Action::QuickLook
         | Action::Trash
         | Action::DeletePermanently
@@ -250,6 +252,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::PutBack
         | Action::EmptyTrash
         | Action::SystemIntegration
+        | Action::CleanTagStore
         | Action::ConnectToServer
         | Action::GroupNone
         | Action::GroupType
@@ -306,6 +309,16 @@ pub fn allowed(action: Action) -> bool {
         | Action::MoveTo
         | Action::SplitFile
         | Action::JoinFiles
+        | Action::Tags
+        | Action::Tag1
+        | Action::Tag2
+        | Action::Tag3
+        | Action::Tag4
+        | Action::Tag5
+        | Action::Tag6
+        | Action::Tag7
+        | Action::ClearTags
+        | Action::EditComment
         | Action::CopyToOtherPane => false,
     }
 }

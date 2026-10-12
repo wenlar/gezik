@@ -274,7 +274,7 @@ pub struct SavedSearch {
 pub const SEARCHES_MAX: usize = 30;
 /// A saved search's folder that is the place shown when it runs.
 pub const HERE: &str = "{here}";
-const SEARCH_KEYS: [&str; 14] = [
+const SEARCH_KEYS: [&str; 18] = [
     "name",
     "folder",
     "pattern",
@@ -289,6 +289,10 @@ const SEARCH_KEYS: [&str; 14] = [
     "hidden",
     "skipped",
     "duplicates",
+    "tags",
+    "untagged",
+    "min-rating",
+    "comment",
 ];
 
 /// One `[[searches]]` entry; the error is why it is left out (sapma 17: whether the folder is a
@@ -369,6 +373,8 @@ pub struct Settings {
     pub system: SystemSettings,
     /// `[sidebar] cloud`: the CLOUD section (spec 13.1); roots are found either way.
     pub sidebar_cloud: bool,
+    /// `[sidebar] tags`: the TAGS section (spec 12 §7.1).
+    pub sidebar_tags: bool,
     /// `[sidebar] tree-follow`: the sidebar tree opens down to the folder shown (spec 10 §5.3).
     pub sidebar_tree_follow: bool,
     /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
@@ -390,6 +396,10 @@ pub struct Settings {
     pub commands: Vec<CommandSpec>,
     /// View rules (`[[view-rules]]`, spec 10 §8); invalid ones are left out.
     pub view_rules: Vec<gezik_core::view_rules::RuleSpec>,
+    /// Highlight rules (`[[highlight-rules]]`, spec 12 §9), compiled; invalid ones are left out.
+    pub highlight_rules: gezik_core::highlight::Highlights,
+    /// `[tags]` (spec 12 §4.5).
+    pub tags: crate::tags::TagsSettings,
 }
 
 /// Allowed `max-fps` values besides 0 (no limit).
@@ -417,6 +427,7 @@ impl Default for Settings {
             session: SessionSettings::default(),
             system: SystemSettings::default(),
             sidebar_cloud: true,
+            sidebar_tags: true,
             sidebar_tree_follow: false,
             panes_confirm: true,
             terminal: TerminalSettings::default(),
@@ -430,6 +441,8 @@ impl Default for Settings {
             convert: ConvertSettings::default(),
             commands: Vec::new(),
             view_rules: Vec::new(),
+            highlight_rules: Default::default(),
+            tags: crate::tags::TagsSettings::default(),
         }
     }
 }
@@ -646,6 +659,13 @@ impl Settings {
                             )),
                         }
                     }
+                    if let Some(value) = sidebar.get("tags") {
+                        match value.as_bool() {
+                            Some(on) => settings.sidebar_tags = on,
+                            None => warnings
+                                .push(Warning::new(file, format!("sidebar.tags: expected true or false, got {value}"))),
+                        }
+                    }
                     if let Some(value) = sidebar.get("tree-follow") {
                         match value.as_bool() {
                             Some(on) => settings.sidebar_tree_follow = on,
@@ -674,6 +694,13 @@ impl Settings {
                     }
                 }
                 None => warnings.push(Warning::new(file, format!("panes: expected a table, got {value}"))),
+            },
+        }
+        match table.get("tags") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(tags) => settings.tags = crate::tags::parse(tags, file, warnings),
+                None => warnings.push(Warning::new(file, format!("tags: expected a table, got {value}"))),
             },
         }
         match table.get("terminal") {
@@ -799,6 +826,9 @@ impl Settings {
         if let Some(value) = table.get("view-rules") {
             settings.view_rules = crate::view_rules::parse_view_rules(value, file, warnings);
         }
+        if let Some(value) = table.get("highlight-rules") {
+            settings.highlight_rules = crate::highlight_rules::parse_highlight_rules(value, file, warnings);
+        }
         settings
     }
 
@@ -818,7 +848,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     {
         out.view.mode = mode;
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\" or \"size\"";
+    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\" or \"rating\"";
     // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
     let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
     if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
@@ -831,7 +861,7 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
         out.view.grid_size = size;
     }
-    let groups = "\"none\", \"type\", \"date\" or \"size\"";
+    let groups = "\"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\"";
     if let Some(group) = view_choice(table, "group", groups, GroupBy::parse, file, warnings) {
         out.view.group = group;
     }
@@ -1002,6 +1032,18 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
     if spec.kind != KindFilter::Any {
         table.insert("type".into(), text(spec.kind.as_str()));
     }
+    if !spec.tags.is_empty() {
+        table.insert("tags".into(), toml::Value::Array(spec.tags.iter().map(|tag| text(tag)).collect()));
+    }
+    if spec.untagged {
+        table.insert("untagged".into(), toml::Value::Boolean(true));
+    }
+    if spec.min_rating > 0 {
+        table.insert("min-rating".into(), toml::Value::Integer(i64::from(spec.min_rating)));
+    }
+    if !spec.comment.is_empty() {
+        table.insert("comment".into(), text(&spec.comment));
+    }
     table
 }
 
@@ -1049,6 +1091,23 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
     if let Some(modified) = text("modified")? {
         spec.modified = DateRange::parse(modified).map_err(|err| format!("modified: {err}"))?;
     }
+    if let Some(tags) = table.get("tags") {
+        let bad = || format!("tags: expected a list of tag names, got {tags}");
+        for tag in tags.as_array().ok_or_else(bad)? {
+            let name = tag.as_str().ok_or_else(bad)?;
+            gezik_core::meta::check_tag_name(name).map_err(|err| format!("tags: \"{name}\": {err}"))?;
+            spec.tags.push(name.to_owned());
+        }
+    }
+    spec.untagged = flag("untagged")?;
+    if let Some(stars) = table.get("min-rating") {
+        spec.min_rating = stars
+            .as_integer()
+            .and_then(|n| u8::try_from(n).ok())
+            .filter(|n| *n <= 5)
+            .ok_or_else(|| format!("min-rating: expected a number from 0 to 5, got {stars}"))?;
+    }
+    spec.comment = text("comment")?.unwrap_or_default().to_owned();
     if let Some(kind) = text("type")? {
         spec.kind = KindFilter::parse(kind).ok_or_else(|| {
             format!(
@@ -1659,10 +1718,18 @@ pub struct State {
     pub preview_open: bool,
     /// Preview pane width in logical pixels (200–600).
     pub preview_width: Option<u32>,
+    /// The preview wraps text and code (`[preview] wrap-text`, `wrap-code`; spec 13 §4.2);
+    /// `None` until first changed (text wraps, code does not).
+    pub preview_wrap: Option<(bool, bool)>,
+    /// The preview player's volume 0–100 and mute (`[preview] volume`, `muted`; spec 13
+    /// §6.2); `None` until first changed (80, not muted).
+    pub preview_volume: Option<(u8, bool)>,
     /// The operations panel is folded into the status bar.
     pub operations_collapsed: bool,
     /// The first close with the tray icon on said once that Gezik keeps running (9b9).
     pub tray_told: bool,
+    /// A tag was written once (`[tags] used`): `[tags] dots = "auto"` shows dots then (spec 12 §5.4).
+    pub tags_used: bool,
     /// The rename layer's last rules.
     pub batch_rename: Option<BatchRenameState>,
     pub archive: ArchiveState,
@@ -1833,6 +1900,19 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (200..=600).contains(w));
+        let wrap = |key: &str| preview.and_then(|p| p.get(key)).and_then(|v| v.as_bool());
+        let preview_wrap = match (wrap("wrap-text"), wrap("wrap-code")) {
+            (None, None) => None,
+            (text, code) => Some((text.unwrap_or(true), code.unwrap_or(false))),
+        };
+        let volume = preview.and_then(|p| p.get("volume")).and_then(|v| v.as_integer());
+        let preview_volume = match (volume, wrap("muted")) {
+            (None, None) => None,
+            (volume, muted) => Some((
+                volume.and_then(|v| u8::try_from(v).ok()).filter(|v| *v <= 100).unwrap_or(80),
+                muted.unwrap_or(false),
+            )),
+        };
         let operations_collapsed = table
             .get("operations")
             .and_then(|v| v.as_table())
@@ -1940,8 +2020,16 @@ impl State {
             result_columns,
             preview_open,
             preview_width,
+            preview_wrap,
+            preview_volume,
             operations_collapsed,
             tray_told,
+            tags_used: table
+                .get("tags")
+                .and_then(|v| v.as_table())
+                .and_then(|t| t.get("used"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
             batch_rename,
             archive,
             convert,
@@ -2000,11 +2088,23 @@ impl State {
         if let Some(columns) = &self.result_columns {
             root.insert("result-columns".into(), columns_toml(columns));
         }
-        if self.preview_open || self.preview_width.is_some() {
+        if self.preview_open
+            || self.preview_width.is_some()
+            || self.preview_wrap.is_some()
+            || self.preview_volume.is_some()
+        {
             let mut preview = toml::Table::new();
             preview.insert("open".into(), toml::Value::Boolean(self.preview_open));
             if let Some(width) = self.preview_width {
                 preview.insert("width".into(), toml::Value::Integer(width.into()));
+            }
+            if let Some((text, code)) = self.preview_wrap {
+                preview.insert("wrap-text".into(), toml::Value::Boolean(text));
+                preview.insert("wrap-code".into(), toml::Value::Boolean(code));
+            }
+            if let Some((volume, muted)) = self.preview_volume {
+                preview.insert("volume".into(), toml::Value::Integer(volume.into()));
+                preview.insert("muted".into(), toml::Value::Boolean(muted));
             }
             root.insert("preview".into(), toml::Value::Table(preview));
         }
@@ -2017,6 +2117,11 @@ impl State {
             let mut tray = toml::Table::new();
             tray.insert("told".into(), toml::Value::Boolean(true));
             root.insert("tray".into(), toml::Value::Table(tray));
+        }
+        if self.tags_used {
+            let mut tags = toml::Table::new();
+            tags.insert("used".into(), toml::Value::Boolean(true));
+            root.insert("tags".into(), toml::Value::Table(tags));
         }
         if let Some(batch) = &self.batch_rename {
             let mut table = toml::Table::new();
@@ -2261,9 +2366,9 @@ mod tests {
 
     #[test]
     fn the_cloud_section_is_on_unless_turned_off() {
-        assert!(Settings::default().sidebar_cloud);
-        let (settings, warnings) = parse("[sidebar]\ncloud = false\n");
-        assert!(!settings.sidebar_cloud);
+        assert!(Settings::default().sidebar_cloud && Settings::default().sidebar_tags);
+        let (settings, warnings) = parse("[sidebar]\ncloud = false\ntags = false\n");
+        assert!(!settings.sidebar_cloud && !settings.sidebar_tags);
         assert!(warnings.is_empty());
         let (settings, warnings) = parse("[sidebar]\ncloud = \"no\"\n");
         assert!(settings.sidebar_cloud, "a bad value keeps the default");
@@ -2562,7 +2667,7 @@ width = 900
     #[test]
     fn bad_view_values_keep_defaults_with_warnings() {
         let (settings, warnings) = parse(
-            "[view]\nmode = \"tiles\"\nsort-dir = 1\ngroup = \"tag\"\nthumbnails = \"yes\"\nicons = \"system\"\n",
+            "[view]\nmode = \"tiles\"\nsort-dir = 1\ngroup = \"label\"\nthumbnails = \"yes\"\nicons = \"system\"\n",
         );
         assert_eq!(settings.view, ViewDefaults::default());
         let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
@@ -2570,7 +2675,8 @@ width = 900
         assert!(messages[0].starts_with("view.mode:") && messages[0].contains("\"tiles\""));
         assert!(messages[1].starts_with("view.sort-dir:"));
         assert!(
-            messages[2].starts_with("view.group: expected \"none\", \"type\", \"date\" or \"size\""),
+            messages[2]
+                .starts_with("view.group: expected \"none\", \"type\", \"date\", \"size\", \"tag\" or \"rating\""),
             "{messages:?}"
         );
         assert!(messages[3].starts_with("view.thumbnails:"));
@@ -2592,13 +2698,31 @@ width = 900
     }
 
     #[test]
+    fn preview_wrap_round_trips() {
+        let state = State { preview_wrap: Some((false, true)), ..State::default() };
+        assert!(state.to_toml().contains("wrap-text = false\nwrap-code = true"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(State::parse("[preview]\nwrap-code = true\n").preview_wrap, Some((true, true)));
+        assert_eq!(State::parse("[preview]\nopen = true\n").preview_wrap, None);
+    }
+
+    #[test]
+    fn preview_volume_round_trips() {
+        let state = State { preview_volume: Some((35, true)), ..State::default() };
+        assert!(state.to_toml().contains("volume = 35\nmuted = true"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(State::parse("[preview]\nvolume = 300\n").preview_volume, Some((80, false)), "out of range");
+        assert_eq!(State::parse("[preview]\nopen = true\n").preview_volume, None);
+    }
+
+    #[test]
     fn broken_columns_and_preview_values_are_repaired() {
         let state = State::parse(
             "[[columns]]\nkey = \"size\"\nwidth = 3\n\n[[columns]]\nkey = \"bogus\"\nwidth = 100\n\n\
              [[columns]]\nwidth = 100\n\n[preview]\nopen = true\nwidth = 9000\n",
         );
         let columns = state.columns.unwrap();
-        assert_eq!(columns.len(), 4);
+        assert_eq!(columns.len(), ColumnKey::ALL.len());
         assert_eq!((columns[3].width, columns[3].visible), (gezik_core::view::MIN_COLUMN_WIDTH, true));
         assert!(state.preview_open);
         assert_eq!(state.preview_width, None);
@@ -3110,8 +3234,11 @@ last-pattern = \"\"
         assert!(warnings.is_empty(), "{warnings:?}");
         let defaults = Shortcuts::defaults(Platform::Other);
         for action in crate::shortcuts::Action::ALL {
-            if action.tab_number().is_some_and(|n| n > 1) || action.pin_number().is_some_and(|n| n > 1) {
-                continue; // "tab-2 … tab-8 and pin-2 … pin-9 likewise"
+            if action.tab_number().is_some_and(|n| n > 1)
+                || action.pin_number().is_some_and(|n| n > 1)
+                || action.tag_number().is_some_and(|n| n > 1)
+            {
+                continue; // "tab-2 … tab-8, pin-2 … pin-9 and tag-2 … tag-7 likewise"
             }
             assert_eq!(shortcuts.chord_for(action), defaults.chord_for(action), "{}", action.name());
         }
@@ -3748,6 +3875,25 @@ split = 0.2
         let table = search_to_toml(&duplicates);
         assert_eq!(table.get("duplicates"), Some(&toml::Value::Boolean(true)));
         assert_eq!(search_from_toml(&table), Ok(duplicates), "[[searches]] duplicates = true");
+        let mut tagged = SearchSpec::new(Scope::AllDrives);
+        tagged.tags = vec!["Red".into(), "Project X".into()];
+        tagged.untagged = true;
+        tagged.min_rating = 4;
+        tagged.comment = "review".into();
+        let table = search_to_toml(&tagged);
+        assert_eq!(table.get("min-rating"), Some(&toml::Value::Integer(4)));
+        assert_eq!(search_from_toml(&table), Ok(tagged), "tags, untagged, min-rating, comment");
+        let bad = |text: &str| search_from_toml(&toml::from_str::<toml::Table>(text).unwrap()).unwrap_err();
+        assert_eq!(
+            bad("folder = \"drives\"
+min-rating = 6"),
+            "min-rating: expected a number from 0 to 5, got 6"
+        );
+        assert!(
+            bad("folder = \"drives\"
+tags = [\"a,b\"]")
+            .starts_with("tags: \"a,b\"")
+        );
     }
 
     #[test]
@@ -3982,6 +4128,25 @@ split = 0.2
             warnings[0].message,
             "system.start-at-login: start at login is a system change; turn it on or off in System Integration (this key is ignored)"
         );
+    }
+
+    #[test]
+    fn a_written_tag_is_remembered() {
+        let used = State { tags_used: true, ..State::default() };
+        let text = used.to_toml();
+        assert!(text.contains("[tags]\nused = true"), "{text}");
+        assert!(State::parse(&text).tags_used);
+        assert!(!State::default().to_toml().contains("[tags]"), "nothing written while false");
+    }
+
+    #[test]
+    fn tags_settings_read_from_settings_toml() {
+        let (settings, warnings) = parse("[tags]\ndots = false\nlist = [{ name = \"Work\", color = \"blue\" }]\n");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.tags.dots, crate::tags::Dots::Off);
+        assert_eq!(&*settings.tags.list[0].name, "Work");
+        let (_, warnings) = parse("tags = 3\n");
+        assert_eq!(warnings[0].message, "tags: expected a table, got 3");
     }
 
     #[test]

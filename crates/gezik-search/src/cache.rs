@@ -117,7 +117,9 @@ impl NameCache {
                 return None;
             }
             let (name, is_dir) = (self.name(item), item.is_dir);
-            if !query.passes(name, is_dir, item.size, time(item.modified)) {
+            if !query.passes(name, is_dir, item.size, time(item.modified))
+                || !query.passes_meta(|| self.root.join(self.folder_text(item.parent)).join(name))
+            {
                 continue;
             }
             if entries.len() >= query.max_results() {

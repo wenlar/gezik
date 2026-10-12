@@ -10,6 +10,7 @@ use std::rc::Rc;
 use gezik_config::settings::ViewOption;
 use gezik_core::drag::Effect;
 use gezik_core::group::GroupBy;
+use gezik_core::meta::{Tag, TagColor};
 use gezik_core::nav::Location;
 use gezik_core::path_text::PathFormat;
 use gezik_core::search::{DateRange, Scope, SearchSpec};
@@ -179,6 +180,13 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
     for (i, (on, title)) in options.into_iter().zip(titles).enumerate() {
         items.push((OPTION_FIRST + i as u32, marked(on, title), true));
     }
+    let mut tags: Vec<String> = spec.tags.clone();
+    if spec.untagged {
+        tags.push("none".to_owned());
+    }
+    let shown = |text: String| if text.is_empty() { text } else { format!(" ({text})") };
+    items.push((SEARCH_TAGS, format!("Tags…{}", shown(tags.join(", "))), true));
+    items.push((SEARCH_COMMENT, format!("Comment…{}", shown(spec.comment.clone())), true));
     items.push((FILTERS_CLEAR, "Clear filters".to_owned(), spec.filter_count() > 0));
     let mut modified: Vec<(u32, String, bool)> = MODIFIED_PRESETS
         .iter()
@@ -195,9 +203,16 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
         .enumerate()
         .map(|(i, kind)| (KIND_FIRST + i as u32, marked(spec.kind == *kind, kind.label()), true))
         .collect();
+    let ratings = (0..=5u8)
+        .map(|stars| {
+            let title = if stars == 0 { "Any rating".to_owned() } else { "★".repeat(usize::from(stars)) };
+            (SEARCH_RATING_FIRST + u32::from(stars), marked(spec.min_rating == stars, &title), true)
+        })
+        .collect();
     let subs = vec![
         Submenu { title: "Modified".to_owned(), at: 0, items: modified },
         Submenu { title: "Type".to_owned(), at: 0, items: kinds },
+        Submenu { title: "Rating".to_owned(), at: 0, items: ratings },
     ];
     (items, subs)
 }
@@ -244,6 +259,69 @@ pub const SAVED_SEARCH_FIRST: u32 = 1610;
 pub const SAVED_SEARCH_DELETE_FIRST: u32 = 1640;
 pub const SAVED_SEARCH_MAX: u32 = 30;
 
+// The preview's menu (spec 13 §10.3: 2600–2619).
+pub const PREVIEW_HEX: u32 = 2600;
+pub const PREVIEW_TEXT: u32 = 2601;
+pub const PREVIEW_WRAP: u32 = 2602;
+// A PDF's pages and the zoom (13b): what the bar has, reachable in a narrow pane too.
+pub const PREVIEW_PREVIOUS_PAGE: u32 = 2603;
+pub const PREVIEW_NEXT_PAGE: u32 = 2604;
+pub const PREVIEW_GO_TO_PAGE: u32 = 2605;
+pub const PREVIEW_ZOOM_IN: u32 = 2606;
+pub const PREVIEW_ZOOM_OUT: u32 = 2607;
+pub const PREVIEW_FIT: u32 = 2608;
+pub const PREVIEW_ACTUAL_SIZE: u32 = 2609;
+/// The bar's link: "Download pdfium…", "Download ffmpeg…" or "Enter Password…".
+pub const PREVIEW_LINK: u32 = 2610;
+// The player (13c); Play/Pause is View ▸ Play/Pause Preview too.
+pub const PREVIEW_PLAY: u32 = 2611;
+pub const PREVIEW_BACK: u32 = 2612;
+pub const PREVIEW_FORWARD: u32 = 2613;
+pub const PREVIEW_MUTE: u32 = 2614;
+
+/// Right-click on the preview: a PDF's pages and the zoom (`surface` 4 a PDF, 5 a picture), the
+/// player (6), the bar's `link`, hex or back, and wrap for text.
+pub fn preview_items(
+    hex: bool,
+    file: bool,
+    wrap: Option<bool>,
+    (surface, link): (i32, &str),
+) -> Vec<(u32, String, bool)> {
+    let mut items = Vec::new();
+    match link {
+        "" => {}
+        "Download" if surface == 6 => items.push((PREVIEW_LINK, "Download ffmpeg…".to_owned(), true)),
+        "Download" => items.push((PREVIEW_LINK, "Download pdfium…".to_owned(), true)),
+        link => items.push((PREVIEW_LINK, link.to_owned(), true)),
+    }
+    if surface == 4 {
+        items.push((PREVIEW_PREVIOUS_PAGE, "Previous Page".to_owned(), true));
+        items.push((PREVIEW_NEXT_PAGE, "Next Page".to_owned(), true));
+        items.push((PREVIEW_GO_TO_PAGE, "Go to Page…".to_owned(), true));
+    }
+    if surface == 6 {
+        items.push((PREVIEW_PLAY, "Play/Pause".to_owned(), true));
+        items.push((PREVIEW_BACK, "Back 10 Seconds".to_owned(), true));
+        items.push((PREVIEW_FORWARD, "Forward 10 Seconds".to_owned(), true));
+        items.push((PREVIEW_MUTE, "Mute/Unmute".to_owned(), true));
+    }
+    if surface == 4 || surface == 5 {
+        items.push((PREVIEW_ZOOM_IN, "Zoom In".to_owned(), true));
+        items.push((PREVIEW_ZOOM_OUT, "Zoom Out".to_owned(), true));
+        items.push((PREVIEW_FIT, "Fit".to_owned(), true));
+        items.push((PREVIEW_ACTUAL_SIZE, "Actual Size".to_owned(), true));
+    }
+    if hex {
+        items.push((PREVIEW_TEXT, "Show as Text".to_owned(), true));
+    } else if file {
+        items.push((PREVIEW_HEX, "Show as Hex".to_owned(), true));
+    }
+    if let Some(on) = wrap {
+        items.push((PREVIEW_WRAP, marked(on, "Wrap Lines"), true));
+    }
+    items
+}
+
 /// The results' column header menu.
 pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
     let mut out: Vec<(u32, String)> = ColumnKey::RESULTS
@@ -251,11 +329,22 @@ pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
         .enumerate()
         .map(|(i, key)| {
             let shown = columns.iter().any(|c| c.key == *key && c.visible);
-            (RESULT_COLUMN_FIRST + i as u32, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
+            let id = meta_column_id(*key).unwrap_or(RESULT_COLUMN_FIRST + i as u32);
+            (id, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
         })
         .collect();
     out.push((RESULT_COLUMNS_RESET, "Reset columns".to_owned()));
     out
+}
+
+/// Step 12's columns' Show/Hide ids in both header menus (spec 12 §12.3).
+fn meta_column_id(key: ColumnKey) -> Option<u32> {
+    match key {
+        ColumnKey::Tags => Some(TAGS_COLUMN),
+        ColumnKey::Rating => Some(RATING_COLUMN),
+        ColumnKey::Comment => Some(COMMENT_COLUMN),
+        _ => None,
+    }
 }
 
 /// Header menu: 20-23 show/hide the columns in `ColumnKey::ALL` order.
@@ -267,7 +356,8 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
     let mut out: Vec<(u32, &'static str)> = columns
         .iter()
         .map(|c| {
-            let id = TOGGLE_COLUMN_FIRST + u32::try_from(c.key.index() - 1).unwrap_or(0);
+            let id = meta_column_id(c.key)
+                .unwrap_or_else(|| TOGGLE_COLUMN_FIRST + u32::try_from(c.key.index() - 1).unwrap_or(0));
             let title = match (c.key, c.visible) {
                 (ColumnKey::Modified, true) => "Hide Modified",
                 (ColumnKey::Modified, false) => "Show Modified",
@@ -281,6 +371,12 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, &'static str)> {
                 (ColumnKey::Folder, false) => "Show Folder",
                 (ColumnKey::Match, true) => "Hide Match",
                 (ColumnKey::Match, false) => "Show Match",
+                (ColumnKey::Tags, true) => "Hide Tags",
+                (ColumnKey::Tags, false) => "Show Tags",
+                (ColumnKey::Rating, true) => "Hide Rating",
+                (ColumnKey::Rating, false) => "Show Rating",
+                (ColumnKey::Comment, true) => "Hide Comment",
+                (ColumnKey::Comment, false) => "Show Comment",
             };
             (id, title)
         })
@@ -542,6 +638,84 @@ pub const TOOLS_COPY_TO: u32 = 2207;
 pub const TOOLS_MOVE_TO: u32 = 2208;
 pub const TOOLS_SPLIT: u32 = 2209;
 pub const TOOLS_JOIN: u32 = 2210;
+// Step 12 (spec 12 §12.3): 2400–2599. Tags ▸ 2400–2409 (Tags… 2400, Clear tags 2401, 12d's
+// Comment… 2402; 12e: New tag… 2403, the search bar's Filters ▸ Tags… 2404 and Comment… 2405),
+// the list's tags 2410–2469, ratings 2470–2475, the sidebar's tag menu 2480–2489, colours
+// 2490–2497, View items 2500–2509 (Tag dots 2500; 12c: Sort by tags 2501, Group by ▸ Tag 2502,
+// Show/Hide Tags in the column headers 2503; 12d: Sort by rating 2504, Group by ▸ Rating 2505,
+// Show/Hide Rating 2506 and Comment 2507), 12e's Filters ▸ Rating ▸ 2510–2515.
+/// Tags ▸ Tags…, Clear tags (12b) and Comment… (12d), on rows.
+pub const TAGS_PICKER: u32 = 2400;
+pub const TAGS_CLEAR: u32 = 2401;
+pub const TAGS_COMMENT: u32 = 2402;
+/// Tags ▸ No rating, ★ … ★★★★★ (12d): 2470 + stars.
+pub const TAGS_RATING_FIRST: u32 = 2470;
+pub const TAGS_RATING_LAST: u32 = TAGS_RATING_FIRST + 5;
+/// Tags ▸ the list's tags, one id each in the list's order (at most `TAGS_TAG_MAX`).
+pub const TAGS_TAG_FIRST: u32 = 2410;
+pub const TAGS_TAG_MAX: u32 = gezik_config::tags::TAGS_MAX as u32;
+/// The View menu's Tag dots (12b).
+pub const TAG_DOTS: u32 = 2500;
+/// Sort by tags, Group by ▸ Tag, and the Tags column in both header menus (12c).
+pub const SORT_BY_TAGS: u32 = 2501;
+pub const GROUP_BY_TAG: u32 = 2502;
+pub const TAGS_COLUMN: u32 = 2503;
+/// Sort by rating, Group by ▸ Rating, the Rating and Comment columns (12d).
+pub const SORT_BY_RATING: u32 = 2504;
+pub const GROUP_BY_RATING: u32 = 2505;
+pub const RATING_COLUMN: u32 = 2506;
+pub const COMMENT_COLUMN: u32 = 2507;
+/// A sidebar tag's menu (12e, spec 12 §7.1): New tag…, the searches, Rename…, the moves.
+pub const TAGS_NEW: u32 = 2403;
+pub const TAG_SEARCH_HERE: u32 = 2480;
+pub const TAG_SEARCH_EVERYWHERE: u32 = 2481;
+pub const TAG_FILTER: u32 = 2482;
+pub const TAG_RENAME: u32 = 2483;
+pub const TAG_UP: u32 = 2484;
+pub const TAG_DOWN: u32 = 2485;
+pub const TAG_REMOVE: u32 = 2486;
+/// Color ▸: 2490 + Finder's colour number.
+pub const TAG_COLOR_FIRST: u32 = 2490;
+/// The search bar's Filters ▸ Tags…, Comment… and Rating ▸ Any rating, ★ … ★★★★★ (12e).
+pub const SEARCH_TAGS: u32 = 2404;
+pub const SEARCH_COMMENT: u32 = 2405;
+pub const SEARCH_RATING_FIRST: u32 = 2510;
+
+/// A sidebar tag's menu for `tag`, the first and the last of the list or not: the searches,
+/// Filter, Rename…, Color ▸ (marked), the moves, Remove from list, New tag….
+pub fn tag_row_items(tag: &Tag, first: bool, last: bool) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
+    let items: Vec<(u32, String, bool)> = [
+        (TAG_SEARCH_HERE, "Search this folder", true),
+        (TAG_SEARCH_EVERYWHERE, "Search everywhere", true),
+        (TAG_FILTER, "Filter this folder", true),
+        (TAG_RENAME, "Rename…", true),
+        (TAG_UP, "Move up", !first),
+        (TAG_DOWN, "Move down", !last),
+        (TAG_REMOVE, "Remove from list", true),
+        (TAGS_NEW, "New tag…", true),
+    ]
+    .into_iter()
+    .map(|(id, title, on)| (id, title.to_owned(), on))
+    .collect();
+    // Finder's order: the colours, then none.
+    let colors = [
+        TagColor::Red,
+        TagColor::Orange,
+        TagColor::Yellow,
+        TagColor::Green,
+        TagColor::Blue,
+        TagColor::Purple,
+        TagColor::Gray,
+        TagColor::None,
+    ]
+    .into_iter()
+    .map(|color| {
+        let title = if color == TagColor::None { "No color" } else { color.default_name() };
+        (TAG_COLOR_FIRST + u32::from(color.number()), marked(tag.color == color, title), true)
+    })
+    .collect();
+    (items, vec![Submenu { title: "Color".to_owned(), at: 4, items: colors }])
+}
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
 /// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
@@ -573,6 +747,20 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
     Submenu { title: "Tools".to_owned(), at, items }
 }
 
+/// `Tags ▸` for `paths` right after `Tools ▸` (which drives and the trash have not: no tags
+/// there). Gezik's own menus have `MAX_SUBMENUS` places: there the tags go at the end of Tools ▸,
+/// under a greyed "Tags" (plan 12b sapma 11).
+fn add_tags(subs: &mut Vec<Submenu>, paths: &[PathBuf], native: bool) {
+    let Some(tools) = subs.iter_mut().find(|sub| sub.title == "Tools") else { return };
+    let tags = crate::tags::menu_sub(paths, tools.at);
+    if native {
+        subs.push(tags);
+    } else {
+        tools.items.push((HEADING, "Tags".to_owned(), false));
+        tools.items.extend(tags.items);
+    }
+}
+
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
 pub fn trash_row_items() -> [(u32, &'static str); 2] {
@@ -592,7 +780,7 @@ pub const GEZIK_IDS_END: u32 = 4096;
 #[cfg(windows)]
 const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
 /// Most submenus a menu shows: app.slint and popup-menu.slint have this many places (a macOS
-/// row: Open With, Copy path as, Commands, Tools, Quick Actions).
+/// row: Open With, Copy path as, Commands, Tools, Quick Actions; Tags go inside Tools there).
 pub const MAX_SUBMENUS: usize = 5;
 
 /// A submenu among a menu's items ("Commands ▸"): its title, its place among the items (0:
@@ -871,6 +1059,8 @@ pub fn view_items(
         (SORT_BY_CREATED, SortKey::Created, "Sort by date created"),
         (SORT_BY_TYPE, SortKey::Type, "Sort by type"),
         (SORT_BY_SIZE, SortKey::Size, "Sort by size"),
+        (SORT_BY_TAGS, SortKey::Tags, "Sort by tags"),
+        (SORT_BY_RATING, SortKey::Rating, "Sort by rating"),
     ];
     for (id, key, title) in sorts {
         out.push((id, mark(view.sort.key == key, title)));
@@ -878,6 +1068,8 @@ pub fn view_items(
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
+    out.push((PREVIEW_HEX, "    Show Preview as Hex".to_owned()));
+    out.push((PREVIEW_PLAY, "    Play/Pause Preview".to_owned()));
     out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));
     out.push((SHOW_HISTORY, "    Operation history".to_owned()));
     out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
@@ -927,10 +1119,11 @@ pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
     ]
 }
 
-/// Group by ▸ (spec 10 §6.2): None, Type, Date, Size, the current one marked; at place `at`.
+/// Group by ▸ (spec 10 §6.2): None, Type, Date, Size, Tag, Rating, the current one marked; at
+/// place `at`.
 pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
-    let items = [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]
+    let items = [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG, GROUP_BY_RATING]
         .into_iter()
         .zip(GroupBy::ALL)
         .map(|(id, by)| (id, mark(by == current, by.title()), true))
@@ -1089,10 +1282,14 @@ enum Subject {
     Search,
     /// A saved search in the sidebar, by name.
     SavedSearch(String),
+    /// A tag in the sidebar, by name.
+    TagRow(String),
     /// A job's row in the operations panel, by id.
     Job(i32),
     /// The size map's rectangle menu (items by id).
     SizeMap,
+    /// The preview's viewer.
+    Preview,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -1237,6 +1434,7 @@ impl Menus {
             let services = self.add_finder_extras(&list, &mut subs, &rows);
             self.add_links(&mut list, &mut subs, &rows, native);
             self.add_file_tools(&mut list, &mut subs, rows, native);
+            add_tags(&mut subs, &paths, native);
             list.extend(self.file_extras(false, false, native));
             let in_cloud = paths.iter().all(|p| crate::cloud::root_of(p).is_some());
             list.extend(cloud_items(in_cloud, native, cfg!(target_os = "macos")));
@@ -1275,6 +1473,7 @@ impl Menus {
         let services = self.add_finder_extras(&list, &mut subs, &[(path.clone(), is_dir)]);
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
+        add_tags(&mut subs, std::slice::from_ref(&path), native);
         list.extend(self.file_extras(true, is_dir, native));
         list.extend(cloud_items(crate::cloud::root_of(&path).is_some(), native, cfg!(target_os = "macos")));
         // Not asked on Windows: Explorer's menu has Eject, and asking a fixed drive's bus costs a query.
@@ -1504,6 +1703,13 @@ impl Menus {
             let list = [(RUN_SEARCH_NEW_TAB, "Run in new tab"), (RENAME_SEARCH, "Rename…"), (DELETE_SEARCH, "Delete")];
             return self.open_slint(&list, Anchor::point(x, y));
         }
+        if section == crate::sidebar::SECTION_TAGS {
+            let list = crate::tags::list();
+            let Some(i) = usize::try_from(index).ok().filter(|i| *i < list.len()) else { return };
+            *self.subject.borrow_mut() = Some(Subject::TagRow(list[i].name.to_string()));
+            let (items, subs) = tag_row_items(&list[i], i == 0, i + 1 == list.len());
+            return self.open_slint_entries(&items, subs, Anchor::point(x, y));
+        }
         if section == crate::sidebar::SECTION_TRASH {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint(&[(EMPTY_TRASH, empty_title())], Anchor::point(x, y));
@@ -1651,6 +1857,9 @@ impl Menus {
             0
         };
         rule_items(&mut entries, crate::panes::active_view().rule_state());
+        // Last, so the submenus' places above stay (spec 12 §5.4; plan 12b sapma 8).
+        let dots = crate::tags::dots_on();
+        entries.push((TAG_DOTS, format!("{}Tag dots", if dots { "• " } else { "    " }), true));
         let mut subs = format_subs(options, place + 2 + shift);
         subs.push(group_by_sub(crate::panes::active_view().view_settings().group, at_group));
         self.open_slint_entries(&entries, subs, at);
@@ -1839,6 +2048,14 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
+    /// Right-click on the preview's viewer, at `at`.
+    pub fn preview_menu(&self, at: Anchor) {
+        let (hex, file, wrap) = self.preview.viewer_state();
+        *self.subject.borrow_mut() = Some(Subject::Preview);
+        let surface = self.preview.surface_state();
+        self.open_slint_entries(&preview_items(hex, file, wrap, surface), Vec::new(), at);
+    }
+
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
     pub fn info_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Info);
@@ -1959,8 +2176,18 @@ impl Menus {
             (id, _) if (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id) => {
                 crate::panes::active_view().set_group(GroupBy::ALL[(id - GROUP_BY_NONE) as usize]);
             }
+            (GROUP_BY_TAG, _) => crate::panes::active_view().set_group(GroupBy::Tag),
+            (GROUP_BY_RATING, _) => crate::panes::active_view().set_group(GroupBy::Rating),
+            (SORT_BY_TAGS, Subject::View) => crate::panes::active_view()
+                .set_sort(SortSpec { key: SortKey::Tags, dir: crate::panes::active_view().sort().dir }),
+            (SORT_BY_RATING, Subject::View) => crate::panes::active_view()
+                .set_sort(SortSpec { key: SortKey::Rating, dir: crate::panes::active_view().sort().dir }),
+            (TAGS_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Tags),
+            (RATING_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Rating),
+            (COMMENT_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Comment),
             (COLLAPSE_GROUPS, _) => crate::panes::active_view().collapse_all(true),
             (EXPAND_GROUPS, _) => crate::panes::active_view().collapse_all(false),
+            (id, Subject::TagRow(name)) => crate::tags::row_menu_chosen(id, &name),
             (RUN_SEARCH_NEW_TAB, Subject::SavedSearch(name)) => {
                 crate::saved_searches::with_current(|s| s.run(&name, true));
             }
@@ -2040,6 +2267,9 @@ impl Menus {
                 crate::compare::select_differences()
             }
             (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
+            (PREVIEW_HEX | PREVIEW_TEXT, Subject::Preview) => _ = self.preview.toggle_hex(),
+            (PREVIEW_WRAP, Subject::Preview) => self.preview.toggle_wrap(),
+            (PREVIEW_PREVIOUS_PAGE..=PREVIEW_MUTE, Subject::Preview) => self.preview.surface_menu(id),
             (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -2066,6 +2296,12 @@ impl Menus {
                 if (DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT).contains(&id) =>
             {
                 crate::search::select_duplicates(&crate::panes::active_view(), id);
+            }
+            (TAGS_PICKER..=TAGS_RATING_LAST, Subject::Row(path)) => {
+                crate::tags::menu_chosen(id, vec![path]);
+            }
+            (TAGS_PICKER..=TAGS_RATING_LAST, Subject::Rows(paths)) => {
+                crate::tags::menu_chosen(id, paths);
             }
             (TOOLS_COPY_TO..=TOOLS_JOIN, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -2208,6 +2444,8 @@ impl Menus {
             (SORT_DESC, Subject::View) => crate::panes::active_view()
                 .set_sort(SortSpec { dir: SortDir::Desc, ..crate::panes::active_view().sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
+            (PREVIEW_HEX, Subject::View) => self.preview.show_hex(),
+            (PREVIEW_PLAY, Subject::View) => self.preview.play_action(),
             (TWO_PANES, Subject::View) => crate::dual::toggle(),
             (SYNC_BROWSING, Subject::View) => crate::dual::toggle_sync(),
             (SWAP_PANES, Subject::View) => crate::dual::swap(),
@@ -2221,6 +2459,7 @@ impl Menus {
                 crate::integration::with_current(crate::integration::Integration::open)
             }
             (REVEAL_IN_TREE, _) => self.sidebar.reveal_current(),
+            (TAG_DOTS, _) => crate::tags::toggle_dots(),
             (TOOLS_EXPORT_LIST, _) => crate::export::ask(&crate::panes::active_nav(), &crate::panes::active_view()),
             (CALC_FOLDER_SIZES, _) => {
                 crate::panes::with_active(|p| p.folder_sizes.calculate());
@@ -2469,6 +2708,8 @@ fn from_submenu(id: u32) -> bool {
         || (DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32).contains(&id)
         || (SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32).contains(&id)
         || (GROUP_BY_NONE..=GROUP_BY_SIZE).contains(&id)
+        || id == GROUP_BY_TAG
+        || id == GROUP_BY_RATING
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
@@ -2481,12 +2722,15 @@ fn from_submenu(id: u32) -> bool {
         || id == TOOLS_CHECKSUMS
         || id == TOOLS_VERIFY
         || (TOOLS_COPY_TO..=TOOLS_JOIN).contains(&id)
+        || (TAGS_PICKER..=TAGS_RATING_LAST).contains(&id)
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
         || id == OPEN_WITH_OTHER
         || (QUICK_ACTION_FIRST..QUICK_ACTION_FIRST + QUICK_ACTION_MAX).contains(&id)
         || (MODIFIED_FIRST..=MODIFIED_BETWEEN).contains(&id)
         || (KIND_FIRST..KIND_FIRST + gezik_core::search::KindFilter::ALL.len() as u32).contains(&id)
+        || (SEARCH_RATING_FIRST..SEARCH_RATING_FIRST + 6).contains(&id)
+        || (TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8).contains(&id)
         || matches!(
             id,
             NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
@@ -2534,10 +2778,13 @@ mod tests {
     fn the_results_header_menu_has_its_own_ids() {
         let items = result_header_items(&gezik_core::view::default_result_columns());
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
-        assert_eq!(ids, [1550, 1551, 1552, 1553, 1554, 1555, RESULT_COLUMNS_RESET]);
+        assert_eq!(
+            ids,
+            [1550, 1551, 1552, 1553, 1554, 1555, TAGS_COLUMN, RATING_COLUMN, COMMENT_COLUMN, RESULT_COLUMNS_RESET]
+        );
         assert_eq!(items[0].1, "Hide Folder");
         assert_eq!(items[3].1, "Show Created");
-        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "8a's range");
+        assert!(ids.iter().all(|id| (1500..1600).contains(id) || (2503..=2507).contains(id)), "8a's range, and 12's");
     }
 
     #[test]
@@ -2619,6 +2866,8 @@ mod tests {
             SORT_ASC,
             SORT_DESC,
             PREVIEW_PANE,
+            PREVIEW_HEX,
+            PREVIEW_PLAY,
             TOGGLE_STACK,
             SHOW_HISTORY,
             APPLY_TO_ALL,
@@ -2839,7 +3088,7 @@ mod tests {
         let sub = group_by_sub(GroupBy::Date, 3);
         assert_eq!((sub.title.as_str(), sub.at), ("Group by", 3));
         let ids: Vec<u32> = sub.items.iter().map(|(id, _, _)| *id).collect();
-        assert_eq!(ids, [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE]);
+        assert_eq!(ids, [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG, GROUP_BY_RATING]);
         let marked: Vec<&str> =
             sub.items.iter().filter(|(_, t, _)| t.starts_with("• ")).map(|(_, t, _)| t.as_str()).collect();
         assert_eq!(marked, ["• Date"]);
@@ -2882,6 +3131,8 @@ mod tests {
             SORT_ASC,
             SORT_DESC,
             PREVIEW_PANE,
+            PREVIEW_HEX,
+            PREVIEW_PLAY,
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
@@ -2989,11 +3240,36 @@ mod tests {
             TOOLS_MOVE_TO,
             TOOLS_SPLIT,
             TOOLS_JOIN,
+            TAG_DOTS,
+            SORT_BY_TAGS,
+            GROUP_BY_TAG,
+            TAGS_COLUMN,
+            TAGS_PICKER,
+            TAGS_CLEAR,
+            TAGS_COMMENT,
+            SORT_BY_RATING,
+            GROUP_BY_RATING,
+            RATING_COLUMN,
+            COMMENT_COLUMN,
+            TAGS_NEW,
+            SEARCH_TAGS,
+            SEARCH_COMMENT,
+            TAG_SEARCH_HERE,
+            TAG_SEARCH_EVERYWHERE,
+            TAG_FILTER,
+            TAG_RENAME,
+            TAG_UP,
+            TAG_DOWN,
+            TAG_REMOVE,
         ];
         let mut ranges: Vec<std::ops::Range<u32>> = singles.iter().map(|id| *id..id + 1).collect();
         ranges.extend([
             RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX,
             GROUP_BY_NONE..GROUP_BY_NONE + 4,
+            TAGS_TAG_FIRST..TAGS_TAG_FIRST + TAGS_TAG_MAX,
+            TAGS_RATING_FIRST..TAGS_RATING_LAST + 1,
+            TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8,
+            SEARCH_RATING_FIRST..SEARCH_RATING_FIRST + 6,
             DUP_SELECT_FIRST..DUP_SELECT_FIRST + DUP_SELECT_COUNT,
             TOGGLE_COLUMN_FIRST..RESET_COLUMNS,
             CONFLICT_FIRST..CONFLICT_FIRST + 4,
@@ -3317,6 +3593,9 @@ mod tests {
                 (TOGGLE_COLUMN_FIRST + 1, "Show Created"),
                 (TOGGLE_COLUMN_FIRST + 2, "Hide Type"),
                 (TOGGLE_COLUMN_FIRST + 3, "Hide Size"),
+                (TAGS_COLUMN, "Show Tags"),
+                (RATING_COLUMN, "Show Rating"),
+                (COMMENT_COLUMN, "Show Comment"),
                 (RESET_COLUMNS, "Reset columns"),
             ]
         );
@@ -3423,9 +3702,13 @@ mod tests {
                 SORT_BY_CREATED,
                 SORT_BY_TYPE,
                 SORT_BY_SIZE,
+                SORT_BY_TAGS,
+                SORT_BY_RATING,
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,
+                PREVIEW_HEX,
+                PREVIEW_PLAY,
                 TOGGLE_STACK,
                 SHOW_HISTORY,
                 HIDE_EXTENSIONS,
@@ -3495,7 +3778,7 @@ mod tests {
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[13..],
+            &ids[16..],
             [
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
@@ -3508,9 +3791,9 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(items[13].1.starts_with("• ") && items[14].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[15].1.starts_with("• "));
-        assert_eq!(items[16].1.starts_with("• "), options.show_hidden);
+        assert!(items[16].1.starts_with("• ") && items[17].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[18].1.starts_with("• "));
+        assert_eq!(items[19].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
@@ -3587,7 +3870,8 @@ mod tests {
             .chain(subs.iter().flat_map(|s| s.items.iter().map(|i| i.0)))
             .chain(search_more_items(3, &[], true).iter().map(|i| i.0).filter(|id| *id != SAVE_SEARCH))
             .collect();
-        assert!(ids.iter().all(|id| (1500..1600).contains(id)), "{ids:?}");
+        // 8a's range, and 12e's tag, comment and rating filters.
+        assert!(ids.iter().all(|id| (1500..1600).contains(id) || (2400..2600).contains(id)), "{ids:?}");
         assert!(search_more_items(0, &[], true).iter().all(|(id, _, _)| *id != SEARCH_PROBLEMS));
         assert_eq!(modified_for(MODIFIED_FIRST + 3), Some(DateRange::LastDays(30)));
         assert_eq!(modified_for(MODIFIED_BETWEEN), None, "asked for in a box");
@@ -3595,5 +3879,87 @@ mod tests {
             vec![(Scope::Folder("/w".into()), "This folder (w)".to_owned()), (Scope::AllDrives, "This PC".to_owned())];
         let scope = search_scope_items(&choices, &Scope::AllDrives);
         assert_eq!(scope[1], (SCOPE_FIRST + 1, "• This PC".to_owned(), true));
+    }
+
+    #[test]
+    fn the_tag_filters_show_what_is_asked_for() {
+        use gezik_core::search::{Scope, SearchSpec};
+        let mut spec = SearchSpec::new(Scope::AllDrives);
+        spec.tags = vec!["Red".into(), "Blue".into()];
+        spec.untagged = true;
+        spec.comment = "review".into();
+        spec.min_rating = 3;
+        let (items, subs) = search_filter_items(&spec);
+        assert!(items.contains(&(SEARCH_TAGS, "Tags… (Red, Blue, none)".to_owned(), true)));
+        assert!(items.contains(&(SEARCH_COMMENT, "Comment… (review)".to_owned(), true)));
+        let rating = subs.iter().find(|s| s.title == "Rating").unwrap();
+        assert_eq!(rating.items.len(), 6);
+        assert_eq!(rating.items[3], (SEARCH_RATING_FIRST + 3, "• ★★★".to_owned(), true));
+        assert!(rating.items[0].1.ends_with("Any rating"));
+        let (items, _) = search_filter_items(&SearchSpec::new(Scope::AllDrives));
+        assert!(items.contains(&(SEARCH_TAGS, "Tags…".to_owned(), true)), "nothing asked: no brackets");
+    }
+
+    #[test]
+    fn a_sidebar_tag_has_its_menu() {
+        let tag = Tag::new("Red", TagColor::Red);
+        let (items, subs) = tag_row_items(&tag, true, false);
+        let ids: Vec<(u32, bool)> = items.iter().map(|(id, _, on)| (*id, *on)).collect();
+        assert_eq!(
+            ids,
+            [
+                (TAG_SEARCH_HERE, true),
+                (TAG_SEARCH_EVERYWHERE, true),
+                (TAG_FILTER, true),
+                (TAG_RENAME, true),
+                (TAG_UP, false),
+                (TAG_DOWN, true),
+                (TAG_REMOVE, true),
+                (TAGS_NEW, true)
+            ],
+            "the first cannot go up"
+        );
+        assert_eq!((subs[0].title.as_str(), subs[0].at, subs[0].items.len()), ("Color", 4, 8));
+        assert_eq!(subs[0].items[0], (TAG_COLOR_FIRST + 6, "• Red".to_owned(), true), "Finder's number");
+        assert_eq!(subs[0].items[7].0, TAG_COLOR_FIRST, "No color");
+        assert!(subs[0].items.iter().chain(&items).all(|(id, _, _)| (2400..2600).contains(id)), "step 12's range");
+    }
+
+    #[test]
+    fn the_preview_menu_offers_hex_or_text_and_wrap() {
+        let ids = |items: Vec<(u32, String, bool)>| items.iter().map(|i| i.0).collect::<Vec<_>>();
+        assert_eq!(ids(preview_items(false, true, Some(true), (0, ""))), [PREVIEW_HEX, PREVIEW_WRAP]);
+        assert_eq!(ids(preview_items(true, true, None, (0, ""))), [PREVIEW_TEXT]);
+        assert!(preview_items(false, false, None, (0, "")).is_empty(), "a folder");
+        assert!(preview_items(false, true, Some(true), (0, ""))[1].1.starts_with("• "));
+        // A PDF in a narrow pane: everything its bar has, the link first.
+        let pdf = preview_items(false, true, None, (4, "Enter Password…"));
+        assert_eq!(
+            ids(pdf.clone()),
+            [
+                PREVIEW_LINK,
+                PREVIEW_PREVIOUS_PAGE,
+                PREVIEW_NEXT_PAGE,
+                PREVIEW_GO_TO_PAGE,
+                PREVIEW_ZOOM_IN,
+                PREVIEW_ZOOM_OUT,
+                PREVIEW_FIT,
+                PREVIEW_ACTUAL_SIZE,
+                PREVIEW_HEX
+            ]
+        );
+        assert_eq!(pdf[0].1, "Enter Password…");
+        assert_eq!(preview_items(false, true, None, (4, "Download"))[0].1, "Download pdfium…");
+        assert_eq!(ids(preview_items(false, true, None, (5, ""))).len(), 5, "a picture: zoom and Hex");
+        let player = preview_items(false, true, None, (6, "Download"));
+        assert_eq!(
+            ids(player.clone()),
+            [PREVIEW_LINK, PREVIEW_PLAY, PREVIEW_BACK, PREVIEW_FORWARD, PREVIEW_MUTE, PREVIEW_HEX],
+            "a player: no zoom"
+        );
+        assert_eq!(player[0].1, "Download ffmpeg…");
+        for id in [PREVIEW_HEX, PREVIEW_TEXT, PREVIEW_WRAP, PREVIEW_PLAY, PREVIEW_MUTE] {
+            assert!((2600..2620).contains(&id), "spec 13 §10.3");
+        }
     }
 }

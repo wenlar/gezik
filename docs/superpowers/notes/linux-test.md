@@ -664,6 +664,61 @@ Numbers stay as they are when branches merge (see 10b). 11d uses 239–243 as it
 247. **Removable disk and network.** A USB stick (vfat or ext4) gets Mirror deletions in its `.Trash-<uid>` and Ctrl+Z brings them back; on an SMB or NFS mount (no trash) deletions are left out and replacing needs Replace them anyway, as macOS 337.
 248. **Profiles and memory.** As macOS 338–339 with Ctrl+Shift+P and `ps -o rss= -p $(pgrep -x gezik)`.
 
+### 12a, tag storage (no interface yet)
+
+249. **Tests first.** `cargo test -p gezik-core meta`, `cargo test -p gezik-platform meta`, `cargo test -p gezik-ops meta`, `cargo test -p gezik-ops tags`; paste the output (in `/tmp` on tmpfs before Linux 6.6 some platform tests return early: write `findmnt -T /tmp`).
+250. **Dolphin sees Gezik's tags.** `cargo test -p gezik-platform meta::tests::dolphin_probe -- --ignored`, then `getfattr -d ~/gezik-tag-probe.txt` shows `user.xdg.tags="Red,Öncelikli"`, `user.baloo.rating="8"` and `user.xdg.comment="Ready for review"`. In Dolphin (if installed), the file's Information panel shows the two tags, 4 stars and the comment. Tag it `Blue` and 3 stars in Dolphin, then `getfattr -d` shows `Red,Öncelikli,Blue` (or Dolphin's order) and `6`. The file's modification time did not change (`stat -c %y` before and after the probe).
+251. **vfat stick.** With a vfat USB stick mounted: `GEZIK_TEST_TAG_DIR=/media/$USER/<STICK> cargo test -p gezik-ops meta::tests::the_store_on_a_drive_without_records -- --ignored` passes: the tag goes to the store (vfat keeps no attributes), the store file is made and follows the rename. Write the stick's line of `lsblk -f` (the UUID is the store's key for it).
+
+### 13a, text, code and hex viewer
+
+Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 249–265).
+
+266. **Colors and the end of a big log.** As macOS 366 and 367 with Alt+P, Space and `ps -o rss= -p $(pgrep -x gezik)` (a `.rs` or `.py` file colored and numbered; a 3 GB log's End shows its last line within a moment and memory stays within +5 MB). Then `H` on `/usr/lib/x86_64-linux-gnu/libc.so.6` shows hex rows (`7F 45 4C 46` first).
+267. **Japanese text wraps in line.** A text file with long Japanese lines (`日本語のテキスト` repeated, mixed with Latin words): with Wrap on, every row ends at the same column width (a wide character takes two columns); the characters come from a fallback font and do not overlap. Write the font you see if they do not line up (GNOME and KDE).
+
+### 12b, tagging and tag dots
+
+252. **The picker.** As macOS 344 with Ctrl+Shift+L: one job, one Ctrl+Z; `getfattr -n user.xdg.tags` on the files shows what the picker left. Before the first tag no dots show (`dots = "auto"`); after it they do, and `state.toml` has `[tags] used = true`.
+253. **Alt+Shift+1…7, Alt+Shift+0.** On GNOME and on KDE (X11 and Wayland): Alt+Shift+1 toggles Red on the selection (`Red added to 3 items`, then `Red removed from 3 items`), Alt+Shift+0 clears; write down any desktop that takes the keys itself (the picker's Ctrl+Shift+L still works).
+254. **Dots.** As macOS 348; a tag Dolphin gave (no colour in `user.xdg.tags`) shows gray unless your `[tags] list` names it; a vfat stick's tags (the store) show too.
+
+### 12c, Tags column, sort, group and filter
+
+255. **Column, sort and group.** As macOS 349–350 (the macOS View ▸ Group By ▸ Tag is the View button's Group by ▸ Tag here); tags Dolphin gave sort among the unlisted by name.
+256. **Filter, case.** As macOS 351; on ext4 with files `a.txt` and `A.txt`, `tag:red` finds Red on both (the tag's name ignores case, the file names do not).
+257. **A big folder.** As macOS 352 with `seq 1 100000 | xargs touch`; `strace -f -e trace=getxattr,lgetxattr -p $(pidof gezik)` shows no reads while scrolling with name sort, no Tags column and dots off.
+
+### 12d, ratings and comments
+
+258. **Stars and Dolphin.** As macOS 353 with Ctrl+Shift+L and Alt+0…5 in the picker (Alt+4 gives four stars). `getfattr -d file` shows `user.baloo.rating="8"` for four stars; Dolphin's Information panel shows the same stars. A file Dolphin rated with a half star (`setfattr -n user.baloo.rating -v 7 f`) shows ★★★★ in Gezik, and stays `7` after only its comment is changed in Gezik.
+259. **Comment.** As macOS 354: `user.xdg.comment` holds the text (`getfattr -n user.xdg.comment f`), Dolphin shows it; a comment set in Dolphin shows in Gezik's Comment column.
+260. **Columns, sort, group, filter.** As macOS 355–356 (the View button's Group by ▸ Rating here).
+
+### 12e, the tags sidebar and search
+
+261. **TAGS and a click.** As macOS 357; a click on a tag searches the folder shown with its subfolders (no Spotlight on Linux), the tab titled `Tag: Red`; the menu's Search everywhere walks every drive and adds the tag store's files on a vfat stick (`[tags] write-to-files` or vfat).
+262. **Drop and the list.** As macOS 359–360 (Ctrl+Shift+L for the picker); tags Dolphin wrote are found by the search too (`getfattr -n user.xdg.tags`).
+263. **Search words and Clean Up.** As macOS 361 without Spotlight; with the vfat stick unplugged Clean Up Tag Store… leaves its entries alone and says how many; plugged in with a file deleted from it, Remove takes only that entry.
+
+### 12f, highlight rules
+
+264. **Rules color rows.** As macOS 362–363 with a dark GTK/system theme; tags written by Dolphin (`user.xdg.tags`) light up the `tag` rule too.
+265. **Only when asked.** As macOS 364 (`top` instead of Activity Monitor; `setfattr` or Dolphin to tag the file).
+
+### 13b, PDF pages and zoom
+
+13b uses 268–270.
+
+268. **Pages and password.** As macOS 369 and 371 with Alt+P and Space (pdfium from the preview bar's `Download` or a PDF tool): `›`, Page Down/Up, Home/End, Go to Page (click the page number) and the wheel at a page's end; an encrypted PDF asks for its password.
+269. **Zoom.** As macOS 370 with Ctrl+wheel (X11 and Wayland, 100% and 200% scaling): the text stays sharp at 400%, a drag moves it and the edges fill in after stopping; a photo zooms to `100%` and back.
+270. **The worker goes.** `pgrep -af -- --pdf-view` shows one process after 268; 10 s after selecting a text file none; selecting a PDF without touching its pages starts none.
+271. **Play.** As macOS 373 with Alt+P and Space on PipeWire (and on PulseAudio if you have one): an MP4 plays with picture and sound in step after `▶` (ffmpeg from the bar's `Download` or the system's `apt install ffmpeg`); pause and play on; `K`, `M` and the volume bar (in a pane narrower than 300 px Hex and the volume bar drop, right-click has them).
+272. **Seek.** As macOS 374: the seek bar, `J`/`L`; after a minute's pause `pgrep -a ffmpeg` shows none and `K` goes on from the same place.
+273. **MKV.** An `.mkv` and a `.webm` play; an MP3 plays with its time and seek bar.
+274. **No sound server.** `systemctl --user stop pipewire-pulse.socket pipewire-pulse` (or `pulseaudio -k`), then play a video: it plays without sound at the right speed and the bar says `No sound: PulseAudio or PipeWire is not available`. Start the server again afterwards (`systemctl --user start pipewire-pulse`).
+275. **Processes go.** While a video plays select another file: within a second `pgrep -a ffmpeg` shows none.
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

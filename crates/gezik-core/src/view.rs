@@ -250,19 +250,35 @@ pub enum ColumnKey {
     Folder,
     /// A content search's first matching line.
     Match,
+    /// The row's tags (spec 12 §6.1).
+    Tags,
+    /// The row's stars and comment (spec 12 §8.2).
+    Rating,
+    Comment,
 }
 
 impl ColumnKey {
     /// A folder's columns.
-    pub const ALL: [ColumnKey; 4] = [ColumnKey::Modified, ColumnKey::Created, ColumnKey::Type, ColumnKey::Size];
+    pub const ALL: [ColumnKey; 7] = [
+        ColumnKey::Modified,
+        ColumnKey::Created,
+        ColumnKey::Type,
+        ColumnKey::Size,
+        ColumnKey::Tags,
+        ColumnKey::Rating,
+        ColumnKey::Comment,
+    ];
     /// The search results' and the flat view's columns, in display order.
-    pub const RESULTS: [ColumnKey; 6] = [
+    pub const RESULTS: [ColumnKey; 9] = [
         ColumnKey::Folder,
         ColumnKey::Match,
         ColumnKey::Modified,
         ColumnKey::Created,
         ColumnKey::Type,
         ColumnKey::Size,
+        ColumnKey::Tags,
+        ColumnKey::Rating,
+        ColumnKey::Comment,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -273,6 +289,9 @@ impl ColumnKey {
             ColumnKey::Size => "size",
             ColumnKey::Folder => "folder",
             ColumnKey::Match => "match",
+            ColumnKey::Tags => "tags",
+            ColumnKey::Rating => "rating",
+            ColumnKey::Comment => "comment",
         }
     }
 
@@ -288,6 +307,9 @@ impl ColumnKey {
             ColumnKey::Size => "Size",
             ColumnKey::Folder => "Folder",
             ColumnKey::Match => "Match",
+            ColumnKey::Tags => "Tags",
+            ColumnKey::Rating => "Rating",
+            ColumnKey::Comment => "Comment",
         }
     }
 
@@ -299,11 +321,15 @@ impl ColumnKey {
             ColumnKey::Type => SortKey::Type,
             ColumnKey::Size => SortKey::Size,
             ColumnKey::Folder => SortKey::Folder,
-            ColumnKey::Match => SortKey::Name,
+            // Never sorted by: their headers do not sort (spec 12 §8.2 for Comment).
+            ColumnKey::Match | ColumnKey::Comment => SortKey::Name,
+            ColumnKey::Tags => SortKey::Tags,
+            ColumnKey::Rating => SortKey::Rating,
         }
     }
 
-    /// The column's number in the UI: 0 is Name, then 1–4 the folder columns, 5 Folder, 6 Match.
+    /// The column's number in the UI: 0 is Name, then 1–4 the folder columns, 5 Folder, 6 Match,
+    /// 7 Tags, 8 Rating, 9 Comment.
     pub fn index(self) -> i32 {
         match self {
             ColumnKey::Modified => 1,
@@ -312,6 +338,9 @@ impl ColumnKey {
             ColumnKey::Size => 4,
             ColumnKey::Folder => 5,
             ColumnKey::Match => 6,
+            ColumnKey::Tags => 7,
+            ColumnKey::Rating => 8,
+            ColumnKey::Comment => 9,
         }
     }
 
@@ -322,6 +351,9 @@ impl ColumnKey {
             ColumnKey::Size => 90,
             ColumnKey::Folder => 220,
             ColumnKey::Match => 320,
+            ColumnKey::Tags => 160,
+            ColumnKey::Rating => 90,
+            ColumnKey::Comment => 200,
         }
     }
 }
@@ -338,11 +370,15 @@ pub struct ColumnState {
     pub width: u32,
 }
 
-/// Modified, Type and Size shown; Created hidden.
+/// Modified, Type and Size shown; Created, Tags, Rating and Comment hidden.
 pub fn default_columns() -> Vec<ColumnState> {
     ColumnKey::ALL
         .into_iter()
-        .map(|key| ColumnState { key, visible: key != ColumnKey::Created, width: key.default_width() })
+        .map(|key| ColumnState {
+            key,
+            visible: !matches!(key, ColumnKey::Created | ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment),
+            width: key.default_width(),
+        })
         .collect()
 }
 
@@ -489,7 +525,7 @@ mod tests {
         let saved = [ColumnState { key: ColumnKey::Folder, visible: false, width: 9 }];
         let normal = normalize_result_columns(&saved);
         assert_eq!(normal[0], ColumnState { key: ColumnKey::Folder, visible: false, width: MIN_COLUMN_WIDTH });
-        assert_eq!(normal.len(), 6);
+        assert_eq!(normal.len(), ColumnKey::RESULTS.len());
         assert_eq!(normalize_columns(&saved), default_columns(), "a folder list never gets them");
     }
 }

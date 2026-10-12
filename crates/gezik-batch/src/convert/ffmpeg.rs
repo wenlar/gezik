@@ -73,6 +73,91 @@ pub fn duration_us(ff: &Ffmpeg, input: &Path) -> Option<u64> {
     parse_seconds_us(&first).filter(|&us| us > 0)
 }
 
+/// What playing a file needs to know of it (spec 13 §6.2): how long it is, whether it has a
+/// picture stream (a cover picture does not count) and sound, and its frame rate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Probe {
+    pub duration_us: Option<u64>,
+    pub video: bool,
+    pub audio: bool,
+    /// Frames per second of the first picture stream (0 when not known).
+    pub fps: f64,
+}
+
+/// [`Probe`] of `input` from ffprobe; `None` without ffprobe, when it fails or takes longer
+/// than 10 s.
+pub fn probe(ff: &Ffmpeg, input: &Path) -> Option<Probe> {
+    let ffprobe = ff.ffprobe.as_deref()?;
+    let args: [OsString; 9] = [
+        "-v".into(),
+        "error".into(),
+        "-show_entries".into(),
+        "stream=codec_type,avg_frame_rate:stream_disposition=attached_pic:format=duration".into(),
+        "-of".into(),
+        "default=noprint_wrappers=1".into(),
+        "-hide_banner".into(),
+        "-i".into(),
+        input.as_os_str().to_os_string(),
+    ];
+    let mut child = ChildProcess::spawn(ffprobe, &args, None).ok()?;
+    let lines = child.stdout_lines();
+    let started = Instant::now();
+    let status = child.wait_or_stop(|| started.elapsed() > PROBE_TIMEOUT).ok()??;
+    if !status.success() {
+        return None;
+    }
+    // It has ended: this waits only for the reader to pass on what it wrote.
+    let lines: Vec<String> = lines.take(256).collect();
+    Some(parse_probe(lines.iter().map(String::as_str)))
+}
+
+/// ffprobe's `key=value` lines: each `codec_type=` starts a stream, its frame rate and
+/// `DISPOSITION:attached_pic` follow; `duration=` is the file's.
+pub fn parse_probe<'a>(lines: impl IntoIterator<Item = &'a str>) -> Probe {
+    let mut probe = Probe { duration_us: None, video: false, audio: false, fps: 0.0 };
+    // The stream being read: its type and frame rate.
+    let mut stream: Option<(String, f64)> = None;
+    let end = |stream: Option<(String, f64)>, cover: bool, probe: &mut Probe| match stream {
+        Some((kind, fps)) if kind == "video" && !cover && !probe.video => {
+            probe.video = true;
+            probe.fps = fps;
+        }
+        Some((kind, _)) if kind == "audio" => probe.audio = true,
+        _ => {}
+    };
+    for line in lines {
+        let Some((key, value)) = line.trim().split_once('=') else { continue };
+        match key {
+            "codec_type" => {
+                end(stream.take(), false, &mut probe);
+                stream = Some((value.to_owned(), 0.0));
+            }
+            "avg_frame_rate" => {
+                if let Some((_, fps)) = stream.as_mut() {
+                    *fps = parse_rate(value);
+                }
+            }
+            "DISPOSITION:attached_pic" => {
+                // The stream's last line: a cover picture is no video.
+                end(stream.take(), value == "1", &mut probe);
+            }
+            "duration" => probe.duration_us = parse_seconds_us(value).filter(|&us| us > 0),
+            _ => {}
+        }
+    }
+    end(stream, false, &mut probe);
+    probe
+}
+
+/// `30000/1001` → 29.97; `0/0` and anything else → 0.
+fn parse_rate(text: &str) -> f64 {
+    let (num, den) = text.trim().split_once('/').unwrap_or((text.trim(), "1"));
+    match (num.parse::<f64>(), den.parse::<f64>()) {
+        (Ok(num), Ok(den)) if den > 0.0 && num.is_finite() && num > 0.0 => num / den,
+        _ => 0.0,
+    }
+}
+
 /// `12.345678` (seconds) → 12 345 678 µs; `N/A` and anything else → `None`.
 fn parse_seconds_us(text: &str) -> Option<u64> {
     let text = text.trim();
@@ -256,6 +341,29 @@ mod tests {
         assert_eq!(plain_failure("Invalid data found when processing input"), None);
     }
     use super::*;
+
+    #[test]
+    fn a_probe_finds_the_streams_and_skips_a_cover() {
+        let video = "codec_type=video\navg_frame_rate=30000/1001\nDISPOSITION:attached_pic=0\n\
+                     codec_type=audio\navg_frame_rate=0/0\nDISPOSITION:attached_pic=0\nduration=12.5\n";
+        let probe = parse_probe(video.lines());
+        assert!(probe.video && probe.audio);
+        assert!((probe.fps - 29.97).abs() < 0.01);
+        assert_eq!(probe.duration_us, Some(12_500_000));
+        let mp3 = "codec_type=audio\navg_frame_rate=0/0\nDISPOSITION:attached_pic=0\n\
+                   codec_type=video\navg_frame_rate=90000/1\nDISPOSITION:attached_pic=1\nduration=N/A\n";
+        let probe = parse_probe(mp3.lines());
+        assert!(probe.audio && !probe.video, "a cover picture is no video");
+        assert_eq!(probe.duration_us, None);
+        let silent = parse_probe(["codec_type=video", "avg_frame_rate=25/1"]);
+        assert!(silent.video && !silent.audio && silent.fps == 25.0, "the last stream without its disposition");
+        assert_eq!(
+            parse_probe(["garbage", "avg_frame_rate=1/0", ""]),
+            Probe { duration_us: None, video: false, audio: false, fps: 0.0 }
+        );
+        assert_eq!(parse_rate("-5/1"), 0.0);
+        assert_eq!(parse_rate("24"), 24.0);
+    }
 
     #[test]
     fn seconds_become_microseconds() {

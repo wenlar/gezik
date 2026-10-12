@@ -84,6 +84,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::stack::CURRENT.with(|s| s.forget(id)),
     |id| crate::tab_sets::CURRENT.with(|s| s.forget(id)),
     |id| crate::tab_tools::CURRENT.with(|s| s.forget(id)),
+    |id| crate::tags::CURRENT.with(|s| s.forget(id)),
     |id| crate::window_state::PENDING.with(|s| s.forget(id)),
     |id| crate::window_state::RECT.with(|s| s.forget(id)),
 ];
@@ -866,7 +867,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     window.set_column_width(state.column_width.unwrap_or(crate::COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(settings.folder_sizes, settings.search.everything);
-    let preview = preview::Preview::new(&window);
+    let preview = preview::Preview::new(
+        &window,
+        state.preview_wrap.unwrap_or((true, false)),
+        state.preview_volume.unwrap_or((80, false)),
+    );
     let StartPlan { session, select, start, .. } = opening.plan;
     let nav = navigation::Navigator::new(pane_id, window.as_weak(), view.clone(), session, select, start);
     // The open tabs go to state.toml as they change (spec 5.1); its own thread writes them, so
@@ -922,11 +927,14 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     sidebar.install();
     sidebar.set_pinned(settings.pinned.clone());
     sidebar.set_show_cloud(settings.sidebar_cloud);
+    sidebar.set_show_tags(settings.sidebar_tags);
     sidebar.set_tree_follow(settings.sidebar_tree_follow);
     let _tab_sets = tab_sets::TabSets::new(dialogs.clone(), config.clone());
     let _saved_searches = saved_searches::SavedSearches::new(dialogs.clone(), config.clone());
     let _tab_tools = tab_tools::TabTools::new(&window);
     let _integration = integration::Integration::new(&window);
+    let _tags = crate::tags::TagPicker::new(&window);
+    window.set_view_tag_dots(crate::tags::dots_on());
     let _select_tools =
         select_tools::SelectTools::new(dialogs.clone(), config.clone(), state.selection.last_pattern.clone());
     let ops = process.ops.clone();
@@ -1015,6 +1023,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             if section == sidebar::SECTION_SEARCHES {
                 return crate::run_saved_search(index, false);
             }
+            if section == sidebar::SECTION_TAGS {
+                return crate::tags::sidebar_clicked(index, false);
+            }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().go(location);
             }
@@ -1025,6 +1036,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         move |section, index| {
             if section == sidebar::SECTION_SEARCHES {
                 return crate::run_saved_search(index, true);
+            }
+            if section == sidebar::SECTION_TAGS {
+                return crate::tags::sidebar_clicked(index, true);
             }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().open_tab(location, false);
@@ -1308,6 +1322,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             crate::size_map::with_current(|m| items = m.menu_items(x, y));
             menus.size_map_menu(items, popup::Anchor::point(wx, wy));
         }
+    });
+    window.global::<crate::PreviewActions>().on_context_menu({
+        let menus = menus.clone();
+        move |x, y| menus.preview_menu(popup::Anchor::point(x, y))
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu({

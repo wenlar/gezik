@@ -236,7 +236,9 @@ pub fn translate_at(spec: &SearchSpec, roots: &[PathBuf], now: SystemTime, utc_o
         }
     } else {
         let mut includes = Vec::new();
-        for part in spec.pattern.split(';').map(str::trim).filter(|part| !part.is_empty()) {
+        // The `tag:`, `rating:` and `comment:` words are Gezik's to check (spec 12 §7.2).
+        let name = spec.name_pattern();
+        for part in name.split(';').map(str::trim).filter(|part| !part.is_empty()) {
             let (leave_out, body) = match part.strip_prefix('!') {
                 Some(rest) => (true, rest.trim_start()),
                 None => (false, part),
@@ -533,7 +535,7 @@ fn candidates(
             entry.modified = meta.modified().ok();
             entry.created = entry.created.or_else(|| meta.created().ok());
         }
-        if query.passes(&entry.name, entry.is_dir, entry.size, entry.modified) {
+        if query.passes(&entry.name, entry.is_dir, entry.size, entry.modified) && query.passes_meta(|| path.clone()) {
             out.push((path, entry));
         }
     }
@@ -894,6 +896,9 @@ mod tests {
         // Everything does not take İ for i: the Turkish letters become wildcards, Gezik checks after.
         assert_eq!(translate(&spec("istanbul"), &roots()).unwrap().0, r#""D:\Work\" wfn:*?stanbul*"#);
         assert_eq!(translate(&spec("!ılık"), &roots()).unwrap().0, r#""D:\Work\""#, "a Turkish exclusion is Gezik's");
+        // Tags, ratings and comments are Gezik's to read (spec 12 §7.2).
+        assert_eq!(translate(&spec("*.pdf tag:Red rating:4"), &roots()).unwrap().0, r#""D:\Work\" wfn:*.pdf"#);
+        assert_eq!(translate(&spec("tag:\"Project X\""), &roots()).unwrap().0, r#""D:\Work\""#);
     }
 
     #[test]

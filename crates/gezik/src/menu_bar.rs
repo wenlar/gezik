@@ -40,6 +40,21 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
                 let names = crate::tab_sets::names();
                 return crate::tab_sets::with_current(|sets| sets.chosen(id, &names));
             }
+            if let Some(index) = name.strip_prefix("tag:").and_then(|i| i.parse::<usize>().ok()) {
+                return crate::tags::toggle_nth(index + 1, &crate::panes::active_view());
+            }
+            if name == "tag-dots" {
+                return crate::tags::toggle_dots();
+            }
+            if name == "group-tag" {
+                return crate::panes::active_view().set_group(gezik_core::group::GroupBy::Tag);
+            }
+            if name == "group-rating" {
+                return crate::panes::active_view().set_group(gezik_core::group::GroupBy::Rating);
+            }
+            if let Some(stars) = name.strip_prefix("rating:").and_then(|n| n.parse::<u8>().ok()) {
+                return crate::tags::rate(stars, &crate::panes::active_view());
+            }
             if let Some(id) = name.strip_prefix("view-option:").and_then(|i| i.parse::<u32>().ok()) {
                 let options = crate::view_options::current();
                 if let Some(option) = crate::context_menu::view_option_for(id, options) {
@@ -96,6 +111,24 @@ pub fn set_tab_sets(window: &AppWindow, names: &[String]) {
         })
         .collect();
     window.set_bar_tab_sets(ModelRc::new(VecModel::from(entries)));
+}
+
+/// File ▸ Tags: the list's tags; the first seven say their `tag-N` keys (⌃1…⌃7 by default).
+pub fn set_tags(window: &AppWindow, list: &[gezik_core::meta::Tag]) {
+    let entries: Vec<MenuEntry> = list
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let keys = crate::tags::key_label(list, &t.name);
+            let title = if keys.is_empty() { t.name.to_string() } else { format!("{}    {keys}", t.name) };
+            MenuEntry {
+                id: i32::try_from(i).unwrap_or(-1),
+                title: crate::context_menu::menu_title(&title).into(),
+                enabled: true,
+            }
+        })
+        .collect();
+    window.set_bar_tags(ModelRc::new(VecModel::from(entries)));
 }
 
 /// Presses and releases `chord`'s keys in the window, as the keyboard would.
