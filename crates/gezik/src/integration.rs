@@ -703,11 +703,7 @@ fn confirm(action: RowAction) {
             login_add.as_deref(),
         )
         .map(|message| match changes::portable_note() {
-            Some(note) => format!(
-                "{note}
-
-{message}"
-            ),
+            Some(note) => format!("{note}\n\n{message}"),
             None => message,
         });
         crate::windows::post(window_id, move || {

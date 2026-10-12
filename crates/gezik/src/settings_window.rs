@@ -338,7 +338,9 @@ pub fn open_backup(import: bool) {
 fn focus_row(open: &Open, row: usize) {
     open.window.set_focus_row(-1);
     let row = i32::try_from(row).unwrap_or(-1);
-    slint::Timer::single_shot(Duration::ZERO, move || {
+    // After a frame, not on the next turn: the -1 must be seen (the same row asked for again
+    // is a change then), and a row just added must exist and be laid out.
+    slint::Timer::single_shot(Duration::from_millis(50), move || {
         if let Some(open) = current() {
             open.window.set_focus_row(row);
         }
@@ -858,7 +860,9 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 crate::settings_backup::export(store.shared_dir(), &out, &groups).map(|n| (n, out))
             };
             return work(open, &saying, job, |open, result| match (open, result) {
-                (Some(open), Ok((n, out))) => say(open, &format!("Exported {n} files to {}", out.display())),
+                (Some(open), Ok((n, out))) => {
+                    say(open, &format!("Exported {n} {} to {}", if n == 1 { "file" } else { "files" }, out.display()))
+                }
                 (Some(open), Err(why)) => say_bad(open, &why),
                 (None, _) => {}
             });

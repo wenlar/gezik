@@ -120,7 +120,9 @@ impl Backup {
                         "gezik-portable".to_owned(),
                         "On".to_owned(),
                         format!(
-                            "A gezik-portable file next to Gezik keeps everything in this folder.{read_only} Delete                              that file to use this computer's settings folder again (the data stays); Export and                              Import move settings between the two."
+                            "A gezik-portable file next to Gezik keeps everything in this folder.{read_only} Delete \
+                             that file to use this computer's settings folder again (the data stays); Export and \
+                             Import move settings between the two."
                         ),
                         vec![OPEN_DATA],
                     )

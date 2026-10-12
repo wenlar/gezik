@@ -216,6 +216,12 @@ component SettingLine inherits Rectangle {
                 color: root.item.kind == 7 ? Theme.danger : Theme.foreground;
                 font-weight: 600;
                 vertical-alignment: center;
+                // A long title (Portable's folder) wraps, and is cut at the end, rather than push
+                // the control past the window's edge.
+                horizontal-stretch: 1;
+                min-width: 0px;
+                wrap: word-wrap;
+                overflow: elide;
             }
             Rectangle {
                 width: 240px;
