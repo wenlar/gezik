@@ -51,6 +51,8 @@ pub struct Summary {
     pub elapsed: Duration,
     /// The names came from Everything (Task 4).
     pub everything: bool,
+    /// The answer came from Spotlight (macOS, spec 12 §7.1).
+    pub spotlight: bool,
     /// Duplicates: files only in the cloud, not read (spec 11 §9.2).
     pub online: usize,
     /// Duplicates: hard links of a file in a group, counted once.
@@ -95,7 +97,9 @@ impl Visit for Matcher {
     fn folder(&self, dir: &Path, relative: &str, items: Vec<DirItem>) {
         let mut found = Vec::new();
         for item in &items {
-            if !self.query.passes(&item.name, item.is_dir, item.size, item.modified) {
+            if !self.query.passes(&item.name, item.is_dir, item.size, item.modified)
+                || !self.query.passes_meta(|| dir.join(&item.name))
+            {
                 continue;
             }
             let line = match self.query.content() {
@@ -285,7 +289,19 @@ mod tests {
 
     /// Runs `spec` under `root` to the end: the results and the summary.
     fn search(root: &Path, spec: SearchSpec, max: usize) -> (ResultSet, Summary, Vec<usize>) {
-        let query = Query::compile(&spec, &options(max)).unwrap();
+        search_with(root, spec, max, None)
+    }
+
+    fn search_with(
+        root: &Path,
+        spec: SearchSpec,
+        max: usize,
+        reader: Option<crate::query::MetaReader>,
+    ) -> (ResultSet, Summary, Vec<usize>) {
+        let mut query = Query::compile(&spec, &options(max)).unwrap();
+        if let Some(reader) = reader {
+            query.read_meta_with(reader);
+        }
         let walk = Walk::new(vec![root.to_path_buf()], false, 4, WalkRules::new(None, &[], Vec::new()));
         let (tx, rx) = mpsc::channel();
         start(walk, query, move |event| {
@@ -331,6 +347,41 @@ mod tests {
         assert_eq!(summary.found, 3);
         assert!(!summary.cancelled && !summary.limit_reached);
         assert!(summary.folders >= 4);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tags_are_read_only_for_names_that_pass() {
+        use std::sync::atomic::AtomicUsize;
+        let root = tree("tags");
+        for name in ["red.jpg", "blue.jpg", "red.txt"] {
+            std::fs::write(root.join(name), "x").unwrap();
+        }
+        let read = Arc::new(Mutex::new(Vec::new()));
+        let seen = read.clone();
+        let count = Arc::new(AtomicUsize::new(0));
+        let counted = count.clone();
+        let reader = crate::query::MetaReader(Arc::new(move |path: &Path| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            seen.lock().unwrap().push(path.to_path_buf());
+            let name = path.file_name().unwrap().to_string_lossy();
+            let tags = if name.starts_with("red") {
+                vec![gezik_core::meta::Tag::new("Red", Default::default())]
+            } else {
+                vec![]
+            };
+            gezik_core::meta::Meta { tags, ..Default::default() }
+        }));
+        let mut spec = SearchSpec::new(Scope::Folder(root.clone()));
+        spec.pattern = "*.jpg tag:red".into();
+        let (set, _, _) = search_with(&root, spec.clone(), 100, Some(reader.clone()));
+        assert_eq!(keys(&set), ["red.jpg"]);
+        assert_eq!(count.load(Ordering::SeqCst), 2, "red.txt is left out by its name, unread");
+        assert!(read.lock().unwrap().iter().all(|p| p.starts_with(&root)), "whole paths");
+        spec.pattern = "*.jpg".into();
+        count.store(0, Ordering::SeqCst);
+        let (set, _, _) = search_with(&root, spec, 100, Some(reader));
+        assert_eq!((set.len(), count.load(Ordering::SeqCst)), (2, 0), "no criterion: nothing read");
         let _ = std::fs::remove_dir_all(&root);
     }
 

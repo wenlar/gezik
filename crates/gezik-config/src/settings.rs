@@ -274,7 +274,7 @@ pub struct SavedSearch {
 pub const SEARCHES_MAX: usize = 30;
 /// A saved search's folder that is the place shown when it runs.
 pub const HERE: &str = "{here}";
-const SEARCH_KEYS: [&str; 14] = [
+const SEARCH_KEYS: [&str; 18] = [
     "name",
     "folder",
     "pattern",
@@ -289,6 +289,10 @@ const SEARCH_KEYS: [&str; 14] = [
     "hidden",
     "skipped",
     "duplicates",
+    "tags",
+    "untagged",
+    "min-rating",
+    "comment",
 ];
 
 /// One `[[searches]]` entry; the error is why it is left out (sapma 17: whether the folder is a
@@ -1012,6 +1016,18 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
     if spec.kind != KindFilter::Any {
         table.insert("type".into(), text(spec.kind.as_str()));
     }
+    if !spec.tags.is_empty() {
+        table.insert("tags".into(), toml::Value::Array(spec.tags.iter().map(|tag| text(tag)).collect()));
+    }
+    if spec.untagged {
+        table.insert("untagged".into(), toml::Value::Boolean(true));
+    }
+    if spec.min_rating > 0 {
+        table.insert("min-rating".into(), toml::Value::Integer(i64::from(spec.min_rating)));
+    }
+    if !spec.comment.is_empty() {
+        table.insert("comment".into(), text(&spec.comment));
+    }
     table
 }
 
@@ -1059,6 +1075,23 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
     if let Some(modified) = text("modified")? {
         spec.modified = DateRange::parse(modified).map_err(|err| format!("modified: {err}"))?;
     }
+    if let Some(tags) = table.get("tags") {
+        let bad = || format!("tags: expected a list of tag names, got {tags}");
+        for tag in tags.as_array().ok_or_else(bad)? {
+            let name = tag.as_str().ok_or_else(bad)?;
+            gezik_core::meta::check_tag_name(name).map_err(|err| format!("tags: \"{name}\": {err}"))?;
+            spec.tags.push(name.to_owned());
+        }
+    }
+    spec.untagged = flag("untagged")?;
+    if let Some(stars) = table.get("min-rating") {
+        spec.min_rating = stars
+            .as_integer()
+            .and_then(|n| u8::try_from(n).ok())
+            .filter(|n| *n <= 5)
+            .ok_or_else(|| format!("min-rating: expected a number from 0 to 5, got {stars}"))?;
+    }
+    spec.comment = text("comment")?.unwrap_or_default().to_owned();
     if let Some(kind) = text("type")? {
         spec.kind = KindFilter::parse(kind).ok_or_else(|| {
             format!(
@@ -3775,6 +3808,25 @@ split = 0.2
         let table = search_to_toml(&duplicates);
         assert_eq!(table.get("duplicates"), Some(&toml::Value::Boolean(true)));
         assert_eq!(search_from_toml(&table), Ok(duplicates), "[[searches]] duplicates = true");
+        let mut tagged = SearchSpec::new(Scope::AllDrives);
+        tagged.tags = vec!["Red".into(), "Project X".into()];
+        tagged.untagged = true;
+        tagged.min_rating = 4;
+        tagged.comment = "review".into();
+        let table = search_to_toml(&tagged);
+        assert_eq!(table.get("min-rating"), Some(&toml::Value::Integer(4)));
+        assert_eq!(search_from_toml(&table), Ok(tagged), "tags, untagged, min-rating, comment");
+        let bad = |text: &str| search_from_toml(&toml::from_str::<toml::Table>(text).unwrap()).unwrap_err();
+        assert_eq!(
+            bad("folder = \"drives\"
+min-rating = 6"),
+            "min-rating: expected a number from 0 to 5, got 6"
+        );
+        assert!(
+            bad("folder = \"drives\"
+tags = [\"a,b\"]")
+            .starts_with("tags: \"a,b\"")
+        );
     }
 
     #[test]

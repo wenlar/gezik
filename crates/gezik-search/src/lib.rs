@@ -11,5 +11,6 @@ pub mod query;
 pub mod results;
 pub mod run;
 pub mod size;
+pub mod spotlight;
 pub mod tree_scan;
 pub mod walk;

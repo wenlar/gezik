@@ -1,9 +1,14 @@
 //! A search compiled once (spec 3.1-3.3): the name matcher, the kind, the size, the time
-//! window and the content matcher, checked from the cheapest on.
+//! window, the tags, rating and comment (spec 12 §7.2) and the content matcher, checked from
+//! the cheapest on.
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use gezik_core::Entry;
+use gezik_core::meta::Meta;
+use gezik_core::meta_filter::{TagTerm, matches};
 use gezik_core::search::{Day, KindFilter, SearchSpec, SizeRange, TimeWindow, day_of, utc_offset};
 use gezik_platform::fs::DirItem;
 
@@ -39,12 +44,26 @@ pub enum QueryError {
     Content(String),
 }
 
+/// Reads an item's tags, rating and comment: the app's reader (the file's own record and
+/// Gezik's store, `gezik_ops::meta::MetaStore::read`).
+#[derive(Clone)]
+pub struct MetaReader(pub Arc<dyn Fn(&Path) -> Meta + Send + Sync>);
+
+impl std::fmt::Debug for MetaReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("MetaReader")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Query {
     name: NameMatcher,
     kind: KindFilter,
     size: SizeRange,
     window: TimeWindow,
+    /// Every one must hold; read only for an item the rest let through.
+    meta: Vec<TagTerm>,
+    reader: Option<MetaReader>,
     content: Option<ContentMatcher>,
     flat: bool,
     max_results: usize,
@@ -52,7 +71,8 @@ pub struct Query {
 
 impl Query {
     pub fn compile(spec: &SearchSpec, options: &QueryOptions) -> Result<Query, QueryError> {
-        let name = NameMatcher::compile(&spec.pattern, spec.name_regex, spec.match_case).map_err(QueryError::Name)?;
+        let name =
+            NameMatcher::compile(&spec.name_pattern(), spec.name_regex, spec.match_case).map_err(QueryError::Name)?;
         let content = (!spec.content.is_empty())
             .then(|| {
                 ContentMatcher::compile(&spec.content, spec.content_regex, spec.match_case, options.content_max_size)
@@ -65,6 +85,8 @@ impl Query {
             kind: spec.kind,
             size: spec.size,
             window: spec.modified.window(options.now, options.today, options.utc_offset),
+            meta: spec.meta_terms(),
+            reader: None,
             content,
             flat: spec.flat,
             max_results: options.max_results,
@@ -85,6 +107,31 @@ impl Query {
         self.passes_name(name, is_dir)
             && (self.size.is_any() || (!is_dir && self.size.contains(size)))
             && self.window.contains(modified)
+    }
+
+    /// Reads the items' meta with `reader` (without one, every item has none).
+    pub fn read_meta_with(&mut self, reader: MetaReader) {
+        self.reader = Some(reader);
+    }
+
+    /// Whether it asks for tags, a rating or a comment.
+    pub fn has_meta(&self) -> bool {
+        !self.meta.is_empty()
+    }
+
+    /// The tags, rating and comment of the item at `path` (asked only when there are such
+    /// criteria): last of the cheap checks, before the content.
+    pub fn passes_meta(&self, path: impl FnOnce() -> PathBuf) -> bool {
+        if self.meta.is_empty() {
+            return true;
+        }
+        let meta = self.reader.as_ref().map_or_else(Meta::default, |read| (read.0)(&path()));
+        matches(&self.meta, &meta)
+    }
+
+    /// The tag, rating and comment criteria (Spotlight asks for them).
+    pub fn meta_terms(&self) -> &[TagTerm] {
+        &self.meta
     }
 
     pub fn content(&self) -> Option<&ContentMatcher> {
@@ -160,6 +207,37 @@ mod tests {
         let mut folders = spec();
         folders.kind = KindFilter::Folders;
         assert!(Query::compile(&folders, &options()).unwrap().passes("d", true, 0, None));
+    }
+
+    #[test]
+    fn meta_is_read_last_and_only_when_asked_for() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = reads.clone();
+        let reader = MetaReader(Arc::new(move |path: &Path| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            let red = path.ends_with("red.jpg");
+            Meta {
+                tags: if red { vec![gezik_core::meta::Tag::new("Red", Default::default())] } else { vec![] },
+                ..Meta::default()
+            }
+        }));
+        let mut s = spec();
+        s.pattern = "*.jpg".into();
+        let mut plain = Query::compile(&s, &options()).unwrap();
+        plain.read_meta_with(reader.clone());
+        assert!(plain.passes_meta(|| "/w/a.jpg".into()) && !plain.has_meta());
+        assert_eq!(reads.load(Ordering::SeqCst), 0, "no criterion: nothing read");
+        s.pattern = "*.jpg tag:red".into();
+        let mut q = Query::compile(&s, &options()).unwrap();
+        q.read_meta_with(reader);
+        assert!(q.has_meta() && q.passes("x.jpg", false, 0, None), "the word is no name");
+        assert!(q.passes_meta(|| "/w/red.jpg".into()) && !q.passes_meta(|| "/w/blue.jpg".into()));
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+        let mut unread = spec();
+        unread.tags = vec!["Red".into()];
+        let q = Query::compile(&unread, &options()).unwrap();
+        assert!(!q.passes_meta(|| "/w/red.jpg".into()), "no reader: no tags");
     }
 
     #[test]

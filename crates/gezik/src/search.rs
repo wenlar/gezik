@@ -70,6 +70,9 @@ pub fn done_text(summary: &Summary) -> String {
     if summary.everything {
         text.push_str(" via Everything");
     }
+    if summary.spotlight {
+        text.push_str(" via Spotlight (drives it does not index are not in it)");
+    }
     push_unread(&mut text, summary);
     text
 }
