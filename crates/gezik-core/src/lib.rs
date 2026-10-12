@@ -18,6 +18,7 @@ pub mod group;
 pub mod history;
 pub mod kind;
 pub mod layout;
+pub mod meta;
 pub mod nav;
 pub mod ops;
 pub mod palette;
