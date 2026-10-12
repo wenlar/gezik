@@ -17,6 +17,7 @@ pub mod system_journal;
 pub mod tags;
 pub mod theme;
 pub mod theme_rules;
+pub mod theme_source;
 mod view_rules;
 pub mod views_file;
 mod views_writer;

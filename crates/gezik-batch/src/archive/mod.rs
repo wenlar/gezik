@@ -125,6 +125,38 @@ pub fn packed_size(path: &Path) -> u64 {
     }
 }
 
+/// The files of the zip in `bytes` whose names `wanted` takes (the first `max_count`), read
+/// in memory: nothing is written anywhere, so no entry name can lead outside. Each is read up
+/// to `max_each` bytes unpacked, counted as they come (a zip bomb stops there): `None` when it
+/// has more. Folders, links and files that do not read (encrypted, damaged) are left out; no
+/// other entry's content is read.
+pub fn read_zip_entries(
+    bytes: &[u8],
+    wanted: &dyn Fn(&str) -> bool,
+    max_each: u64,
+    max_count: usize,
+) -> IoResult<Vec<(String, Option<Vec<u8>>)>> {
+    let mut archive = ::zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    let mut found = Vec::new();
+    for i in 0..archive.len() {
+        if found.len() == max_count {
+            break;
+        }
+        let Ok(file) = archive.by_index(i) else { continue };
+        if file.is_dir() || file.is_symlink() || !wanted(file.name()) {
+            continue;
+        }
+        let name = file.name().to_owned();
+        let mut data = Vec::new();
+        if file.take(max_each + 1).read_to_end(&mut data).is_err() {
+            continue;
+        }
+        let fits = data.len() as u64 <= max_each;
+        found.push((name, fits.then_some(data)));
+    }
+    Ok(found)
+}
+
 /// Whether Gezik itself can open it (false: 7-Zip is needed).
 pub fn supported(format: &Format) -> bool {
     // RAR needs the `rar` feature (UnRAR's C++).
@@ -548,5 +580,35 @@ mod tests {
         let parts = DateParts { year: 2024, month: 5, day: 17, hour: 13, minute: 45, second: 30 };
         let time = local_time(parts).unwrap();
         assert_eq!(gezik_platform::local_date_parts(time), Some(parts));
+    }
+
+    #[test]
+    fn zip_entries_are_read_in_memory_within_bounds() {
+        use ::zip::write::SimpleFileOptions;
+        let mut zip = ::zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let deflate = SimpleFileOptions::default().compression_method(::zip::CompressionMethod::Deflated);
+        zip.add_directory("r-1/themes/", deflate).unwrap();
+        for (name, data) in
+            [("r-1/a.toml", b"a".repeat(10)), ("r-1/bomb.toml", vec![b' '; 1 << 20]), ("r-1/x.md", vec![1])]
+        {
+            zip.start_file(name, deflate).unwrap();
+            zip.write_all(&data).unwrap();
+        }
+        zip.add_symlink("r-1/link.toml", "../../../etc/passwd", deflate).unwrap();
+        for i in 0..5 {
+            zip.start_file(format!("r-1/t{i}.toml"), deflate).unwrap();
+        }
+        let bytes = zip.finish().unwrap().into_inner();
+        let toml = |name: &str| name.ends_with(".toml") || name.ends_with('/');
+        let found = read_zip_entries(&bytes, &toml, 64, 4).unwrap();
+        let names: Vec<&str> = found.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["r-1/a.toml", "r-1/bomb.toml", "r-1/t0.toml", "r-1/t1.toml"],
+            "no folder, link, .md; 4 at most"
+        );
+        assert_eq!(found[0].1.as_deref(), Some(&b"a".repeat(10)[..]));
+        assert_eq!(found[1].1, None, "1 MB unpacked from a few KB: cut at 64 bytes");
+        assert!(read_zip_entries(b"not a zip", &toml, 64, 4).is_err());
     }
 }
