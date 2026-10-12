@@ -4,16 +4,17 @@
 //! is sent (older ones are stale). Every reply must come within [`LIMIT`] and pass the
 //! protocol's checks, else the worker is ended and the viewer says the PDF could not be shown.
 
+use std::collections::HashMap;
 use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use gezik_core::batch::pdf_view::{Command, Reply, fits, read_hello, read_reply};
 use gezik_platform::ChildProcess;
-use slint::{Rgba8Pixel, SharedPixelBuffer};
+use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use super::zoom::ZoomView;
 
@@ -32,12 +33,17 @@ pub enum Event {
     Died(String),
 }
 
+/// Command numbers, across workers: a late reply of an ended worker never matches a newer
+/// command.
+static NEXT: AtomicU64 = AtomicU64::new(1);
+
 /// The running worker. Dropping it closes the channel: its thread ends the process.
 pub struct Worker {
     commands: Sender<(u64, Command)>,
-    next: u64,
     /// Its thread ended it (set before `Died` is delivered).
     ended: Arc<AtomicBool>,
+    /// The file of its last `open`.
+    pub opened: Option<PathBuf>,
     /// When the preview left PDFs: it is ended [`PARK`] after.
     pub parked: Option<Instant>,
 }
@@ -79,7 +85,7 @@ impl Worker {
                 deliver(0, Event::Died(if tail.is_empty() { why } else { format!("{why}: {tail}") }));
             }
         })?;
-        Ok(Worker { commands, next: 0, ended, parked: None })
+        Ok(Worker { commands, ended, opened: None, parked: None })
     }
 
     /// Whether its process was ended (it failed, or its channel closed).
@@ -89,8 +95,11 @@ impl Worker {
 
     /// Sends `command`; its number (replies carry it), or `None` when the worker is gone.
     pub fn send(&mut self, command: Command) -> Option<u64> {
-        self.next += 1;
-        self.commands.send((self.next, command)).ok().map(|()| self.next)
+        if let Command::Open { pdf, .. } = &command {
+            self.opened = Some(pdf.clone());
+        }
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        self.commands.send((id, command)).ok().map(|()| id)
     }
 }
 
@@ -167,12 +176,15 @@ pub enum State {
     Ready,
     /// pdfium is not there; what to install first for downloading to work.
     NoPdfium(Option<String>),
+    /// The pdfium there does not load (a broken download): get it again.
+    BrokenPdfium,
     Failed,
 }
 
 /// A page picture: drawn at `scale` (physical pixels per point), `region` of the scaled page.
+/// Made into an `Image` once: every redraw (a drag) shows the same one.
 pub struct Shown {
-    pub picture: SharedPixelBuffer<Rgba8Pixel>,
+    pub image: Image,
     pub scale: f32,
     pub region: (u32, u32, u32, u32),
 }
@@ -187,6 +199,12 @@ pub struct PdfView {
     pub zoom: ZoomView,
     /// The page whose size `zoom` has (0: none yet).
     pub sized: u32,
+    /// The sizes of the pages seen (a page turned back to is drawn at once, at its zoom).
+    sizes: HashMap<u32, (f32, f32)>,
+    /// The page was reached going back: its view starts at its bottom once its size is known.
+    from_below: bool,
+    /// The last render failed (a damaged page): the bar says so, the document stays.
+    pub page_failed: bool,
     pub state: State,
     pub shown: Option<Shown>,
     /// The newest command's number: replies to older ones are stale.
@@ -206,6 +224,9 @@ impl PdfView {
             pages: 0,
             zoom: ZoomView::new((612.0, 792.0), scale_factor * 4.0 / 3.0, view),
             sized: 0,
+            sizes: HashMap::new(),
+            from_below: false,
+            page_failed: false,
             state: State::Finding,
             shown: None,
             wanted: 0,
@@ -226,25 +247,53 @@ impl PdfView {
         }
     }
 
-    /// Moves `step` pages (the last page's number unknown while opening); whether it moved.
-    pub fn step(&mut self, step: i64) -> bool {
+    /// Moves `step` pages (the last page's number unknown while opening), the view at the
+    /// new page's top (or its bottom when not `top`: the wheel going back); whether it moved.
+    pub fn step(&mut self, step: i64, top: bool) -> bool {
         let last = if self.pages == 0 { i64::from(u32::MAX) } else { i64::from(self.pages) };
         let page = (i64::from(self.page) + step).clamp(1, last.max(1)) as u32;
-        let moved = page != self.page;
+        if page == self.page {
+            return false;
+        }
         self.page = page;
-        moved
+        self.from_below = !top;
+        if let Some(&size) = self.sizes.get(&page) {
+            self.size_page(size);
+        } else if top {
+            self.zoom.go_top();
+        }
+        true
     }
 
-    /// A picture came for the newest render: page size `(w, h)` points, `width` × `height`.
+    /// The shown page is `size` points: the zoom takes it, then goes to its top or bottom.
+    fn size_page(&mut self, size: (f32, f32)) {
+        self.zoom.set_content(size);
+        self.sized = self.page;
+        if self.from_below { self.zoom.go_bottom() } else { self.zoom.go_top() }
+    }
+
+    /// A picture came for the newest render: page size `(w, h)` points.
     pub fn take_picture(&mut self, page_size: (f32, f32), picture: SharedPixelBuffer<Rgba8Pixel>) {
         let (scale, (x, y, _, _)) =
             gezik_batch::pdf::view::region(page_size.0, page_size.1, self.asked.0, self.asked.1);
         if self.sized != self.page {
-            self.zoom.set_content(page_size);
-            self.sized = self.page;
+            self.sizes.insert(self.page, page_size);
+            self.size_page(page_size);
         }
         let region = (x, y, picture.width(), picture.height());
-        self.shown = Some(Shown { picture, scale, region });
+        self.shown = Some(Shown { image: Image::from_rgba8(picture), scale, region });
+        self.page_failed = false;
+    }
+
+    /// The worker that had `opened` open stopped: this PDF failed if it was the one, else it
+    /// is opened again with a new worker (whether to look for pdfium again).
+    pub fn worker_died(&mut self, opened: Option<&Path>) -> bool {
+        if opened == Some(self.path.as_path()) {
+            self.state = State::Failed;
+            return false;
+        }
+        self.state = State::Finding;
+        true
     }
 
     /// The bar's note and link for its state.
@@ -254,7 +303,9 @@ impl PdfView {
             State::Password { wrong: false } => ("Password protected", "Enter Password…"),
             State::Password { wrong: true } => ("Wrong password", "Enter Password…"),
             State::NoPdfium(_) => ("More pages need pdfium", "Download"),
+            State::BrokenPdfium => ("pdfium could not be loaded", "Download"),
             State::Failed => ("This PDF could not be shown", ""),
+            State::Ready if self.page_failed => ("This page could not be shown", ""),
             State::Ready => ("", ""),
         }
     }
@@ -367,10 +418,10 @@ mod tests {
     #[test]
     fn pages_step_within_the_document_and_a_picture_sizes_the_page() {
         let mut pdf = PdfView::new("a.pdf".into(), 1.0, (400.0, 400.0));
-        assert!(pdf.step(5), "the count is not known yet");
+        assert!(pdf.step(5, true), "the count is not known yet");
         pdf.pages = 3;
         pdf.page = 1;
-        assert!(!pdf.step(-1) && pdf.step(1) && pdf.step(9));
+        assert!(!pdf.step(-1, true) && pdf.step(1, true) && pdf.step(9, true));
         assert_eq!(pdf.page, 3);
         let Command::Render { scale, w, h, .. } = pdf.next_render() else { panic!() };
         assert_eq!((scale, w, h), (0.0, 400, 400), "a new page is fitted first");
@@ -384,7 +435,50 @@ mod tests {
         assert_eq!(pdf.note(), ("Opening…", ""));
         pdf.state = State::Ready;
         assert_eq!(pdf.note(), ("", ""));
+        pdf.page_failed = true;
+        assert_eq!(pdf.note(), ("This page could not be shown", ""), "one bad page keeps the document");
         pdf.state = State::NoPdfium(None);
         assert_eq!(pdf.note(), ("More pages need pdfium", "Download"));
+        pdf.state = State::BrokenPdfium;
+        assert_eq!(pdf.note(), ("pdfium could not be loaded", "Download"));
+    }
+
+    #[test]
+    fn a_page_seen_before_is_drawn_at_its_zoom_from_its_bottom_going_back() {
+        let mut pdf = PdfView::new("a.pdf".into(), 1.0, (400.0, 300.0));
+        (pdf.pages, pdf.state) = (3, State::Ready);
+        pdf.zoom.fit_to(super::super::zoom::Fit::Zoom(2.0));
+        pdf.asked = (0.0, (0, 0, 400, 300));
+        pdf.take_picture((300.0, 600.0), SharedPixelBuffer::new(150, 300));
+        assert!(pdf.step(1, true));
+        assert!(matches!(pdf.next_render(), Command::Render { scale: 0.0, .. }), "page 2's size is not known");
+        // Back to page 1 by the wheel: its size is known, so its bottom at once.
+        assert!(pdf.step(-1, false));
+        assert_eq!(pdf.sized, 1);
+        assert!(pdf.zoom.at_bottom() && !pdf.zoom.at_top());
+        assert!(matches!(pdf.next_render(), Command::Render { page: 1, scale, .. } if scale > 0.0));
+    }
+
+    #[test]
+    fn a_tiny_page_fitted_asks_for_a_scale_the_worker_takes() {
+        use gezik_core::batch::pdf_view::MAX_SCALE;
+        let mut pdf = PdfView::new("a.pdf".into(), 2.0, (3000.0, 3000.0));
+        (pdf.pages, pdf.state) = (1, State::Ready);
+        pdf.asked = (0.0, (0, 0, 3000, 3000));
+        pdf.take_picture((1.0, 1.0), SharedPixelBuffer::new(3000, 3000));
+        let render = pdf.next_render();
+        let Command::Render { scale, .. } = render else { panic!() };
+        assert!(scale <= MAX_SCALE, "{scale}");
+        assert_eq!(Command::parse(&render.to_line()).unwrap(), render);
+    }
+
+    #[test]
+    fn a_dead_worker_fails_its_own_pdf_and_another_opens_again() {
+        let mut pdf = PdfView::new("b.pdf".into(), 1.0, (400.0, 400.0));
+        pdf.state = State::Ready;
+        assert!(pdf.worker_died(Some(Path::new("a.pdf"))), "a.pdf crashed it; b.pdf starts over");
+        assert_eq!(pdf.state, State::Finding);
+        assert!(!pdf.worker_died(Some(Path::new("b.pdf"))));
+        assert_eq!(pdf.state, State::Failed);
     }
 }

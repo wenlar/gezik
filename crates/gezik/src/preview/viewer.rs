@@ -4,7 +4,7 @@
 
 use gezik_config::shortcuts::Key;
 use gezik_core::text::display_width;
-use slint::{Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
+use slint::{Image, ModelRc, VecModel};
 
 use super::hex::HexView;
 use super::pdf::PdfView;
@@ -30,7 +30,8 @@ pub const MAX_ZOOM_PIXELS: u64 = 48_000_000;
 pub struct PictureView {
     /// Its content is the picture's own size; 100% is one picture pixel a physical pixel.
     pub zoom: ZoomView,
-    pub full: Option<SharedPixelBuffer<Rgba8Pixel>>,
+    /// Made into an `Image` once: every redraw (a drag) shows the same one.
+    pub full: Option<Image>,
     /// Its megapixels, when too large to decode whole.
     pub too_large: Option<u64>,
     pub scale_factor: f32,
@@ -85,7 +86,7 @@ impl Viewer {
             info.bar_link = link.into();
             // The last picture stays until the next page's comes.
             if let Some(shown) = &pdf.shown {
-                info.picture = Image::from_rgba8(shown.picture.clone());
+                info.picture = shown.image.clone();
                 info.has_picture = true;
                 place(info, &pdf.zoom, pdf.scale_factor, shown.scale, shown.region);
             }
@@ -93,7 +94,7 @@ impl Viewer {
         } else if let Some(picture) = &self.picture {
             info.zoom_text = zoom_text(&picture.zoom).into();
             if let Some(full) = &picture.full {
-                info.picture = Image::from_rgba8(full.clone());
+                info.picture = full.clone();
             }
             let size = info.picture.size();
             let scale = size.width as f32 / picture.zoom.content().0;

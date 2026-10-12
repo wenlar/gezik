@@ -2,6 +2,8 @@
 //! by dragging, zoomed in steps around the pointer. Pure: sizes in, places out. The content is
 //! measured in its own units (PDF points, picture pixels); the view in physical pixels.
 
+use gezik_core::batch::pdf_view::MAX_SCALE;
+
 /// The zoom steps, 25% to 800%.
 pub const STEPS: [f32; 11] = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0];
 
@@ -49,7 +51,8 @@ impl ZoomView {
             Fit::Width => vw / cw,
             Fit::Zoom(z) => z * self.unit,
         }
-        .max(1e-4)
+        // The PDF view protocol takes no larger scale (a tiny page fitted to a big view).
+        .clamp(1e-4, MAX_SCALE)
     }
 
     /// The zoom as a percentage of 100% (the bar's `125%`).

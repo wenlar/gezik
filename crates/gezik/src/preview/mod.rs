@@ -394,6 +394,9 @@ struct Inner {
     settle_timer: slint::Timer,
     /// When the wheel last turned a page.
     turned: Cell<Option<Instant>>,
+    /// A picture is being decoded at its own size, and the one to decode after it.
+    decoding: Cell<bool>,
+    decode_next: RefCell<Option<PathBuf>>,
 }
 
 #[derive(Clone)]
@@ -422,6 +425,8 @@ impl Preview {
             park_timer: slint::Timer::default(),
             settle_timer: slint::Timer::default(),
             turned: Cell::new(None),
+            decoding: Cell::new(false),
+            decode_next: RefCell::new(None),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
         // Its own preview, not the current window's: a viewer made while a frame is drawn says
@@ -1175,19 +1180,24 @@ impl Preview {
     /// What the worker said: for the newest command of the shown PDF, or that it stopped.
     fn pdf_event(&self, id: u64, event: pdf::Event) {
         let mut render = false;
+        if let pdf::Event::Died(why) = &event {
+            eprintln!("gezik: the PDF view worker stopped: {why}");
+            // Only the one that stopped (a new one may have started since): the PDF it had
+            // open failed; another shown PDF opens again with a new worker.
+            let dead = self.0.pdf_worker.borrow().as_ref().filter(|w| w.ended()).map(|w| w.opened.clone());
+            let Some(opened) = dead else { return };
+            *self.0.pdf_worker.borrow_mut() = None;
+            let again = self.0.viewer.borrow_mut().pdf.as_mut().and_then(|pdf| {
+                let again = pdf.worker_died(opened.as_deref());
+                again.then(|| pdf.path.clone())
+            });
+            if let Some(path) = again {
+                self.find_pdfium(path);
+            }
+            return self.redraw();
+        }
         {
             let mut v = self.0.viewer.borrow_mut();
-            if let pdf::Event::Died(why) = &event {
-                eprintln!("gezik: the PDF view worker stopped: {why}");
-                // Only the one that stopped (a new one may have started since).
-                let mut worker = self.0.pdf_worker.borrow_mut();
-                if worker.as_ref().is_some_and(pdf::Worker::ended) {
-                    *worker = None;
-                }
-                if let Some(pdf) = v.pdf.as_mut() {
-                    pdf.state = State::Failed;
-                }
-            }
             let Some(pdf) = v.pdf.as_mut().filter(|pdf| pdf.wanted == id) else {
                 drop(v);
                 return self.redraw();
@@ -1203,7 +1213,16 @@ impl Preview {
                 pdf::Event::Reply(Reply::WrongPassword) => pdf.state = State::Password { wrong: true },
                 pdf::Event::Reply(Reply::Failed(why)) => {
                     eprintln!("gezik: the PDF could not be shown: {why}");
-                    pdf.state = State::Failed;
+                    if crate::pdf::says_pdfium_failed(&why) {
+                        // A broken library: ended, so a new download can replace its file.
+                        pdf.state = State::BrokenPdfium;
+                        *self.0.pdf_worker.borrow_mut() = None;
+                    } else if pdf.state == State::Ready {
+                        // One page (a damaged one, a scale out of range): the rest still shows.
+                        pdf.page_failed = true;
+                    } else {
+                        pdf.state = State::Failed;
+                    }
                 }
                 pdf::Event::Picture { page_size, picture } => {
                     let first = pdf.sized != pdf.page;
@@ -1241,17 +1260,7 @@ impl Preview {
         if !self.pdf_ready() {
             return false;
         }
-        let moved = {
-            let mut v = self.0.viewer.borrow_mut();
-            let Some(pdf) = v.pdf.as_mut() else { return true };
-            let moved = pdf.step(step);
-            if moved && top {
-                pdf.zoom.go_top();
-            } else if moved {
-                pdf.zoom.go_bottom();
-            }
-            moved
-        };
+        let moved = self.0.viewer.borrow_mut().pdf.as_mut().is_some_and(|pdf| pdf.step(step, top));
         if moved {
             self.0.settle_timer.stop();
             self.pdf_render();
@@ -1281,22 +1290,40 @@ impl Preview {
         let decode = view.too_large.is_none();
         self.0.viewer.borrow_mut().picture = Some(view);
         if decode {
-            let window_id = crate::windows::current();
-            std::thread::spawn(move || {
-                let Ok(decoded) = gezik_platform::decode_image(&path, u32::MAX) else { return };
-                let Some(full) = buffer(decoded.image) else { return };
-                crate::windows::post(window_id, move || {
-                    with_current(|p| p.picture_decoded(&path, full));
-                });
-            });
+            self.decode_full(path);
         }
         true
     }
 
-    fn picture_decoded(&self, path: &Path, full: SharedPixelBuffer<Rgba8Pixel>) {
-        let shown = matches!(&*self.0.viewer_target.borrow(), Target::Entry { path: p, .. } if p == path);
-        if let Some(picture) = self.0.viewer.borrow_mut().picture.as_mut().filter(|_| shown) {
-            picture.full = Some(full);
+    /// Decodes `path` at its own size on a thread, one at a time: while one runs, only the
+    /// newest picture waits (older ones are skipped).
+    fn decode_full(&self, path: PathBuf) {
+        if self.0.decoding.replace(true) {
+            *self.0.decode_next.borrow_mut() = Some(path);
+            return;
+        }
+        let window_id = crate::windows::current();
+        std::thread::spawn(move || {
+            // Straight into the picture's buffer: no third copy.
+            let full =
+                gezik_platform::decode_image_into(&path, SharedPixelBuffer::<Rgba8Pixel>::new, |b| b.make_mut_bytes());
+            crate::windows::post(window_id, move || {
+                with_current(|p| p.picture_decoded(&path, full.ok()));
+            });
+        });
+    }
+
+    fn picture_decoded(&self, path: &Path, full: Option<SharedPixelBuffer<Rgba8Pixel>>) {
+        self.0.decoding.set(false);
+        let shown = |path: &Path| matches!(&*self.0.viewer_target.borrow(), Target::Entry { path: p, .. } if p == path);
+        let shown_now = shown(path);
+        if let (Some(picture), Some(full)) = (self.0.viewer.borrow_mut().picture.as_mut().filter(|_| shown_now), full) {
+            picture.full = Some(Image::from_rgba8(full));
+        }
+        let next = self.0.decode_next.take();
+        let waiting = self.0.viewer.borrow().picture.as_ref().is_some_and(|p| p.full.is_none());
+        if let Some(next) = next.filter(|next| waiting && shown(next)) {
+            self.decode_full(next);
         }
         self.redraw();
     }
@@ -1392,9 +1419,9 @@ impl Preview {
         if pdf_scrolls == Some(true) || (!is_pdf && self.0.viewer.borrow().picture.is_some()) {
             return self.pan(dx, dy);
         }
-        // Up over a PDF's first look starts nothing; down shows page 2.
-        let up_at_start = pdf_scrolls.is_none() && dy > 0.0;
-        if !is_pdf || dy == 0.0 || up_at_start || self.0.turned.get().is_some_and(|t| t.elapsed() < TURN_GAP) {
+        // A PDF's first look (no viewer yet) is not turned by the wheel: nothing starts by itself.
+        if !is_pdf || dy == 0.0 || pdf_scrolls.is_none() || self.0.turned.get().is_some_and(|t| t.elapsed() < TURN_GAP)
+        {
             return;
         }
         self.0.turned.set(Some(Instant::now()));
@@ -1405,6 +1432,17 @@ impl Preview {
         }
     }
 
+    /// pdfium was downloaded: the shown PDF `path` looks for it again.
+    fn look_again(&self, path: &Path) {
+        if let Some(pdf) = self.0.viewer.borrow_mut().pdf.as_mut().filter(|pdf| pdf.path == path) {
+            pdf.state = State::Finding;
+        } else {
+            return;
+        }
+        self.find_pdfium(path.to_path_buf());
+        self.redraw();
+    }
+
     /// The bar's link: download pdfium, or the PDF's password.
     fn bar_link(&self) {
         let (path, state) = {
@@ -1413,18 +1451,12 @@ impl Preview {
             (pdf.path.clone(), pdf.state.clone())
         };
         match state {
+            State::BrokenPdfium => {
+                let again = Rc::new(move || with_current(|p| p.look_again(&path)).unwrap_or_default());
+                crate::archives::with_current(|archives| archives.offer_pdfium(true, None, again, None));
+            }
             State::NoPdfium(hint) => {
-                let again = Rc::new(move || {
-                    with_current(|p| {
-                        if let Some(pdf) = p.0.viewer.borrow_mut().pdf.as_mut().filter(|pdf| pdf.path == path) {
-                            pdf.state = State::Finding;
-                        } else {
-                            return;
-                        }
-                        p.find_pdfium(path.clone());
-                        p.redraw();
-                    });
-                });
+                let again = Rc::new(move || with_current(|p| p.look_again(&path)).unwrap_or_default());
                 crate::archives::with_current(|archives| archives.offer_pdf_pages(hint, again));
             }
             State::Password { wrong } => {
@@ -1723,7 +1755,7 @@ Some folders could not be read"
         assert_eq!((info.bar, info.page), (5, 0));
         let mut view = PictureView::new((4000, 3000), 1.0, (400.0, 300.0));
         assert_eq!(view.too_large, None);
-        view.full = Some(SharedPixelBuffer::new(4000, 3000));
+        view.full = Some(Image::from_rgba8(SharedPixelBuffer::new(4000, 3000)));
         view.zoom.fit_to(Fit::Zoom(1.0));
         let viewer = Viewer { picture: Some(view), ..Viewer::default() };
         let mut info = base.clone();
