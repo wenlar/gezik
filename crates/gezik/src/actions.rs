@@ -158,6 +158,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::EditComment => crate::tags::edit_comment(view),
         Action::CleanTagStore => crate::tags::clean_up_store(),
         Action::Settings => crate::settings_window::open(),
+        Action::EditShortcuts => crate::settings_window::open_shortcuts(),
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

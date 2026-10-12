@@ -70,7 +70,18 @@ shows its default, marked "default".
   the window.
 - A choice opens its list under the row (Up, Down, Enter; Esc closes it). Right-click a row for **Reset to Default**, **Copy
   Key** (`layout.density`) and **Edit in settings.toml** (opens the file with your editor).
-- Lists and tables (`pinned`, `[[commands]]`, rules, the shortcuts …) show how many entries
+- The Keyboard page lists every action's keys, then each `[[commands]]` entry's ("Command:
+  …"); on macOS also the menu bar's ⌘Q, ⌘H, ⌥⌘H and ⌘M, which cannot change. The search box
+  finds them by name and by key (`ctrl+shift` lists the actions with Ctrl+Shift). **Set Key…**
+  (Enter or Space on it) waits for the keys: press them; Esc cancels, Backspace leaves the
+  action no key. A key another action or command has asks "Ctrl+W is used by Close Tab —
+  Replace?" under the row: Replace takes it from that one (it keeps its other keys). Only the
+  changed action is written, as one line in `[shortcuts]` (`copy-path = "mod+alt+c"`, `mod` so
+  the file works on every system); a command's key goes to its own `[[commands]]` entry.
+  **Reset to Default** writes the default keys in place. Keys that type in the file list (a
+  letter alone), the file list's own keys and the Windows key are refused, with the reason at
+  the bottom. `edit-shortcuts` (Keyboard Shortcuts… in the palette) opens this page.
+- Other lists and tables (`pinned`, `[[commands]]`, rules …) show how many entries
   they have and are edited in the file. The tray icon and the global shortcut are changed in
   System Integration.
 - If `settings.toml` does not read, the line at the bottom says which line, and the rows are

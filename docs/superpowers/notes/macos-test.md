@@ -830,6 +830,10 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 367. **A broken file.** Add a line `[layout` to settings.toml in TextEdit and save while the window is open: the line at the bottom says `settings.toml line N: …` and the controls do nothing; fix the line and save: they work again.
 368. **VoiceOver.** With VoiceOver on, Tab to a row's control: it reads the title, the value and "default" when the file does not set it; the pages read as tabs.
 
+### 14b, the shortcuts page
+
+369. **⌘⌥C, ⌘Q.** Settings ▸ Keyboard: the keys show as ⌘⌥C, ⌃⌘C …; Quit Gezik ⌘Q, Hide Gezik ⌘H, Hide Others ⌥⌘H and Minimize ⌘M have no Set Key… button. Copy Path ▸ Set Key…, press ⌘⌥K: the row says ⌥⌘K, `settings.toml` has one new line `copy-path = "mod+alt+k"` under `[shortcuts]` and the menu bar's Copy Path shows ⌥⌘K. Set Key… on New Tab, press ⌘W: "⌘W is used by Close Tab — Replace?" under the row; Replace: New Tab is ⌘W, Close Tab has none. Reset to Default (right-click) on both brings ⌘T and ⌘W back. Write whether ⌘⇧3 or other system keys reach the window at all.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

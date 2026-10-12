@@ -344,6 +344,7 @@ fn perform(
         | Action::SystemIntegration
         | Action::CleanTagStore
         | Action::Settings
+        | Action::EditShortcuts
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow

@@ -38,7 +38,9 @@
 **What changed:** F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E. With two
 panes F5 copies and F6 moves to the other pane; with one, F5 refreshes as before.
 
-Change them in `settings.toml` under `[shortcuts]` (`"mod"` is ⌘ on macOS and Ctrl
+Change them on the Keyboard page of Settings… (Keyboard Shortcuts… in the command palette:
+press the new keys; see [Configuration](configuration.md#settings-window)) or in
+`settings.toml` under `[shortcuts]` (`"mod"` is ⌘ on macOS and Ctrl
 elsewhere, `""` disables one, a list gives several keys). The template lists every action,
 including those with no key by default (`show-trash`, `system-integration`,
 `calculate-folder-sizes`, `toggle-stack` and more). Ctrl+wheel in a folder changes the grid

@@ -914,7 +914,8 @@ mod tests {
                 | Action::CleanTagStore
                 | Action::PreviewHex
                 | Action::PreviewPlay
-                | Action::MoreColumns => continue,
+                | Action::MoreColumns
+                | Action::EditShortcuts => continue,
             };
             assert_eq!(reach(text), Some(action), "{text}");
         }

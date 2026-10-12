@@ -3368,3 +3368,10 @@ yalnız yeniden yüklemede, yenisi yerine geçmeden önce okunur (`settings_wind
 hiçbir şey yok). Gezik açılırken dosya zaten bozuksa önceki metin yoktur: varsayılanlar görünür (ana
 pencere de onlarla çalışır). Exe 27.990.528 B: tabana göre +285.184 B, bütçeyi 23.040 B aşıyor (kabul).
 Kopya `%TEMP%\gezik-gui-14\bin\t14a-fix2.exe`.
+
+## Adım 14, alt parça 14b sonrası
+
+- Keyboard sayfasında, ayar satırlarından sonra her eylemin (başlığa göre), her `[[commands]]` girdisinin ("Command: X") ve macOS'ta menü çubuğunun değiştirilemez tuşlarının (⌘Q, ⌘H, ⌥⌘H, ⌘M) satırı; arama başlık, eylem adı ve tuşta (`ctrl+shift`, macOS'ta `cmd+…`). `edit-shortcuts` (Keyboard Shortcuts…, `Action::ALL` 126, tuşsuz, yalnız palette) pencereyi bu sayfada açar.
+- `Set Key…` (Enter/Space) tuşu bekler: ana pencerelerle aynı okuma (`chord_from_press`; pencereye `note_key` kancası), yalnız değiştirici bekler, Esc iptal, Backspace tuşsuz; dosya listesinin ve menü çubuğunun tuşları, Windows/Super tuşu, tek başına harf ve AltGr'nin yazdığı karakter nedeniyle reddedilir. Başkasının tuşu satırın altında `Replace`/`Cancel` sorar; `taken_by` tabloyu yükleme kurallarıyla yeniden okuyarak kaybedeni bulur (F5 paylaşımı soru açmaz).
+- Yazma: eylem `SettingsChange::Value` ile `[shortcuts]`'ta tek satır (`mod` ile, şablondaki biçimde); komut `SettingsChange::CommandShortcut` ile kendi girdisinde. `Reset to Default` varsayılan metinleri yerinde yazar.
+- Açık kalanlar: GUI çalıştırılmadı (Windows ekran testi bekliyor); Reset çakışma sormaz; ölü tuşlu rakam (Türkçe Q Ctrl+Shift+3) yakalanmaz; Keyboard sayfası ≈ 130 satır kurar (14a'nın satır bileşeni, sanallaştırma yok): açılışı ve süzmesi ekranda ölçülmeli. Exe 28.031.488 B: 14a (162dc6a) 27.990.528 B'ye göre +40.960 B (bütçe +262.144). Kopya `%TEMP%\gezik-gui-14\bin\t14b.exe`.
