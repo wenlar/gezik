@@ -259,6 +259,25 @@ pub const SAVED_SEARCH_FIRST: u32 = 1610;
 pub const SAVED_SEARCH_DELETE_FIRST: u32 = 1640;
 pub const SAVED_SEARCH_MAX: u32 = 30;
 
+// The preview's menu (spec 13 §10.3: 2600–2619).
+pub const PREVIEW_HEX: u32 = 2600;
+pub const PREVIEW_TEXT: u32 = 2601;
+pub const PREVIEW_WRAP: u32 = 2602;
+
+/// Right-click on the preview: hex or back, and wrap for text.
+pub fn preview_items(hex: bool, file: bool, wrap: Option<bool>) -> Vec<(u32, String, bool)> {
+    let mut items = Vec::new();
+    if hex {
+        items.push((PREVIEW_TEXT, "Show as Text".to_owned(), true));
+    } else if file {
+        items.push((PREVIEW_HEX, "Show as Hex".to_owned(), true));
+    }
+    if let Some(on) = wrap {
+        items.push((PREVIEW_WRAP, marked(on, "Wrap Lines"), true));
+    }
+    items
+}
+
 /// The results' column header menu.
 pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
     let mut out: Vec<(u32, String)> = ColumnKey::RESULTS
@@ -1005,6 +1024,7 @@ pub fn view_items(
     out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
     out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
     out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
+    out.push((PREVIEW_HEX, "    Show Preview as Hex".to_owned()));
     out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));
     out.push((SHOW_HISTORY, "    Operation history".to_owned()));
     out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
@@ -1223,6 +1243,8 @@ enum Subject {
     Job(i32),
     /// The size map's rectangle menu (items by id).
     SizeMap,
+    /// The preview's viewer.
+    Preview,
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -1981,6 +2003,13 @@ impl Menus {
         self.open_slint_entries(&items, Vec::new(), at);
     }
 
+    /// Right-click on the preview's viewer, at `at`.
+    pub fn preview_menu(&self, at: Anchor) {
+        let (hex, file, wrap) = self.preview.viewer_state();
+        *self.subject.borrow_mut() = Some(Subject::Preview);
+        self.open_slint_entries(&preview_items(hex, file, wrap), Vec::new(), at);
+    }
+
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
     pub fn info_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Info);
@@ -2192,6 +2221,8 @@ impl Menus {
                 crate::compare::select_differences()
             }
             (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
+            (PREVIEW_HEX | PREVIEW_TEXT, Subject::Preview) => _ = self.preview.toggle_hex(),
+            (PREVIEW_WRAP, Subject::Preview) => self.preview.toggle_wrap(),
             (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
                 let rows = std::mem::take(&mut *self.rows.borrow_mut());
@@ -2366,6 +2397,7 @@ impl Menus {
             (SORT_DESC, Subject::View) => crate::panes::active_view()
                 .set_sort(SortSpec { dir: SortDir::Desc, ..crate::panes::active_view().sort() }),
             (PREVIEW_PANE, Subject::View) => self.preview.toggle_pane(),
+            (PREVIEW_HEX, Subject::View) => self.preview.show_hex(),
             (TWO_PANES, Subject::View) => crate::dual::toggle(),
             (SYNC_BROWSING, Subject::View) => crate::dual::toggle_sync(),
             (SWAP_PANES, Subject::View) => crate::dual::swap(),
@@ -2786,6 +2818,7 @@ mod tests {
             SORT_ASC,
             SORT_DESC,
             PREVIEW_PANE,
+            PREVIEW_HEX,
             TOGGLE_STACK,
             SHOW_HISTORY,
             APPLY_TO_ALL,
@@ -3049,6 +3082,7 @@ mod tests {
             SORT_ASC,
             SORT_DESC,
             PREVIEW_PANE,
+            PREVIEW_HEX,
             APPLY_TO_ALL,
             RESET_FOLDER,
             SYSTEM_INTEGRATION,
@@ -3623,6 +3657,7 @@ mod tests {
                 SORT_ASC,
                 SORT_DESC,
                 PREVIEW_PANE,
+                PREVIEW_HEX,
                 TOGGLE_STACK,
                 SHOW_HISTORY,
                 HIDE_EXTENSIONS,
@@ -3692,7 +3727,7 @@ mod tests {
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[15..],
+            &ids[16..],
             [
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
@@ -3705,9 +3740,9 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(items[15].1.starts_with("• ") && items[16].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[17].1.starts_with("• "));
-        assert_eq!(items[18].1.starts_with("• "), options.show_hidden);
+        assert!(items[16].1.starts_with("• ") && items[17].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[18].1.starts_with("• "));
+        assert_eq!(items[19].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
@@ -3837,5 +3872,17 @@ mod tests {
         assert_eq!(subs[0].items[0], (TAG_COLOR_FIRST + 6, "• Red".to_owned(), true), "Finder's number");
         assert_eq!(subs[0].items[7].0, TAG_COLOR_FIRST, "No color");
         assert!(subs[0].items.iter().chain(&items).all(|(id, _, _)| (2400..2600).contains(id)), "step 12's range");
+    }
+
+    #[test]
+    fn the_preview_menu_offers_hex_or_text_and_wrap() {
+        let ids = |items: Vec<(u32, String, bool)>| items.iter().map(|i| i.0).collect::<Vec<_>>();
+        assert_eq!(ids(preview_items(false, true, Some(true))), [PREVIEW_HEX, PREVIEW_WRAP]);
+        assert_eq!(ids(preview_items(true, true, None)), [PREVIEW_TEXT]);
+        assert!(preview_items(false, false, None).is_empty(), "a folder");
+        assert!(preview_items(false, true, Some(true))[1].1.starts_with("• "));
+        for id in [PREVIEW_HEX, PREVIEW_TEXT, PREVIEW_WRAP] {
+            assert!((2600..2620).contains(&id), "spec 13 §10.3");
+        }
     }
 }

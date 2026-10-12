@@ -14,7 +14,14 @@ use std::time::{Duration, SystemTime};
 use gezik_platform::{IconTarget, Rgba};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
-use crate::{AppWindow, PreviewInfo};
+use crate::{AppWindow, PreviewActions, PreviewInfo};
+
+mod hex;
+mod scroller;
+mod text;
+mod viewer;
+
+use viewer::{Place, Room, Viewer};
 
 /// How much of a text file is shown.
 pub const TEXT_BYTES: usize = 64 * 1024;
@@ -120,6 +127,14 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     }
 }
 
+/// The same file or folder (its size and dates may have changed).
+fn same_item(a: &Target, b: &Target) -> bool {
+    match (a, b) {
+        (Target::Entry { path: p, is_dir: d, .. }, Target::Entry { path: q, is_dir: e, .. }) => p == q && d == e,
+        _ => a == b,
+    }
+}
+
 /// A one-place mailbox: [`Slot::put`] replaces what is waiting, [`Slot::take`] waits for
 /// something. The preview worker only ever sees the latest request this way.
 pub struct Slot<T> {
@@ -176,7 +191,7 @@ fn start_worker(current: Arc<AtomicU64>) -> Arc<Slot<Request>> {
             let current = current.clone();
             crate::windows::post(window_id, move || {
                 if current.load(Ordering::SeqCst) == generation {
-                    with_current(|p| p.publish(describe(&target, Some(body))));
+                    with_current(|p| p.loaded(target, body));
                 }
             });
         }
@@ -267,10 +282,8 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                     info.picture = Image::from_rgba8(picture);
                     info.has_picture = true;
                 }
-                Some(Body::Text(text)) => {
-                    info.kind = 2;
-                    info.text = text.into();
-                }
+                // The viewer shows it (`Preview::loaded`).
+                Some(Body::Text(_)) => info.kind = 2,
                 Some(Body::Folder { count, more }) => lines.push(match (count, more) {
                     (_, true) => format!("{}+ items", with_commas(MAX_COUNTED)),
                     (n, false) => crate::stack::count_text(n),
@@ -328,13 +341,24 @@ struct Inner {
     /// What is shown now (the quick look window opens with it).
     info: RefCell<PreviewInfo>,
     quick_look: RefCell<Option<crate::quick_look::QuickLook>>,
+    /// The shown file's viewer, and the target it is for (spec 13 §3.1).
+    viewer: RefCell<Viewer>,
+    viewer_target: RefCell<Target>,
+    /// The viewer's room in this window and in quick look.
+    room: Cell<Room>,
+    room_quick: Cell<Room>,
+    /// Text and code wrap (`state.toml [preview] wrap-text`, `wrap-code`).
+    wrap: Cell<(bool, bool)>,
+    /// Where the pane's viewer was when quick look opened: it goes back there (quick look
+    /// scrolls on its own).
+    pane_place: RefCell<Option<(Target, Place)>>,
 }
 
 #[derive(Clone)]
 pub struct Preview(Rc<Inner>);
 
 impl Preview {
-    pub fn new(window: &AppWindow) -> Preview {
+    pub fn new(window: &AppWindow, wrap: (bool, bool)) -> Preview {
         let preview = Preview(Rc::new(Inner {
             window: window.as_weak(),
             pane_open: Cell::new(false),
@@ -343,8 +367,63 @@ impl Preview {
             timer: slint::Timer::default(),
             info: RefCell::new(PreviewInfo::default()),
             quick_look: RefCell::new(None),
+            viewer: RefCell::default(),
+            viewer_target: RefCell::new(Target::Nothing),
+            room: Cell::new((80, 40)),
+            room_quick: Cell::new((80, 40)),
+            wrap: Cell::new(wrap),
+            pane_place: RefCell::new(None),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
+        // Its own preview, not the current window's: a viewer made while a frame is drawn says
+        // its room then, when no window may be current.
+        let weak = Rc::downgrade(&preview.0);
+        let here = move |f: &dyn Fn(&Preview) -> bool| weak.upgrade().is_some_and(|inner| f(&Preview(inner)));
+        let actions = window.global::<PreviewActions>();
+        actions.on_resized({
+            let here = here.clone();
+            move |cols, rows| {
+                _ = here(&|p| {
+                    p.resized(false, cols, rows);
+                    true
+                })
+            }
+        });
+        actions.on_scrolled({
+            let here = here.clone();
+            move |rows| {
+                _ = here(&|p| {
+                    p.scroll_viewer(rows);
+                    true
+                })
+            }
+        });
+        actions.on_jumped({
+            let here = here.clone();
+            move |fraction| {
+                _ = here(&|p| {
+                    p.jump_viewer(fraction);
+                    true
+                })
+            }
+        });
+        actions.on_toggle_hex({
+            let here = here.clone();
+            move || _ = here(&Preview::toggle_hex)
+        });
+        actions.on_toggle_wrap({
+            let here = here.clone();
+            move || {
+                _ = here(&|p| {
+                    p.toggle_wrap();
+                    true
+                })
+            }
+        });
+        actions.on_key(move |event| {
+            let m = event.modifiers;
+            here(&|p| p.viewer_key(&event.text, (m.control, m.alt, m.shift, m.meta), true))
+        });
         preview
     }
 
@@ -387,7 +466,7 @@ impl Preview {
         }
         if !self.active() {
             // The preview column closed (a folder selected, the list chosen): its picture goes.
-            if *self.0.info.borrow() != PreviewInfo::default() {
+            if self.0.info.borrow().kind != 0 {
                 self.release();
             }
             return;
@@ -407,6 +486,12 @@ impl Preview {
             return;
         }
         let target = crate::panes::active_view().preview_target();
+        // Another file: what its viewer holds goes (spec 13 §3.1). The same one keeps its place
+        // (the pane was resized, the list refreshed, a log grew).
+        if !same_item(&self.0.viewer_target.borrow(), &target) {
+            *self.0.viewer.borrow_mut() = Viewer::default();
+        }
+        *self.0.viewer_target.borrow_mut() = target.clone();
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.publish(describe(&target, None));
         if !matches!(target, Target::Entry { .. }) {
@@ -432,7 +517,13 @@ impl Preview {
     }
 
     fn publish(&self, info: PreviewInfo) {
-        if let Some(window) = self.0.window.upgrade() {
+        self.publish_to(info, true);
+    }
+
+    /// Shows `info`, in this window too unless `main` is false (quick look scrolled).
+    fn publish_to(&self, mut info: PreviewInfo, main: bool) {
+        self.0.viewer.borrow().fill(&mut info, self.room());
+        if main && let Some(window) = self.0.window.upgrade() {
             window.set_preview(info.clone());
         }
         if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
@@ -532,6 +623,28 @@ impl Preview {
         );
         match opened {
             Ok(quick_look) => {
+                let place = self.0.viewer.borrow().place();
+                *self.0.pane_place.borrow_mut() = Some((self.0.viewer_target.borrow().clone(), place));
+                // Its viewer's events act in this window's preview.
+                let actions = quick_look.viewer_actions();
+                let here = move |f: &dyn Fn(&Preview)| {
+                    crate::windows::with_window(id, |_| with_current(f));
+                };
+                actions.on_resized(move |cols, rows| here(&|p| p.resized(true, cols, rows)));
+                actions.on_scrolled(move |rows| here(&|p| p.scroll_viewer(rows)));
+                actions.on_jumped(move |fraction| here(&|p| p.jump_viewer(fraction)));
+                actions.on_toggle_hex(move || here(&|p| _ = p.toggle_hex()));
+                actions.on_toggle_wrap(move || here(&Preview::toggle_wrap));
+                actions.on_key(move |event| {
+                    let m = event.modifiers;
+                    crate::windows::with_window(id, |_| {
+                        with_current(|p| p.quick_look_key(&event.text, m.control, m.alt, m.shift, m.meta))
+                    })
+                    .flatten()
+                    .unwrap_or(false)
+                });
+                // Its viewer may have said its room before anyone listened.
+                actions.set_ask(actions.get_ask() + 1);
                 *self.0.quick_look.borrow_mut() = Some(quick_look);
                 self.refresh();
             }
@@ -545,8 +658,16 @@ impl Preview {
         if let Some(quick_look) = quick_look {
             quick_look.close();
         }
+        if let Some((target, place)) = self.0.pane_place.take()
+            && same_item(&target, &self.0.viewer_target.borrow())
+        {
+            self.0.viewer.borrow_mut().set_place(place);
+        }
         if !self.active() {
             self.release();
+        } else if self.0.viewer.borrow().shown() {
+            // Back to this window's room.
+            self.redraw();
         }
     }
 
@@ -565,6 +686,9 @@ impl Preview {
     fn quick_look_key(&self, text: &str, ctrl: bool, alt: bool, shift: bool, meta: bool) -> bool {
         use gezik_config::shortcuts::{Key, Platform};
         use gezik_core::layout::Move;
+        if self.viewer_key(text, (ctrl, alt, shift, meta), false) {
+            return true;
+        }
         let Some(chord) = crate::keys::chord_from_slint(text, ctrl, alt, shift, meta, Platform::current()) else {
             return false;
         };
@@ -596,7 +720,146 @@ impl Preview {
     fn release(&self) {
         self.0.timer.stop();
         self.0.generation.fetch_add(1, Ordering::SeqCst);
+        *self.0.viewer.borrow_mut() = Viewer::default();
+        *self.0.viewer_target.borrow_mut() = Target::Nothing;
         self.publish(PreviewInfo::default());
+    }
+
+    /// The worker's result: text gets its viewer, from the start the worker read.
+    fn loaded(&self, target: Target, mut body: Body) {
+        if let (Body::Text(head), Target::Entry { path, size, .. }) = (&mut body, &target)
+            && self.0.viewer.borrow().text.is_none()
+            && same_item(&self.0.viewer_target.borrow(), &target)
+        {
+            let size = size.unwrap_or(head.len() as u64);
+            let view = text::TextView::from_head(path, size, std::mem::take(head), self.0.wrap.get());
+            self.0.viewer.borrow_mut().text = Some(view);
+        }
+        self.publish(describe(&target, Some(body)));
+    }
+
+    /// The viewer's room where it is seen: quick look's while it is open.
+    fn room(&self) -> Room {
+        if self.quick_look_open() { self.0.room_quick.get() } else { self.0.room.get() }
+    }
+
+    /// Shows the viewer's rows again (it scrolled, its room changed).
+    fn redraw(&self) {
+        let info = self.0.info.borrow().clone();
+        self.publish_to(info, !self.quick_look_open());
+    }
+
+    /// The viewer has `cols` × `rows` in this window or in quick look.
+    fn resized(&self, quick: bool, cols: i32, rows: i32) {
+        let room = (usize::try_from(cols).unwrap_or(1).max(1), usize::try_from(rows).unwrap_or(1).max(1));
+        let cell = if quick { &self.0.room_quick } else { &self.0.room };
+        if cell.replace(room) != room && quick == self.quick_look_open() && self.0.viewer.borrow().shown() {
+            self.redraw();
+        }
+    }
+
+    fn scroll_viewer(&self, rows: i32) {
+        let room = self.room();
+        self.0.viewer.borrow_mut().scroll(i64::from(rows), room);
+        self.redraw();
+    }
+
+    fn jump_viewer(&self, fraction: f32) {
+        let room = self.room();
+        self.0.viewer.borrow_mut().jump(fraction, room);
+        self.redraw();
+    }
+
+    /// Hex, or back to the text or picture (spec 13 §4.4); whether the shown item is a file.
+    pub fn toggle_hex(&self) -> bool {
+        let Target::Entry { path, is_dir: false, size, .. } = self.0.viewer_target.borrow().clone() else {
+            return false;
+        };
+        let shown = self.0.viewer.borrow().hex.is_some();
+        if shown {
+            self.0.viewer.borrow_mut().hex = None;
+        } else if gezik_platform::only_in_cloud(&path) {
+            // Reading it would download it.
+            if let Some(window) = self.0.window.upgrade() {
+                window.set_status("This file is only in the cloud: it is not read".into());
+            }
+            return true;
+        } else {
+            let size = size.or_else(|| std::fs::metadata(&path).ok().map(|m| m.len())).unwrap_or(0);
+            let at = self.0.viewer.borrow().text.as_ref().map_or(0, text::TextView::file_offset);
+            self.0.viewer.borrow_mut().hex = Some(hex::HexView::new(&path, size).starting_at(at));
+        }
+        self.redraw();
+        true
+    }
+
+    /// `preview-hex`: the selected file as hex (the pane opens if nothing shows the preview).
+    pub fn show_hex(&self) {
+        if !self.active() {
+            self.set_pane_open(true);
+        }
+        self.toggle_hex();
+    }
+
+    /// Wrap on or off for the shown text; remembered for text or code (state.toml).
+    pub fn toggle_wrap(&self) {
+        let (mut wrap_text, mut wrap_code) = self.0.wrap.get();
+        {
+            let mut viewer = self.0.viewer.borrow_mut();
+            let Some(view) = viewer.text.as_mut() else { return };
+            view.set_wrap(!view.wrap);
+            if view.is_code() {
+                wrap_code = view.wrap;
+            } else {
+                wrap_text = view.wrap;
+            }
+        }
+        self.0.wrap.set((wrap_text, wrap_code));
+        if let Some(store) = crate::windows::config() {
+            store.update_state(|state| state.preview_wrap = Some((wrap_text, wrap_code)));
+        }
+        self.redraw();
+    }
+
+    /// For the preview's menu: hex is shown, the item is a file, the text's wrap.
+    pub fn viewer_state(&self) -> (bool, bool, Option<bool>) {
+        let viewer = self.0.viewer.borrow();
+        let file = matches!(*self.0.viewer_target.borrow(), Target::Entry { is_dir: false, .. });
+        let wrap = viewer.text.as_ref().filter(|_| viewer.hex.is_none()).map(|t| t.wrap);
+        (viewer.hex.is_some(), file, wrap)
+    }
+
+    /// The viewer's own keys (spec 13 §3.2): Page Up/Down, Home/End, H, W; in the pane also
+    /// the arrows, and Esc gives the keyboard back to the list.
+    fn viewer_key(&self, text: &str, (ctrl, alt, shift, meta): (bool, bool, bool, bool), pane: bool) -> bool {
+        use gezik_config::shortcuts::{Key, Platform};
+        let Some(chord) = crate::keys::chord_from_slint(text, ctrl, alt, shift, meta, Platform::current()) else {
+            return false;
+        };
+        if chord.ctrl || chord.alt || chord.meta || chord.shift {
+            return false;
+        }
+        match chord.key {
+            Key::Char('h') => self.toggle_hex(),
+            Key::Char('w') if self.viewer_state().2.is_some() => {
+                self.toggle_wrap();
+                true
+            }
+            Key::Escape if pane => {
+                if let Some(window) = self.0.window.upgrade() {
+                    window.invoke_focus_list();
+                }
+                true
+            }
+            key => {
+                let room = self.room();
+                let used = self.0.viewer.borrow_mut().key(key, pane, room);
+                if used {
+                    self.redraw();
+                }
+                used
+            }
+        }
     }
 }
 
@@ -762,7 +1025,7 @@ mod tests {
         assert!(loading.loading && loading.kind == 3);
         assert_eq!(loading.details.as_str(), "Thing\n2.0 KB");
         let text = describe(&file, Some(Body::Text("hi".into())));
-        assert_eq!((text.kind, text.text.as_str(), text.loading), (2, "hi", false));
+        assert_eq!((text.kind, text.loading), (2, false));
         let picture = describe(&file, Some(Body::Picture(SharedPixelBuffer::new(2, 2), Some((300, 200)))));
         assert_eq!(picture.kind, 1);
         assert!(picture.has_picture && picture.details.ends_with("300 × 200 pixels"));
@@ -814,5 +1077,43 @@ Some folders could not be read"
     fn utf16_without_a_mark_shows_as_text() {
         let bytes: Vec<u8> = "Satır bir\r\nSatır iki".encode_utf16().flat_map(u16::to_le_bytes).collect();
         assert_eq!(decode_text(&bytes).as_deref(), Some("Satır bir\r\nSatır iki"));
+    }
+
+    #[test]
+    fn the_viewer_fills_the_bar_and_rows_and_leaves_an_unused_preview_alone() {
+        use slint::Model;
+        let mut info = PreviewInfo::default();
+        Viewer::default().fill(&mut info, (80, 40));
+        let d = PreviewInfo::default();
+        assert!(
+            info.rows == d.rows && info.bar == 0 && info.scroll_size == d.scroll_size,
+            "nothing new while nothing is shown"
+        );
+        let file = entry(PathBuf::from("/x/a.rs"), false);
+        let mut info = describe(&file, Some(Body::Picture(SharedPixelBuffer::new(2, 2), None)));
+        Viewer::default().fill(&mut info, (80, 40));
+        assert_eq!(info.bar, 3, "a file offers Hex");
+        let text = text::TextView::from_head(Path::new("/x/a.rs"), 9, "fn x\ny\n".into(), (true, false));
+        let viewer = Viewer { text: Some(text), hex: None };
+        let mut info = describe(&file, Some(Body::Text(String::new())));
+        viewer.fill(&mut info, (80, 40));
+        assert_eq!((info.bar, info.gutter, info.bar_text.as_str(), info.wrap), (1, 1, "2 lines", false));
+        assert_eq!(info.rows.row_count(), 2);
+        let first = info.rows.row_data(0).unwrap();
+        assert_eq!((first.number.as_str(), first.parts.row_data(0).unwrap().class), ("1", 1), "a keyword");
+    }
+
+    #[test]
+    fn the_viewer_goes_back_to_a_place_and_knows_its_widest_row() {
+        use slint::Model;
+        let text = text::TextView::from_head(Path::new("/x/a.txt"), 12, "a\nbbbb\nc\nd\n".into(), (false, false));
+        let mut viewer = Viewer { text: Some(text), hex: None };
+        let place = viewer.place();
+        viewer.scroll(2, (80, 2));
+        viewer.set_place(place);
+        let mut info = PreviewInfo::default();
+        viewer.fill(&mut info, (80, 2));
+        assert_eq!(info.rows.row_data(0).unwrap().number.as_str(), "1", "back at the top");
+        assert_eq!(info.max_cols, 4, "bbbb");
     }
 }
