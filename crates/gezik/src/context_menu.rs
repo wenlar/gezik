@@ -278,6 +278,8 @@ pub const PREVIEW_PLAY: u32 = 2611;
 pub const PREVIEW_BACK: u32 = 2612;
 pub const PREVIEW_FORWARD: u32 = 2613;
 pub const PREVIEW_MUTE: u32 = 2614;
+/// A property row's value to the clipboard (13d).
+pub const PREVIEW_COPY: u32 = 2615;
 
 /// Right-click on the preview: a PDF's pages and the zoom (`surface` 4 a PDF, 5 a picture), the
 /// player (6), the bar's `link`, hex or back, and wrap for text.
@@ -1290,6 +1292,8 @@ enum Subject {
     SizeMap,
     /// The preview's viewer.
     Preview,
+    /// A property row of the preview, by its value.
+    PreviewValue(String),
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -2056,6 +2060,12 @@ impl Menus {
         self.open_slint_entries(&preview_items(hex, file, wrap, surface), Vec::new(), at);
     }
 
+    /// Right-click on a property row of the preview (13d): Copy Value.
+    pub fn preview_value_menu(&self, value: String, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::PreviewValue(value));
+        self.open_slint_entries(&[(PREVIEW_COPY, "Copy Value".to_owned(), true)], Vec::new(), at);
+    }
+
     /// One of the Info window's ▾ menus (info.rs builds it): `items` under its button.
     pub fn info_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
         *self.subject.borrow_mut() = Some(Subject::Info);
@@ -2269,6 +2279,17 @@ impl Menus {
             (id, Subject::SizeMap) => crate::size_map::with_current(|map| map.menu_chosen(id)),
             (PREVIEW_HEX | PREVIEW_TEXT, Subject::Preview) => _ = self.preview.toggle_hex(),
             (PREVIEW_WRAP, Subject::Preview) => self.preview.toggle_wrap(),
+            (PREVIEW_COPY, Subject::PreviewValue(value)) => {
+                crate::panes::active_view().note(match gezik_platform::clipboard::write_text(&value) {
+                    Ok(()) => "Copied the value".to_owned(),
+                    Err(gezik_platform::clipboard::ClipboardError::Unsupported) => {
+                        "No system clipboard here".to_owned()
+                    }
+                    Err(gezik_platform::clipboard::ClipboardError::Failed(why)) => {
+                        format!("Cannot use the clipboard: {why}")
+                    }
+                })
+            }
             (PREVIEW_PREVIOUS_PAGE..=PREVIEW_MUTE, Subject::Preview) => self.preview.surface_menu(id),
             (TOOLS_SIZE_MAP, Subject::Row(path) | Subject::Background(path)) => crate::size_map::open_at(path),
             (CONVERT, Subject::Row(_) | Subject::Rows(_)) => {
@@ -3778,7 +3799,7 @@ mod tests {
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
         assert_eq!(
-            &ids[16..],
+            &ids[17..],
             [
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
@@ -3791,9 +3812,9 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(items[16].1.starts_with("• ") && items[17].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[18].1.starts_with("• "));
-        assert_eq!(items[19].1.starts_with("• "), options.show_hidden);
+        assert!(items[17].1.starts_with("• ") && items[18].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[19].1.starts_with("• "));
+        assert_eq!(items[20].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
@@ -3958,7 +3979,7 @@ mod tests {
             "a player: no zoom"
         );
         assert_eq!(player[0].1, "Download ffmpeg…");
-        for id in [PREVIEW_HEX, PREVIEW_TEXT, PREVIEW_WRAP, PREVIEW_PLAY, PREVIEW_MUTE] {
+        for id in [PREVIEW_HEX, PREVIEW_TEXT, PREVIEW_WRAP, PREVIEW_PLAY, PREVIEW_MUTE, PREVIEW_COPY] {
             assert!((2600..2620).contains(&id), "spec 13 §10.3");
         }
     }

@@ -13,6 +13,7 @@ pub mod drop_names;
 pub mod duplicates;
 pub mod elevated;
 pub mod export;
+pub mod fields;
 pub mod file_filter;
 pub mod group;
 pub mod highlight;

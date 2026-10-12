@@ -159,6 +159,11 @@ write-to-files = true
 # Tag dots beside names: "auto" (macOS: on; else on once you tag a file), true or false.
 dots = "auto"
 
+[preview]
+# The preview pane and Quick Look show a file's properties under its facts (camera, artist,
+# length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read.
+properties = true
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E.

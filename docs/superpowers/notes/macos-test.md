@@ -799,6 +799,14 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 377. **Music.** An MP3 with a cover: the poster is its cover (Finder's thumbnail), `▶` plays it, the time and seek bar move, the end stops at the full length and `▶` starts again from the start.
 378. **Processes go.** While a video plays select another file: within a second `ps ax | grep ffmpeg` shows none and the sound stops; Activity Monitor's Gezik memory goes back within a few MB of before. Close the preview pane while playing: the same.
 
+### 13d, file properties
+
+13d uses 379–381. First `cargo test -p gezik-batch fields` and `cargo test -p gezik-core fields`; paste the output.
+
+379. **Photo.** With the preview pane open (⌥P) select an iPhone HEIC photo (with location on when it was taken): under the facts a `Photo` group shows Date Taken, Camera (`Apple iPhone …`), Lens, Exposure (`1/… s`), Aperture, ISO, Focal Length and Location (`41.0…° N, 28.9…° E`), and `Picture` Dimensions upright (portrait: the smaller number first). Right-click a row: `Copy Value`; paste it in TextEdit. The same rows in Space's Quick Look and in Get Info (⌘I) under its facts.
+380. **Music.** An MP3 with tags and a cover: the poster is its own cover (also when Finder shows none), `Media` Duration, Audio Codec `MP3`, Bit Rate, Sample Rate; `Music` Title, Artist, Album, Track, Year. The bar shows the length before `▶` (not `--:--`). An M4A and a FLAC the same.
+381. **Document.** A DOCX saved by Word or Pages (File ▸ Properties filled in): `Document` Title, Author, Pages, Words. A PDF with a title shows its Title and Pages. In `settings.toml` set `[preview]` `properties = false`: no Properties rows (and Get Info still shows them).
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

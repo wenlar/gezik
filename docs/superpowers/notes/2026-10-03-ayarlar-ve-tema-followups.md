@@ -3084,3 +3084,102 @@ Screenshots: `%TEMP%\gezik-gui-13\shots\13cfix\`. Keys sent only with focus on t
 
 Note: clicking ▶ still leaves focus on the window (K/J/L need a click on the picture first), as in finding 3 of the first run.
 Test data and `cfg\13c` removed; `cfg\q1` kept.
+
+## Adım 13, alt parça 13d sonrası
+
+- Alan kaydı `gezik-core/src/fields.rs`: 31 alan (Picture, Photo, Media, Music, Document; her biri bir sabit, `FIELDS` bir makroyla), `FieldSet` (u64), `Value`, tek gösterim `Fields::text` (`4032 × 3024`, `1/250 s`, `f/1.8`, `3:25`, `41.0082° N, …`), `compare` (değersiz sonda, metin harf duyarsız), `parse_value` (`3m`, `1:30`, `2024-05`, `50 mm`, `f/2.8`, `1/250`), `READERS`/`readers_for` (istenen alanla kesişmeyen okuyucu çalışmaz, uzantısı olmayan dosya açılmaz).
+- Okuyucular `gezik-batch/src/fields/`: resim başlığı (`image` sandığı, EXIF yönüyle görünen boyut; HEIF/AVIF `ispe`), EXIF (`exif.rs` buraya taşındı, `taken()` dahil: tarih, kamera, lens, pozlama, diyafram, ISO, odak, konum), ses (ID3v2.2–2.4, ID3v1.1, MPEG Xing/VBRI ya da sabit bit hızı, ADTS, FLAC, Ogg Vorbis/Opus, WAV, AIFF), MP4/MOV/M4A (`moov` sonda da, ≤ 4 MB; `ilst` etiketleri), Matroska/WebM, AVI, OOXML/ODF özellikleri (ZIP'ten parça başına ≤ 256 KB), PDF `/Info` ve sayfa ağacı kökü (baştaki ve sondaki 64 KB). Okuyucu dosyanın ilk baytlarına bakar; uzantı yalnız okuyucuyu seçer. `#![deny(clippy::indexing_slicing)]`, uzunluklar ayırma yapmaz (okunan kadar büyür), yalnız-bulut dosya okunmaz.
+- Testler: gerçek küçük örnekler `crates/gezik-batch/tests/data/fields/` (`make.py`: ffmpeg ve Pillow; Türkçe etiketler; her biri ≤ 20 KB), her okuyucuda 10.000 rastgele/kesilmiş/bozulmuş giriş (uzunluk baytları 0xFF), kayıt testleri, panel satırları, ayar.
+- Panel: önizleme işçisi gövdeyi gönderdikten sonra aynı iş parçacığında alanları okur, ayrı gönderir (resim beklemez; yeni seçim okumayı keser). Bilgi satırlarının altında grup başlıklarıyla `Label  Value` satırları (`PropRows`, önizleme, Quick Look ve Info ortak); Width/Height yerine Dimensions; `title` müzik alanlarıyla Music'te, belgeyle Document'ta. Gezik'in çözdüğü resimde boyut alanları okunmaz (bilgi satırı söylüyor). Sağ tık `Copy Value` (2615). `[preview] properties = true` (settings.toml; false: önizleme okumaz). Info (macOS/Linux) tek dosyada aynı satırları gösterir.
+- 13c'nin bıraktığı: ses dosyasının gömülü kapağı (ID3 `APIC`, FLAC `PICTURE`, MP4 `covr`, ≤ 8 MB) poster olur (`decode_image_bytes`, yalnız JPEG/PNG çözücüsü); alanlarda süre varsa oynatıcı çubuğu oynatmadan önce `--:--` yerine onu yazar.
+- Sapmalar (plan 1–6): `Tags` alanları ve `meta` okuyucusu yok (12a bu dalda yok); MP3 sabit bit hızı tahmini `≈`'siz; panelde PDF sayfa sayısı pdfium'dan alınmaz; `Show Column` 13e'de; numaralı ID3 türleri (`(17)`) gösterilmez; fikstürler `tests/data/fields/` (spec: `tests/fixtures/fields/`).
+- Boyut: ilk ölçümde +572.928 B (bütçe aşımı). Nedeni genel kodun yeni okuyucu türleriyle ikinci kez derlenmesiydi: `image` sandığının bütün çözücüleri `Cursor` ve `&mut BufReader` için, `zip` okuması `&mut BufReader` için. Düzeltme: resim başlığı `ImageReader::open` ile (önizlemeyle aynı tür), ZIP `BufReader<File>` ile (arşivlerle aynı), kapak yalnız PNG/JPEG çözücüsüyle, okuyucular tek tür (`BufReader<File>`).
+- Sürüm exe'si **27.782.144 B** (taban 13c f225669, 27.596.288 B, **+185.856 B**; bütçe 262.144, spec tahmini ≈ 200 KB). Boşta yeni zamanlayıcı/iş parçacığı yok: alanlar önizleme işçisinde, yalnız önizleme açıkken ve dosya seçiliyken okunur.
+- Windows ekran testleri, macOS 379–381 ve Linux 276–277 bekliyor.
+
+## Windows ekran testleri: 13d
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d.exe. Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on), data = the
+`tests/data/fields` fixtures + empty.mp3 + random-junk junk.mp4/.docx/.pdf + 30 copies in `many\`.
+Screenshots: %TEMP%\gezik-gui-13\shots\13d\.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1 | JPEG (GPS, orientation 6): Photo group date, camera, lens, exposure, aperture, ISO, focal length, location; 24 × 32 upright | PASS (01-photo) |
+| 2 | MP3 with cover: poster = cover, Media (duration, codec, bitrate, rate, channels) + Music rows; bar shows 0:02 before play | PASS (02-id3v24_mp3); id3v23/id3v1 also right, Turkish text right |
+| 3 | M4A, FLAC, Opus (+ OGG, WAV): same rows | PASS |
+| 3b | AIFF codec row | FAIL (minor): shows "SSND" |
+| 4 | MP4, MKV, AVI: Dimensions 64 × 48, video/audio codec, 10 fps, duration | PASS |
+| 5 | DOCX (Title, Author, Subject, Pages, Words), PDF (Title, Author with escapes, Subject, Pages), ODT | PASS |
+| 6 | Right-click row → Copy Value: clipboard = value, status "Copied the value" | PASS (Camera, Location; clipboard saved and restored) |
+| 7a | Quick Look (Space): same rows (photo, mp3, mkv, docx) | PASS (07-ql-*) |
+| 7b | Pane at 200 px: no horizontal overflow (values wrap) | PASS |
+| 7c | Pane at 200 px: vertical | FAIL: the rows past the pane bottom are cut off, the last visible row draws over the pane's bottom border, no scroll |
+| 8a | `[preview] properties = false` (settings.toml): no rows, also in Quick Look | PASS (10-noprops-*); bar shows --:-- before play then |
+| 8b | Fast arrows over 30 files (60 ms steps, 15 ms bursts): rows always match the file name in the pane | PASS (no stale rows) |
+| - | 0-byte .mp3, junk .mp4/.docx/.pdf: no crash, no rows | PASS (08-*) |
+| - | CPU after tests | PASS, 0 % over 5 s |
+
+### Yeniden test 2 (fix2 sonrası)
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d-fix2.exe. Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on), data =
+the `tests/data/fields` fixtures. Screenshots: %TEMP%\gezik-gui-13\shots\13dfix2\. Play never pressed.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1a | width 200, 1600×900, photo.jpg: all rows down to Location visible | PASS (01): the image now shrinks so the wrapped facts fit; nothing left to scroll, wheel is a no-op (02) |
+| 1b | width 200, 1600×650 (forces overflow): wheel scrolls to Location | PASS (03 → 04): Exposure..Location reached, content clips under the zoom buttons |
+| 1c | rows clip at the pane edge, label/value rows don't overlap | PASS (04z zoom): wrapped Date Taken/Camera/Lens/Location values stay in their rows, labels vertically centred |
+| 2a | width 420, 1000×450: wheel scrolls to Location | PASS (05 → 06) |
+| 2b | width 420, 1600×900 | PASS (07): all rows visible, single-line |
+| 3 | Right-click Lens value → Copy Value | PASS: clipboard = "iPhone 15 Pro back camera 6.86mm f/1.78", status "Copied the value"; clipboard restored |
+| 4 | width 200, id3v23/id3v24.mp3, tags.flac (Turkish title/artist/album artist) | PASS (09-*, 10): Çiğdem Öztürk / Öztürk Ailesi wrap to 2 lines, readable, no overlap; Media+Music down to Year fit |
+
+Note: the fixtures have no really long title/album (longest wraps to 2 lines at 200 px), so a 5+ line value was
+only exercised by photo.jpg's Lens.
+
+## Failures
+
+1. AIFF codec "SSND". Repro: select `plain.aiff` (fixture) → Media › Audio Codec = "SSND" (ffprobe: pcm_s16be).
+   Cause: `aiff()` in `crates/gezik-batch/src/fields/audio.rs` reads 22 bytes of `COMM`, but a plain AIFF `COMM`
+   is 18 bytes, so bytes 18..22 are the next chunk's id. Read the compression type only when the chunk size is
+   at least 22 (AIFC), else PCM.
+2. Rows cut off in a narrow pane. Repro: state.toml `[preview] width = 200`, window 1600×900, select `photo.jpg`.
+   The values wrap to 2-4 lines; Exposure is drawn half over the pane's bottom border, Aperture/ISO/Focal
+   Length/Location can't be seen; mouse wheel over the rows does nothing (09-w200-photo-wheel-crop.png,
+   09-w200-bottom-zoom.png). Same at 420 px when the window is short. Needs a clip and/or a scroll for the info area.
+
+- Gözden geçirme ve ekran testi düzeltmeleri: HEIF EXIF okumasından önce `ftyp`/`meta` kutularının boyutu denetlenir (dosya sonuna uzanan `meta` büyük dosyayı belleğe almaz; kamadak-exif onları bütün okur); belge etiket bulucusu ad için en çok 128, varlık için 11 karakter bakar (256 KB `<`/`&` doğrusal); düz AIFF `COMM` 18 bayt okunur (kodek artık `SSND` değil `PCM`); önizlemede başlık, bilgi ve özellikler kayan, bölme kenarında kesilen bir alanda (dar bölmede ve kısa pencerede teker çalışır). Sürüm exe'si **27.790.336 B** (taban 27.596.288 B, **+194.048 B**). Yapı `t13d-fix.exe`; ekranda yeniden denenmedi.
+
+### Yeniden test (düzeltmeler sonrası)
+
+
+Build: %TEMP%\gezik-gui-13\bin\t13d-fix.exe (commit 72c3983). Config %TEMP%\gezik-gui-13\cfg\13d (muted, confirm-trash on),
+data = the `tests/data/fields` fixtures. Screenshots: %TEMP%\gezik-gui-13\shots\13dfix\.
+
+| # | Check | Result |
+|---|-------|--------|
+| 1a | width 200, 1600×900, photo.jpg: rows cut at the pane edge, nothing over the border | PASS (01-w200-photo) |
+| 1b | width 200, 1600×900: wheel scrolls to Location | FAIL: no scroll at all (3 points, 5-15 notches each); Exposure..Location still unreachable (03, 04, 15) |
+| 2 | width 420, 1000×450, photo.jpg: cut at the edge, wheel scrolls to Location | PASS (05-short-photo, 07-short-wheel-end); also video.mkv, plain.aiff (10b, 12b) |
+| 3 | Image area ≥ 80 px | PASS: ~95 px at 1000×450, ~430 px at width 200 |
+| 4 | Right-click Lens value → Copy Value | PASS: clipboard = "iPhone 15 Pro back camera 6.86mm f/1.78", status "Copied the value"; clipboard restored |
+| 5 | plain.aiff codec | PASS: Audio Codec = PCM |
+| 6a | Fast arrows (4 rounds: 15 down @60 ms, 15 up @15 ms, 7 down @15 ms) | PASS: 12/12 pane title = selected row; facts scroll back to top on file change |
+| 6b | Quick Look (photo.jpg) rows | PASS, and the wheel scrolls to Location inside Quick Look (13, 14) |
+
+## Failure
+
+1b. Repro: state.toml `[preview] width = 200`, window 1600×900, select `photo.jpg`. The facts block gets ~300 px
+(y 558-858), which is its unwrapped height; the values wrap to 2-5 lines, so Lens ends at the pane bottom and
+Exposure/Aperture/ISO/Focal Length/Location are clipped away with no scroll range. Likely cause: in
+`preview-pane.slint` the Flickable's `preferred-height`/`max-height`/`content-height` all bind to
+`facts-text.preferred-height`, which does not reflect the word-wrapped height at the narrow width, so the
+layout caps the Flickable at the single-line height and the content equals the viewport (nothing to scroll),
+while the image takes the spare space. At 420 px (no wrapping) the same code works.
+
+Note: UIA focus reports the main Window (not the list) after a row click in this build; arrow keys still go to the list.
+
+- Yeniden testin tek notu düzeltildi (fix2): satırdaki değer yatay düzende satırın genişliğiyle ölçülüyordu, 200 px bölmede liste olduğundan kısa çıkıp kaymıyordu; etiket ve değer artık elle yerleşiyor, değer kendi genişliğiyle ölçülüyor. Sürüm exe'si **27.784.704 B** (+188.416 B). Yapı `t13d-fix2.exe`; ekranda yeniden denenmedi.

@@ -15,8 +15,9 @@ use gezik_core::batch::pdf_view::{Command, Reply};
 use gezik_platform::{IconTarget, Rgba};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
-use crate::{AppWindow, PreviewActions, PreviewInfo};
+use crate::{AppWindow, PreviewActions, PreviewInfo, PropRow};
 
+pub mod fields;
 mod hex;
 mod media;
 mod pdf;
@@ -133,7 +134,7 @@ pub fn load(target: &Target, px: u32) -> Body {
 /// before each slow step once `wanted` says the result is no longer needed. Runs on a
 /// worker thread; never panics on bad files.
 pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
-    let Target::Entry { path, is_dir, counts, .. } = target else { return Body::None };
+    let Target::Entry { path, is_dir, counts, kind, .. } = target else { return Body::None };
     if !wanted() {
         return Body::None;
     }
@@ -172,6 +173,14 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     }
     if !wanted() {
         return Body::None;
+    }
+    // A sound file's own cover is its poster (spec 13 §6.1).
+    if local
+        && *kind == gezik_core::kind::Kind::Audio.index()
+        && let Some(cover) = gezik_batch::fields::cover(path)
+        && let Some(picture) = gezik_platform::decode_image_bytes(&cover, px).ok().and_then(|d| buffer(d.image))
+    {
+        return Body::Picture(picture, None);
     }
     let mut picture = gezik_platform::thumbnail_while(path, px, wanted);
     if picture.is_none() && wanted() {
@@ -246,10 +255,23 @@ fn start_worker(current: Arc<AtomicU64>) -> Arc<Slot<Request>> {
             if !wanted() {
                 continue;
             }
+            let fields_of = fields_wanted(&target, &body);
+            let (posted, current_) = (target.clone(), current.clone());
+            crate::windows::post(window_id, move || {
+                if current_.load(Ordering::SeqCst) == generation {
+                    with_current(|p| p.loaded(posted, body));
+                }
+            });
+            // Then the file's fields, apart (the picture does not wait for them; spec 13 §7.4).
+            let Some((path, want)) = fields_of else { continue };
+            let found = gezik_batch::fields::read(&path, want, &|| !wanted());
+            if !wanted() || found.is_empty() {
+                continue;
+            }
             let current = current.clone();
             crate::windows::post(window_id, move || {
                 if current.load(Ordering::SeqCst) == generation {
-                    with_current(|p| p.loaded(target, body));
+                    with_current(|p| p.fields_loaded(&target, &found));
                 }
             });
         }
@@ -258,6 +280,17 @@ fn start_worker(current: Arc<AtomicU64>) -> Arc<Slot<Request>> {
         eprintln!("gezik: cannot start the preview thread: {err}");
     }
     slot
+}
+
+/// The file whose fields the pane shows, and which: none for folders or with `[preview]
+/// properties = false`; a picture Gezik decoded says its size already.
+fn fields_wanted(target: &Target, body: &Body) -> Option<(PathBuf, gezik_core::fields::FieldSet)> {
+    use gezik_core::fields::{self as f, FieldSet};
+    let Target::Entry { path, is_dir: false, .. } = target else { return None };
+    let sized = matches!(body, Body::Picture(_, Some(_)));
+    let want =
+        if sized { FieldSet::ALL.without(FieldSet::of(&[f::WIDTH, f::HEIGHT, f::DIMENSIONS])) } else { FieldSet::ALL };
+    fields::properties().then(|| (path.clone(), want))
 }
 
 /// The start of a text file (at most [`TEXT_BYTES`]); `None` for binary files (a NUL in
@@ -435,6 +468,8 @@ struct Inner {
     /// Moves the bar's time while playing; ends a long pause's processes.
     tick_timer: slint::Timer,
     pause_timer: slint::Timer,
+    /// The shown file's property rows and length (ms; the player's bar before it plays).
+    properties: RefCell<(slint::ModelRc<PropRow>, Option<u64>)>,
 }
 
 #[derive(Clone)]
@@ -469,6 +504,7 @@ impl Preview {
             gain: Arc::new(AtomicU32::new(media::gain(volume.0, volume.1))),
             tick_timer: slint::Timer::default(),
             pause_timer: slint::Timer::default(),
+            properties: RefCell::default(),
         }));
         CURRENT.with(|c| c.set(crate::windows::current(), preview.clone()));
         // Its own preview, not the current window's: a viewer made while a frame is drawn says
@@ -631,6 +667,16 @@ impl Preview {
     fn publish_to(&self, mut info: PreviewInfo, main: bool) {
         let (volume, muted) = self.0.volume.get();
         (info.volume, info.muted) = (f32::from(volume) / 100.0, muted);
+        let (properties, length) = self.0.properties.borrow().clone();
+        info.properties = properties;
+        // Before playing, the bar says the length the fields found.
+        let length = |info: &mut PreviewInfo| {
+            if let (6, Some(ms)) = (info.bar, length)
+                && info.bar_text == "--:--"
+            {
+                info.bar_text = gezik_core::fields::duration_text(ms).into();
+            }
+        };
         // Kept without the viewer's part: the next fill starts from the file's own preview
         // (a zoomed picture's large copy is not held here once it is back to fit).
         let mut shown = info.clone();
@@ -644,6 +690,7 @@ impl Preview {
             }
         };
         self.0.viewer.borrow().fill(&mut shown, self.room(), true);
+        length(&mut shown);
         tools(&mut shown, if quick { &self.0.surface_quick } else { &self.0.surface });
         // A picture over Gezik's limits says so before any zoom.
         if shown.bar == 5
@@ -658,6 +705,7 @@ impl Preview {
                 // quick look's size would show stretched there.
                 let mut pane = info.clone();
                 self.0.viewer.borrow().fill(&mut pane, self.room(), false);
+                length(&mut pane);
                 tools(&mut pane, &self.0.surface);
                 window.set_preview(pane);
             } else {
@@ -884,6 +932,20 @@ impl Preview {
             self.0.picture_size.set(Some(*size));
         }
         self.publish(describe(&target, Some(body)));
+    }
+
+    /// The worker read the shown file's fields: its property rows show under its facts.
+    fn fields_loaded(&self, target: &Target, found: &gezik_core::fields::Fields) {
+        if !same_item(&self.0.viewer_target.borrow(), target) {
+            return;
+        }
+        let length = match found.get(gezik_core::fields::DURATION) {
+            Some(gezik_core::fields::Value::Duration(ms)) => Some(*ms),
+            _ => None,
+        };
+        *self.0.properties.borrow_mut() = (fields::model(fields::rows(found)), length);
+        let info = self.0.info.borrow().clone();
+        self.publish(info);
     }
 
     /// The viewer's room where it is seen: quick look's while it is open.
@@ -1122,6 +1184,7 @@ impl Preview {
 
     /// Lets go of the shown file's viewer; a PDF's worker waits 10 s for the next PDF.
     fn drop_viewer(&self) {
+        *self.0.properties.borrow_mut() = Default::default();
         let old = std::mem::take(&mut *self.0.viewer.borrow_mut());
         self.0.picture_size.set(None);
         self.0.settle_timer.stop();
