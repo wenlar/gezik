@@ -36,6 +36,8 @@ Windows · macOS · Linux
 
 **Layouts.** Two panes with F5/F6 copy and move and synced browsing, a folder tree in the sidebar, grouping by type, date or size, Miller columns, several windows with tabs you can tear off, and view rules that pick a folder's view by path, kind or content. → [Layouts](docs/features.md#layouts)
 
+**Tags.** Color tags, star ratings and comments kept in the files (Finder and Dolphin read them), tag dots and columns, `tag:`/`rating:` filters and search, a TAGS sidebar section, and highlight rules that color rows. → [Tags](docs/features.md#tags)
+
 **The system.** A command line, a single instance, one Trash view for every bin, and PATH integration you can undo. → [System integration](docs/features.md#system-integration)
 
 **Tools.** Checksums and their verification, file and folder compare, a sync (two-way, left to right or mirror) that asks first and deletes only to the trash (it is stateless: a delete spreads only with mirror or a row turned to `×`), duplicates, a size map and list export; Copy To with a filter, split and join; copies that can be verified, speed-limited and reordered in the queue. → [Tools](docs/features.md#tools) · [Compare and sync](docs/features.md#tabs-address-bar-and-terminal) · [Copy options](docs/features.md#file-operations) · [Export list](docs/features.md#export-list)

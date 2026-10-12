@@ -701,6 +701,11 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 262. **Drop and the list.** As macOS 359–360 (Ctrl+Shift+L for the picker); tags Dolphin wrote are found by the search too (`getfattr -n user.xdg.tags`).
 263. **Search words and Clean Up.** As macOS 361 without Spotlight; with the vfat stick unplugged Clean Up Tag Store… leaves its entries alone and says how many; plugged in with a file deleted from it, Remove takes only that entry.
 
+### 12f, highlight rules
+
+264. **Rules color rows.** As macOS 362–363 with a dark GTK/system theme; tags written by Dolphin (`user.xdg.tags`) light up the `tag` rule too.
+265. **Only when asked.** As macOS 364 (`top` instead of Activity Monitor; `setfattr` or Dolphin to tag the file).
+
 ### 13b, PDF pages and zoom
 
 13b uses 268–270.
