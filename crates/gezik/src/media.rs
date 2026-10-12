@@ -67,11 +67,9 @@ pub enum MediaKey {
         px: u32,
     },
     /// A row's tags, rating and comment, for its dots and columns (spec 12 §3.4): only rows on
-    /// screen ask, only while dots or a meta column show; `explorer`: Explorer's Tags and rating
-    /// too (Windows, §8.3).
+    /// screen ask, only while dots or a meta column show.
     Tags {
         path: PathBuf,
-        explorer: bool,
     },
 }
 
@@ -121,9 +119,7 @@ fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
         }
         MediaKey::PathIcon { path, px } => picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px)),
         MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
-        MediaKey::Tags { path, explorer } if wanted() => {
-            Outcome::Tags(Arc::new(crate::tags::read_for_rows(path, *explorer)))
-        }
+        MediaKey::Tags { path } if wanted() => Outcome::Tags(Arc::new(crate::tags::read_for_rows(path))),
         MediaKey::Tags { .. } => Outcome::Nothing,
     }
 }
@@ -395,22 +391,17 @@ impl Media {
     }
 
     /// `path`'s meta, if read; otherwise it is asked for and entry `entry` is redrawn when it
-    /// arrives. `explorer`: with Explorer's Tags and rating (a meta read without them is asked
-    /// again). What was read before the last [`forget_tags`] is drawn until the new one lands.
-    pub fn tags(&self, path: PathBuf, entry: usize, explorer: bool) -> Option<Arc<RowMeta>> {
+    /// arrives. What was read before the last [`forget_tags`] is drawn until the new one lands.
+    pub fn tags(&self, path: PathBuf, entry: usize) -> Option<Arc<RowMeta>> {
         let found = self.shared.tags.borrow().get(&path).cloned();
         match found {
-            Some((generation, meta))
-                if generation == self.shared.tags_generation.get() && (!explorer || meta.explorer.is_some()) =>
-            {
-                Some(meta)
-            }
+            Some((generation, meta)) if generation == self.shared.tags_generation.get() => Some(meta),
             Some((_, old)) => {
-                self.request(MediaKey::Tags { path, explorer }, Some(entry));
+                self.request(MediaKey::Tags { path }, Some(entry));
                 Some(old)
             }
             None => {
-                self.request(MediaKey::Tags { path, explorer }, Some(entry));
+                self.request(MediaKey::Tags { path }, Some(entry));
                 None
             }
         }
@@ -524,7 +515,7 @@ impl Media {
                 self.shared.type_names.borrow_mut().insert((ext.clone(), *is_dir), name);
                 Ready::TypeName
             }
-            (MediaKey::Tags { path, .. }, Outcome::Tags(tags)) => {
+            (MediaKey::Tags { path }, Outcome::Tags(tags)) => {
                 let mut known = self.shared.tags.borrow_mut();
                 if known.len() >= MAX_TAGGED {
                     known.clear();
