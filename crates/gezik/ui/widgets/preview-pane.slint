@@ -18,6 +18,15 @@ export struct PreviewRow {
     parts: [PreviewPart],
 }
 
+// A button of a PDF's or picture's bar: its text, what a screen reader says, and what it does
+// (`PreviewActions.surface`'s first argument, with `step` as its dx; -1 is Hex).
+export struct PreviewTool {
+    text: string,
+    label: string,
+    what: int,
+    step: int,
+}
+
 // What the preview shows; built by Rust (preview/mod.rs, preview/viewer.rs).
 export struct PreviewInfo {
     // 0 nothing selected, 1 a picture, 2 text, 3 another file (its thumbnail or icon),
@@ -60,8 +69,8 @@ export struct PreviewInfo {
     zoom-text: string,
     // A button after the note ("Download", "Enter Password…"); "" for none.
     bar-link: string,
-    // Under 300 px: the bar drops the zoom's figure and Hex (the right-click menu has them).
-    narrow: bool,
+    // A PDF's or picture's bar buttons (13b).
+    tools: [PreviewTool],
 }
 
 // The viewer's events, for Rust (one connection per window, not one per pane).
@@ -92,9 +101,6 @@ export component PreviewPane inherits Rectangle {
     // A fixed-width font for text files.
     in property <string> mono-font;
     property <bool> viewer: root.info.bar == 1 || root.info.bar == 2;
-    // Rust says it from the surface's width (a binding on this width would loop through the
-    // bar's own size).
-    property <bool> narrow: root.info.narrow;
 
     background: Theme.surface;
     accessible-role: none;
@@ -231,27 +237,19 @@ export component PreviewPane inherits Rectangle {
 
             }
 
-            if !root.viewer && root.info.zoomed: Rectangle {
+            // The picture fitted, or (zoomed, 13b) placed where Rust says and cut by the area.
+            if !root.viewer && root.info.has-picture: Rectangle {
                 clip: true;
                 Image {
-                    x: root.info.pic-x;
-                    y: root.info.pic-y;
-                    width: root.info.pic-w;
-                    height: root.info.pic-h;
+                    x: root.info.zoomed ? root.info.pic-x : 0;
+                    y: root.info.zoomed ? root.info.pic-y : 0;
+                    width: root.info.zoomed ? root.info.pic-w : parent.width;
+                    height: root.info.zoomed ? root.info.pic-h : parent.height;
                     source: root.info.picture;
-                    image-fit: fill;
+                    image-fit: root.info.zoomed ? fill : contain;
                     accessible-role: image;
                     accessible-label: root.info.pages > 0 ? "Page \{root.info.page} of \{root.info.pages}" : root.info.title;
                 }
-            }
-
-            if !root.viewer && root.info.has-picture && !root.info.zoomed: Image {
-                width: parent.width;
-                height: parent.height;
-                source: root.info.picture;
-                image-fit: contain;
-                accessible-role: image;
-                accessible-label: root.info.title;
             }
 
             if !root.viewer && root.info.kind != 0 && !root.info.has-picture: FileIcon {
@@ -323,8 +321,7 @@ export component PreviewPane inherits Rectangle {
         }
 
         // The viewer's bar: Text │ Hex, Wrap, a note and where it is; a PDF's pages and a
-        // zoom. In a narrow pane the zoom's figure and Hex give way (the right-click menu has
-        // them); a PDF's or picture's note and link take a row of their own.
+        // zoom. In a narrow pane what does not fit gives way (the right-click menu has it all).
         if root.info.bar != 0: HorizontalLayout {
             spacing: Theme.spacing;
             if root.info.bar == 1 || root.info.bar == 2: TextButton {
@@ -337,7 +334,7 @@ export component PreviewPane inherits Rectangle {
                     }
                 }
             }
-            if root.info.bar < 4 || !root.narrow: TextButton {
+            if root.info.bar < 4: TextButton {
                 compact: true;
                 text: "Hex";
                 checked: root.info.bar == 2;
@@ -347,58 +344,18 @@ export component PreviewPane inherits Rectangle {
                     }
                 }
             }
-            if root.info.bar == 4: TextButton {
+            // A PDF's or picture's buttons (Hex, ‹ page ›, − 125% +, Fit): one repeated button
+            // costs far less than one each.
+            for tool in root.info.tools: TextButton {
                 compact: true;
-                text: "‹";
-                label: "Previous page";
+                text: tool.text;
+                label: tool.label;
                 clicked => {
-                    PreviewActions.surface(1, 0, 0, -1px, 0);
-                }
-            }
-            // The page and the count; a click asks for a page to go to.
-            if root.info.bar == 4: TextButton {
-                compact: true;
-                text: root.info.pages > 0 ? "\{root.info.page} / \{root.info.pages}" : "\{root.info.page}";
-                label: root.info.pages > 0 ? "Page \{root.info.page} of \{root.info.pages}, go to page" : "Page \{root.info.page}, go to page";
-                clicked => {
-                    PreviewActions.surface(2, 0, 0, 0, 0);
-                }
-            }
-            if root.info.bar == 4: TextButton {
-                compact: true;
-                text: "›";
-                label: "Next page";
-                clicked => {
-                    PreviewActions.surface(1, 0, 0, 1px, 0);
-                }
-            }
-            if root.info.bar >= 4: TextButton {
-                compact: true;
-                text: "−";
-                label: "Zoom out";
-                clicked => {
-                    PreviewActions.surface(3, -1px, -1px, -1px, 0);
-                }
-            }
-            if root.info.bar >= 4 && !root.narrow: Text {
-                text: root.info.zoom-text;
-                vertical-alignment: center;
-                color: Theme.foreground-muted;
-            }
-            if root.info.bar >= 4: TextButton {
-                compact: true;
-                text: "+";
-                label: "Zoom in, \{root.info.zoom-text}";
-                clicked => {
-                    PreviewActions.surface(3, -1px, -1px, 1px, 0);
-                }
-            }
-            if root.info.bar >= 4: TextButton {
-                compact: true;
-                text: "Fit";
-                label: root.info.bar == 4 ? "Fit the page or its width" : "Fit the picture";
-                clicked => {
-                    PreviewActions.surface(4, 0, 0, 0, 0);
+                    if tool.what < 0 {
+                        PreviewActions.toggle-hex();
+                    } else {
+                        PreviewActions.surface(tool.what, -1px, -1px, tool.step * 1px, 0);
+                    }
                 }
             }
             if root.info.bar == 1: TextButton {
@@ -411,7 +368,7 @@ export component PreviewPane inherits Rectangle {
                 }
             }
             Text {
-                text: root.info.bar < 4 ? root.info.bar-note : "";
+                text: root.info.bar-note;
                 horizontal-stretch: 1;
                 overflow: elide;
                 vertical-alignment: center;
@@ -419,26 +376,6 @@ export component PreviewPane inherits Rectangle {
             }
             Text {
                 text: root.info.bar-text;
-                overflow: elide;
-                vertical-alignment: center;
-                color: Theme.foreground-muted;
-            }
-        }
-
-        // A PDF's or picture's note ("Password protected", "Too large to zoom") and its link
-        // first, so the link stays in reach however narrow the pane.
-        if root.info.bar >= 4 && (root.info.bar-note != "" || root.info.bar-link != ""): HorizontalLayout {
-            spacing: Theme.spacing;
-            if root.info.bar-link != "": TextButton {
-                compact: true;
-                text: root.info.bar-link;
-                clicked => {
-                    PreviewActions.surface(9, 0, 0, 0, 0);
-                }
-            }
-            Text {
-                text: root.info.bar-note;
-                horizontal-stretch: 1;
                 overflow: elide;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;

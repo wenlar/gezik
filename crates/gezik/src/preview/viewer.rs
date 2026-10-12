@@ -10,7 +10,7 @@ use super::hex::HexView;
 use super::pdf::PdfView;
 use super::text::{Row, TextView};
 use super::zoom::{Fit, ZoomView};
-use crate::{PreviewInfo, PreviewPart, PreviewRow};
+use crate::{PreviewInfo, PreviewPart, PreviewRow, PreviewTool};
 
 /// The text view, and the hex view over it while shown (the text keeps its place under it);
 /// a PDF's pages or a zoomed picture (spec 13 §5).
@@ -60,6 +60,53 @@ pub fn too_large((w, h): (u32, u32)) -> Option<String> {
     } else {
         None
     }
+}
+
+/// A PDF's or picture's bar buttons for `info` (bar 4 or 5): Hex, ‹ the page ›, − the zoom
+/// +, Fit, after the link when there is one. A `narrow` bar drops Hex and the zoom's figure,
+/// and the zoom when there is a link (the right-click menu has them all).
+pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
+    if info.bar < 4 {
+        return ModelRc::default();
+    }
+    let tool = |text: String, label: String, what: i32, step: i32| PreviewTool {
+        text: text.into(),
+        label: label.into(),
+        what,
+        step,
+    };
+    let mut tools = Vec::new();
+    // The link (Download, Enter Password…) first: it is what to do next.
+    let link = !info.bar_link.is_empty();
+    if link {
+        tools.push(tool(info.bar_link.to_string(), info.bar_link.to_string(), 9, 0));
+    }
+    if !narrow {
+        tools.push(tool("Hex".into(), "Hex".into(), -1, 0));
+    }
+    if info.bar == 4 {
+        let (page, pages) = (info.page, info.pages);
+        let (text, label) = if pages > 0 {
+            (format!("{page} / {pages}"), format!("Page {page} of {pages}, go to page"))
+        } else {
+            (page.to_string(), format!("Page {page}, go to page"))
+        };
+        tools.push(tool("‹".into(), "Previous page".into(), 1, -1));
+        tools.push(tool(text, label, 2, 0));
+        tools.push(tool("›".into(), "Next page".into(), 1, 1));
+    }
+    if narrow && link {
+        return ModelRc::new(VecModel::from(tools));
+    }
+    tools.push(tool("−".into(), "Zoom out".into(), 3, -1));
+    if !narrow {
+        // The figure; a click is 100%.
+        tools.push(tool(info.zoom_text.to_string(), format!("{}, actual size", info.zoom_text), 5, 0));
+    }
+    tools.push(tool("+".into(), format!("Zoom in, {}", info.zoom_text), 3, 1));
+    let fit = if info.bar == 4 { "Fit the page or its width" } else { "Fit the picture" };
+    tools.push(tool("Fit".into(), fit.into(), 4, 0));
+    ModelRc::new(VecModel::from(tools))
 }
 
 /// The bar's zoom: "Fit", "Fit Width" or "125%".

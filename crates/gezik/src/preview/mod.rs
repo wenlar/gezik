@@ -604,8 +604,9 @@ impl Preview {
         let mut shown = info.clone();
         let quick = self.quick_look_open();
         let narrow = |cell: &Cell<(f32, f32)>| cell.get().0 < NARROW;
-        shown.narrow = narrow(if quick { &self.0.surface_quick } else { &self.0.surface });
+        let tools = |info: &PreviewInfo, cell| viewer::bar_tools(info, narrow(cell));
         self.0.viewer.borrow().fill(&mut shown, self.room(), true);
+        shown.tools = tools(&shown, if quick { &self.0.surface_quick } else { &self.0.surface });
         // A picture over Gezik's limits says so before any zoom.
         if shown.bar == 5
             && shown.bar_note.is_empty()
@@ -619,7 +620,7 @@ impl Preview {
                 // quick look's size would show stretched there.
                 let mut pane = info.clone();
                 self.0.viewer.borrow().fill(&mut pane, self.room(), false);
-                pane.narrow = narrow(&self.0.surface);
+                pane.tools = tools(&pane, &self.0.surface);
                 window.set_preview(pane);
             } else {
                 window.set_preview(shown.clone());
@@ -1017,7 +1018,7 @@ impl Preview {
             2 => self.ask_page(),
             3 => _ = self.zoom_step(steps, (x >= 0.0).then_some((x, y))),
             4 => self.fit(),
-            5 => _ = self.zoom_actual(Some((x, y))),
+            5 => _ = self.zoom_actual((x >= 0.0).then_some((x, y))),
             6 => self.pan(dx, dy),
             7 | 8 => self.wheel((dx, dy), what == 8, (x, y)),
             9 => self.bar_link(),
@@ -1862,6 +1863,19 @@ Some folders could not be read"
         let mut info = describe(&pdf, Some(Body::Picture(SharedPixelBuffer::new(2, 2), None)));
         Viewer::default().fill(&mut info, (80, 40), true);
         assert_eq!((info.bar, info.page, info.zoom_text.as_str(), info.zoomed), (4, 1, "Fit", false));
+        {
+            use slint::Model;
+            let texts =
+                |narrow| viewer::bar_tools(&info, narrow).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+            assert_eq!(texts(false), ["Hex", "‹", "1", "›", "−", "Fit", "+", "Fit"]);
+            assert_eq!(texts(true), ["‹", "1", "›", "−", "+", "Fit"], "narrow: no Hex, no figure");
+            let mut locked = info.clone();
+            locked.bar_link = "Enter Password…".into();
+            assert_eq!(
+                viewer::bar_tools(&locked, true).iter().map(|t| t.text.to_string()).collect::<Vec<_>>(),
+                ["Enter Password…", "‹", "1", "›"]
+            );
+        }
         // A 4000 × 3000 photo shown from its 1024 px preview.
         let photo = entry(PathBuf::from("/x/p.jpg"), false);
         let base = describe(&photo, Some(Body::Picture(SharedPixelBuffer::new(1024, 768), Some((4000, 3000)))));
