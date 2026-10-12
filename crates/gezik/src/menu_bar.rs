@@ -84,11 +84,11 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
                     });
                 }
                 // No shortcut (none by default, or turned off in settings.toml), or only
-                // the keypad's.
+                // the keypad's: run as the palette runs it (Show Preview as Hex has no key).
                 None if crate::actions::run(action, &nav, &view) => {}
                 None => {
-                    if action == Action::BatchRename {
-                        ops.batch_rename();
+                    if let Some(preview) = crate::preview::with_current(crate::preview::Preview::clone) {
+                        crate::perform(action, window, &nav, &view, &preview, ops);
                     }
                 }
             }
