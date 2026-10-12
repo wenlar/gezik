@@ -34,10 +34,10 @@ reduce-motion = false
 # How folders look. A folder you change keeps its own view; "Apply to all folders"
 # in the View menu writes mode, sort, sort-dir, grid-size and group here.
 mode = "list"          # list | grid | columns
-sort = "name"          # name | modified | created | type | size | tags
+sort = "name"          # name | modified | created | type | size | tags | rating
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
-group = "none"         # none | type | date | size | tag: the list's groups when a folder has no view of its own
+group = "none"         # none | type | date | size | tag | rating: the list's groups when a folder has no view of its own
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
 folder-sizes = "off"      # sizes of the folders shown: off (only when asked) | local (not on network folders) | all
 thumbnails = true      # pictures and videos show a preview in the grid
@@ -261,6 +261,7 @@ dots = "auto"
 # tags = "ctrl+shift+l"   # Tags…: the tag picker for the selection; macOS: "mod+ctrl+l"
 # tag-1 = "alt+shift+1"    # the first tag of [tags] list on (or, when all have it, off) the selection; tag-2 … tag-7 likewise; macOS: "ctrl+1"
 # clear-tags = "alt+shift+0"   # takes every tag off the selection; macOS: "ctrl+0"
+# edit-comment = ""        # Comment…: asks for the selection's comment (no key by default)
 # preview-hex = ""  # Show Preview as Hex: the selected file's bytes in the preview, or back to its text or picture
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
@@ -327,7 +328,7 @@ dots = "auto"
 # cloud) and by content ("pictures >= 50%" of the items shown; pictures, videos, audio,
 # documents, archives, code or folders); with more than one, all must match. Search results
 # match by kind only. A rule sets mode (list | grid | columns), sort, sort-dir, group, grid-size and
-# columns (modified, created, type, size, tags; name always shows); what it leaves out stays
+# columns (modified, created, type, size, tags, rating, comment; name always shows); what it leaves out stays
 # [view]'s. A rule with a mistake is reported and left out.
 # [[view-rules]]
 # path = "{pictures}/**"

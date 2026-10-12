@@ -8,11 +8,12 @@ use std::os::windows::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use gezik_core::meta::{Meta, StreamRecord, decode_stream, encode_stream};
+use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Storage::FileSystem::{
     DeleteFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES, FILE_WRITE_ATTRIBUTES,
     GetDriveTypeW, GetVolumeInformationW,
 };
-use windows::core::HSTRING;
+use windows::core::{GUID, HSTRING};
 
 use super::{Own, Volume};
 use crate::fs::{io_error, verbatim};
@@ -129,4 +130,127 @@ pub fn volume(root: &Path) -> io::Result<Volume> {
         format!("{serial:08x}")
     };
     Ok(Volume { key, holds })
+}
+
+/// Explorer's Tags (`System.Keywords`) and rating (`System.Rating`, 0–99) of `path`, read
+/// through its property handler (spec 12 §8.3): read only, never written. `None` when it has
+/// no handler, cannot be read, is a link or only in the cloud now (the handler would download
+/// it), or the handler takes over 2 s: that call is left behind and the file is not tried again
+/// in this session.
+pub fn explorer(path: &Path) -> Option<(Vec<String>, u32)> {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, PoisonError};
+    static HUNG: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+    let hung = || HUNG.lock().unwrap_or_else(PoisonError::into_inner);
+    if hung().as_ref().is_some_and(|h| h.contains(path)) {
+        return None;
+    }
+    let facts = std::fs::symlink_metadata(path).ok()?;
+    let cloud_only = gezik_core::attribute_flags(&facts) & gezik_core::Entry::CLOUD_ONLY != 0;
+    if facts.is_symlink() || !facts.is_file() || cloud_only {
+        return None;
+    }
+    let owned = path.to_path_buf();
+    let (send, answer) = std::sync::mpsc::sync_channel(1);
+    let started = super::within(std::time::Duration::from_secs(2), move || {
+        let _ = send.send(());
+        explorer_now(&owned)
+    });
+    match started {
+        Some(found) => found,
+        // Started but not done in time (not a refusal for too many calls): never again.
+        None if answer.try_recv().is_ok() => {
+            hung().get_or_insert_with(HashSet::new).insert(path.to_path_buf());
+            None
+        }
+        None => None,
+    }
+}
+
+/// `System.Keywords` and `System.Rating`.
+const KEYWORDS: PROPERTYKEY = PROPERTYKEY { fmtid: GUID::from_u128(0xf29f85e0_4ff9_1068_ab91_08002b27b3d9), pid: 5 };
+const RATING: PROPERTYKEY = PROPERTYKEY { fmtid: GUID::from_u128(0x64440492_4c8b_11d1_8b70_080036b11a03), pid: 9 };
+
+fn explorer_now(path: &Path) -> Option<(Vec<String>, u32)> {
+    use windows::Win32::System::Com::StructuredStorage::PropVariantClear;
+    use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
+    use windows::Win32::System::Variant::{VT_LPWSTR, VT_UI4, VT_VECTOR};
+    use windows::Win32::UI::Shell::PropertiesSystem::{GPS_DEFAULT, IPropertyStore, SHGetPropertyStoreFromParsingName};
+    // A thread of its own (`within`): the multithreaded apartment needs no message loop.
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    let store: IPropertyStore =
+        unsafe { SHGetPropertyStoreFromParsingName(&HSTRING::from(path.as_os_str()), None, GPS_DEFAULT) }.ok()?;
+    let mut keywords = Vec::new();
+    let mut rating = 0;
+    // SAFETY: each union field is read only under the type tag that says it holds one.
+    unsafe {
+        if let Ok(mut value) = store.GetValue(&KEYWORDS) {
+            let inner = &value.Anonymous.Anonymous;
+            if inner.vt == VT_VECTOR | VT_LPWSTR {
+                let list = inner.Anonymous.calpwstr;
+                for i in 0..list.cElems as usize {
+                    if let Ok(word) = (*list.pElems.add(i)).to_string() {
+                        keywords.push(word);
+                    }
+                }
+            } else if inner.vt == VT_LPWSTR
+                && let Ok(word) = inner.Anonymous.pwszVal.to_string()
+            {
+                keywords.push(word);
+            }
+            let _ = PropVariantClear(&mut value);
+        }
+        if let Ok(mut value) = store.GetValue(&RATING) {
+            let inner = &value.Anonymous.Anonymous;
+            if inner.vt == VT_UI4 {
+                rating = inner.Anonymous.ulVal.min(99);
+            }
+            let _ = PropVariantClear(&mut value);
+        }
+    }
+    Some((keywords, rating))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::System::Com::StructuredStorage::{
+        InitPropVariantFromStringAsVector, PROPVARIANT, PropVariantClear,
+    };
+    use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
+    use windows::Win32::System::Variant::VT_UI4;
+    use windows::Win32::UI::Shell::PropertiesSystem::{
+        GPS_READWRITE, IPropertyStore, SHGetPropertyStoreFromParsingName,
+    };
+
+    #[test]
+    fn explorers_tags_and_rating_are_read_and_the_file_is_left_alone() {
+        let _alone = super::super::within_alone();
+        // Written only under %TEMP%\gezik-12d: the test plays Explorer on its own picture.
+        let dir = std::env::temp_dir().join("gezik-12d").join(format!("explorer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("photo.jpg");
+        image::RgbImage::from_pixel(16, 16, image::Rgb([200, 120, 40])).save(&file).unwrap();
+        assert_eq!(explorer(&file), Some((Vec::new(), 0)), "a picture without them");
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let store: IPropertyStore =
+                SHGetPropertyStoreFromParsingName(&HSTRING::from(file.as_os_str()), None, GPS_READWRITE).unwrap();
+            let mut keywords = InitPropVariantFromStringAsVector(windows::core::w!("beach;Ayşe")).unwrap();
+            store.SetValue(&KEYWORDS, &keywords).unwrap();
+            let _ = PropVariantClear(&mut keywords);
+            let mut rating = PROPVARIANT::default();
+            (*rating.Anonymous.Anonymous).vt = VT_UI4;
+            (*rating.Anonymous.Anonymous).Anonymous.ulVal = 75;
+            store.SetValue(&RATING, &rating).unwrap();
+            store.Commit().unwrap();
+        }
+        let (bytes, modified) = (std::fs::read(&file).unwrap(), std::fs::metadata(&file).unwrap().modified().unwrap());
+        assert_eq!(explorer(&file), Some((vec!["beach".to_owned(), "Ayşe".to_owned()], 75)));
+        assert_eq!(std::fs::read(&file).unwrap(), bytes, "read only: the file's bytes stay");
+        assert_eq!(std::fs::metadata(&file).unwrap().modified().unwrap(), modified, "and its time");
+        assert_eq!(explorer(&dir.join("gone.jpg")), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

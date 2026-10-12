@@ -689,6 +689,12 @@ Numbers stay as they are when branches merge. 13a uses 266–267 (step 12 has 24
 256. **Filter, case.** As macOS 351; on ext4 with files `a.txt` and `A.txt`, `tag:red` finds Red on both (the tag's name ignores case, the file names do not).
 257. **A big folder.** As macOS 352 with `seq 1 100000 | xargs touch`; `strace -f -e trace=getxattr,lgetxattr -p $(pidof gezik)` shows no reads while scrolling with name sort, no Tags column and dots off.
 
+### 12d, ratings and comments
+
+258. **Stars and Dolphin.** As macOS 353 with Ctrl+Shift+L and Alt+0…5 in the picker (Alt+4 gives four stars). `getfattr -d file` shows `user.baloo.rating="8"` for four stars; Dolphin's Information panel shows the same stars. A file Dolphin rated with a half star (`setfattr -n user.baloo.rating -v 7 f`) shows ★★★★ in Gezik, and stays `7` after only its comment is changed in Gezik.
+259. **Comment.** As macOS 354: `user.xdg.comment` holds the text (`getfattr -n user.xdg.comment f`), Dolphin shows it; a comment set in Dolphin shows in Gezik's Comment column.
+260. **Columns, sort, group, filter.** As macOS 355–356 (the View button's Group by ▸ Rating here).
+
 ## Known gaps (not bugs)
 
 - **Folder sizes (8b):** a change deep inside a subfolder made outside Gezik shows the old size for up to 5 minutes (F5 works it out again). Search results and the flat view show no folder sizes.

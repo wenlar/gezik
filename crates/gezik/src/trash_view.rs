@@ -316,6 +316,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::Tag6
         | Action::Tag7
         | Action::ClearTags
+        | Action::EditComment
         | Action::CopyToOtherPane => false,
     }
 }

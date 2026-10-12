@@ -17,7 +17,73 @@ pub(crate) use unix::copy_xattrs;
 #[cfg(unix)]
 pub use unix::{read, volume, write};
 #[cfg(windows)]
-pub use windows::{read, volume, write};
+pub use windows::{explorer, read, volume, write};
+
+/// `work`'s answer if it comes within `limit`; else `None`, and `work` is left to finish on its
+/// own thread (a property handler that hangs on a broken file cannot be stopped; spec 12 §8.3).
+/// The `within` calls running (those left behind too).
+static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Tests that use `within` run one at a time, each after the calls an earlier one left behind.
+#[cfg(test)]
+pub(crate) fn within_alone() -> std::sync::MutexGuard<'static, ()> {
+    static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = ALONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let start = std::time::Instant::now();
+    while LIVE.load(std::sync::atomic::Ordering::SeqCst) > 0 && start.elapsed().as_secs() < 5 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    guard
+}
+
+/// At most `MAX_LIVE` such calls run at once (those left behind count until they end); `None`
+/// when that many already do.
+pub fn within<T: Send + 'static>(limit: std::time::Duration, work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    use std::sync::atomic::Ordering;
+    const MAX_LIVE: usize = 4;
+    if LIVE.fetch_add(1, Ordering::SeqCst) >= MAX_LIVE {
+        LIVE.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
+    let (send, answer) = std::sync::mpsc::sync_channel(1);
+    let spawned = std::thread::Builder::new().name("gezik-props".into()).spawn(move || {
+        let _ = send.send(work());
+        LIVE.fetch_sub(1, Ordering::SeqCst);
+    });
+    if spawned.is_err() {
+        LIVE.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
+    answer.recv_timeout(limit).ok()
+}
+
+/// Sets each attribute of `changes` (`None`: removed) that differs from what `old` reads, the
+/// largest first (a full disk refuses the comment before anything else is written); when one
+/// fails, those set before it get their old values back, so a record is never left half
+/// written. Linux and macOS (Windows writes one stream).
+#[cfg_attr(windows, allow(dead_code))]
+pub(crate) fn set_all(
+    mut changes: Vec<(&str, Option<Vec<u8>>)>,
+    old: impl Fn(&str) -> io::Result<Option<Vec<u8>>>,
+    mut set: impl FnMut(&str, Option<&[u8]>) -> io::Result<()>,
+) -> io::Result<()> {
+    changes.sort_by_key(|(_, value)| std::cmp::Reverse(value.as_ref().map_or(0, Vec::len)));
+    let mut done: Vec<(&str, Option<Vec<u8>>)> = Vec::new();
+    for (name, value) in changes {
+        let before = old(name)?;
+        if before == value {
+            continue;
+        }
+        if let Err(err) = set(name, value.as_deref()) {
+            for (name, before) in done.iter().rev() {
+                let _ = set(name, before.as_deref());
+            }
+            return Err(err);
+        }
+        done.push((name, before));
+    }
+    Ok(())
+}
 
 /// What a file's own record holds.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -82,6 +148,72 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_call_that_hangs_is_left_behind_after_its_time() {
+        use std::time::{Duration, Instant};
+        let _alone = within_alone();
+        assert_eq!(within(Duration::from_secs(2), || 7), Some(7));
+        let start = Instant::now();
+        let hung = within(Duration::from_millis(50), || std::thread::sleep(Duration::from_millis(1500)));
+        assert_eq!(hung, None);
+        assert!(start.elapsed() < Duration::from_secs(1), "not waited for: {:?}", start.elapsed());
+    }
+
+    #[test]
+    fn a_failed_attribute_puts_back_those_written_before_it() {
+        use std::cell::RefCell;
+        use std::collections::HashMap;
+        let disk = RefCell::new(HashMap::from([("tags", b"Red".to_vec()), ("rating", b"6".to_vec())]));
+        let old = |name: &str| Ok(disk.borrow().get(name).cloned());
+        let writes = RefCell::new(Vec::new());
+        // The disk is full for the rating: the comment (largest, first) and the tags go back.
+        let set = |name: &str, value: Option<&[u8]>| {
+            writes.borrow_mut().push(name.to_owned());
+            if name == "rating" && value.is_some() {
+                return Err(io::Error::from_raw_os_error(28));
+            }
+            match value {
+                Some(v) => disk.borrow_mut().insert(name.to_string().leak(), v.to_vec()),
+                None => disk.borrow_mut().remove(name),
+            };
+            Ok(())
+        };
+        let changes = vec![
+            ("tags", Some(b"Red,Blue".to_vec())),
+            ("rating", Some(b"8".to_vec())),
+            ("comment", Some(b"A long comment".to_vec())),
+        ];
+        assert_eq!(set_all(changes, old, set).unwrap_err().raw_os_error(), Some(28));
+        assert_eq!(writes.borrow()[..3], ["comment", "tags", "rating"], "the largest first");
+        let disk = disk.into_inner();
+        assert_eq!(disk.get("tags").map(Vec::as_slice), Some(&b"Red"[..]), "tags put back");
+        assert_eq!(disk.get("rating").map(Vec::as_slice), Some(&b"6"[..]), "the half star stays");
+        assert!(!disk.contains_key("comment"), "the new comment removed again");
+    }
+
+    #[test]
+    fn calls_left_behind_are_capped() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+        let _alone = within_alone();
+        let ran = Arc::new(AtomicUsize::new(0));
+        for _ in 0..8 {
+            let ran = ran.clone();
+            let _ = within(Duration::from_millis(5), move || {
+                ran.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(Duration::from_millis(500));
+            });
+        }
+        // A spawned call may not have started yet under load; wait for it, not a fixed time.
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while ran.load(Ordering::SeqCst) < 4 && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let ran = ran.load(Ordering::SeqCst);
+        assert_eq!(ran, 4, "at most four hang at once");
     }
 
     fn sample() -> Meta {

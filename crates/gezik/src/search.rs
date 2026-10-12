@@ -677,7 +677,10 @@ impl Searches {
             // `tag:` is no name to look for (12c); tags are searched from step 12e on.
             let tag_word = !draft.name_regex && !gezik_core::meta_filter::split(&draft.pattern).1.is_empty();
             let name_error = if tag_word {
-                Some("Search can't look for tags yet; filter a folder with tag: (Ctrl+F)".to_owned())
+                Some(
+                    "Search can't look for tags or ratings yet; filter a folder with tag: or rating: (Ctrl+F)"
+                        .to_owned(),
+                )
             } else {
                 NameMatcher::compile(&draft.pattern, draft.name_regex, draft.match_case).err()
             };

@@ -18,9 +18,10 @@ use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
+
+use crate::tags::RowMeta;
 use std::time::SystemTime;
 
-use gezik_core::meta::Tag;
 use gezik_platform::{IconTarget, Rgba};
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -65,7 +66,8 @@ pub enum MediaKey {
         modified: Option<SystemTime>,
         px: u32,
     },
-    /// A row's tags, for its dots (spec 12 §3.4): only rows on screen ask, only while dots show.
+    /// A row's tags, rating and comment, for its dots and columns (spec 12 §3.4): only rows on
+    /// screen ask, only while dots or a meta column show.
     Tags {
         path: PathBuf,
     },
@@ -83,7 +85,7 @@ pub enum Outcome {
     Picture(SharedPixelBuffer<Rgba8Pixel>),
     /// A folder without a custom icon: the generic folder icon applies.
     PlainFolder,
-    Tags(Box<[Tag]>),
+    Tags(Arc<RowMeta>),
     Nothing,
 }
 
@@ -117,7 +119,7 @@ fn run(key: &MediaKey, wanted: &dyn Fn() -> bool) -> Outcome {
         }
         MediaKey::PathIcon { path, px } => picture(gezik_platform::icon(&IconTarget::Path(path.clone()), *px)),
         MediaKey::Thumbnail { path, px, .. } => picture(gezik_platform::thumbnail_while(path, *px, wanted)),
-        MediaKey::Tags { path } if wanted() => Outcome::Tags(crate::tags::read_for_rows(path)),
+        MediaKey::Tags { path } if wanted() => Outcome::Tags(Arc::new(crate::tags::read_for_rows(path))),
         MediaKey::Tags { .. } => Outcome::Nothing,
     }
 }
@@ -213,8 +215,8 @@ impl<K: Eq + Hash + Clone, V: Clone> ByteLru<K, V> {
     }
 }
 
-/// A row's tags and the generation they were read in.
-type ReadTags = (u64, Box<[Tag]>);
+/// A row's meta and the generation it was read in.
+type ReadTags = (u64, Arc<RowMeta>);
 
 type ReadyListener = Rc<dyn Fn(&[usize], Ready)>;
 
@@ -388,13 +390,12 @@ impl Media {
         }
     }
 
-    /// `path`'s tags, if read; otherwise they are asked for and entry `entry` is redrawn when
-    /// they arrive.
-    /// `path`'s tags read before the last [`forget_tags`] are drawn until the new ones land.
-    pub fn tags(&self, path: PathBuf, entry: usize) -> Option<Box<[Tag]>> {
+    /// `path`'s meta, if read; otherwise it is asked for and entry `entry` is redrawn when it
+    /// arrives. What was read before the last [`forget_tags`] is drawn until the new one lands.
+    pub fn tags(&self, path: PathBuf, entry: usize) -> Option<Arc<RowMeta>> {
         let found = self.shared.tags.borrow().get(&path).cloned();
         match found {
-            Some((generation, tags)) if generation == self.shared.tags_generation.get() => Some(tags),
+            Some((generation, meta)) if generation == self.shared.tags_generation.get() => Some(meta),
             Some((_, old)) => {
                 self.request(MediaKey::Tags { path }, Some(entry));
                 Some(old)
@@ -407,8 +408,8 @@ impl Media {
     }
 
     /// Only what is already known; asks for nothing (menus).
-    pub fn known_tags(&self, path: &std::path::Path) -> Option<Box<[Tag]>> {
-        self.shared.tags.borrow().get(path).map(|(_, tags)| tags.clone())
+    pub fn known_tags(&self, path: &std::path::Path) -> Option<Arc<RowMeta>> {
+        self.shared.tags.borrow().get(path).map(|(_, meta)| meta.clone())
     }
 
     /// Every row's tags read again when next drawn (a listing shown, a tag job ended, F5);

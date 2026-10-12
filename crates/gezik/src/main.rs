@@ -378,7 +378,8 @@ fn perform(
         | Action::Tag5
         | Action::Tag6
         | Action::Tag7
-        | Action::ClearTags => return actions::run(action, nav, view),
+        | Action::ClearTags
+        | Action::EditComment => return actions::run(action, nav, view),
     }
     true
 }

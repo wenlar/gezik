@@ -763,6 +763,13 @@ Fresh settings (`GEZIK_CONFIG_DIR=/tmp/gz12b`): `[tags] dots = "auto"` shows dot
 351. **Filter.** ⌘F, type `tag:Red`: only Red files; `*.jpg tag:Red` the Red pictures; `tag:"Project X"` a tag with a space; `tag:none` the untagged; `tag:any` the tagged; `tag:red` matches Red (case does not matter).
 352. **A big folder.** `mkdir /tmp/t100k && cd /tmp/t100k && seq 1 100000 | xargs touch` (one minute), open it in Gezik, Sort by tags: the list stays usable while the status line says `Reading tags… 40,000 of 100,000`, then sorts once. Leaving the folder in the middle stops the read (Activity Monitor: Gezik's CPU drops). Write down how long 100,000 took. With name sort and no Tags column, `sudo fs_usage -w -f filesys gezik | grep getxattr` shows no reads while scrolling (dots off: View ▸ Tag Dots).
 
+### 12d, ratings and comments
+
+353. **Stars in the picker.** Select three files, ⌃⌘L: under the tags a Rating line with five stars and a Comment… line. Click the third star, Esc: the three files get ★★★ (one job: Edit ▸ Undo takes it back). Open the picker again: ★★★ shows; on files with different ratings the stars are faint. File ▸ Tags ▸ Rating ▸ ★★★★★ and right-click ▸ Tags ▸ ★★ also rate. In Terminal, `mdls -name kMDItemStarRating file` shows the stars Gezik gave.
+354. **Comment.** File ▸ Tags ▸ Comment… (or the picker's Comment… line): a question with one field; type `Ready for review`, Save. `mdls -name kMDItemFinderComment file` shows it; Finder's Get Info may not (known gap: Finder reads comments from `.DS_Store`). On two files with different comments the field starts empty with `Comments differ across 2 items`; Save without typing changes nothing, `Remove Comments` clears them; pasting 1,001 characters turns the line red and Save waits; Save with an empty field removes the comment.
+355. **Columns.** Header ▸ Show Rating and Show Comment: `★★★☆☆` and the comment's text; a click on Rating's header sorts most stars first (a second click turns it round); the Comment header does not sort. View ▸ Group By ▸ Rating: `★★★★★ (1)` … `Not Rated (12)`.
+356. **Filter.** ⌘F, `rating:3` (or `rating:>=3`): files with three stars or more; `rating:none` the unrated; `rating:any` the rated; `*.jpg rating:4 tag:Red` combines them. In search results Sort by rating says `Tags and ratings sort, group and filter folders, not search results`.
+
 ## Known gaps (not bugs)
 
 These are known differences from Finder and ForkLift (from the ForkLift comparison, §3). Don't report them as failures. A note is welcome if one hurts more than expected.

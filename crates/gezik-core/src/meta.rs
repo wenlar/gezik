@@ -142,7 +142,9 @@ pub enum MetaEdit {
 /// `text` on one line, at most [`MAX_COMMENT`] characters.
 fn one_paragraph(text: &str) -> Box<str> {
     // Line breaks, tabs and the store's field separator (U+001F) are all control characters.
-    let line: String = text.trim().chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    // A Windows line break is one break: one space.
+    let line: String =
+        text.trim().replace("\r\n", "\n").chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
     line.chars().take(MAX_COMMENT).collect::<String>().into()
 }
 
@@ -305,6 +307,32 @@ pub fn label_color(tags: &[Tag]) -> TagColor {
     tags.iter().rev().map(|tag| tag.color).find(|color| *color != TagColor::None).unwrap_or(TagColor::None)
 }
 
+/// `stars` as the Rating column draws them: `★★★☆☆`; nothing when not rated.
+pub fn stars_text(stars: u8) -> String {
+    let n = usize::from(stars.min(5));
+    if n == 0 { String::new() } else { format!("{}{}", "★".repeat(n), "☆".repeat(5 - n)) }
+}
+
+/// Whether Windows has a property handler that keeps Explorer's Tags (`System.Keywords`) and
+/// rating in files named so (spec 12 §8.3): a fixed list, as trying any file loads a handler.
+pub fn explorer_kind(name: &str) -> bool {
+    const KINDS: [&str; 13] =
+        ["jpg", "jpeg", "tif", "tiff", "heic", "mp3", "m4a", "wma", "mp4", "wmv", "docx", "xlsx", "pptx"];
+    name.rsplit_once('.').is_some_and(|(_, ext)| KINDS.iter().any(|k| k.eq_ignore_ascii_case(ext)))
+}
+
+/// `System.Rating` (1–99) as stars, by Explorer's ranges (it writes 1, 25, 50, 75, 99).
+pub fn stars_from_windows(rating: u32) -> u8 {
+    match rating {
+        0 => 0,
+        1..=12 => 1,
+        13..=37 => 2,
+        38..=62 => 3,
+        63..=87 => 4,
+        _ => 5,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +376,8 @@ mod tests {
         assert_eq!(m.comment.chars().count(), MAX_COMMENT);
         m.apply(&MetaEdit::Comment("a\u{1f}b\tc".into()));
         assert_eq!(&*m.comment, "a b c", "no control characters: the store parts fields with U+001F");
+        m.apply(&MetaEdit::Comment("one\r\ntwo\rthree".into()));
+        assert_eq!(&*m.comment, "one two three", "CRLF is one space");
         m.apply(&MetaEdit::AddTags(vec![Tag::new("bad\u{1f}", TagColor::Red)]));
         assert!(m.tags.is_empty(), "a name no system holds is not added");
         let many: Vec<Tag> = (0..100).map(|i| Tag::new(&format!("tag {i}"), TagColor::Red)).collect();
@@ -394,6 +424,16 @@ mod tests {
         let bad = decode_stream("gezik-meta 1\ntag x Red\nrating 9\ntag 1 a,b\n");
         assert!(bad.meta.is_empty());
         assert_eq!(bad.unknown.len(), 3, "bad lines are kept, not lost");
+    }
+
+    #[test]
+    fn stars_and_explorers_ratings() {
+        assert_eq!((stars_text(0), stars_text(3), stars_text(9)), (String::new(), "★★★☆☆".into(), "★★★★★".into()));
+        let written = [1, 25, 50, 75, 99].map(stars_from_windows);
+        assert_eq!(written, [1, 2, 3, 4, 5], "what Explorer writes reads back");
+        assert_eq!([0, 12, 13, 37, 38, 62, 63, 87, 88].map(stars_from_windows), [0, 1, 2, 2, 3, 3, 4, 4, 5]);
+        assert!(explorer_kind("a.JPG") && explorer_kind("x.tar.docx") && !explorer_kind("a.png"));
+        assert!(!explorer_kind("jpg") && !explorer_kind("a.jpgx"));
     }
 
     #[test]

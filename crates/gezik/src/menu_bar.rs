@@ -49,6 +49,12 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
             if name == "group-tag" {
                 return crate::panes::active_view().set_group(gezik_core::group::GroupBy::Tag);
             }
+            if name == "group-rating" {
+                return crate::panes::active_view().set_group(gezik_core::group::GroupBy::Rating);
+            }
+            if let Some(stars) = name.strip_prefix("rating:").and_then(|n| n.parse::<u8>().ok()) {
+                return crate::tags::rate(stars, &crate::panes::active_view());
+            }
             if let Some(id) = name.strip_prefix("view-option:").and_then(|i| i.parse::<u32>().ok()) {
                 let options = crate::view_options::current();
                 if let Some(option) = crate::context_menu::view_option_for(id, options) {

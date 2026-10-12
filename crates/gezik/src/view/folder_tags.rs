@@ -1,5 +1,5 @@
-//! A folder's tags read whole (spec 12 §3.4 item 3, §6): only while the view sorts by tags,
-//! groups by tag or filters with `tag:`. One low-priority thread reads every name, says how far
+//! A folder's tags, ratings and comments read whole (spec 12 §3.4 item 3, §6, §8.2): only while
+//! the view sorts by tags or rating, groups by them or filters with `tag:` or `rating:`. One low-priority thread reads every name, says how far
 //! it got, and hands the result over once; the list is then sorted, grouped and filtered again,
 //! once. Rows not read yet sort last, group as `Reading tags…` and pass the filter, drawn faint.
 
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use gezik_core::Entry;
 use gezik_core::group::GroupBy;
-use gezik_core::meta::Tag;
+use gezik_core::meta::Meta;
 use gezik_core::meta_filter::{TagKey, TagTerm, matches, tag_key};
 use gezik_core::pattern::Pattern;
 use gezik_core::sort::SortKey;
@@ -27,8 +27,9 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 /// What the view knows of its folder's tags.
 pub struct FolderTags {
     pub dir: PathBuf,
-    /// Tagged names only (a folder of 100,000 untagged files keeps nothing per file).
-    pub tags: HashMap<Box<str>, Box<[Tag]>>,
+    /// Names with a tag, rating or comment only (a folder of 100,000 untagged files keeps
+    /// nothing per file).
+    pub tags: HashMap<Box<str>, Meta>,
     /// Every name was read; until then every row is on its way.
     pub complete: bool,
     /// A `tag:` filter waits for the first read: the rows it lets through meanwhile are faint.
@@ -39,13 +40,14 @@ pub struct FolderTags {
 }
 
 impl FolderTags {
-    /// Row `name`'s tags; `None` while on their way.
-    pub fn of(&self, name: &str) -> Option<&[Tag]> {
-        self.complete.then(|| self.tags.get(name).map_or(&[][..], |tags| &tags[..]))
+    /// Row `name`'s meta; `None` while on its way.
+    pub fn of(&self, name: &str) -> Option<&Meta> {
+        static NONE: std::sync::LazyLock<Meta> = std::sync::LazyLock::new(Meta::default);
+        self.complete.then(|| self.tags.get(name).unwrap_or(&NONE))
     }
 
     #[cfg(test)]
-    pub fn read(dir: PathBuf, tags: HashMap<Box<str>, Box<[Tag]>>) -> FolderTags {
+    pub fn read(dir: PathBuf, tags: HashMap<Box<str>, Meta>) -> FolderTags {
         FolderTags { dir, tags, complete: true, faint: Cell::new(false), stamp: 0 }
     }
 }
@@ -69,12 +71,14 @@ impl Drop for TagRun {
 /// What the reading thread sends.
 pub enum TagArrival {
     Progress { done: usize, total: usize },
-    Done(HashMap<Box<str>, Box<[Tag]>>),
+    Done(HashMap<Box<str>, Meta>),
 }
 
-/// Whether a view needs its folder's tags whole (nothing is read otherwise).
+/// Whether a view needs its folder's meta whole (nothing is read otherwise).
 pub fn needed(sort: SortKey, group: GroupBy, filter_has_tags: bool) -> bool {
-    sort == SortKey::Tags || group == GroupBy::Tag || filter_has_tags
+    matches!(sort, SortKey::Tags | SortKey::Rating)
+        || matches!(group, GroupBy::Tag | GroupBy::Rating)
+        || filter_has_tags
 }
 
 /// The same for the same files in any order (names, sizes, modification times).
@@ -233,7 +237,13 @@ impl View {
     pub(super) fn tag_keys(&self, dir: &Path) -> impl Fn(&Entry) -> TagKey + use<> {
         let known = self.0.data.borrow().folder_tags.clone().filter(|f| f.dir == dir);
         let list = crate::tags::list();
-        move |e: &Entry| tag_key(known.as_ref().and_then(|f| f.of(&e.name)), &list)
+        move |e: &Entry| tag_key(known.as_ref().and_then(|f| f.of(&e.name)).map(|m| &m.tags[..]), &list)
+    }
+
+    /// The stars rows of `dir` sort and group by: as read, else on their way (`None`).
+    pub(super) fn rating_keys(&self, dir: &Path) -> impl Fn(&Entry) -> Option<u8> + use<> {
+        let known = self.0.data.borrow().folder_tags.clone().filter(|f| f.dir == dir);
+        move |e: &Entry| known.as_ref().and_then(|f| f.of(&e.name)).map(|m| m.rating)
     }
 
     /// What `pattern` and the `tag:` words `terms` let through of `full` (the entries of `dir`);
@@ -249,7 +259,7 @@ impl View {
             return filtered_with(dir, full, pattern, None);
         }
         let known = self.0.data.borrow().folder_tags.clone().filter(|f| f.dir == dir);
-        let keep = |e: &Entry| known.as_ref().and_then(|f| f.of(&e.name)).is_none_or(|tags| matches(terms, tags));
+        let keep = |e: &Entry| known.as_ref().and_then(|f| f.of(&e.name)).is_none_or(|meta| matches(terms, meta));
         filtered_with(dir, full, pattern, Some(&keep))
     }
 }
@@ -271,7 +281,7 @@ fn read_whole(dir: &Path, names: &[(String, bool, u64, i64)], cancel: &AtomicBoo
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let found = crate::tags::read_tags(&dir.join(name));
+        let found = crate::tags::read_meta(&dir.join(name));
         if !found.is_empty() {
             tags.insert(Box::from(name.as_str()), found);
         }
@@ -297,6 +307,7 @@ mod tests {
         assert!(needed(SortKey::Tags, GroupBy::None, false));
         assert!(needed(SortKey::Name, GroupBy::Tag, false));
         assert!(needed(SortKey::Size, GroupBy::None, true));
+        assert!(needed(SortKey::Rating, GroupBy::None, false) && needed(SortKey::Name, GroupBy::Rating, false));
     }
 
     fn view_of(names: &[&str]) -> View {
@@ -315,8 +326,8 @@ mod tests {
         (0..data.listing.len()).map(|i| data.listing.entry(i).unwrap().name.clone()).collect()
     }
 
-    fn red() -> Box<[Tag]> {
-        vec![Tag::new("Red", TagColor::Red)].into_boxed_slice()
+    fn red() -> Meta {
+        Meta { tags: vec![gezik_core::meta::Tag::new("Red", TagColor::Red)], ..Meta::default() }
     }
 
     #[test]
@@ -360,6 +371,29 @@ mod tests {
         view.sync_folder_tags(false);
         assert!(view.0.data.borrow().folder_tags.is_none(), "not needed any more: dropped");
         assert!(view.0.tag_run.borrow().is_none(), "and the read stopped");
+    }
+
+    #[test]
+    fn a_rating_sort_and_filter_read_the_folder_and_use_the_stars() {
+        let view = view_of(&["a.txt", "b.txt", "c.txt"]);
+        view.0.current.set(gezik_core::view::ViewSettings {
+            sort: SortSpec { key: SortKey::Rating, dir: SortDir::Desc },
+            ..view.0.current.get()
+        });
+        view.sync_folder_tags(false);
+        let id = view.0.tag_runs.get();
+        let stars = |n| Meta { rating: n, ..Meta::default() };
+        view.tags_arrived(
+            id,
+            TagArrival::Done(HashMap::from([(Box::from("a.txt"), stars(2)), (Box::from("c.txt"), stars(5))])),
+        );
+        assert_eq!(shown(&view), ["c.txt", "a.txt", "b.txt"], "most stars first, not rated last");
+        let terms = gezik_core::meta_filter::split("rating:>=2").1;
+        let full = view.0.data.borrow().full.clone();
+        let (listing, _) = view.filter_files(Path::new("/x"), &full, &Pattern::default(), &terms);
+        assert_eq!(listing.len(), 2, "b.txt has no stars");
+        let (none, _) = view.filter_files(Path::new("/x"), &full, &Pattern::default(), &[TagTerm::Unrated]);
+        assert_eq!(none.len(), 1);
     }
 
     #[test]

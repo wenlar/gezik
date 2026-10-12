@@ -101,19 +101,135 @@ thread_local! {
     static NETWORK: RefCell<Option<(PathBuf, bool)>> = const { RefCell::new(None) };
 }
 
-/// A row's tags, on the icon worker (media.rs); a file that cannot be read has none, nor one on
-/// a network drive unless dots are forced on (each read would cross the network).
-pub fn read_for_rows(path: &Path) -> Box<[Tag]> {
-    if !dots_forced() && on_network(path) {
-        return Box::default();
-    }
-    STORE.get().and_then(|store| store.read(path).ok()).map(|meta| meta.tags.into_boxed_slice()).unwrap_or_default()
+/// A row's meta as drawn (its own record and Gezik's store).
+#[derive(Debug, Default)]
+pub struct RowMeta {
+    pub meta: Meta,
 }
 
-/// A file's tags for a folder read whole (12c, `view/folder_tags.rs`): network drives too, the
-/// view asked for them; a file that cannot be read has none.
-pub fn read_tags(path: &Path) -> Box<[Tag]> {
-    STORE.get().and_then(|store| store.read(path).ok()).map(|meta| meta.tags.into_boxed_slice()).unwrap_or_default()
+/// What Explorer keeps in a file (`System.Keywords`, `System.Rating`).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Explorer {
+    /// Its Tags, parted by ", ".
+    pub keywords: Box<str>,
+    pub stars: u8,
+}
+
+/// Explorer's Tags and rating of `path`; none where Windows keeps none (or the handler hangs).
+pub fn read_explorer(path: &Path) -> Explorer {
+    #[cfg(windows)]
+    if let Some((keywords, rating)) = gezik_platform::meta::explorer(path) {
+        return Explorer { keywords: keywords.join(", ").into(), stars: gezik_core::meta::stars_from_windows(rating) };
+    }
+    let _ = path;
+    Explorer::default()
+}
+
+/// A row's meta, on the icon worker (media.rs); a file that cannot be read has none, nor one on
+/// a network drive unless dots are forced on (each read would cross the network).
+pub fn read_for_rows(path: &Path) -> RowMeta {
+    if !dots_forced() && on_network(path) {
+        return RowMeta::default();
+    }
+    RowMeta { meta: read_meta(path) }
+}
+
+/// Explorer's reads (Windows, spec 12 §8.3): their own worker and small queue, so a slow
+/// property handler never holds up icons and dots. Answers are kept by path until F5 or a tag
+/// job; rows are drawn again as they come.
+struct ExplorerReads {
+    queue: std::collections::VecDeque<PathBuf>,
+    known: std::collections::HashMap<PathBuf, Explorer>,
+    started: bool,
+}
+
+/// The most queued: the newest win (rows scrolled past are not read).
+const EXPLORER_QUEUE: usize = 64;
+/// Answers kept; forgotten wholesale beyond this.
+const EXPLORER_KNOWN: usize = 10_000;
+
+static EXPLORER: std::sync::Mutex<Option<ExplorerReads>> = std::sync::Mutex::new(None);
+static EXPLORER_WAKE: std::sync::Condvar = std::sync::Condvar::new();
+static EXPLORER_REDRAW: AtomicBool = AtomicBool::new(false);
+
+fn explorer_reads() -> std::sync::MutexGuard<'static, Option<ExplorerReads>> {
+    EXPLORER.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Explorer's Tags and stars of `path` if read; otherwise queued for its worker.
+pub fn explorer_of(path: &Path) -> Option<Explorer> {
+    let mut guard = explorer_reads();
+    let reads = guard.get_or_insert_with(|| ExplorerReads {
+        queue: std::collections::VecDeque::new(),
+        known: std::collections::HashMap::new(),
+        started: false,
+    });
+    if let Some(found) = reads.known.get(path) {
+        return Some(found.clone());
+    }
+    if !reads.queue.iter().any(|p| p == path) {
+        if reads.queue.len() >= EXPLORER_QUEUE {
+            reads.queue.pop_front();
+        }
+        reads.queue.push_back(path.to_path_buf());
+    }
+    if !reads.started {
+        reads.started = std::thread::Builder::new().name("gezik-explorer".into()).spawn(explorer_worker).is_ok();
+    }
+    EXPLORER_WAKE.notify_one();
+    None
+}
+
+fn explorer_worker() {
+    gezik_platform::priority::lower_this_thread();
+    loop {
+        let path = {
+            let mut guard = explorer_reads();
+            loop {
+                if let Some(path) = guard.as_mut().and_then(|r| r.queue.pop_back()) {
+                    break path;
+                }
+                guard = EXPLORER_WAKE.wait(guard).unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+        };
+        let found = read_explorer(&path);
+        if let Some(reads) = explorer_reads().as_mut() {
+            if reads.known.len() >= EXPLORER_KNOWN {
+                reads.known.clear();
+            }
+            reads.known.insert(path, found);
+        }
+        // One redraw for answers that come together.
+        if !EXPLORER_REDRAW.swap(true, Ordering::SeqCst) {
+            let _ = slint::invoke_from_event_loop(|| {
+                EXPLORER_REDRAW.store(false, Ordering::SeqCst);
+                redraw_all();
+            });
+        }
+    }
+}
+
+/// F5, a tag job: Explorer's answers are asked for again.
+fn forget_explorer() {
+    if let Some(reads) = explorer_reads().as_mut() {
+        reads.known.clear();
+    }
+}
+
+/// Tests: an answer as if read.
+#[cfg(test)]
+pub fn set_explorer_for_tests(path: &Path, found: Explorer) {
+    drop(explorer_of(path));
+    if let Some(reads) = explorer_reads().as_mut() {
+        reads.queue.retain(|p| p != path);
+        reads.known.insert(path.to_path_buf(), found);
+    }
+}
+
+/// A file's meta for a folder read whole (12c, `view/folder_tags.rs`): network drives too, the
+/// view asked for it; a file that cannot be read has none.
+pub fn read_meta(path: &Path) -> Meta {
+    STORE.get().and_then(|store| store.read(path).ok()).unwrap_or_default()
 }
 
 /// Store entries of files other programs moved into `folder` follow them (12c).
@@ -178,6 +294,7 @@ pub fn dots_of(tags: &[Tag], list: &[Tag]) -> (Vec<Color>, i32, String) {
 /// Drops what is known of every row's tags and draws the rows again (a tag job ended, F5).
 pub fn forget_rows() {
     crate::media::with_current(crate::media::Media::forget_tags);
+    forget_explorer();
     // This window's panes read again now; other windows' when they next show or sort.
     let here: Vec<_> = crate::panes::all().iter().map(|p| p.id).collect();
     for p in crate::panes::everywhere() {
@@ -354,6 +471,85 @@ pub fn clear_paths(paths: Vec<PathBuf>) {
     crate::panes::active_view().note(note);
 }
 
+/// The selection's stars (0: none), from the macOS menu bar (spec 12 §8.1).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn rate(stars: u8, view: &View) {
+    if let Some(paths) = targets(view) {
+        rate_paths(stars, paths);
+    }
+}
+
+pub fn rate_paths(stars: u8, paths: Vec<PathBuf>) {
+    let what = crate::stack::count_text(paths.len());
+    let note = match stars.min(5) {
+        0 => format!("Rating removed from {what}"),
+        n => format!("{what} rated {}", "★".repeat(usize::from(n))),
+    };
+    submit(paths, vec![MetaEdit::Rating(stars.min(5))]);
+    crate::panes::active_view().note(note);
+}
+
+/// `edit-comment`: the selection's comment asked for in a question (spec 12 §8.1).
+pub fn edit_comment(view: &View) {
+    if let Some(paths) = targets(view) {
+        edit_comment_paths(paths);
+    }
+}
+
+/// The comment the field starts with: the items' own when all have the same (0), else none and
+/// how many items there are (their comments differ).
+pub fn shared_comment(metas: &[Meta]) -> (String, usize) {
+    match metas.split_first() {
+        Some((first, rest)) if rest.iter().all(|m| m.comment == first.comment) => (first.comment.to_string(), 0),
+        _ => (String::new(), metas.len()),
+    }
+}
+
+/// The line under the comment field for `text`, and whether it stops Save: over 1,000
+/// characters it does; line breaks and tabs become spaces; `differing` items' comments differ.
+pub fn comment_note(text: &str, differing: usize) -> (String, bool) {
+    let count = text.chars().count();
+    if count > gezik_core::meta::MAX_COMMENT {
+        let count = gezik_core::group_digits(count as u64);
+        (format!("A comment is at most 1,000 characters; this one has {count}"), true)
+    } else if text.chars().any(char::is_control) {
+        ("Line breaks and tabs become spaces".to_owned(), false)
+    } else if text.is_empty() && differing > 0 {
+        (format!("Comments differ across {}", crate::stack::count_text(differing)), false)
+    } else {
+        (String::new(), false)
+    }
+}
+
+/// The comment a question's answer writes: Save with a changed field writes it (empty: removes
+/// it); `Remove Comments` (button 1, only when they differ) removes them all; an untouched field
+/// does nothing, so different comments are never cleared by a Save.
+pub fn comment_answer(choice: usize, text: &str, initial: &str, differing: usize) -> Option<String> {
+    match choice {
+        1 if differing > 0 => Some(String::new()),
+        0 if text.trim() != initial.trim() => Some(text.to_owned()),
+        _ => None,
+    }
+}
+
+pub fn edit_comment_paths(paths: Vec<PathBuf>) {
+    read_then(paths, |paths, metas| {
+        let (initial, differing) = shared_comment(&metas);
+        let message = format!("Comment for {}:", crate::operations::items_text(&paths));
+        let note = move |text: &str| comment_note(text, differing);
+        let unchanged = initial.clone();
+        let buttons: &[&str] = if differing > 0 { &["Save", "Remove Comments", "Cancel"] } else { &["Save", "Cancel"] };
+        crate::operations::with_current(|ops| {
+            ops.dialogs().ask_form("Comment", message, (initial, Vec::new()), buttons, note, move |answer| {
+                let Some((choice, text, _)) = answer else { return };
+                if let Some(comment) = comment_answer(choice, &text, &unchanged, differing) {
+                    submit(paths, vec![MetaEdit::Comment(comment.into())]);
+                }
+            });
+        });
+    });
+}
+
 /// `tags`: the picker for the selection.
 pub fn open_picker(view: &View) {
     if let Some(paths) = targets(view) {
@@ -372,8 +568,8 @@ pub fn job_done(job: gezik_ops::JobId) {
 /// `Tags ▸` for `paths` at place `at`: the list's tags, marked `• ` when every row (whose tags
 /// are known) has it, `– ` when some do; then Tags… and Clear tags.
 pub fn menu_sub(paths: &[PathBuf], at: usize) -> crate::context_menu::Submenu {
-    use crate::context_menu::{TAGS_CLEAR, TAGS_PICKER, TAGS_TAG_FIRST};
-    let mut known: Vec<Box<[Tag]>> = Vec::new();
+    use crate::context_menu::{TAGS_CLEAR, TAGS_COMMENT, TAGS_PICKER, TAGS_RATING_FIRST, TAGS_TAG_FIRST};
+    let mut known: Vec<Arc<RowMeta>> = Vec::new();
     crate::media::with_current(|m| known = paths.iter().filter_map(|p| m.known_tags(p)).collect());
     // Marks only when every row is known: nothing is read for a menu.
     let all_known = known.len() == paths.len() && !paths.is_empty();
@@ -381,7 +577,7 @@ pub fn menu_sub(paths: &[PathBuf], at: usize) -> crate::context_menu::Submenu {
         .iter()
         .enumerate()
         .map(|(i, tag)| {
-            let count = known.iter().filter(|tags| tags.iter().any(|t| same_name(&t.name, &tag.name))).count();
+            let count = known.iter().filter(|row| row.meta.has_tag(&tag.name)).count();
             let mark = match (all_known, count) {
                 (false, _) | (_, 0) => "    ",
                 (true, n) if n == paths.len() => "• ",
@@ -392,15 +588,30 @@ pub fn menu_sub(paths: &[PathBuf], at: usize) -> crate::context_menu::Submenu {
         .collect();
     items.push((TAGS_PICKER, "Tags…".to_owned(), true));
     items.push((TAGS_CLEAR, "Clear tags".to_owned(), true));
+    // The stars, marked when every row is known to have them (12d).
+    let same = known
+        .split_first()
+        .filter(|_| all_known)
+        .and_then(|(first, rest)| rest.iter().all(|r| r.meta.rating == first.meta.rating).then_some(first.meta.rating));
+    for stars in 0..=5u8 {
+        let mark = if same == Some(stars) { "• " } else { "    " };
+        let title = if stars == 0 { "No rating".to_owned() } else { "★".repeat(usize::from(stars)) };
+        items.push((TAGS_RATING_FIRST + u32::from(stars), format!("{mark}{title}"), true));
+    }
+    items.push((TAGS_COMMENT, "Comment…".to_owned(), true));
     crate::context_menu::Submenu { title: "Tags".to_owned(), at, items }
 }
 
 /// A `Tags ▸` item chosen for `paths`; returns whether `id` was one.
 pub fn menu_chosen(id: u32, paths: Vec<PathBuf>) -> bool {
-    use crate::context_menu::{TAGS_CLEAR, TAGS_PICKER, TAGS_TAG_FIRST, TAGS_TAG_MAX};
+    use crate::context_menu::{
+        TAGS_CLEAR, TAGS_COMMENT, TAGS_PICKER, TAGS_RATING_FIRST, TAGS_RATING_LAST, TAGS_TAG_FIRST, TAGS_TAG_MAX,
+    };
     match id {
         TAGS_PICKER => with_current(|p| p.open(paths)),
         TAGS_CLEAR => clear_paths(paths),
+        TAGS_COMMENT => edit_comment_paths(paths),
+        TAGS_RATING_FIRST..=TAGS_RATING_LAST => rate_paths((id - TAGS_RATING_FIRST) as u8, paths),
         id if (TAGS_TAG_FIRST..TAGS_TAG_FIRST + TAGS_TAG_MAX).contains(&id) => {
             if let Some(tag) = list().get((id - TAGS_TAG_FIRST) as usize).cloned() {
                 toggle_on(tag, paths);
@@ -428,6 +639,10 @@ pub enum Line {
     Tag(Tag, bool),
     /// `Create "…"`: the typed name.
     Create(String),
+    /// The stars (12d).
+    Rating,
+    /// `Comment…`.
+    Comment,
 }
 
 /// What the picker changes when it closes: tags put on every item, and tags taken off all.
@@ -435,6 +650,8 @@ pub enum Line {
 pub struct Edits {
     pub adds: Vec<Tag>,
     pub removes: Vec<Box<str>>,
+    /// Stars given in the box (12d).
+    pub rating: Option<u8>,
 }
 
 impl Edits {
@@ -447,7 +664,26 @@ impl Edits {
         if !self.adds.is_empty() {
             out.push(MetaEdit::AddTags(self.adds.clone()));
         }
+        out.extend(self.rating.map(MetaEdit::Rating));
         out
+    }
+
+    /// The stars the box shows: those given, else the items' own when all have the same (none
+    /// while read); 6 when they differ (drawn faint).
+    pub fn stars(&self, metas: Option<&[Meta]>) -> i32 {
+        if let Some(stars) = self.rating {
+            return i32::from(stars);
+        }
+        match metas.and_then(|m| m.split_first()) {
+            Some((first, rest)) if rest.iter().any(|m| m.rating != first.rating) => 6,
+            Some((first, _)) => i32::from(first.rating),
+            None => 0,
+        }
+    }
+
+    /// A click on star `n`: those stars, or none when the box shows exactly them.
+    pub fn star(&mut self, n: u8, metas: Option<&[Meta]>) {
+        self.rating = Some(if self.stars(metas) == i32::from(n) { 0 } else { n.min(5) });
     }
 
     /// 2 on every item, 1 on some, 0 on none, as the picker shows `name` now; `metas` `None`
@@ -510,6 +746,7 @@ pub fn picker_lines(list: &[Tag], metas: Option<&[Meta]>, edits: &Edits, query: 
     if !typed.is_empty() && !exact {
         lines.push(Line::Create(typed.to_owned()));
     }
+    lines.extend([Line::Rating, Line::Comment]);
     lines
 }
 
@@ -595,8 +832,17 @@ impl TagPicker {
         self.show();
     }
 
-    /// Esc closes (and applies), Enter toggles the current line, Up/Down move.
+    /// Esc closes (and applies), Enter toggles the current line, Up/Down move; Alt+0…5 gives
+    /// the stars (Windows and Linux: ⌥ types a character on macOS).
     pub fn chord(&self, chord: &Chord) -> bool {
+        if let Key::Char(c @ '0'..='5') = chord.key
+            && chord.alt
+            && !(chord.ctrl || chord.meta || chord.shift)
+        {
+            self.0.edits.borrow_mut().rating = Some(c as u8 - b'0');
+            self.show();
+            return true;
+        }
         if chord.ctrl || chord.alt || chord.meta || chord.shift {
             return false;
         }
@@ -620,12 +866,28 @@ impl TagPicker {
         self.choose(line);
     }
 
+    /// A click on star `n` of the Rating line.
+    pub fn starred(&self, n: u8) {
+        {
+            let metas = self.0.metas.borrow();
+            self.0.edits.borrow_mut().star(n, metas.as_deref());
+        }
+        self.show();
+    }
+
     /// Toggles a tag on the items (in memory; the box stays open), or creates the typed one.
     fn choose(&self, line: usize) {
         let Some(line) = self.0.lines.borrow().get(line).cloned() else { return };
         self.0.current.set(self.0.lines.borrow().iter().position(|l| *l == line).unwrap_or(0));
         let tag = match line {
             Line::Tag(tag, _) => tag,
+            // Enter on the stars: they take clicks and Alt+digits.
+            Line::Rating => return,
+            Line::Comment => {
+                let paths = self.0.paths.borrow().clone();
+                self.close();
+                return edit_comment_paths(paths);
+            }
             Line::Create(name) => {
                 if let Err(err) = check_tag_name(&name) {
                     return crate::panes::active_view().note(format!("\"{name}\": {err}"));
@@ -687,17 +949,20 @@ impl TagPicker {
                         bold: false,
                         dot: color_of(shown_color(tag, &list, linux)),
                         check: edits.check(&tag.name, metas.as_deref()),
+                        stars: -1,
                     }
                 }
-                Line::Create(name) => PickRow {
-                    title: format!("Create \"{name}\"").into(),
-                    detail: "".into(),
-                    tag: "New tag".into(),
-                    keys: "".into(),
-                    bold: false,
-                    dot: Color::default(),
-                    check: -1,
+                Line::Create(name) => {
+                    PickRow { title: format!("Create \"{name}\"").into(), tag: "New tag".into(), ..plain_row() }
+                }
+                Line::Rating => PickRow {
+                    title: "Rating".into(),
+                    keys: if cfg!(target_os = "macos") { "" } else { "Alt+0…5" }.into(),
+                    tag: " ".into(),
+                    stars: edits.stars(metas.as_deref()),
+                    ..plain_row()
                 },
+                Line::Comment => PickRow { title: "Comment…".into(), ..plain_row() },
             })
             .collect();
         drop((metas, edits, paths));
@@ -707,6 +972,20 @@ impl TagPicker {
         self.0.model.set_vec(rows);
         window.set_tp_label(label.into());
         window.set_tp_current(i32::try_from(current).unwrap_or(0));
+    }
+}
+
+/// A picker line without a tag's dot, mark or stars.
+fn plain_row() -> PickRow {
+    PickRow {
+        title: "".into(),
+        detail: "".into(),
+        tag: "".into(),
+        keys: "".into(),
+        bold: false,
+        dot: Color::default(),
+        check: -1,
+        stars: -1,
     }
 }
 
@@ -767,15 +1046,83 @@ mod tests {
             .map(|l| match l {
                 Line::Tag(t, listed) => format!("{}{}", t.name, if *listed { "" } else { "*" }),
                 Line::Create(n) => format!("+{n}"),
+                Line::Rating => "★".to_owned(),
+                Line::Comment => "Comment…".to_owned(),
             })
             .collect();
-        assert_eq!(names, ["Red", "Orange", "Green", "Project X*"], "red is Red: one line");
+        assert_eq!(names, ["Red", "Orange", "Green", "Project X*", "★", "Comment…"], "red is Red: one line");
         let typed = picker_lines(&list(), Some(&metas), &Edits::default(), "pro");
-        assert_eq!(typed, [Line::Tag(tag("Project X", TagColor::None), false), Line::Create("pro".into())]);
+        assert_eq!(
+            typed,
+            [
+                Line::Tag(tag("Project X", TagColor::None), false),
+                Line::Create("pro".into()),
+                Line::Rating,
+                Line::Comment
+            ]
+        );
         let exact = picker_lines(&list(), Some(&metas), &Edits::default(), " GREEN ");
-        assert_eq!(exact, [Line::Tag(tag("Green", TagColor::Green), true)], "a tag's own name: no Create");
+        assert_eq!(exact[0], Line::Tag(tag("Green", TagColor::Green), true));
+        assert_eq!(exact.len(), 3, "a tag's own name: no Create");
         let turkish = picker_lines(&[tag("İş", TagColor::Blue)], None, &Edits::default(), "iş");
-        assert_eq!(turkish.len(), 1, "Turkish İ folds");
+        assert_eq!(turkish.len(), 3, "Turkish İ folds");
+    }
+
+    fn rated(stars: u8, comment: &str) -> Meta {
+        Meta { rating: stars, comment: comment.into(), ..Meta::default() }
+    }
+
+    #[test]
+    fn the_stars_show_the_items_rating_and_a_click_sets_or_clears_it() {
+        let same = [rated(3, ""), rated(3, "")];
+        let mixed = [rated(3, ""), rated(0, "")];
+        let mut edits = Edits::default();
+        assert_eq!(edits.stars(None), 0, "while read: none");
+        assert_eq!((edits.stars(Some(&same)), edits.stars(Some(&mixed))), (3, 6), "6: they differ (faint)");
+        edits.star(3, Some(&same));
+        assert_eq!(edits.rating, Some(0), "the stars shown again: none");
+        edits.star(4, Some(&same));
+        assert_eq!((edits.rating, edits.stars(Some(&mixed))), (Some(4), 4));
+        edits.star(5, Some(&mixed));
+        edits.toggle(&tag("Red", TagColor::Red), Some(&same));
+        assert_eq!(
+            edits.to_edits(),
+            [MetaEdit::AddTags(vec![tag("Red", TagColor::Red)]), MetaEdit::Rating(5)],
+            "tags and stars: one job"
+        );
+        assert_eq!(Edits::default().to_edits(), [], "no stars given: the rating is left alone");
+    }
+
+    #[test]
+    fn a_comment_starts_from_the_shared_one_and_stays_within_its_rules() {
+        assert_eq!(shared_comment(&[rated(0, "draft"), rated(2, "draft")]), ("draft".to_owned(), 0));
+        assert_eq!(shared_comment(&[rated(0, "a"), rated(0, ""), rated(0, "b")]), (String::new(), 3));
+        assert_eq!(shared_comment(&[rated(0, "a"), rated(0, "")]), (String::new(), 2), "1 has one: 2 differ");
+        assert_eq!(shared_comment(&[rated(0, ""), rated(0, "")]), (String::new(), 0));
+        assert_eq!(comment_note("ok", 0), (String::new(), false));
+        assert_eq!(comment_note("", 2), ("Comments differ across 2 items".to_owned(), false));
+        assert_eq!(comment_note("a\tb", 0), ("Line breaks and tabs become spaces".to_owned(), false));
+        let (line, stops) = comment_note(&"ğ".repeat(1001), 0);
+        assert!(stops && line.ends_with("1,001"), "{line}");
+        assert!(!comment_note(&"ğ".repeat(1000), 0).1, "1,000 characters (not bytes) fit");
+        // Different comments: an untouched Save leaves them; Remove Comments clears them.
+        assert_eq!(comment_answer(0, "", "", 2), None);
+        assert_eq!(comment_answer(0, "new", "", 2), Some("new".to_owned()));
+        assert_eq!(comment_answer(1, "", "", 2), Some(String::new()));
+        // One shared comment: Save as it was does nothing, emptied removes it.
+        assert_eq!(comment_answer(0, " draft ", "draft", 0), None);
+        assert_eq!(comment_answer(0, "", "draft", 0), Some(String::new()));
+        assert_eq!(comment_answer(1, "x", "draft", 0), None, "Cancel");
+    }
+
+    #[test]
+    fn the_menu_has_the_stars_and_comment_marked_from_what_is_known() {
+        use crate::context_menu::{TAGS_COMMENT, TAGS_RATING_FIRST};
+        let sub = menu_sub(&[PathBuf::from("a")], 2);
+        let ids: Vec<u32> = sub.items.iter().map(|(id, _, _)| *id).collect();
+        assert_eq!(&ids[ids.len() - 7..], [2470, 2471, 2472, 2473, 2474, 2475, TAGS_COMMENT]);
+        assert_eq!(sub.items[ids.len() - 6].1, "    ★", "nothing known: no mark");
+        assert_eq!(TAGS_RATING_FIRST, 2470);
     }
 
     #[test]
