@@ -281,8 +281,18 @@ mod tests {
 
     const OTHER: Platform = Platform::Other;
 
+    /// Read with Windows' and Linux's keys on every host: `parse` reads `mod` as Cmd on a Mac.
     fn settings(text: &str) -> Settings {
-        Settings::parse("settings.toml", text, &mut Vec::new())
+        let mut settings = Settings::parse("settings.toml", text, &mut Vec::new());
+        let table: toml::Table = text.parse().unwrap();
+        let shortcuts = table.get("shortcuts").and_then(toml::Value::as_table);
+        settings.shortcuts = Shortcuts::from_table(shortcuts, OTHER, "settings.toml", &mut Vec::new());
+        for (index, command) in settings.commands.iter().enumerate() {
+            if let Some(text) = &command.shortcut {
+                settings.shortcuts.bind_command(index, chord(text)).unwrap();
+            }
+        }
+        settings
     }
 
     fn chord(text: &str) -> Chord {
