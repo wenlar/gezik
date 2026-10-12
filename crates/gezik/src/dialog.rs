@@ -12,6 +12,8 @@ type Answer = Box<dyn FnOnce(Option<usize>)>;
 
 /// The line under a field, from its text: `(line, is_error)`.
 type Note = Rc<dyn Fn(&str) -> (String, bool)>;
+/// Whether a blocking question's field may be answered: the error line to show if not.
+type Check = Rc<dyn Fn(&str) -> Result<(), String>>;
 
 struct Question {
     title: String,
@@ -31,6 +33,8 @@ struct Question {
     checks: Vec<(String, bool)>,
     /// While the line under the field is an error, only the Esc button answers (`ask_form`).
     blocks: bool,
+    /// What a blocking question's buttons go by instead of the line (`ask_text_checked`).
+    check: Option<Check>,
     answer: Answer,
 }
 
@@ -45,6 +49,8 @@ struct Inner {
     open_note: RefCell<Option<Note>>,
     /// The question on screen blocks its buttons while its line is an error: its Esc button.
     open_blocks: Cell<Option<usize>>,
+    /// The check its buttons go by, if not the line.
+    open_check: RefCell<Option<Check>>,
 }
 
 #[derive(Clone)]
@@ -59,6 +65,7 @@ impl Dialogs {
             open_job: Cell::new(None),
             open_note: RefCell::new(None),
             open_blocks: Cell::new(None),
+            open_check: RefCell::new(None),
         }));
         window.on_dialog_chosen({
             let dialogs = dialogs.clone();
@@ -91,6 +98,7 @@ impl Dialogs {
             open_job: Cell::new(None),
             open_note: RefCell::new(None),
             open_blocks: Cell::new(None),
+            open_check: RefCell::new(None),
         }))
     }
 
@@ -125,6 +133,7 @@ impl Dialogs {
             note: None,
             checks: Vec::new(),
             blocks: false,
+            check: None,
             answer: Box::new(answer),
         });
     }
@@ -150,6 +159,7 @@ impl Dialogs {
             note: None,
             checks: Vec::new(),
             blocks: false,
+            check: None,
             answer: Box::new(answer),
         });
     }
@@ -189,6 +199,7 @@ impl Dialogs {
                     .zip(window.get_dialog_checks().iter())
                     .collect(),
                 blocks: self.0.open_blocks.take().is_some(),
+                check: self.0.open_check.borrow_mut().take(),
                 answer,
             });
         }
@@ -259,6 +270,38 @@ impl Dialogs {
         );
     }
 
+    /// Like `ask_text_noted`, but the buttons other than the last (Esc) answer only once `check`
+    /// passes; until then they show its error under the field and the question stays open.
+    #[allow(clippy::too_many_arguments)]
+    pub fn ask_text_checked(
+        &self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        initial: impl Into<String>,
+        buttons: &[&str],
+        note: impl Fn(&str) -> (String, bool) + 'static,
+        check: impl Fn(&str) -> Result<(), String> + 'static,
+        answer: impl FnOnce(Option<String>) + 'static,
+    ) {
+        let window = self.0.window.clone();
+        self.push(Question {
+            title: title.into(),
+            message: message.into(),
+            buttons: buttons.iter().map(|b| (*b).to_owned()).collect(),
+            escape: buttons.len().saturating_sub(1),
+            input: Some(initial.into()),
+            secret: false,
+            job: None,
+            note: Some(Rc::new(note)),
+            checks: Vec::new(),
+            blocks: true,
+            check: Some(Rc::new(check)),
+            answer: Box::new(move |choice| {
+                answer(window.upgrade().map(|w| w.get_dialog_input().to_string()).filter(|_| choice == Some(0)));
+            }),
+        });
+    }
+
     /// Like `ask_text_noted`, but every button except the last (Esc) answers, with its index
     /// and the text (Connect / Map to Z: / Cancel).
     pub fn ask_text_choice(
@@ -283,6 +326,7 @@ impl Dialogs {
             note: Some(Rc::new(note)),
             checks: Vec::new(),
             blocks: false,
+            check: None,
             answer: Box::new(move |choice| {
                 let text = window.upgrade().map(|w| w.get_dialog_input().to_string());
                 answer(choice.filter(|&c| c != escape).zip(text));
@@ -314,6 +358,7 @@ impl Dialogs {
             note: Some(Rc::new(note)),
             checks,
             blocks: true,
+            check: None,
             answer: Box::new(move |choice| {
                 use slint::Model;
                 let form = window
@@ -347,6 +392,7 @@ impl Dialogs {
             note: None,
             checks,
             blocks: false,
+            check: None,
             answer: Box::new(move |choice| {
                 use slint::Model;
                 let marks = window.upgrade().map(|w| w.get_dialog_checks().iter().collect::<Vec<bool>>());
@@ -390,6 +436,7 @@ impl Dialogs {
             note,
             checks: Vec::new(),
             blocks: false,
+            check: None,
             answer: Box::new(move |choice| {
                 let text = window.upgrade().map(|w| {
                     let text = w.get_dialog_input().to_string();
@@ -431,6 +478,7 @@ impl Dialogs {
                 *self.0.open.borrow_mut() = Some(question.answer);
                 self.0.open_job.set(question.job.map(|job| (job, question.escape)));
                 self.0.open_blocks.set(question.blocks.then_some(question.escape));
+                *self.0.open_check.borrow_mut() = question.check;
                 window.set_dialog_open(true);
             }
             None => {
@@ -464,6 +512,7 @@ impl Dialogs {
             return;
         }
         self.0.open_blocks.set(None);
+        self.0.open_check.borrow_mut().take();
         let answer = self.0.open.borrow_mut().take();
         self.0.open_job.set(None);
         self.0.open_note.borrow_mut().take();
@@ -489,10 +538,15 @@ impl Dialogs {
         if usize::try_from(index).ok() == Some(escape) {
             return false;
         }
-        let (Some(note), Some(window)) = (self.0.open_note.borrow().clone(), self.0.window.upgrade()) else {
+        let Some(window) = self.0.window.upgrade() else { return false };
+        let text = window.get_dialog_input();
+        let (line, error) = if let Some(check) = self.0.open_check.borrow().clone() {
+            check(&text).map_or_else(|why| (why, true), |()| (String::new(), false))
+        } else if let Some(note) = self.0.open_note.borrow().clone() {
+            note(&text)
+        } else {
             return false;
         };
-        let (line, error) = note(&window.get_dialog_input());
         if error {
             window.set_dialog_note(line.into());
             window.set_dialog_note_error(true);
@@ -548,5 +602,26 @@ mod tests {
         dialogs.ask_text_noted("T", "m", "x", &["OK", "Cancel"], |_| ("bad".to_owned(), true), move |t| p.set(Some(t)));
         window.invoke_dialog_chosen(0);
         assert_eq!(plain.take(), Some(Some("x".to_owned())), "F5's kind of question keeps its behavior");
+    }
+
+    #[test]
+    fn a_checked_field_keeps_ok_until_it_is_good() {
+        crate::windows::tests::platform();
+        let window = AppWindow::new().expect("a headless window");
+        let dialogs = Dialogs::new(&window);
+        let got = Rc::new(RefCell::new(None));
+        let g = got.clone();
+        // The line shows a hint, not an error, for a word being typed (`art`): OK goes by the check.
+        let note = |_: &str| ("artist, album-artist".to_owned(), false);
+        let check = |t: &str| if t == "artist:x" { Ok(()) } else { Err(format!("\"{t}\" is no property")) };
+        dialogs.ask_text_checked("T", "m", "art", &["OK", "Cancel"], note, check, move |t| *g.borrow_mut() = Some(t));
+        window.invoke_dialog_chosen(0);
+        assert!(window.get_dialog_open() && got.borrow().is_none(), "OK is refused");
+        assert_eq!(window.get_dialog_note(), "\"art\" is no property");
+        assert!(window.get_dialog_note_error());
+        window.set_dialog_input("artist:x".into());
+        window.invoke_dialog_chosen(0);
+        assert_eq!(*got.borrow(), Some(Some("artist:x".to_owned())));
+        assert!(!window.get_dialog_open());
     }
 }
