@@ -1370,10 +1370,79 @@ Not changed:
 - Exe: `target/release/gezik` 24,836,272 bytes
 - Run by Claude Code on the Mac, at the maintainer's request. Window driven with synthetic CGEvents, checked with `screencapture` and the file system.
 - Run: `PATH=/usr/bin:/bin:/usr/sbin:/sbin GEZIK_CONFIG_DIR=/tmp/gezik-cfg ./target/release/gezik /tmp/gezik-rel`, from an empty `/tmp/gezik-cfg`. The repo was used where it is (`~/Work/gezik`), not cloned to `~/gezik`.
-- Rules the maintainer added for this run: only `/tmp` test folders and the `GEZIK_CONFIG_DIR` config; `~/Library/Application Support/gezik`, system settings, the keyboard layout and login items are not touched; whatever an item changes (PATH, links, Finder tags) is undone when the item ends; bugs are recorded, not fixed. So `~/GezikReleaseTest`, `~/gezik-tag-probe.txt` and `~/Downloads` are not used: the sub-steps that need them are NOT TESTED, and R52 (writes the real config) is NOT TESTED. Screenshots are in `/tmp/gezik-run3/` (not committed).
+- Rules the maintainer added for this run: only `/tmp` test folders and the `GEZIK_CONFIG_DIR` config; `~/Library/Application Support/gezik`, system settings, the keyboard layout and login items are not touched; whatever an item changes (PATH, links, Finder tags) is undone when the item ends; bugs are recorded, not fixed. So `~/GezikReleaseTest`, `~/gezik-tag-probe.txt` and `~/Downloads` are not used: the sub-steps that need them are NOT TESTED, the portable bundle (R49–R51) was made under `/tmp/gezik-rel`, and R52 (writes the real config) is NOT TESTED. Screenshots are in `/tmp/gezik-run3/` (not committed).
+- The run was done in two sessions on 2026-10-12/13: R1–R5 first; after the maintainer allowed the synthetic-input helper, the test data was made again and R6–R51 followed. Menu-bar items and the app menu were read and chosen through Accessibility (System Events) where clicking was not reliable. ⌘, and other punctuation keys were sent with the character the Turkish-QWERTY-PC layout puts on that key.
 - A Gezik from Run 2 (pid 96680, started 2026-10-10 on `/private/tmp/gezik-test`) was still running and was left alone.
 - `~/Library/Application Support/gezik` did not exist before the run (fingerprint empty). `mdfind 'kMDItemUserTags == "*"'` listed 0 files before the run. `~/.local/bin` did not exist.
 - HEIC made with sips.
+
+### Summary
+
+| Item | Result | Note |
+|---|---|---|
+| R1 [build] | FAIL | 2771 passed, 16 failed (gezik 6, gezik-config 1, gezik-core 2, gezik-ops 6, gezik-platform 1) |
+| R2 [340–342] | PASS | tests pass, but they skip themselves on the startup disk (R13); Finder probe NOT TESTED (home) |
+| R3 [343] | PASS | exFAT image keeps tags |
+| R4 [13a–13f, 14e] | PASS | pdfium tests too (17 + 1 + 11) |
+| R5 [1] | PASS | live theme reload works through `/tmp` |
+| R6 [2] | PASS | |
+| R7 [5, 6] | PASS | Finder interop both ways |
+| R8 [7, 11] | PASS | template default is `confirm-trash = false`; Put Back under `/tmp` fixed |
+| R9 [9, 98] | PASS | upright, no extra window, pages through 3 |
+| R10 [72] | PASS | |
+| R11 [231, 235] | PASS | |
+| R12 [261, 263, Run 2 #1] | PASS | no crash on closing the last window |
+| R13 [344] | FAIL | **tags never written to files on the startup disk** (`drive_root` → `/`, read-only system volume); no `–` for a shell tag; no title |
+| R14 [345, 346] | FAIL | row right-click menu has no Tags |
+| R15 [347] | FAIL | Finder tags not written or read (R13) |
+| R16 [348, 349] | PASS | dots, `+2`, ring, Tags column (Gezik's store) |
+| R17 [350, 351] | PASS | |
+| R18 [353–356] | FAIL | rating/comment only in Gezik's store (R13); rating filter count says `6 / 6` |
+| R19 [357, 358] | PASS | Spotlight part with a home file NOT TESTED |
+| R20 [359] | PASS | Finder drag NOT TESTED |
+| R21 [361] | FAIL | saved search has no `min-rating`/`comment` keys; This Mac NOT TESTED |
+| R22 [362, 363] | PASS | |
+| R23 [13a 366] | PASS | ⌥P does nothing on Turkish-QWERTY-PC |
+| R24 [13a 367] | PASS | memory flat |
+| R25 [13a 368] | FAIL | View ▸ Show Preview as Hex does nothing |
+| R26 [13b 369] | PASS | pdfium downloaded and loaded; narrow pane NOT TESTED |
+| R27 [13b 370] | FAIL | no zoom % in the pane; Fit never becomes Fit Width |
+| R28 [13b 371] | PASS | password link only after `›` |
+| R29 [13b 372] | PASS | worker goes at 10 s |
+| R30 [13c 373] | PASS | ffmpeg 9.0.2 downloaded; sound NOT TESTED (no ears) |
+| R31 [13c 374] | PASS | |
+| R32 [13c 375] | PASS | system volume untouched |
+| R33 [13c 376, 377] | FAIL | `broken.mp4` shown as text, not `Cannot play this file` |
+| R34 [13c 378] | PASS | |
+| R35 [13d 379] | FAIL | HEIC Dimensions `32 × 24` (not upright) |
+| R36 [13d 380, 381] | FAIL | capital `Ö` shown as `O` in properties |
+| R37 [13e 382] | PASS | Return does not pick in More Columns… |
+| R38 [13e 383] | PASS | |
+| R39 [13f 385] | FAIL | OK closes the dialog on an invalid value |
+| R40 [13f 386] | PASS | |
+| R41 [14a 365] | PASS | memory does not come back down after closing |
+| R42 [14a 366] | PASS | |
+| R43 [14a 367] | PASS | |
+| R44 [14b 369] | FAIL | menu bar keeps the old Copy Path key; old key still works |
+| R45 [14c 370] | FAIL | no Replace/Keep Both on installing again |
+| R46 [14c 370] | FAIL | Delete Theme's question opens behind Settings |
+| R47 [14d 372] | PASS | |
+| R48 [14d 373] | PASS | |
+| R49 [14e 374] | PASS | bundle in `/tmp` (maintainer's rule) |
+| R50 [14e 374] | PASS | 7-Zip download NOT TESTED |
+| R51 [14e, Linux 272] | PASS | |
+| R52 [14e 375] | NOT TESTED | writes the real config; needs Gatekeeper |
+| R53 | PASS | clean-up checks all clean |
+
+**37 PASS, 15 FAIL, 1 NOT TESTED** (53 items). Sound, Spotlight-under-home, Finder-from-home, the narrow pane and the 7-Zip download are NOT TESTED sub-steps inside passing items.
+
+### Main findings
+
+1. **Finder tags, ratings and comments never reach files on the startup disk** (R13, R15, R18, R2): on APFS `/`, `/tmp` and `/Users` share a device number, so `drive_root` returns `/` and the sealed system volume makes `holds = false`; everything goes to `tags-store.tsv`. The macOS meta tests skip themselves for the same reason.
+2. `cargo test --workspace` has 16 failures on macOS (R1), mostly Windows/Linux expectations and the verified-copy test hook.
+3. Preview: View ▸ Show Preview as Hex does nothing (R25); the pane shows no zoom and Fit never becomes Fit Width (R27); `broken.mp4` is shown as text (R33); HEIC dimensions are not upright (R35); a capital `Ö` loses its dots in the property rows (R36).
+4. Settings: a changed key is not shown in the menu bar and the old one still works (R44); installing a theme again has no Replace/Keep Both (R45); Delete Theme asks in the main window, hidden behind Settings (R46); Properties… OK closes on an invalid value (R39); a saved search keeps its words only in `pattern` (R21).
+5. Smaller: row right-click menu has no Tags (R14); ⌥P does nothing on Turkish-QWERTY-PC (R23); Return does not choose in More Columns… (R37); the rating filter count says `6 / 6` (R18); the bare binary's app menu says `gezik` and has no Settings… (R41); RSS stays up after the Settings window closes (R41); the template's default is `confirm-trash = false` (R8).
 
 ### Items
 
@@ -1393,37 +1462,248 @@ Not changed:
 #### R3 [343] exFAT keeps tags: PASS
 - `hdiutil create -size 200m -fs ExFAT -volname GZEXFAT /tmp/gzexfat.dmg`, attached at `/Volumes/GZEXFAT`. `GEZIK_TEST_TAG_DIR=/Volumes/GZEXFAT cargo test -p gezik-platform meta::tests::a_copy_to_an_exfat_disk_keeps_its_tags -- --ignored`: 1 passed. Detached and deleted afterwards.
 
-#### R4 [13a–13f, 14e] Part tests: PASS (pdfium part NOT TESTED)
+#### R4 [13a–13f, 14e] Part tests: PASS
 - `-p gezik-core syntax` 7 passed; `-p gezik preview::` 66 passed, 1 ignored; `-p gezik-core pdf_view` 7 passed; `-p gezik-batch fields` 38 passed; `-p gezik-core fields` 14 passed; `-p gezik field` 19 passed; `-p gezik-core template` 9 passed; `-p gezik-search properties` 2 passed; `-p gezik-config paths` 18 passed; `-p gezik-platform audio` matches only 1 ignored test (0 run).
-- The `GEZIK_TEST_PDFIUM=… --test pdf_view --test pdf_worker --test pdf_tasks` run needs the pdfium that R26 downloads through the window; R26 was not reached, so it was not run.
+- After R26 downloaded pdfium: `GEZIK_TEST_PDFIUM=/tmp/gezik-cfg/tools/pdfium-8086/libpdfium.dylib cargo test -p gezik-batch --test pdf_view --test pdf_worker --test pdf_tasks`: pdf_tasks 17 passed, pdf_view 1 passed, pdf_worker 11 passed.
 
 #### R5 [1] Start: PASS
 - Gezik opened on `/tmp/gezik-rel` with no error line (the Terminal printed only `Slint: long callback/instantiation chain detected`). `/tmp/gezik-cfg` held only `state.toml` and an empty `themes/` (no `settings.toml` was written at start).
 - `theme = "light"` written to `/tmp/gezik-cfg/settings.toml` (given through the `/tmp` link): light within 2.5 s; `theme = "dark"`: dark; then `auto`. So Run 2's live reload fix works through the `/tmp` link. Screenshots: `/tmp/gezik-run3/r5-start.png`, `r5-light.png`, `r5-dark.png`.
 
-#### R6–R51: NOT TESTED
-- These need clicks and keys in Gezik's window. The synthetic-input helper (CGEvents, as in Run 2) was refused by Claude Code's permission check on this machine, twice, so the window could not be driven. They are left for a person, or for a rerun once that permission is given.
-- The test data of §3 was made in `/tmp/gezik-rel` (without `~/GezikReleaseTest` and without the ffmpeg media, which waited for R30's download).
+#### R6 [2] Navigation: PASS
+- Double-click `nav`, ⌘↓ on `a` opened `nav/a`; ⌘[ (the key next to P, which types `ğ` on Turkish-QWERTY-PC) went back, ⌘] forward, ⌘↑ up; ⌘T opened a Home tab, ⌘W closed it. Sidebar: FOLDERS (Home …), CLOUD, TAGS, then LOCATIONS with `GezikHedef`, `Macintosh HD`, Trash (scrolled). No beachball. Screenshots `r6-*.png`.
+- Note: the defaults are ⌘⇧1 list and ⌘⇧2 grid (⌘1/⌘2 pick tabs); the checklist's "⌘2 grid, ⌘1 list" (R9, R16) does not match the defaults.
+
+#### R7 [5, 6] Copy, cut, Finder: PASS
+- ⌘C on `copy/lines.txt`, ⌘V in `nav/c`: a copy. ⌘X on `nav/a/one.txt`: the row turned faint (`r7-cut.png`); ⌘V in `nav/c` moved it; ⌘Z put it back in `nav/a`.
+- ⌘C on `nav/c/lines.txt`, ⌘⌥V in `nav/a/b`: moved (gone from `nav/c`).
+- Finder interop: `lines.txt` copied in Gezik and ⌘V in a Finder window on `nav/a` arrived there (Finder first showed its own Keep Both/Stop/Replace dialog in `nav/a/b`, where a `lines.txt` already was; Stop). `one.txt` copied in Finder, ⌘V in Gezik in `nav/c`: arrived.
+
+#### R8 [7, 11] Trash and conflicts: PASS (with a note)
+- With the fresh config, ⌘⌫ on `nav/c/two.txt` moved it to the Trash **without asking**: the template's default is `confirm-trash = false` (`crates/gezik-config/templates/settings.toml:55`), while the checklist expects "confirm on". ⌘Z put it back to `nav/c` (Run 2 bug A fixed). For the rest of the run `[files] confirm-trash = true` was set in `/tmp/gezik-cfg/settings.toml`.
+- With it on: "Move two.txt to the Trash?" (Trash / Cancel), Return trashed it, ⌘Z put it back under `/tmp`.
+- Pasting `lines.txt` into `nav/a/b`, which has one: "1 conflict · Copying lines.txt to /tmp/gezik-rel/nav/a/b" with Replace/Skip/Keep both/If newer (`r8-conflict.png`); Keep both + Start gave `lines (2).txt`; ⌘Z removed it.
+
+#### R9 [9, 98] Quick Look and views: PASS
+- `photos/iphone.jpg` (stored 32×24, EXIF orientation 6), Space: the system Quick Look panel, shown upright (portrait). Esc closed it; only the main Gezik window was left, no Gezik preview window (98 fix holds).
+- ⌘A then Space: the panel has ‹ › and the index button; → paged `iphone.jpg` → `big12mp.jpg` → `iphone.heic`.
+- ⌘⇧2 grid (upright thumbnails), ⌘⇧1 list, ⌘A selects 3 (`3 items · 3 selected (188.3 KB)`). Screenshots `r9-*.png`.
+
+#### R10 [72] Search: PASS
+- ⌘⇧F in `/tmp/gezik-rel`, `*.txt`, Return: 12 results with a Folder column, `12 results in 0.0 s`. Content, `file 3`, Return: `f3.txt` in `tags`, Match `1: file 3`. Esc closed the search bar, the results stayed.
+
+#### R11 [231, 235] Two panes: PASS
+- ⌃⌘P: a second pane on the same folder, active (right). Right pane to `nav/a/b`, Tab to the left, `copy/lines.txt`, fn+F5: `Copy "lines.txt" to /tmp/gezik-rel/nav/a/b?` (with a folder field, Verify copies, Filter…, Don't Ask Again; wording differs from the checklist's `Copy 1 item to …`). Return copied it, the right pane showed it; ⌘Z removed it. ⌃⌘P closed the pane.
+
+#### R12 [261, 263, Run 2 finding 1] Windows and quitting: PASS
+- ⌘N: a second window in the same process (one Gezik for `/tmp/gezik-rel`; the other `gezik` in `pgrep` is Run 2's). It opened at (602, 227), 24 points off the first at (578, 203).
+- Closing it, then the last window, with the red button: Gezik quit with no dialog and no new report in `~/Library/Logs/DiagnosticReports` (Run 2 finding 1 fixed). Started again: the tabs came back (`copy` and `gezik-rel`, from `state.toml [session]`). ⌘Q also quit cleanly, no report.
+
+#### R13 [344] The picker: FAIL (tags never reach the file)
+- ⌃⌘L on `tags/f1.txt`–`f3.txt`: a picker with the seven colours and ⌃1…⌃7, Rating and Comment… (`r13-picker.png`). There is **no `Tags for 3 items` title**.
+- `f1` got Orange from the shell first (`settag`, read back with `xattr`): the picker shows **no `–` on Orange**, and the list shows no orange dot for `f1`.
+- Return on Red: `✓`. `Proj`, Return on `Create "Proj"` (row says `New tag`): `[tags] list` in settings.toml gained `{ name = "Proj", color = "none" }` (the whole default list was written out with it). Esc: dots in the list (red + a ring). ⌘Z took all of it back.
+- **But nothing was written into the files**: `com.apple.metadata:_kMDItemUserTags` of `f1`–`f3` is unchanged (f1 still only Orange, f2/f3 none). The tags went to `/tmp/gezik-cfg/tags-store.tsv` (`tmp/gezik-rel/tags/f1.txt … tag 6 Red\utag 0 Proj`). The same through `/private/tmp/gezik-rel/tags` (`private/tmp/gezik-rel/tags/f1.txt … tag 6 Red`).
+- Cause (found, not fixed): on this Mac `stat -f %d` gives the same device (16777229) for `/`, `/private`, `/tmp`, `/Users` and `/System/Volumes/Data` (APFS volume group). `drive_root` (`crates/gezik-platform/src/fs/unix.rs:204`) walks up while the device is the same, so it returns `/` for every path on the startup disk; `volume("/")` then `statvfs`es the sealed system volume, which is read-only, so `holds = false` (`crates/gezik-platform/src/meta/unix.rs:248`). `MetaStore` then neither reads nor writes Finder tags for any file on the startup disk, home folder included; everything goes to the store. The exFAT disk image (R3) is its own device, so it works there.
+- So R2's macOS tests do not prove much: the platform tests return early when `!holds(&dir)` (`crates/gezik-platform/src/meta/mod.rs:234`, 260, 380, 395), so they "pass" without writing anything.
+
+#### R14 [345, 346] Keys and menus: FAIL (row menu has no Tags)
+- ⌃1 on `f1`–`f3`: status bar `Red added to 3 items`; ⌃1 again took it off; ⌃0: `Tags cleared from 3 items`, a 3-star rating set in the picker stayed (in `tags-store.tsv`: `rating 3`; `mdls` gives nothing under `/tmp`, and the files got nothing, see R13). ⌃1 is not taken by Mission Control on this Mac.
+- File ▸ Tags: Red ⌃1, Orange ⌃2 … Gray ⌃7, Proj, Tags… ⌃⌘L, Clear Tags ⌃0, Rating ▸, Comment…, Clean Up Tag Store… (`r14-menu.png`).
+- **A row's right-click menu has no Tags at all**: on `f1.txt` tagged Red the native menu is Open, Open with default app, Open With ▸, Open terminal here, Copy path as ▸, Make Alias, Create link, Compress…, Compress to "f1.zip", Convert…, Tools ▸, Cut, Copy, Duplicate, Rename, Move to Trash, Delete permanently, Get Info, Share… (`r14-ctx.png`). `context_menu.rs:823` (`add_tags`) should put a `Tags ▸` right after `Tools ▸` in the native menu. Drive and Trash rows not checked further (they have none by design).
+
+#### R15 [347] Finder both ways: FAIL
+- Tags given in Gezik do not reach Finder: the files' `_kMDItemUserTags` stay empty (R13 cause).
+- `settag tags/f4.txt $'Blue\n4'` then ⌘R in Gezik: no blue dot on `f4` (`r15-blue.png`); Gezik does not read the file's tags either.
+- `ls -lT` before and after: the modified dates did not change (only the `@` of the new attribute).
+
+#### R16 [348, 349] Dots and the Tags column: PASS (in Gezik's store)
+- `f5` with five tags (⌃1…⌃5): three dots then `+2`; `f6` with `Proj` (no colour): a ring; a selected row's dots get a light edge; crisp at 2×. The same in grid (⌘⇧2) and columns (⌃⌘3) (`r16-*.png`).
+- Header right-click: Hide Modified, Show Created, Hide Type, Hide Size, Show Tags, Show Rating, Show Comment, More Columns…, Reset columns, Group by ▸. Show Tags: a Tags column after Size (`Red, Orange, Yello…`, `Proj`); a click on its header sorts tagged rows first.
+- View ▸ Tag Dots off: no dots, `dots = false` under `[tags]` in settings.toml. Turned back on.
+- These tags live only in `tags-store.tsv` (R13).
+
+#### R17 [350, 351] Sort, group, filter: PASS (in Gezik's store)
+- View ▸ Group By ▸ Tag: `● Red (2)`, `● Proj (1)`, `No Tags (3)` last (`r17-group.png`).
+- ⌘F `tag:Red` and `tag:red`: f1, f5 (`2 / 6`); `tag:none`: f2, f3, f4; `tag:any`: f1, f5, f6; `*.txt tag:Red`: f1, f5.
+
+#### R18 [353–356] Ratings and comments: FAIL (nothing reaches the file; `mdls` sub-steps)
+- In Gezik: the picker's third star gives ★★★ (store `rating 3`); a 4th star on `f4` then Esc was one job and ⌘Z took it back. File ▸ Tags ▸ Comment… `Ready for review`, Save: stored (`comment Ready for review`). `f1`+`f2` with different comments: the field starts empty with `Comments differ across 2 items` and a `Remove Comments` button. Header ▸ Show Rating: `★★★☆☆`; its header sorts most stars first (the column was off-screen to the right until Modified and Type were hidden; the window is 900 pt wide). Filters `rating:>=3` (f1–f3) and `rating:none` (f4–f6) are right, **but the counter beside the field says `6 / 6` for both** (the tag filters said `2 / 6`, `3 / 6`).
+- `mdls -name kMDItemStarRating` / `kMDItemFinderComment`: not possible under `/tmp` (not indexed), and the files got no attributes anyway (R13 cause), so the Finder side fails.
+
+#### R19 [357, 358] TAGS sidebar and Spotlight: PASS (part); home-folder part NOT TESTED
+- `mdfind 'kMDItemUserTags == "Red"cd' | wc -l`: 0 (nothing on this Mac is tagged Red in Spotlight, and Gezik writes no file tags, R13). `~/GezikReleaseTest/spot/s1.txt` was not made (home folder not used): NOT TESTED.
+- No saved searches yet, so the sidebar is FOLDERS, CLOUD, TAGS (coloured dots, `Proj` with a ring), LOCATIONS. Clicking Red: a `Tag: Red` search tab `in Computer`, `0 results in 0.0 s via Spotlight (drives it does not index are not in it)`, the same as `mdfind`.
+- Red's menu (Search this folder, Search everywhere, Filter this folder, Rename…, Color ▸, Move up, Move down, Remove from list, New tag…) ▸ Search this folder in `/tmp/gezik-rel/tags`: `f1.txt`, `f5.txt` (from Gezik's store), `2 results`.
+- `[sidebar] tags = false`: the TAGS section went; `true`: back.
+
+#### R20 [359] Drop to tag: PASS (Finder part NOT TESTED)
+- Dragging two selected rows onto Purple in the sidebar: `Purple added to 2 items`, nothing moved; ⌘Z took it off. (The first synthetic drag did not start; the second did. It tagged `f4`+`f5` because the first attempt had moved the selection. The `Tag 2 items Purple` label was not caught on a screenshot.) Stored in `tags-store.tsv`, not in the files (R13).
+- The drag of `~/GezikReleaseTest/spot/s2.txt` from Finder needs the home folder: NOT TESTED.
+
+#### R21 [361] Search words: FAIL (saved fields); This Mac part NOT TESTED
+- On `/tmp/gezik-rel/tags` (⌘⇧F): `tag:Red rating:3` → `f1.txt`; `comment:review` → `f1.txt` (the folder is walked).
+- Scope This Mac through Spotlight needs a file under home with a rating and comment: NOT TESTED.
+- ⌄ ▸ Save search… `RedReview` ▸ Save with this folder wrote `[[searches]] name = "RedReview"`, `folder = "/tmp/gezik-rel/tags"`, `pattern = "tag:Red rating:3 comment:review"`, `tags = ["Red"]`. There is **no `min-rating` and no `comment` key**; the words stay in `pattern`. (The `tags = ["Red"]` probably comes from the `Filters (1)` left on from clicking Red in the sidebar earlier, not from the words.)
+
+#### R22 [362, 363] Highlight rules: PASS
+- The template's four `[[highlight-rules]]` examples, uncommented in `/tmp/gezik-cfg/settings.toml`: `x.tmp` grey, folders changed today green, Red-tagged files (`f1`, `f5`, from the store) bold, in list, grid, columns and search results (`r22-*.png`).
+- `min-size = "lots"`: the status bar says `settings.toml: highlight-rules[4]: min-size: expected a size like "500 MB", got "lots"`; the other rules still work.
+- `theme = "light"`: folders dark green (`#2e7d32`); `theme = "dark"`: lighter green (`dark-color`); bold names crisp. The settings were put back afterwards.
+- Also seen: once a search was saved, the sidebar got a SEARCHES section between CLOUD and TAGS.
+
+#### R23 [13a 366] Code: PASS (with notes)
+- With `[system] quick-look = "gezik"`. **⌥P did not open or close the preview pane** on Turkish-QWERTY-PC (Option+P types `π`; the default is `alt+p`, and the View menu item shows no key). View ▸ Show Preview did. (The window grew from 900 to 915 pt when the pane opened.)
+- `code/main.rs` and `code/big.rs` (2.2 MB): coloured, line numbers, columns straight at 2×. Page Down, End (last line `}` whole), Home. `W` wrapped and unwrapped; `state.toml [preview] wrap-code = true` was written. Space opened Gezik's own window `big.rs — Gezik` with the same coloured text.
+- Seen: after End in `big.rs` the pane showed the end as plain text without line numbers or colour (status `Pl… 2.2 MB · 100%`); the top is coloured. Probably the large-file path; noted for the maintainer to judge.
+
+#### R24 [13a 367] A 3 GB log: PASS
+- `big.log` 3,000,000,000 bytes (`2.8 GB`). Selected: the first lines at once, numbered, `1,311+ lines`. End: the last lines at once, `2.8 GB · 100%`. Scroll bar dragged to the middle: `2.8 GB · 49%`.
+- RSS (KB): 143,392 before, 134,768 on select, 134,800 at End and middle. `big.log` removed afterwards.
+
+#### R25 [13a 368] Hex: FAIL (menu item)
+- `code/libjetbrains-toolbox-interop.dylib` (the first dylib over 100 KB under /Applications, 120,864 bytes): an `exec` icon and a `Hex` button. Space, `H`: rows `00000000 CF FA ED FE 0C 00 00 01 …` with `__TEXT` in the text column; End: last row `0001D810` (`0x0001_D730` at the top), which fits the size; `H` back to the icon. The pane's `Hex` button does the same (4 bytes a row in the narrow pane).
+- **View ▸ Show Preview as Hex did nothing** with the dylib selected in the pane (tried twice, through Accessibility; the item is enabled, no checkmark).
+
+#### R26 [13b 369] PDF pages (pdfium worker): PASS (narrow pane NOT TESTED)
+- `docs/p50.pdf` (cupsfilter made 49 pages, not 50): page 1 at once with `‹ 1 › − + Fit`. `›`: `More pages need pdfium` with `Download`; the dialog "pdfium needed — More PDF pages need pdfium (~2.3 MB, free)" (Download / Where does it come from? / Cancel); Download put it in `/tmp/gezik-cfg/tools/pdfium-8086/libpdfium.dylib` (7,339,520 bytes) and the bar became `1 / 49` with no codesign or library-validation error.
+- `›` `2 / 49`; Page Down `3 / 49`, Page Up `2 / 49`, End `49 / 49`, Home `1 / 49`; click on the number, `25`, Return: `25 / 49`. The same in Space's window (`Hex ‹ 25 / 49 › − 25% + Fit`). Pages sharp at 2×.
+- Narrowing the pane to ≈220 px by dragging its edge did not work with the synthetic drag (pane stayed 280): NOT TESTED.
+
+#### R27 [13b 370] Zoom: FAIL (Fit / Fit Width; no zoom text in the pane)
+- In the pane (280 px) the bar is `‹ 25 / 49 › − + Fit`: `+`/`−` zoom (`−` shows the page smaller than Fit), but **the pane has no zoom percentage at all**; the button stays `Fit`.
+- In Space's window the percentage sits between `−` and `+`: `+` up to `800%`, `1` gives `100%`, `0` fits. **Clicking `Fit` never shows `Fit Width`**: from a zoom it goes back to Fit, and pressed again it stays Fit (no `Fit Width` label at any point).
+- Dragging at 800 % showed only the white middle of the page, so following the drag could not be judged. → did not change the page in Space's window.
+- `photos/big12mp.jpg` (3000 × 4000) in Space's window: double-click `100%`, drag, `0` back to fit. RSS 150,624 → 209,312 (100 %) → 162,208 KB (after `0`).
+
+#### R28 [13b 371] Password: PASS (with a note)
+- `docs/enc_aes256.pdf`: a lock in place of the page and `‹ 1 › − + Fit`; `Password protected · Enter Password…` only appeared after `›` was pressed (not on selecting). A wrong password: `Wrong password`. `pw`: `1 / 3`, then `›` `2 / 3`.
+
+#### R29 [13b 372] The worker goes: PASS
+- After paging: one `gezik --pdf-view`. Selecting `report.docx`: still there at 2, 4, 6, 8 s, gone at 10 s. Selecting `p50.pdf` without paging: none started; `›`: one. `info.pdf` then `enc_aes256.pdf` and `›` within 10 s: still one.
+
+#### R30 [13c 373] Play (AudioQueue): PASS (picture); sound NOT TESTED
+- Gezik was started with the Homebrew-free PATH; there is no Homebrew ffmpeg on this Mac anyway. `▶` on `media/music/id3v23.mp3`: `Download · Play… 0:00 / --:--`; the dialog "ffmpeg needed — Playing video and audio needs ffmpeg (~20.2 MB, free)". Download put ffmpeg 9.0.2 (with ffprobe) in `/tmp/gezik-cfg/tools/ffmpeg-9.0.2/` and the mp3 then played by itself (`0:01 / 0:02`). The §3 media were then made with that ffmpeg (`av.mp4`, `av.mkv`, `av.webm` with VP8/Opus, `cover.png`, `music/long.mp3`).
+- `media/av.mp4` selected: poster with `▶`, the pane bar `▶ 0:30 Mute` (no Hex and no volume bar in the 280 px pane, see R32); no ffmpeg running. `▶`: the first frame by 0.4 s, `0:02 / 0:30` after 2 s, the seek bar moving; two ffmpeg (one `-map 0:v:0 … -vf fps=30,scale=512:278`, one `-map 0:a:0 … -f s16le pipe:1`). `K` paused at 0:16 (picture still), `K` went on (0:18). Space's window: `Hex ▶ [seek] 0:04 / 0:30 Mute [volume]`, plays.
+- Sound: no ears here, and neither `log stream --predicate 'subsystem == "com.apple.coreaudio"'` nor `processID == <gezik>` printed anything while it played, so whether sound reached the output is NOT TESTED (a person should check sync).
+
+#### R31 [13c 374] Seek: PASS
+- Dragging the seek bar while playing and releasing: it went on from there (0:21). With the pane focused, `L` 0:06 → 0:18, `J` twice → 0:01 (keys did nothing while the focus was elsewhere). The video's right-click: Play/Pause, Back 10 Seconds, Forward 10 Seconds, Mute/Unmute, Show as Hex.
+- Paused at 0:17: both ffmpeg still there at 55 s, gone at 60 s. `K`: it went on from the same place (0:19), two ffmpeg again.
+
+#### R32 [13c 375] Volume: PASS
+- `osascript -e 'output volume of (get volume settings)'`: 56 before and after (read only). In Space's window the bar right of `Mute` set Gezik's volume while dragging (shorter bar); `M` muted (Mute lit, bar empty). Quit and start: still muted; `state.toml [preview] volume = 30`, `muted = true`. The 280 px pane has no Hex button and no volume bar (`▶ 0:30 Mute`).
+
+#### R33 [13c 376, 377] Other files: FAIL (broken.mp4)
+- `av.mkv` and `av.webm` (VP8/Opus) play (`0:02 / 0:30`, two ffmpeg on the file). Sound: NOT TESTED (no ears).
+- **`broken.mp4` (11 bytes, `not a video`) is shown as text** (`1 not a video`) with no player, not `Cannot play this file` with the poster.
+- `music/long.mp3`: the orange cover as poster, `3:20`; `▶` plays; dragged near the end (3:14) it stopped at `3:20 / 3:20` with `▶`; `▶` again started from `0:01`.
+
+#### R34 [13c 378] Processes go: PASS (with a note)
+- `av.webm` playing (two ffmpeg), another file selected: none left by 0.3 s; RSS 131,824 → 132,208 KB. `av.mp4` playing, the pane closed (View ▸ Show Preview): none by 0.5 s; RSS 132,832 → 132,960 KB.
+- Quit (⌘Q) while `av.mp4` played in Space's window: no crash report. The two ffmpeg were still there 3 s after Gezik was gone and had gone by 8 s.
+
+#### R35 [13d 379] Photo fields, HEIF: FAIL (HEIC dimensions not upright)
+- `photos/iphone.jpg` (pane, Space's window): Photo group with Date Taken `2024-07-01 09:30`, Camera `Apple iPhone 15 Pro`, Lens `iPhone 15 Pro back camera 6.86mm f/1.78`, Exposure `1/250 s`, Aperture `f/1.8`, ISO `100`, Focal Length `6.9 mm`, Location `41.0082° N, 28.9784° E`; size line `24 × 32 pixels` (upright). The test photo's date is 2024-07-01.
+- `photos/iphone.heic` (HEIC made with sips; no real iPhone HEIC at hand): the same Photo rows, nothing lost (sips shows make/model only, but Gezik read the EXIF block). **But its `Picture ▸ Dimensions` says `32 × 24`**, the stored size, while the picture is shown upright (portrait); the JPEG says `24 × 32`. The same in Get Info.
+- Right-click on the Camera value ▸ Copy Value: the clipboard held `Apple iPhone 15 Pro` (the menu also has Show Column).
+- Get Info (File ▸ Get Info) is a sheet on the right; Esc did not close it, and its Done button was below the window's bottom edge until the sheet was scrolled (window 632 pt tall).
+
+#### R36 [13d 380, 381] Music and documents: FAIL (capital Ö shown as O)
+- `media/music/id3v24.mp3`, `tags.m4a`, `tags.flac`: Media (Duration 0:02, codec MP3 / AAC / FLAC, Bit Rate, Sample Rate, Channels) and Music (Title `Ağıt Şarkısı`, Artist, Album `Gölge`, Album Artist, Genre `Halk`, Composer `Anonim`); the bar shows `0:02` before `▶`. Track and Year rows were below the pane's edge.
+- `docs/report.docx`: Document Title, Author `Ayşe Yılmaz`, Subject `Bütçe`, Pages 12, Words 3,456. `docs/info.pdf`: Title, Author `Ay(s)e A` (right: the file has `(Ay\(s\)e \101)`), Subject, Pages 2.
+- **A capital `Ö` loses its dots in the properties**: Artist `Çiğdem Oztürk`, Album Artist `Oztürk Ailesi` (ffprobe: `Çiğdem Öztürk`, `Öztürk Ailesi`), PDF Title `Yıllık Ozet` and DOCX Title `Yıllık Rapor & Ozet` (the files and the reader tests say `Özet`). Lower-case ö, ç, ğ, ı, ş and capital Ç, Ş are right, and a file named `Özet.txt` shows right in the list. The same in Get Info.
+- `[preview] properties = false`: no property rows in the pane; Get Info still had them. Put back.
+
+#### R37 [13e 382] Property columns: PASS (with a note)
+- In `media/music`: header right-click ▸ `More Columns…`, `art` offers Artist and Album Artist (Music). **Return (and keypad Enter) did not take the highlighted row**: the typed text stayed and later typing piled up (`artalbumdurationp`). Clicking a row turns it on (`Shown`) and keeps the picker open; Esc closes it. Artist, Album and Duration were added that way.
+- They fill for the rows on screen (`Çiğdem Öztürk`, `Gölge`, `Ünlü`, `Gezik Test`, `0:02`/`3:20`; the capital Ö is right in columns, unlike R36's properties). Duration's header sorts shortest first, again longest first (`long.mp3` 3:20 at the top). Artist narrowed to 150 survived a restart (`state.toml [[columns]] key = "artist" width = 150`).
+- View ▸ Group By ▸ Property… ▸ Album: `Ünlü (1)`, `Gölge (4)`, `Gezik Test (1)`. No file here lacks an album, so `No Album` could not show.
+- The new columns are to the right of Tags and Rating, so with the 280 px preview pane open they were off-screen.
+
+#### R38 [13e 383] Property filter: PASS
+- In `photos` (all three are the test photo's EXIF: 2024-07-01, Apple iPhone 15 Pro) ⌘F `taken>=2024 camera:iphone`: `3 / 3`; `taken>=2025`: `0 / 3`; `camera:canon`: `0 / 3`. The `Reading properties… n of m` state was not caught (three tiny files read at once).
+- `duration>3x`: red `duration>3x: "3x" is not a duration (3m, 1:30)`, the list stays.
+
+#### R39 [13f 385] Search by properties: FAIL (OK on an invalid value)
+- ⌘⇧F in `media/music`, `*.mp3` (4 results); Filters ▸ `Properties…` ("Property words, like artist:tarkan duration>3m (empty: any)"): typing `art` lists `artist, album-artist` under the field. `artist:Çiğdem duration>3m`, OK, Search: only `long.mp3`, `Filters (1)`; the Filters menu reads `Properties… (artist:Çiğdem durat…`.
+- `duration>3x`: the red line `duration>3x: "3x" is not a duration (3m, 1:30)` appears under the field at once, but **OK closes the dialog** (twice). The bad words were not applied (Filters stayed without a count, 4 results), but the checklist expects OK to do nothing.
+- ⌄ ▸ Save search… `LongCigdem` ▸ Save with this folder: `[[searches]] name = "LongCigdem"`, `folder = "/tmp/gezik-rel/media/music"`, `pattern = "*.mp3"`, `where = "artist:Çiğdem duration>3m"`. The sidebar entry under SEARCHES ran it again: `long.mp3`, `Filters (1)`.
+
+#### R40 [13f 386] Name templates: PASS
+- `media/rename/` with the music files, ⌘A, File ▸ Rename Items… (`Rename 6 items`) ▸ + Add rule ▸ Name from template. `Fields ▾` ▸ Picture/Photo/Media/Music/Document; Music ▸ Track (`{track}`) inserted `{track}` (the native submenu runs past the window's bottom edge; reached with the arrow keys).
+- `{track:02} {artist} - {title}`: `03 Çiğdem Öztürk - Ağıt Şarkısı.mp3`, `07 Öztürk - Gölge.mp3`; the three mp3 copies with the same tags got `3 duplicate names · fix the marked rows` (red ⚠). With a file without an artist (made with ffmpeg) and the optional `AC/DC` file: `05  - Sessiz.mp3` with ⚠ and `1 name with an empty field`; `03 AC_DC - Ağıt Şarkısı.mp3`.
+- `{artist|Unknown}` fixed it (`05 Unknown - Sessiz.mp3`). Rename renamed all 4; ⌘Z put the old names back (`ls` the same as before).
+
+#### R41 [14a 365] ⌘, opens it: PASS (with notes)
+- ⌘, opens `Settings — Gezik` when sent as the Turkish-QWERTY-PC comma key (the key left of Z on ISO / `\` on ANSI); the US-position key did nothing, which is the layout, not Gezik. View ▸ Settings… opens it too. Pages: General, Appearance, Files and Tools, Layouts, Tags, Keyboard, System, Advanced, Sync and Backup (nine), plus Open settings.toml and Open Config Folder.
+- A second ⌘, (main window in front) brought the same window forward, no second one. Closed with the red button and opened again: fresh (General page).
+- RSS: 123,648 KB before, 141,616 open, 141,536 just after closing, 141,648 5 s later: it did not come back down.
+- The app menu says `About gezik`, `Hide gezik`, `Quit gezik` (lower case), and has no Settings… item (it is under View).
+
+#### R42 [14a 366] One line per change: PASS (with a note)
+- Appearance ▸ Density ▸ compact: rows tightened at once (main window and Settings); `diff /tmp/before.toml settings.toml` printed only `[layout]` + `density = "compact"`.
+- General ▸ Max fps `5`, Return: the bottom line red `Max fps: max-fps: expected 0 (no limit) or a number from 10 to 1000, got 5 — not written`, the file unchanged.
+- Note: typing the default back (`120`, Return) wrote `max-fps = 120` into the file (removed again by hand).
+- Pointing at `light` in the Theme list previewed it in the Settings window and the main window; moving away went back to dark.
+
+#### R43 [14a 367] Broken file: PASS
+- `[layout` appended to settings.toml with the window open: the bottom line `settings.toml line 37: unclosed table, expected \`]\` — fix it in settings.toml; until then these are read-only`, the controls greyed; clicking Reduce motion wrote nothing (`cmp` same). Line removed: the controls came back; Reduce motion wrote `reduce-motion = true`, then `false` (removed again by hand).
+
+#### R44 [14b 369] Shortcuts page: FAIL (menu bar keeps the old key)
+- Settings ▸ Keyboard: keys shown as `⇧⌘S`, `⌘[`, `⌃0`, `⌥⌘C`. Quit Gezik `⌘Q`, Hide Gezik `⌘H`, Hide Others `⌥⌘H`, Minimize `⌘M` have no Set Key… ("macOS keeps this key").
+- Copy Path ▸ Set Key… ("Press the keys for Copy Path: Esc cancels, Backspace leaves it no key"), ⌘⌥K: the row says `⌥⌘K`; settings.toml got `[shortcuts]` + one line `copy-path = "mod+alt+k"`. ⌥⌘K copies the selected path (`/tmp/gezik-rel/copy/lines.txt`).
+- **But Edit ▸ Copy Path in the menu bar still shows `⌥⌘C` (AX key `C`, Option), and `⌥⌘C` still copies the path too**: the menu bar did not pick up the new key, and the old one keeps working.
+- New Tab ▸ Set Key…, ⌘W: `⌘W is used by Close Tab — Replace?` (Replace / Cancel); Esc: file unchanged; Replace: `close-tab = ""`, `new-tab = "mod+w"`. Right-click ▸ Reset to Default on Close Tab asked `⌘W is used by New Tab — Replace?`; Replace gave `close-tab = "mod+w"`, `new-tab = ""`; Reset to Default on New Tab gave `mod+t`. (After that Replace the Close Tab row was left in key-capture mode, so the next typing went there; Esc ended it.)
+- ⇧⌘3 in the capture field: nothing reached it (still `Press keys…`), and macOS took a full-screen screenshot (`~/Desktop/Screenshot 2026-10-13 at 00.26.02.png`, written a few seconds later; deleted again). So the system shortcut wins over the capture field, as the checklist wants.
+- The `[shortcuts]` lines were removed afterwards. While the Settings window is in front the menu bar has only the Apple and Gezik menus.
+
+#### R45 [14c 370] Get a theme: FAIL (no Replace/Keep Both)
+- Settings, search `theme`: a `Get Theme` field ("Paste a GitHub repository … or an https address of a .toml file and press Enter"). The palette's Get Theme… was not tried. Pasted `https://github.com/wenlar/gezik/blob/master/crates/gezik-config/tests/themes/nord.toml`, Return: `1 found: point at a choice in a row to preview the theme`, a `Nord — Not installed` row ("Installs as themes/nord.toml; point at Install to preview it"). The download count was not caught.
+- Pointing at `Install`: the Settings window and the main window took Nord's blue-grey; moving away: back.
+- `Install` (the first click on the dropdown item did nothing, the second worked): `/tmp/gezik-cfg/themes/nord.toml` with first line `# Installed from https://github.com/…/nord.toml (nord.toml) on 2026-10-13`; status `Installed Nord as themes/nord.toml: Use Now is in its row`; at once an installed `Nord — Installed` row (`themes/nord.toml — From …`) with `Use Now`, `Check for Updates`, `Open Source Page`, `Delete Theme`.
+- `Use Now`: `theme = "nord"` in settings.toml, the windows switched. `Check for Updates`: fetched again, `Nord — Installed — The same as themes/nord.toml` (unchanged). `Open Source Page`: the GitHub page opened in the default browser (Firefox Developer Edition); that tab was closed again.
+- **Installing it again does not ask `Replace`/`Keep Both`**: the fetched row stays `Installed` (`The same as themes/nord.toml`) and has no Install choice, so `nord-2.toml` cannot be made this way. (The question may only come for a changed file; not tested.)
+
+#### R46 [14c 370] Refusals and delete: FAIL (Delete Theme's question opens behind Settings)
+- `http://github.com/a/b`: red `Only https addresses are downloaded`.
+- `https://github.com/wenlar/gezik/tree/master/crates/gezik-config/tests/themes`: red `Cannot download https://api.github.com/repos/wenlar/gezik/zipball/master: the download is larger than expected (more than 5 MB: paste the address of a theme's .toml file instead)`.
+- No small multi-theme repository was at hand: "no multi-theme repository".
+- `nord-2.toml` could not be made (R45), so `Delete Theme` was tried on `nord` (after `theme = "auto"`). **Choosing it in Settings shows nothing there**: the `Move nord.toml to the Trash?` question opens in the main window, behind the Settings window (`settings_window.rs` sends it to `with_focused`). Each try that seemed to do nothing queued another question; after bringing the main window forward, Trash moved the file to the Trash and two more copies of the question had to be cancelled. ⌘Z then brought `themes/nord.toml` back (same first line).
+
+#### R47 [14d 372] Export and import: PASS (with a note)
+- Second config `/tmp/gezik-cfg2` (nord.toml, `templates/Note.txt`); main Gezik quit; `GEZIK_CONFIG_DIR=/tmp/gezik-cfg2 gezik /tmp`. Music (under home) pinned from the sidebar's right-click (`pinned = ["{music}"]`), `theme = "nord"`. Settings ▸ Sync and Backup ▸ Export Settings `/tmp/gezik-export.zip`, Return: `Exported 3 files to /tmp/gezik-export.zip` (`gezik-export.toml`, `settings.toml`, `themes/nord.toml`, `templates/Note.txt`). The zip made here was used (no Windows zip).
+- Main Gezik (`/tmp/gezik-cfg`): Import Settings `/tmp/gezik-export.zip`, Return: rows `Import settings.toml — 54 settings change: theme: auto → nord, …`, `Import Themes — nord.toml replaces`, `Import Templates — Note.txt new`, `Import from gezik-export.zip — 3 files to write`. Import: the Nord theme, PINNED Music (opens `/Users/macbookpro/Music`), New ▸ Note; `/tmp/gezik-cfg/backups/gezik-settings-2026-10-13-003646-918.zip`.
+- Undo Import ▸ Undo: settings.toml and themes/nord.toml the same as a copy taken before (`diff`/`cmp`), `templates/` empty. No new `~/Documents/gezik-settings-*`.
+- Note: the import replaces settings.toml whole, so the main config's saved searches (RedReview, LongCigdem) were gone until Undo Import, as the dialog says ("nothing is merged").
+
+#### R48 [14d 373] The red row: PASS
+- `[[commands]] name = "Say hi" run = ["echo", "hi"]` added to `/tmp/gezik-cfg2/settings.toml`, exported to `/tmp/gezik-export2.zip`. Previewed in the main Gezik: a red `These run programs on this computer — 1 in settings.toml — Command "Say hi": echo hi. Import only files you trust: nothing runs while importing.`, the bottom line red `1 setting in it runs programs (the red row): import only files you trust`.
+- Cancel (clicked; Return on the highlighted Cancel did not close the list): `Nothing imported`; `diff -r` of the config folder against a copy taken before: no difference.
+- Restore Backup: `2 backups` (R47's `…003646-918.zip` and `…003754-552.zip`, the second made by Undo Import). Choosing R47's showed its rows (`Import settings.toml — The same — No setting changes`, `Import Themes — The same`, `Nothing to import`); nothing written.
+
+#### R49 [14e 374] Next to Gezik.app: PASS
+- Under the maintainer's rule the bundle was made in `/tmp/gezik-rel/Portable` (not `~/GezikReleaseTest`): `Gezik.app/Contents/MacOS/gezik` + `Info.plist`, `codesign --force -s -`, `touch gezik-portable`. `~/Library/Application Support/gezik` did not exist before.
+- `open …/Gezik.app`: `gezik-data/` appeared with `settings.toml`, `state.toml`, `themes/example.toml`, `templates/`. Settings ▸ Sync and Backup, first row: `Portable: settings are kept in /private/tmp/gezik-rel/Portable/gezik-data — On`; its `Open Data Folder` opened `gezik-data` in a tab.
+- Theme changed (`theme = "light"`), Music pinned, ⌘Q: only `gezik-data` changed; `~/Library/Application Support/gezik` still does not exist (fingerprint unchanged). The app menu reads `About Gezik`, `Hide Gezik`, `Quit Gezik` (from the bundle; the bare binary says `gezik`, see R41), plus `Quit and Close All Windows`. `codesign --verify` passes.
+
+#### R50 [14e 374] Two at once: PASS (7-Zip part NOT TESTED)
+- Portable Gezik open (pid 40808), then `GEZIK_CONFIG_DIR=/tmp/gezik-cfg gezik /tmp/gezik-rel` (pid 40813): two processes, two windows, each with its own settings (portable: light theme, PINNED Music; the other: dark, SEARCHES RedReview/LongCigdem). `gezik --help` prints its usage as usual.
+- In the portable one, View ▸ System Integration… then the Default file manager row: `Make Gezik the default file manager? Gezik is running in portable mode from /private/tmp/gezik-rel/Portable. These stop working when the drive is removed. …` (Make Default / Cancel); the Command line (PATH) row: `Add gezik to PATH? Gezik is running in portable mode from … ` (Add / Cancel). **Cancel** both times: no `system-changes.toml` in `gezik-data`, `~/.local/bin` still does not exist, nothing in LaunchServices.
+- Compress… / 7-Zip download: not tried (no one to judge a large download): NOT TESTED.
+
+#### R51 [14e, Linux 272] Read-only data folder: PASS
+- Portable Gezik quit; `hdiutil create -srcfolder /tmp/gezik-rel/Portable -format UDRO -volname GZPORT /tmp/gzport.dmg`, attached; `open /Volumes/GZPORT/Gezik.app`: the portable settings (light, PINNED Music) and the status bar `portable: Portable data folder is read-only: changes are not saved`.
+- Dragging a column header and pinning Desktop: no crash; the status bar said `settings.toml: cannot write: Read-only file system (os error 30)`; `shasum` of the image's `gezik-data/*.toml` unchanged. ⌘Q: no crash report. Detached and deleted. `~/Library/Application Support/gezik` still does not exist.
 
 #### R52 [14e 375] App Translocation: NOT TESTED
 - It writes `~/Library/Application Support/gezik`, which this run may not touch (and it needs a person for Gatekeeper).
 
 #### R53 Clean-up record: PASS
-- The test Gezik (pid 17964) was stopped with `kill` (TERM): no new `gezik*.ips` in `~/Library/Logs/DiagnosticReports`. Run 2's Gezik (pid 96680) is still running, untouched.
-- `GZEXFAT` detached (`GZPORT` was never made); `hdiutil info | grep -c GZ`: 0. `/tmp/gezik-rel` removed. `~/GezikReleaseTest` and `~/gezik-tag-probe.txt` were never made; no Gezik.app copies, so nothing to unregister.
+- Every Gezik of this run quit with ⌘Q (pid 17964 of the first session was stopped with TERM); no `gezik*.ips` in `~/Library/Logs/DiagnosticReports` at any point of the run. No ffmpeg left. Run 2's Gezik (pid 96680) is still running, untouched.
+- `GZEXFAT` and `GZPORT` detached and their images deleted (`hdiutil info | grep -c GZ`: 0). The portable `Gezik.app` unregistered with `lsregister -u`, then `rm -rf /tmp/gezik-rel /tmp/gezik-cfg2 /tmp/gezik-export*.zip`. `~/GezikReleaseTest` and `~/gezik-tag-probe.txt` were never made. `/tmp/gezik-cfg` is kept (it holds the downloaded ffmpeg 9.0.2 and pdfium-8086).
 - `ls -la ~/.local/bin`: "No such file or directory".
 - Application Support fingerprint: `diff /tmp/as-before.txt /tmp/as-after.txt` printed nothing (the folder still does not exist).
-- `mdfind 'kMDItemUserTags == "*"' | wc -l`: 0, the same as before.
+- `mdfind 'kMDItemUserTags == "*"' | wc -l`: 0, the same as before. The only shell-made Finder tags (`f1` Orange, `f4` Blue) were removed in their items.
+- Outside the test folders: one stray `~/Desktop/Screenshot 2026-10-13 at 00.26.02.png` from R44's ⇧⌘3 was deleted (Desktop listing the same as before); one Firefox tab opened by R45's Open Source Page; `nord.toml` from R46 went to the Trash and was put back with ⌘Z (nothing left in the Trash from this run). No new `~/Documents/gezik-settings-*`.
 
-### Summary
-
-| Item | Result | Note |
-|---|---|---|
-| R1 [build] | FAIL | 2771 passed, 16 failed (gezik 6, gezik-config 1, gezik-core 2, gezik-ops 6, gezik-platform 1) |
-| R2 [340–342] | PASS | tests pass; Finder probe NOT TESTED (writes to home) |
-| R3 [343] | PASS | exFAT image keeps tags |
-| R4 [13a–13f, 14e] | PASS | pdfium tests NOT TESTED (need R26) |
-| R5 [1] | PASS | live theme reload works through `/tmp` |
-| R6–R51 | NOT TESTED | synthetic input to the window refused by the permission check |
-| R52 [14e 375] | NOT TESTED | writes the real config; needs Gatekeeper |
-| R53 | PASS | clean-up checks all clean |
