@@ -499,8 +499,8 @@ fn show_rows(open: &Open, new: bool) {
 
 /// Whether two rows show the same (their choices are new models each time).
 fn same(a: &SettingItem, b: &SettingItem) -> bool {
-    (a.kind, &a.title, &a.key, &a.value, a.is_default, &a.description)
-        == (b.kind, &b.title, &b.key, &b.value, b.is_default, &b.description)
+    (a.kind, &a.title, &a.key, &a.value, a.is_default, &a.default, &a.description, a.place)
+        == (b.kind, &b.title, &b.key, &b.value, b.is_default, &b.default, &b.description, b.place)
         && a.options.iter().eq(b.options.iter())
 }
 
@@ -1489,6 +1489,22 @@ mod tests {
             found.contains(&"files.confirm-trash".to_owned()) && found.contains(&"panes.confirm".to_owned()),
             "{found:?}"
         );
+    }
+
+    #[test]
+    fn a_sync_folder_set_up_changes_the_rows_in_place() {
+        let mut s = shown(
+            "[layout]
+density = \"compact\"
+",
+        );
+        let row = s.rows[row_of(&s, "start-folder")];
+        let before = s.item(row);
+        assert!(same(&before, &s.item(row)));
+        s.backup.synced = Some(std::path::PathBuf::from("sync"));
+        let after = s.item(row);
+        assert_eq!((before.place, after.place), (0, 1));
+        assert!(!same(&before, &after), "the row is replaced: its menu offers Only on This Computer");
     }
 
     #[test]

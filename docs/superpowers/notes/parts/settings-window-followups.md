@@ -18,6 +18,6 @@ Follow-ups to 14d–14f (branch `fix/settings-window-followups`, on top of `feat
 
 Dropped here: fixed on `fix/macos-run3` (aba75f4).
 
-## Seen, not changed
+## Rows after a sync folder is set up
 
-- `settings_window::same` compares neither `place` nor `default`: after setting up a sync folder the rows keep their old place (no "Only on This Computer" in the menu) until the page changes.
+- `settings_window::same` compared neither `place` nor `default`, so the rows kept their old place (no "this computer" mark, no Only on This Computer in the menu) until the page changed. It compares both now. Test: `a_sync_folder_set_up_changes_the_rows_in_place`.
