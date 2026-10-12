@@ -3963,8 +3963,10 @@ mod tests {
         let options = ViewOptions { hide_extensions: true, ..ViewOptions::default() };
         let items = view_items(ViewSettings::default(), false, false, options, true);
         let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
+        // Found by id, so a View item added above or below leaves this test alone.
+        let at = ids.iter().position(|id| *id == HIDE_EXTENSIONS).unwrap();
         assert_eq!(
-            &ids[18..],
+            &ids[at..at + 10],
             [
                 HIDE_EXTENSIONS,
                 FOLDERS_FIRST,
@@ -3978,9 +3980,9 @@ mod tests {
                 REVEAL_IN_TREE
             ]
         );
-        assert!(items[18].1.starts_with("• ") && items[19].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[20].1.starts_with("• "));
-        assert_eq!(items[21].1.starts_with("• "), options.show_hidden);
+        assert!(items[at].1.starts_with("• ") && items[at + 1].1.starts_with("• "), "extensions hidden, folders first");
+        assert!(!items[at + 2].1.starts_with("• "));
+        assert_eq!(items[at + 3].1.starts_with("• "), options.show_hidden);
         let elsewhere: Vec<u32> =
             view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
         assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
