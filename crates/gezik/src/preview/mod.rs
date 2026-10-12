@@ -610,6 +610,9 @@ impl Preview {
         }
         if !self.active() {
             self.release();
+        } else if self.0.viewer.borrow().shown() {
+            // Back to this window's room.
+            self.redraw();
         }
     }
 
