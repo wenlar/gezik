@@ -44,6 +44,10 @@ export struct FileRow {
     rating: string,
     rating-faint: bool,
     comment: string,
+    // The first highlight rule matching the row (spec 12 §9.3): its text color (transparent:
+    // the theme's) and a bold name.
+    tint: color,
+    bold: bool,
 }
 
 // A row's tag dots: up to three 8 px dots overlapping as in Finder, then "+2" for more. On a
@@ -632,8 +636,8 @@ export component FileView inherits Rectangle {
             if root.mode != 1 && item.header == "": entry := Rectangle {
                 property <FileRow> file: item.cells[0];
                 property <int> index: item.first;
-                property <color> text-color: self.file.selected ? Theme.selection-foreground : Theme.foreground;
-                property <color> muted-color: self.file.selected ? Theme.selection-foreground-muted : Theme.foreground-muted;
+                property <color> text-color: self.file.tint != transparent ? self.file.tint : self.file.selected ? Theme.selection-foreground : Theme.foreground;
+                property <color> muted-color: self.file.tint != transparent ? self.file.tint : self.file.selected ? Theme.selection-foreground-muted : Theme.foreground-muted;
                 // Inset from the list's edges and rounded (both 0 in the classic themes).
                 x: Theme.inset;
                 width: parent.width - 2 * Theme.inset;
@@ -733,6 +737,7 @@ export component FileView inherits Rectangle {
                         if entry.index != root.renaming-index: Text {
                             text: entry.file.name;
                             opacity: entry.file.cut ? 0.5 : 1;
+                            font-weight: entry.file.bold ? 700 : 0;
                             vertical-alignment: center;
                             // With dots, the name is as wide as it is and the dots follow it.
                             horizontal-stretch: entry.file.dots > 0 ? 0 : 1;
@@ -911,7 +916,8 @@ export component FileView inherits Rectangle {
                             overflow: elide;
                             horizontal-alignment: center;
                             vertical-alignment: top;
-                            color: tile.cell.selected ? Theme.selection-foreground : Theme.foreground;
+                            font-weight: tile.cell.bold ? 700 : 0;
+                            color: tile.cell.tint != transparent ? tile.cell.tint : tile.cell.selected ? Theme.selection-foreground : Theme.foreground;
                         }
                         if tile.index != root.renaming-index && tile.cell.dots > 0: TagDots {
                             width: self.preferred-width;

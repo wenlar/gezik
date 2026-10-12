@@ -160,6 +160,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     sync::set_profiles(loaded.settings.sync_profiles.clone());
     terminal::set_settings(loaded.settings.terminal.command.clone());
     tags::set_settings(loaded.settings.tags.clone());
+    tags::set_highlights(loaded.settings.highlight_rules.clone(), loaded.theme.as_ref().map(|t| &t.colors));
     // Every window shows them alike (spec 9.3, decision 46).
     windows::for_each(|window| {
         dual::set_restore(loaded.settings.session.restore);

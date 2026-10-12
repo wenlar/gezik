@@ -313,6 +313,83 @@ pub fn forget_rows() {
     }
 }
 
+/// The highlight rules in effect (spec 12 §9) and, per rule, its text color in the theme
+/// shown and whether that color stays on a selected row (contrast to the selection ≥ 3:1).
+#[derive(Default)]
+struct Highlighting {
+    rules: gezik_core::highlight::Highlights,
+    tints: Vec<(Color, bool)>,
+    /// The theme's background and selection (kept when a theme fails to load).
+    theme: Option<(gezik_config::Color, gezik_config::Color)>,
+}
+
+thread_local! {
+    static HIGHLIGHT: RefCell<Highlighting> = RefCell::new(Highlighting::default());
+}
+
+/// `[[highlight-rules]]` and the theme, at every resolve: rows are drawn again when either
+/// changes what they show.
+pub fn set_highlights(rules: gezik_core::highlight::Highlights, theme: Option<&gezik_config::theme::ThemeColors>) {
+    let changed = HIGHLIGHT.with(|h| {
+        let mut h = h.borrow_mut();
+        let theme = theme.map(|c| (c.background, c.selection)).or(h.theme);
+        let tints = tints_of(&rules, theme);
+        let changed = h.rules != rules || h.tints != tints;
+        *h = Highlighting { rules, tints, theme };
+        changed
+    });
+    if changed {
+        redraw_all();
+    }
+}
+
+/// Each rule's color for a theme with this background and selection.
+fn tints_of(
+    rules: &gezik_core::highlight::Highlights,
+    theme: Option<(gezik_config::Color, gezik_config::Color)>,
+) -> Vec<(Color, bool)> {
+    use gezik_config::theme_rules::{contrast, flatten, is_dark};
+    let (background, selection) = theme.unwrap_or_default();
+    let dark = is_dark(background);
+    let selection = flatten(selection, background);
+    rules
+        .rules()
+        .iter()
+        .map(|rule| match rule.style.rgb(dark) {
+            None => (Color::from_argb_u8(0, 0, 0, 0), false),
+            Some([r, g, b]) => {
+                (Color::from_rgb_u8(r, g, b), contrast(gezik_config::Color { r, g, b, a: 255 }, selection) >= 3.0)
+            }
+        })
+        .collect()
+}
+
+/// Whether a highlight rule asks for rows' tags, ratings or comments.
+pub fn highlight_needs_meta() -> bool {
+    HIGHLIGHT.with(|h| h.borrow().rules.needs_meta())
+}
+
+/// A row's text color (transparent: the theme's) and boldness by the first rule matching it. A
+/// selected row keeps the color only where it reads on the selection.
+pub fn highlight_of(
+    e: &gezik_core::Entry,
+    now: std::time::SystemTime,
+    meta: gezik_core::highlight::RowMeta,
+    selected: bool,
+) -> (Color, bool) {
+    HIGHLIGHT.with(|h| {
+        let h = h.borrow();
+        let none = (Color::from_argb_u8(0, 0, 0, 0), false);
+        if h.rules.is_empty() {
+            return none;
+        }
+        let Some(i) = h.rules.first(e, now, meta) else { return none };
+        let (tint, keeps) = h.tints[i];
+        let bold = h.rules.rules()[i].style.bold;
+        (if selected && !keeps { none.0 } else { tint }, bold)
+    })
+}
+
 fn redraw_all() {
     for p in crate::panes::everywhere() {
         p.view.redraw();
