@@ -207,6 +207,11 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(500));
             });
         }
+        // A spawned call may not have started yet under load; wait for it, not a fixed time.
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while ran.load(Ordering::SeqCst) < 4 && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
         let ran = ran.load(Ordering::SeqCst);
         assert_eq!(ran, 4, "at most four hang at once");
     }
