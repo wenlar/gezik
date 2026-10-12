@@ -261,6 +261,7 @@ dots = "auto"
 # tags = "ctrl+shift+l"   # Tags…: the tag picker for the selection; macOS: "mod+ctrl+l"
 # tag-1 = "alt+shift+1"    # the first tag of [tags] list on (or, when all have it, off) the selection; tag-2 … tag-7 likewise; macOS: "ctrl+1"
 # clear-tags = "alt+shift+0"   # takes every tag off the selection; macOS: "ctrl+0"
+# preview-hex = ""  # Show Preview as Hex: the selected file's bytes in the preview, or back to its text or picture
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

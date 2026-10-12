@@ -29,6 +29,7 @@ pub mod refresh;
 pub mod search;
 pub mod selection;
 pub mod sort;
+pub mod syntax;
 pub mod system_change;
 pub mod templates;
 pub mod text;

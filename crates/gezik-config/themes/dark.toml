@@ -44,6 +44,12 @@ shadow = "#00000070"
 overlay = "#0000008c"
 scrollbar = "#ecedf038"
 scrollbar-hover = "#ecedf06b"
+syntax-keyword = "#c4a7ff"
+syntax-type = "#5eead4"
+syntax-string = "#86efac"
+syntax-number = "#fdba74"
+syntax-comment = "#9ca3af"
+syntax-tag = "#fca5a5"
 
 [metrics]
 font-family = ""
