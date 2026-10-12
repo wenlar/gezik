@@ -55,7 +55,7 @@ a folder's right-click menu and in the command palette) shows `settings.toml` in
 app with a system-wide Ctrl+, (1Password, for one) takes the key before Gezik sees it: then use
 the View menu or the palette, or give `settings` another key in `[shortcuts]`. On
 the left are the pages (General, Appearance, Files and Tools, Layouts, Tags, Keyboard, System,
-Advanced), then Open settings.toml and Open Config Folder; the search box above the rows looks
+Advanced, Sync and Backup), then Open settings.toml and Open Config Folder; the search box above the rows looks
 through every page by title, key and description. Each row has the comment the file has for it; a setting the file does not set
 shows its default, marked "default".
 
@@ -78,7 +78,8 @@ shows its default, marked "default".
   Replace?" under the row: Replace takes it from that one (it keeps its other keys). Only the
   changed action is written, as one line in `[shortcuts]` (`copy-path = "mod+alt+c"`, `mod` so
   the file works on every system); a command's key goes to its own `[[commands]]` entry.
-  **Reset to Default** writes the default keys in place. Keys that type in the file list (a
+  **Reset to Default** writes the default keys in place (a default key another action has now
+  asks Replace? the same way). Keys that type in the file list (a
   letter alone), the file list's own keys and the Windows key are refused, with the reason at
   the bottom. `edit-shortcuts` (Keyboard Shortcuts… in the palette) opens this page.
 - Other lists and tables (`pinned`, `[[commands]]`, rules …) show how many entries
@@ -86,6 +87,37 @@ shows its default, marked "default".
   System Integration.
 - If `settings.toml` does not read, the line at the bottom says which line, and the rows are
   read-only until it is fixed. Changes made in the file while the window is open show at once.
+  Get Theme and the Sync and Backup page still work then (Restore Backup is how to get back).
+
+## Backup and moving
+
+Settings ▸ **Sync and Backup** (or **Export Settings…** / **Import Settings…** in the palette)
+moves your settings to another computer, or to the same one after a reinstall.
+
+- **Export Settings** writes one zip: `settings.toml`, the themes, the New ▸ templates (box
+  **Export Templates**, on; at most 256 MB, 64 MB a file) and `views.toml` (box **Export Folder
+  Views**, off: its paths are this computer's), with `gezik-export.toml` (format, version, OS,
+  date). The path is a field: the default is `Documents/gezik-settings-<date>.zip`; edit it and
+  press Enter. An existing file is not overwritten. `state.toml`, the tag store, the system
+  changes, downloaded tools and the backups never go in.
+- **Import Settings**: type or paste the zip's path and press Enter. Nothing is written yet: the
+  rows show each kind of file (settings.toml with a summary such as "3 settings change: theme:
+  dark → nord, …", the themes and templates as new or replaces) with a box to leave it out, and
+  then **Import** or **Cancel**. Settings in the zip that run programs on this computer
+  (`[[commands]]`, `[terminal] command`, the compare program, 7-Zip and ffmpeg paths,
+  `[[sync-profiles]]`) are listed by name in a red row when they are new or differ from yours.
+  Nothing runs while importing; import only files you trust.
+- An import never merges: each file chosen replaces the one here. Before it writes, Gezik backs
+  up the files it is about to touch (settings.toml, the themes, and the templates or views when
+  those come in) to `backups/gezik-settings-<time>.zip` in the config folder; the last 10 are
+  kept and older ones go to the trash. **Undo Import** puts back, byte for byte, what the last
+  import replaced and removes what it added. **Restore Backup** lists the backups: choose one to
+  see what it would put back, then Import.
+- Limits: the zip at most 300 MB and 4,096 files, 64 MB each; only `settings.toml`, `views.toml`,
+  `themes/<name>.toml` and `templates/…` come in. Names with `..`, absolute paths, drives, links
+  and names Windows cannot hold are left out (the Import row lists them). A zip whose
+  `settings.toml` or `views.toml` does not read is refused with the line. Paths written with a
+  token (`{home}`, `{documents}`…) work on the other system; others may not exist there.
 
 ## Views
 
