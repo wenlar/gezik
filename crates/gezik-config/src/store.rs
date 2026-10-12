@@ -3,17 +3,18 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use crate::Warning;
 use crate::paths::{Dirs, location, write_atomic};
 use crate::pins::PinEntry;
 use crate::settings::{Density, Settings, State};
 use crate::settings_writer::{Done, SettingsChange, SettingsWriter};
 use crate::state_store::StateCell;
+use crate::sync_folder::{self, CACHE, LOCAL_SETTINGS, OFFLINE_NOTE};
 use crate::theme::{ResolvedTheme, ThemeError, resolve_theme};
 use crate::views_file::parse_views;
 use crate::views_writer::ViewsWriter;
+use crate::{Warning, lock};
 use gezik_core::view::ViewSettings;
 use gezik_core::view_memory::ViewMemory;
 
@@ -30,13 +31,22 @@ pub struct ConfigFiles {
     pub themes: HashMap<String, String>,
     /// Problems found while reading: unreadable files, reserved names.
     pub warnings: Vec<Warning>,
+    /// settings.local.toml, read over settings.toml (only with a sync folder; spec 14 §8.2).
+    pub local_settings: Option<String>,
+    /// The sync folder could not be read: these are its last copy (spec 14 §8.4).
+    pub offline: bool,
+    /// The sync services' conflicting copies in the sync folder (`settings (1).toml`,
+    /// `themes/nord (1).toml`), as named there.
+    pub conflicts: Vec<String>,
 }
 
 /// The config folder. Its clones share one `state.toml` in memory and its writer thread, one
-/// `settings.toml` writer thread and one `views.toml` writer thread.
+/// `settings.toml` writer thread, one `views.toml` writer thread, and where the shared folder is.
 #[derive(Debug, Clone)]
 pub struct ConfigStore {
-    dirs: Dirs,
+    /// The shared folder moves when a sync folder is set or left (spec 14 §8.1).
+    dirs: Arc<Mutex<Dirs>>,
+    local: PathBuf,
     state: Arc<StateCell>,
     settings: Arc<SettingsWriter>,
     views: Arc<ViewsWriter>,
@@ -50,9 +60,29 @@ impl ConfigStore {
 
     pub fn with_dirs(dirs: Dirs) -> Self {
         let state = Arc::new(StateCell::new(dirs.local.join("state.toml")));
-        let settings = Arc::new(SettingsWriter::new(dirs.shared.clone()));
         let views = Arc::new(ViewsWriter::new(dirs.local.join("views.toml")));
-        Self { dirs, state, settings, views }
+        let local = dirs.local.clone();
+        let dirs = Arc::new(Mutex::new(dirs));
+        let settings = Arc::new(SettingsWriter::new(dirs.clone()));
+        Self { dirs, local, state, settings, views }
+    }
+
+    /// Where the files are now.
+    pub fn dirs(&self) -> Dirs {
+        lock(&self.dirs).clone()
+    }
+
+    /// Settings, themes and templates from now on in sync folder `folder`, or (`None`) in the
+    /// local folder again. The caller has copied what has to be there, and reloads.
+    pub fn set_shared(&self, folder: Option<PathBuf>) {
+        let mut dirs = lock(&self.dirs);
+        dirs.synced = folder.is_some();
+        dirs.shared = folder.unwrap_or_else(|| self.local.clone());
+    }
+
+    /// Whether settings.toml is in a sync folder.
+    pub fn is_synced(&self) -> bool {
+        lock(&self.dirs).synced
     }
 
     /// The store where [`location`] says (portable or the per-user folder), if there is one.
@@ -61,53 +91,57 @@ impl ConfigStore {
     }
 
     /// settings.toml, the themes and the templates.
-    pub fn shared_dir(&self) -> &Path {
-        &self.dirs.shared
+    pub fn shared_dir(&self) -> PathBuf {
+        lock(&self.dirs).shared.clone()
     }
 
     /// This machine's files: state, views, tags, backups, tools, system changes.
     pub fn local_dir(&self) -> &Path {
-        &self.dirs.local
+        &self.local
     }
 
     pub fn is_portable(&self) -> bool {
-        self.dirs.portable
+        lock(&self.dirs).portable
     }
 
     /// The folder downloaded tools go in: `tools/`, or in portable mode `tools/<os>-<arch>/`
     /// (one drive can be used on three systems; spec 14 §9.2).
     pub fn tools_dir(&self) -> PathBuf {
-        tools_dir(&self.dirs)
+        tools_dir(&self.dirs())
     }
 
     fn settings_path(&self) -> PathBuf {
-        self.dirs.shared.join("settings.toml")
+        self.shared_dir().join("settings.toml")
     }
 
     fn themes_dir(&self) -> PathBuf {
-        self.dirs.shared.join("themes")
+        self.shared_dir().join("themes")
     }
 
     /// The user's templates for New ▸ (spec 8.1).
     pub fn templates_dir(&self) -> PathBuf {
-        self.dirs.shared.join("templates")
+        self.shared_dir().join("templates")
     }
 
     /// Whether `path` is the templates folder or in it: New ▸ reads the folder again (and
     /// settings are not reloaded for it).
     pub fn is_template_path(&self, path: &Path) -> bool {
-        path.strip_prefix(&self.dirs.shared)
+        path.strip_prefix(self.shared_dir())
             .is_ok_and(|rest| rest.components().next().is_some_and(|first| first.as_os_str() == "templates"))
     }
 
     /// Creates the folder layout (and the templates folder) and commented starter files on the true first run, when
     /// the config folder does not exist yet. Later runs never recreate files the user
-    /// deleted.
+    /// deleted. A sync folder is never made here (it may only be missing for now).
     pub fn ensure_initialized(&self) -> io::Result<()> {
-        let first_run = !self.dirs.shared.exists();
+        let dirs = self.dirs();
+        if dirs.synced {
+            return std::fs::create_dir_all(&dirs.local);
+        }
+        let first_run = !dirs.shared.exists();
         std::fs::create_dir_all(self.themes_dir())?;
-        if self.dirs.local != self.dirs.shared {
-            std::fs::create_dir_all(&self.dirs.local)?;
+        if dirs.local != dirs.shared {
+            std::fs::create_dir_all(&dirs.local)?;
         }
         if first_run {
             std::fs::create_dir_all(self.templates_dir())?;
@@ -117,39 +151,46 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// settings.toml and the themes (with a sync folder: theirs, or their last copy when the
+    /// folder cannot be read, and settings.local.toml). I/O: off the UI thread but at start.
     pub fn read_files(&self) -> ConfigFiles {
-        let mut files = ConfigFiles::default();
-        match read_text(&self.settings_path()) {
-            Ok(text) => files.settings = Some(text),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => files.warnings.push(Warning::new("settings.toml", format!("cannot read: {err}"))),
+        let dirs = self.dirs();
+        if !dirs.synced {
+            return read_folder(&dirs.shared, None);
         }
-
-        let Ok(entries) = std::fs::read_dir(self.themes_dir()) else { return files };
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-                continue;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-            let file = format!("{stem}.toml");
-            let id = stem.to_lowercase();
-            if id == "auto" {
-                files.warnings.push(Warning::new(file, "\"auto\" is a reserved name; rename this theme"));
-                continue;
-            }
-            match read_text(&path) {
-                Ok(text) => {
-                    files.themes.insert(id, text);
-                }
-                Err(err) => files.warnings.push(Warning::new(file, format!("cannot read: {err}"))),
-            }
+        let cache = self.local.join(CACHE);
+        let mut files = read_folder(&dirs.shared, Some(&sync_folder::machines(&dirs.shared)));
+        if files.settings.is_some() {
+            keep_copy(&cache, &files);
+        } else {
+            // Not there (a drive not plugged in, Dropbox not running): the last copy, read-only.
+            let warnings = std::mem::take(&mut files.warnings);
+            files = read_folder(&cache, None);
+            files.warnings.splice(0..0, warnings);
+            files.warnings.push(Warning::new("sync", OFFLINE_NOTE));
+            files.offline = true;
+        }
+        match read_text(&self.local.join(LOCAL_SETTINGS)) {
+            Ok(text) => files.local_settings = Some(text),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => files.warnings.push(Warning::new(LOCAL_SETTINGS, format!("cannot read: {err}"))),
         }
         files
     }
 
+    /// Hands the settings changes not written yet (the sync folder was away) to the writer
+    /// again: after a reload that found the folder.
+    pub fn retry_unsaved(&self) {
+        self.settings.retry_unsaved();
+    }
+
+    /// How many settings changes wait for the sync folder.
+    pub fn unsaved(&self) -> usize {
+        self.settings.unsaved()
+    }
+
     fn views_path(&self) -> PathBuf {
-        self.dirs.local.join("views.toml")
+        self.local.join("views.toml")
     }
 
     /// The last state: read from `state.toml` the first time (at start), then kept in memory.
@@ -264,11 +305,17 @@ impl ConfigStore {
     }
 
     /// Whether a change to `path` should reload the config: `settings.toml` or a theme
-    /// file, but not `state.toml` or editor temp files.
+    /// file, but not `state.toml` or editor temp files. With a sync folder also the folder itself
+    /// (it came back), a conflicting copy at its top, and settings.local.toml.
     pub fn is_config_file(&self, path: &Path) -> bool {
-        let Ok(relative) = path.strip_prefix(&self.dirs.shared) else { return false };
+        let dirs = self.dirs();
+        if dirs.synced && (path == dirs.shared || path == self.local.join(LOCAL_SETTINGS)) {
+            return true;
+        }
+        let Ok(relative) = path.strip_prefix(&dirs.shared) else { return false };
         let parts: Vec<String> = relative.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         match parts.as_slice() {
+            [name] if dirs.synced => name.ends_with(".toml") && !name.starts_with('.'),
             [name] => name == "settings.toml",
             [dir, name] => dir == "themes" && name.ends_with(".toml") && !name.starts_with('.'),
             _ => false,
@@ -280,6 +327,94 @@ impl ConfigStore {
 fn tools_dir(dirs: &Dirs) -> PathBuf {
     let tools = dirs.local.join("tools");
     if dirs.portable { tools.join(format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)) } else { tools }
+}
+
+/// The settings and themes in folder `dir`. `machines`: it is a sync folder (whose computers
+/// these are); its conflicting copies are listed and left out of the themes.
+fn read_folder(dir: &Path, machines: Option<&[String]>) -> ConfigFiles {
+    let mut files = ConfigFiles::default();
+    let settings = dir.join("settings.toml");
+    match read_text(&settings) {
+        Ok(text) => files.settings = Some(text),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => files.warnings.push(Warning::new("settings.toml", format!("cannot read: {err}"))),
+    }
+    let conflict = |name: &str, there: &dyn Fn(&str) -> bool| {
+        machines.and_then(|m| sync_folder::conflict_of(name, m)).is_some_and(|original| there(&original))
+    };
+    if let Some(entries) = machines.and_then(|_| std::fs::read_dir(dir).ok()) {
+        for name in entries.filter_map(Result::ok).filter_map(|e| e.file_name().into_string().ok()) {
+            if files.settings.is_some() && conflict(&name, &|original| original == "settings.toml") {
+                files.conflicts.push(name);
+            }
+        }
+    }
+
+    let Ok(entries) = std::fs::read_dir(dir.join("themes")) else { return note_conflicts(files) };
+    let names: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+    let stems: Vec<String> =
+        names.iter().filter_map(|p| p.file_name()).map(|n| n.to_string_lossy().to_lowercase()).collect();
+    for path in names {
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        let file = format!("{stem}.toml");
+        if conflict(&file, &|original| stems.contains(&original.to_lowercase())) {
+            files.conflicts.push(format!("themes/{file}"));
+            continue;
+        }
+        let id = stem.to_lowercase();
+        if id == "auto" {
+            files.warnings.push(Warning::new(file, "\"auto\" is a reserved name; rename this theme"));
+            continue;
+        }
+        match read_text(&path) {
+            Ok(text) => {
+                files.themes.insert(id, text);
+            }
+            Err(err) => files.warnings.push(Warning::new(file, format!("cannot read: {err}"))),
+        }
+    }
+    note_conflicts(files)
+}
+
+/// Each conflicting copy said in the status bar (spec 14 §8.3).
+fn note_conflicts(mut files: ConfigFiles) -> ConfigFiles {
+    files.conflicts.sort();
+    for name in &files.conflicts {
+        let of = if name.starts_with("themes/") { "a theme" } else { "settings.toml" };
+        files.warnings.push(Warning::new(
+            name.clone(),
+            format!("a conflicting copy of {of} — Review it in Settings > Sync and Backup"),
+        ));
+    }
+    files
+}
+
+/// Keeps the sync folder's settings.toml and themes in `cache` (spec 14 §8.4): only files that
+/// changed are written. A failure is not said (the folder itself was read).
+fn keep_copy(cache: &Path, files: &ConfigFiles) {
+    let keep = |path: &Path, text: &str| {
+        if read_text(path).ok().as_deref() != Some(text) {
+            let _ = path.parent().map(std::fs::create_dir_all);
+            let _ = write_atomic(path, text);
+        }
+    };
+    if let Some(text) = &files.settings {
+        keep(&cache.join("settings.toml"), text);
+    }
+    let themes = cache.join("themes");
+    for (id, text) in &files.themes {
+        keep(&themes.join(format!("{id}.toml")), text);
+    }
+    let Ok(entries) = std::fs::read_dir(&themes) else { return };
+    for entry in entries.filter_map(Result::ok) {
+        let gone = entry.path().file_stem().is_some_and(|s| !files.themes.contains_key(&*s.to_string_lossy()));
+        if gone {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Everything the UI needs after (re)loading the config folder.
@@ -309,8 +444,12 @@ fn write_if_missing(path: &Path, contents: &str) -> io::Result<()> {
 
 pub fn resolve(files: &ConfigFiles, system_dark: bool) -> Loaded {
     let mut warnings = files.warnings.clone();
-    let settings =
-        files.settings.as_deref().map(|text| Settings::parse("settings.toml", text, &mut warnings)).unwrap_or_default();
+    let local = files.local_settings.as_deref();
+    let settings = files
+        .settings
+        .as_deref()
+        .map(|text| Settings::parse_layered("settings.toml", text, local, &mut warnings))
+        .unwrap_or_default();
 
     let id = settings.active_theme(system_dark).to_owned();
     let theme = match resolve_theme(&id, &files.themes, &mut warnings) {
@@ -372,7 +511,7 @@ mod tests {
     #[test]
     fn a_split_store_puts_each_file_in_its_folder() {
         let root = crate::test_dir("split");
-        let dirs = Dirs { shared: root.join("shared"), local: root.join("local"), portable: false };
+        let dirs = Dirs { shared: root.join("shared"), local: root.join("local"), portable: false, synced: false };
         let store = ConfigStore::with_dirs(dirs);
         store.ensure_initialized().unwrap();
         store.save_state(&State::default()).unwrap();
@@ -714,5 +853,102 @@ theme = \"dark\"
         assert_eq!(resolve(&store.read_files(), true).settings.tab_sets, [set]);
         store.save_tab_sets(&[]).unwrap();
         assert!(resolve(&store.read_files(), true).settings.tab_sets.is_empty());
+    }
+
+    /// A store whose settings are in sync folder `root/Dropbox/Gezik`, its own files in `root/local`.
+    fn synced_store(root: &Path) -> ConfigStore {
+        let dirs =
+            Dirs { shared: root.join("Dropbox/Gezik"), local: root.join("local"), portable: false, synced: true };
+        ConfigStore::with_dirs(dirs)
+    }
+
+    #[test]
+    fn a_sync_folder_is_read_with_this_computers_layer_and_kept_as_a_last_copy() {
+        let root = crate::test_dir("sync-read");
+        let store = synced_store(&root);
+        store.ensure_initialized().unwrap();
+        assert!(!root.join("Dropbox").exists(), "a sync folder is never made at start");
+        assert!(root.join("local").is_dir());
+        write(&store, "settings.toml", "theme = \"nord\"\n[layout]\ndensity = \"compact\"\n");
+        write(&store, "themes/nord.toml", "[colors]\naccent = \"#88c0d0\"\n");
+        std::fs::write(root.join("local").join(LOCAL_SETTINGS), "[layout]\ndensity = \"comfortable\"\n").unwrap();
+        let files = store.read_files();
+        assert!(!files.offline && files.conflicts.is_empty());
+        let loaded = resolve(&files, true);
+        assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+        assert_eq!(loaded.settings.density, Density::Comfortable, "this computer's value wins");
+        assert_eq!(loaded.theme.unwrap().id, "nord", "the rest is the shared file's");
+        let cache = root.join("local").join(CACHE);
+        assert_eq!(std::fs::read_to_string(cache.join("settings.toml")).unwrap(), files.settings.unwrap());
+        assert!(cache.join("themes/nord.toml").is_file());
+
+        // The folder is gone (Dropbox not running): the last copy, said, and nothing made.
+        std::fs::remove_dir_all(root.join("Dropbox")).unwrap();
+        let files = store.read_files();
+        assert!(files.offline);
+        assert!(files.warnings.iter().any(|w| w.message == OFFLINE_NOTE), "{:?}", files.warnings);
+        let loaded = resolve(&files, true);
+        assert_eq!(loaded.theme.unwrap().id, "nord");
+        assert_eq!(loaded.settings.density, Density::Comfortable);
+        let pin = store.save_pinned(&[PinEntry::plain("/a")]).unwrap_err();
+        assert_eq!(pin.message, crate::settings_writer::NOT_SAVED);
+        assert!(!root.join("Dropbox").exists());
+        assert_eq!(store.unsaved(), 1);
+
+        // A theme the folder lost leaves the copy too.
+        write(&store, "settings.toml", "theme = \"dark\"\n");
+        store.read_files();
+        assert!(!cache.join("themes/nord.toml").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn conflicting_copies_are_listed_and_said_and_are_not_themes() {
+        let root = crate::test_dir("sync-conflicts");
+        let store = synced_store(&root);
+        write(&store, "settings.toml", "theme = \"dark\"\n");
+        write(&store, "settings (Ann's conflicted copy 2026-10-12).toml", "theme = \"nord\"\n");
+        write(&store, "settings-LAPTOP.toml", "theme = \"nord\"\n");
+        write(&store, "settings-old.toml", "");
+        write(&store, "themes/nord.toml", "");
+        write(&store, "themes/nord (1).toml", "");
+        write(&store, "themes/solo (1).toml", "");
+        std::fs::create_dir_all(store.shared_dir().join("machines")).unwrap();
+        let files = store.read_files();
+        assert_eq!(files.conflicts, ["settings (Ann's conflicted copy 2026-10-12).toml", "themes/nord (1).toml"]);
+        assert!(files.themes.contains_key("solo (1)"), "no original: a theme of its own");
+        assert!(!files.themes.contains_key("nord (1)"));
+        let said: Vec<&Warning> = files.warnings.iter().filter(|w| w.message.contains("conflicting copy")).collect();
+        assert_eq!(said.len(), 2, "{:?}", files.warnings);
+        // A computer that joined the folder: OneDrive's copy named by it is one too.
+        crate::sync_folder::add_machine(&store.shared_dir(), "LAPTOP").unwrap();
+        assert_eq!(store.read_files().conflicts.len(), 3);
+        assert!(store.is_config_file(&store.shared_dir().join("settings (1).toml")));
+        assert!(store.is_config_file(&store.shared_dir()), "the folder coming back");
+        assert!(store.is_config_file(&root.join("local").join(LOCAL_SETTINGS)));
+        assert!(!store.is_config_file(&root.join("local").join("state.toml")));
+        assert!(!store.is_config_file(&store.shared_dir().join("machines").join("LAPTOP")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_shared_folder_moves_and_comes_back() {
+        let root = crate::test_dir("sync-move");
+        let store = ConfigStore::new(root.join("local"));
+        store.ensure_initialized().unwrap();
+        let clone = store.clone();
+        store.set_shared(Some(root.join("Sync")));
+        assert!(clone.is_synced() && clone.shared_dir() == root.join("Sync"), "every clone follows");
+        assert_eq!(clone.templates_dir(), root.join("Sync").join("templates"));
+        assert_eq!(clone.local_dir(), root.join("local"));
+        // Not there: the change waits; the settings.toml left behind is not written.
+        assert!(clone.save_pinned(&[PinEntry::plain("/a")]).is_err());
+        store.set_shared(None);
+        assert!(!clone.is_synced() && clone.shared_dir() == root.join("local"));
+        // Without a sync folder settings.local.toml is not read.
+        std::fs::write(root.join("local").join(LOCAL_SETTINGS), "theme = \"nord\"\n").unwrap();
+        assert!(store.read_files().local_settings.is_none());
+        assert!(!store.is_config_file(&root.join("local").join(LOCAL_SETTINGS)));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

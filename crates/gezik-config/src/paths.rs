@@ -30,12 +30,15 @@ pub struct Dirs {
     pub local: PathBuf,
     /// In `gezik-data` next to a `gezik-portable` marker.
     pub portable: bool,
+    /// `shared` is a sync folder `location.toml` names (spec 14 §8): it may be missing, and
+    /// `settings.local.toml` is read over its settings.toml.
+    pub synced: bool,
 }
 
 impl Dirs {
     /// One folder for everything.
     pub fn one(dir: PathBuf) -> Dirs {
-        Dirs { shared: dir.clone(), local: dir, portable: false }
+        Dirs { shared: dir.clone(), local: dir, portable: false, synced: false }
     }
 }
 
@@ -149,7 +152,8 @@ pub fn plain_path(path: &Path) -> PathBuf {
     }
 }
 
-/// This process's [`Location`]: one `metadata` call for the marker when there is none.
+/// This process's [`Location`]: one `metadata` call for the marker when there is none, and one
+/// `open` for `location.toml` (spec 14 §3.5).
 pub fn location() -> &'static Location {
     static LOCATION: std::sync::OnceLock<Location> = std::sync::OnceLock::new();
     LOCATION.get_or_init(|| {
@@ -160,7 +164,14 @@ pub fn location() -> &'static Location {
         let appimage = std::env::var_os("APPIMAGE").filter(|_| cfg!(target_os = "linux")).map(PathBuf::from);
         let system = dirs::config_dir().map(|dir| dir.join("gezik"));
         let choice = choose(env, exe.as_deref(), appimage.as_deref(), |m| m.is_file(), system);
-        locate(choice, writable)
+        let mut location = locate(choice, writable);
+        if let Some(dirs) = location.dirs.as_mut()
+            && let Ok(text) = std::fs::read_to_string(dirs.local.join(crate::sync_folder::LOCATION_FILE))
+            && let Some(folder) = crate::sync_folder::parse_location(&text, &KnownDirs::system())
+        {
+            (dirs.shared, dirs.synced) = (folder, true);
+        }
+        location
     })
 }
 
@@ -412,7 +423,7 @@ mod tests {
         let system = dir.join("system");
         let choice = || Choice::Portable { folder: dir.clone(), system: Some(system.clone()) };
         let data = dir.join(PORTABLE_DATA);
-        let portable = Some(Dirs { shared: data.clone(), local: data.clone(), portable: true });
+        let portable = Some(Dirs { portable: true, ..Dirs::one(data.clone()) });
         // Not there yet: made by the first run, not here.
         let first = locate(choice(), writable);
         assert_eq!(first, Location { dirs: portable.clone(), read_only: false, note: None });

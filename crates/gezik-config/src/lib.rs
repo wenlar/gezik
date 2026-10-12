@@ -13,6 +13,7 @@ pub mod settings_writer;
 pub mod shortcuts;
 mod state_store;
 pub mod store;
+pub mod sync_folder;
 pub mod sync_profiles;
 pub mod system_journal;
 pub mod tags;

@@ -455,14 +455,29 @@ impl Settings {
     /// Reads `settings.toml`. Anything missing or invalid keeps its default; problems
     /// become warnings. A syntax error yields all defaults.
     pub fn parse(file: &str, text: &str, warnings: &mut Vec<Warning>) -> Settings {
+        Self::parse_layered(file, text, None, warnings)
+    }
+
+    /// [`parse`](Self::parse) with `settings.local.toml`'s text (`local`) over it: its keys win
+    /// (spec 14 §8.2). A local file that does not read is left out, with a warning.
+    pub fn parse_layered(file: &str, text: &str, local: Option<&str>, warnings: &mut Vec<Warning>) -> Settings {
         let mut settings = Settings::default();
-        let table = match text.parse::<toml::Table>() {
+        let mut table = match text.parse::<toml::Table>() {
             Ok(table) => table,
             Err(err) => {
                 warnings.push(Warning::from_toml_error(file, text, &err));
                 return settings;
             }
         };
+        match local.map(str::parse::<toml::Table>) {
+            Some(Ok(over)) => crate::sync_folder::layer(&mut table, over),
+            Some(Err(err)) => warnings.push(Warning::from_toml_error(
+                crate::sync_folder::LOCAL_SETTINGS,
+                local.unwrap_or_default(),
+                &err,
+            )),
+            None => {}
+        }
         let mut text_value = |table: &toml::Table, key: &str, path: &str| -> Option<String> {
             let value = table.get(key)?;
             let text = value.as_str().map(str::to_owned);
