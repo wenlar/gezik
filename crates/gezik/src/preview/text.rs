@@ -6,6 +6,7 @@
 
 #![deny(clippy::indexing_slicing)]
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use gezik_core::syntax::{self, Class, LangDef};
@@ -48,6 +49,7 @@ pub struct TextView {
     /// The top row: its line's start and which wrapped part of it.
     top: (u64, usize),
     pub wrap: bool,
+    cache: scroller::Cache,
 }
 
 impl TextView {
@@ -62,6 +64,7 @@ impl TextView {
             source: memory(head, lang, partial),
             lang,
             top: (0, 0),
+            cache: scroller::Cache::default(),
             wrap: if lang.is_some_and(LangDef::is_code) { wrap.1 } else { wrap.0 },
         }
     }
@@ -100,14 +103,15 @@ impl TextView {
         }
     }
 
-    fn read(&self, offset: u64, len: usize) -> Vec<u8> {
+    /// Paged: at most `len` bytes at `offset`. In memory: all the rest (a line longer than a
+    /// window stays one line).
+    fn read(&self, offset: u64, len: usize) -> Cow<'_, [u8]> {
         match &self.source {
             Source::Memory { text, .. } => {
-                let bytes = text.as_bytes();
-                let start = usize::try_from(offset).unwrap_or(usize::MAX).min(bytes.len());
-                bytes.get(start..bytes.len().min(start.saturating_add(len))).unwrap_or_default().to_vec()
+                let start = usize::try_from(offset).unwrap_or(usize::MAX);
+                Cow::Borrowed(text.as_bytes().get(start..).unwrap_or_default())
             }
-            Source::Paged { .. } => read_at(&self.path, offset, len),
+            Source::Paged { .. } => Cow::Owned(self.cache.read(&self.path, offset, len)),
         }
     }
 
@@ -153,7 +157,7 @@ impl TextView {
         let end = self.limit();
         while out.len() < max && offset < end {
             let buf = self.read(offset, WINDOW);
-            let eof = buf.len() < WINDOW || offset + buf.len() as u64 >= end;
+            let eof = buf.len() != WINDOW || offset + buf.len() as u64 >= end;
             let used = self.split(&buf, offset, eof, &mut out, max);
             if used == 0 {
                 break;
@@ -169,10 +173,19 @@ impl TextView {
         if offset <= origin {
             return Vec::new();
         }
+        if let Source::Memory { starts, .. } = &self.source {
+            // The index knows where they start.
+            let before = starts.partition_point(|&s| u64::from(s) < offset);
+            let from = before.saturating_sub(256);
+            let first = starts.get(from).map_or(0, |&s| u64::from(s));
+            let mut lines = self.lines(first, before - from);
+            lines.retain(|line| line.start < offset);
+            return lines;
+        }
         let (unit, _) = self.unit();
         let mut start = offset.saturating_sub(WINDOW as u64).max(origin);
         start -= (start - origin) % unit as u64;
-        let mut buf = self.read(start, usize::try_from(offset - start).unwrap_or(WINDOW));
+        let mut buf = self.read(start, usize::try_from(offset - start).unwrap_or(WINDOW)).into_owned();
         if start > origin && unit == 1 {
             // Not in the middle of a character.
             let skip = buf.iter().take(3).take_while(|b| (0x80..0xC0).contains(*b)).count();
@@ -286,7 +299,31 @@ impl TextView {
     /// The last rows (a log's tail): the end, `page` rows up.
     pub fn end(&mut self, cols: usize, page: usize) {
         self.load_rest();
-        self.last_page(cols, page);
+        if self.refresh_length() {
+            self.last_page(cols, page);
+        }
+    }
+
+    /// A paged file's length again (a log grows); false, and the top at the start, if it is
+    /// gone or empty now.
+    fn refresh_length(&mut self) -> bool {
+        if let Source::Paged { size, bom, .. } = &mut self.source {
+            self.cache.clear();
+            match scroller::length(&self.path) {
+                Some(length) if length > *bom => (*size, self.size) = (length, length),
+                _ => {
+                    self.top = (*bom, 0);
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// The bytes the page from the top shows; `None` when it reaches the end.
+    fn shown(&self, cols: usize, page: usize) -> Option<u64> {
+        let rows = self.placed_rows(page + 1, cols);
+        rows.get(page).map(|&((start, _), _)| start.saturating_sub(self.top.0))
     }
 
     fn last_page(&mut self, cols: usize, page: usize) {
@@ -297,14 +334,24 @@ impl TextView {
     /// To `fraction` of the way down (the scroll bar).
     pub fn jump(&mut self, fraction: f32, cols: usize, page: usize) {
         self.load_rest();
+        if !self.refresh_length() {
+            return;
+        }
+        if fraction >= 1.0 {
+            return self.last_page(cols, page);
+        }
+        // The bar's track spans the places a top can have: the end minus a page.
         let at = match &self.source {
             Source::Memory { starts, .. } => {
-                let line = (fraction.clamp(0.0, 1.0) * starts.len() as f32) as usize;
+                let span = starts.len().saturating_sub(page);
+                let line = (fraction.clamp(0.0, 1.0) * span as f32).round() as usize;
                 starts.get(line.min(starts.len().saturating_sub(1))).map_or(0, |&s| u64::from(s))
             }
             Source::Paged { .. } => {
                 let (unit, _) = self.unit();
-                let at = scroller::place(fraction, self.origin(), self.limit());
+                let shown = self.shown(cols, page).unwrap_or_else(|| self.limit().saturating_sub(self.top.0));
+                let at =
+                    scroller::place(fraction, self.origin(), self.limit().saturating_sub(shown).max(self.origin()));
                 let at = at - (at - self.origin()) % unit as u64;
                 // The line `at` is in.
                 self.lines_before((at + unit as u64).min(self.limit())).last().map_or(at, |line| line.start)
@@ -362,19 +409,33 @@ impl TextView {
     }
 
     /// The scroll bar: where the top is (0–1) and how much is shown.
-    pub fn scroll_bar(&self, page: usize) -> (f32, f32) {
+    /// The scroll bar: where the top is (0–1, 1 at the last page) and how much is shown.
+    pub fn scroll_bar(&self, cols: usize, page: usize) -> (f32, f32) {
+        let shown = self.shown(cols, page);
         match &self.source {
             Source::Memory { starts, .. } => {
-                let lines = starts.len().max(1) as f32;
+                let lines = starts.len().max(1);
+                let size = (page as f32 / lines as f32).min(1.0);
                 let line = index_of(starts, self.top.0).unwrap_or(0) as f32;
-                (line / lines, (page as f32 / lines).min(1.0))
+                let at = match shown {
+                    None if size >= 1.0 && self.top.0 == 0 => 0.0,
+                    None => 1.0,
+                    Some(_) => (line / lines.saturating_sub(page).max(1) as f32).min(1.0),
+                };
+                (at, size)
             }
-            Source::Paged { .. } => (scroller::fraction(self.top.0, self.origin(), self.limit()), 0.02),
+            Source::Paged { .. } => match shown {
+                None => (1.0, 0.02),
+                Some(shown) => {
+                    let last = self.limit().saturating_sub(shown).max(self.origin() + 1);
+                    (scroller::fraction(self.top.0, self.origin(), last), 0.02)
+                }
+            },
         }
     }
 
     /// The bar's right side: the number of lines, or the size and how far down.
-    pub fn status(&self) -> String {
+    pub fn status(&self, cols: usize, page: usize) -> String {
         match &self.source {
             Source::Memory { starts, head: false, .. } => match starts.len() {
                 1 => "1 line".to_owned(),
@@ -382,7 +443,7 @@ impl TextView {
             },
             Source::Memory { .. } => crate::view_options::size_text(self.size),
             Source::Paged { .. } => {
-                let (at, _) = self.scroll_bar(0);
+                let (at, _) = self.scroll_bar(cols, page);
                 format!("{} · {}%", crate::view_options::size_text(self.size), (at * 100.0).round())
             }
         }
@@ -612,7 +673,7 @@ mod tests {
         assert_eq!(rows.iter().map(|r| r.number.as_str()).collect::<Vec<_>>(), ["1", "2", "3", "4"]);
         assert_eq!(rows[0].parts[0], (0, "fn ".to_owned(), Class::Keyword));
         assert_eq!(rows[2].parts[0].2, Class::Comment, "the block comment goes on");
-        assert_eq!((v.status(), v.gutter(), v.note()), ("4 lines".to_owned(), 1, ""));
+        assert_eq!((v.status(80, 2), v.gutter(), v.note()), ("4 lines".to_owned(), 1, ""));
         v.scroll(2, 80, 2);
         assert_eq!(texts(&v.rows(2, 80)), [" b */", "}"]);
         v.scroll(5, 80, 2);
@@ -639,7 +700,7 @@ mod tests {
         let rows = v.rows(10, 80);
         assert_eq!(rows[0].number, (first_page + 1).to_string());
         assert_eq!(texts(&rows)[0], format!("{:06}", first_page + 1));
-        assert_eq!(v.status(), "20,000 lines");
+        assert_eq!(v.status(80, 10), "20,000 lines");
         v.end(80, 10);
         assert_eq!(texts(&v.rows(10, 80)).last().unwrap(), "020000");
         let _ = std::fs::remove_dir_all(&dir);
@@ -682,8 +743,8 @@ mod tests {
         let rows = texts(&v.rows(20, 80));
         assert_eq!((rows[0].as_str(), rows[19].as_str()), ("0399981", "0400000"));
         v.jump(0.5, 80, 20);
-        assert_eq!(texts(&v.rows(1, 80)), ["0200001"], "the line at the middle");
-        assert!(v.status().ends_with("· 50%"), "{}", v.status());
+        assert_eq!(texts(&v.rows(1, 80)), ["0199991"], "the middle of the places a top can have");
+        assert!(v.status(80, 20).ends_with("· 50%"), "{}", v.status(80, 20));
         v.home();
         assert_eq!(texts(&v.rows(1, 80)), ["0000001"]);
         let _ = std::fs::remove_dir_all(&dir);
@@ -728,6 +789,62 @@ mod tests {
         v.end(80, 1);
         let shown = texts(&v.rows(1, 80)).remove(0);
         assert_eq!(Some(shown), gezik_platform::decode_ansi(&line[..line.len() - 2]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_line_longer_than_a_window_stays_one_line_in_memory() {
+        let dir = temp("longline");
+        let path = dir.join("min.json");
+        let long = "x".repeat(100 * 1024);
+        std::fs::write(&path, format!("a\n{long}\nb\nc\n")).unwrap();
+        let mut v = view(&path);
+        v.end(80, 2);
+        assert!(!v.is_head());
+        assert_eq!(texts(&v.rows(2, 80)), ["b", "c"]);
+        let numbers = |v: &TextView| v.rows(4, 80).iter().map(|r| r.number.clone()).collect::<Vec<_>>();
+        v.scroll(-1, 80, 2);
+        assert_eq!(numbers(&v), ["2", "3", "4"], "no row without a number: the long line is one");
+        v.scroll(-1, 80, 2);
+        assert_eq!(numbers(&v), ["1", "2", "3", "4"]);
+        v.scroll(1, 80, 2);
+        assert_eq!(numbers(&v)[0], "2", "scrolling down from it does not reset");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_scroll_thumb_reaches_the_bottom_at_the_end() {
+        let dir = temp("thumb");
+        let small = dir.join("small.txt");
+        std::fs::write(&small, numbered(100, 3)).unwrap();
+        let big = dir.join("big.txt");
+        std::fs::write(&big, numbered(400_000, 7)).unwrap();
+        for path in [small, big] {
+            let mut v = view(&path);
+            v.end(80, 10);
+            assert_eq!(v.scroll_bar(80, 10).0, 1.0, "{}", path.display());
+            v.home();
+            assert_eq!(v.scroll_bar(80, 10).0, 0.0);
+            v.jump(1.0, 80, 10);
+            assert_eq!(
+                texts(&v.rows(10, 80)).last().map(|t| t.trim_start_matches('0').to_owned()).as_deref(),
+                Some(if path.ends_with("big.txt") { "400000" } else { "100" })
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_vanished_file_goes_back_to_the_start() {
+        let dir = temp("vanish");
+        let path = dir.join("log.txt");
+        std::fs::write(&path, numbered(400_000, 7)).unwrap();
+        let mut v = view(&path);
+        v.end(80, 5);
+        std::fs::remove_file(&path).unwrap();
+        v.end(80, 5);
+        assert_eq!(v.top, (0, 0));
+        assert!(v.rows(5, 80).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -803,7 +920,7 @@ mod tests {
                     _ => v.home(),
                 }
                 let _ = v.rows(30, 40);
-                let _ = v.status();
+                let _ = v.status(40, 10);
             }
         }
         let _ = std::fs::remove_dir_all(&dir);

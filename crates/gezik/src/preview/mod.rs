@@ -127,6 +127,14 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     }
 }
 
+/// The same file or folder (its size and dates may have changed).
+fn same_item(a: &Target, b: &Target) -> bool {
+    match (a, b) {
+        (Target::Entry { path: p, is_dir: d, .. }, Target::Entry { path: q, is_dir: e, .. }) => p == q && d == e,
+        _ => a == b,
+    }
+}
+
 /// A one-place mailbox: [`Slot::put`] replaces what is waiting, [`Slot::take`] waits for
 /// something. The preview worker only ever sees the latest request this way.
 pub struct Slot<T> {
@@ -425,7 +433,7 @@ impl Preview {
         }
         if !self.active() {
             // The preview column closed (a folder selected, the list chosen): its picture goes.
-            if *self.0.info.borrow() != PreviewInfo::default() {
+            if self.0.info.borrow().kind != 0 {
                 self.release();
             }
             return;
@@ -445,12 +453,12 @@ impl Preview {
             return;
         }
         let target = crate::panes::active_view().preview_target();
-        // Another file (or it changed): what its viewer holds goes (spec 13 §3.1). The same
-        // one keeps its place (the pane was resized, the list refreshed).
-        if *self.0.viewer_target.borrow() != target {
+        // Another file: what its viewer holds goes (spec 13 §3.1). The same one keeps its place
+        // (the pane was resized, the list refreshed, a log grew).
+        if !same_item(&self.0.viewer_target.borrow(), &target) {
             *self.0.viewer.borrow_mut() = Viewer::default();
-            *self.0.viewer_target.borrow_mut() = target.clone();
         }
+        *self.0.viewer_target.borrow_mut() = target.clone();
         let generation = self.0.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.publish(describe(&target, None));
         if !matches!(target, Target::Entry { .. }) {
@@ -674,7 +682,7 @@ impl Preview {
     fn loaded(&self, target: Target, mut body: Body) {
         if let (Body::Text(head), Target::Entry { path, size, .. }) = (&mut body, &target)
             && self.0.viewer.borrow().text.is_none()
-            && *self.0.viewer_target.borrow() == target
+            && same_item(&self.0.viewer_target.borrow(), &target)
         {
             let size = size.unwrap_or(head.len() as u64);
             let view = text::TextView::from_head(path, size, std::mem::take(head), self.0.wrap.get());

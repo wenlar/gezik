@@ -20,6 +20,10 @@ thread_local! {
 pub fn read_at(path: &Path, offset: u64, len: usize) -> Vec<u8> {
     #[cfg(test)]
     READS.with(|r| r.set(r.get() + 1));
+    // Reading a file only in the cloud would download it.
+    if gezik_platform::only_in_cloud(path) {
+        return Vec::new();
+    }
     let Ok(mut file) = std::fs::File::open(path) else { return Vec::new() };
     if file.seek(SeekFrom::Start(offset)).is_err() {
         return Vec::new();
@@ -27,6 +31,33 @@ pub fn read_at(path: &Path, offset: u64, len: usize) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(len.min(WINDOW));
     let _ = file.take(len as u64).read_to_end(&mut bytes);
     bytes
+}
+
+/// The last read, so a redraw at the same place (wheel at the end, resize, keys that do not
+/// move) does not open the file again.
+#[derive(Default)]
+pub struct Cache(std::cell::RefCell<Option<(u64, usize, Vec<u8>)>>);
+
+impl Cache {
+    pub fn read(&self, path: &Path, offset: u64, len: usize) -> Vec<u8> {
+        if let Some((at, n, bytes)) = &*self.0.borrow()
+            && (*at, *n) == (offset, len)
+        {
+            return bytes.clone();
+        }
+        let bytes = read_at(path, offset, len);
+        *self.0.borrow_mut() = Some((offset, len, bytes.clone()));
+        bytes
+    }
+
+    pub fn clear(&self) {
+        *self.0.borrow_mut() = None;
+    }
+}
+
+/// The file's length now; `None` if it is gone.
+pub fn length(path: &Path) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|m| m.len())
 }
 
 /// How far `at` is from `start` to `end`, 0–1.

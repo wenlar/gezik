@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 
 use gezik_core::syntax::Class;
 
-use super::scroller::{self, read_at};
+use super::scroller;
 use super::text::Row;
 
-/// Columns a row of 16 bytes takes: narrower places show 8.
-const WIDE_ROW: usize = 76;
+/// Columns a row of 16 bytes takes after its offset: narrower places show 8.
+const WIDE_ROW: usize = 16 * 3 + 2 + 16;
 /// The most read for one page.
 const MAX_PAGE: u64 = 4096;
 
@@ -21,30 +21,31 @@ pub struct HexView {
     size: u64,
     /// The offset of the top row.
     top: u64,
+    cache: scroller::Cache,
 }
 
 impl HexView {
     pub fn new(path: &Path, size: u64) -> HexView {
-        HexView { path: path.to_path_buf(), size, top: 0 }
+        HexView { path: path.to_path_buf(), size, top: 0, cache: scroller::Cache::default() }
     }
 
-    /// Bytes per row in `cols` columns.
+    /// Bytes per row in `cols` columns (the offsets' column is not in them).
     pub fn per_row(cols: usize) -> u64 {
         if cols >= WIDE_ROW { 16 } else { 8 }
     }
 
-    /// Hex digits of the offsets: enough for the size, at least 8 (6 in narrow rows).
-    fn digits(&self, per_row: u64) -> usize {
-        let needed = (64 - self.size.max(1).leading_zeros() as usize).div_ceil(4);
-        needed.max(if per_row == 16 { 8 } else { 6 })
+    /// Hex digits of the offsets: enough for the size, at least 8. Never by the row's width:
+    /// the offsets' column decides the room the rows get.
+    pub fn gutter(&self) -> usize {
+        (64 - self.size.max(1).leading_zeros() as usize).div_ceil(4).max(8)
     }
 
     pub fn rows(&self, count: usize, cols: usize) -> Vec<Row> {
         let per = Self::per_row(cols);
         let top = self.top - self.top % per;
         let len = (count as u64 * per).min(MAX_PAGE);
-        let bytes = read_at(&self.path, top, usize::try_from(len).unwrap_or(0));
-        let digits = self.digits(per);
+        let bytes = self.cache.read(&self.path, top, usize::try_from(len).unwrap_or(0));
+        let digits = self.gutter();
         bytes
             .chunks(per as usize)
             .enumerate()
@@ -78,19 +79,42 @@ impl HexView {
         self.top = 0;
     }
 
-    pub fn end(&mut self, cols: usize, page: usize) {
-        self.top = self.last_top(Self::per_row(cols), page);
+    /// The file's length again (it may have grown or shrunk); false, and the top at the
+    /// start, if it is gone.
+    fn refresh_length(&mut self) -> bool {
+        self.cache.clear();
+        match scroller::length(&self.path) {
+            Some(length) => self.size = length,
+            None => self.size = 0,
+        }
+        if self.size == 0 {
+            self.top = 0;
+        }
+        self.size > 0
     }
 
+    pub fn end(&mut self, cols: usize, page: usize) {
+        if self.refresh_length() {
+            self.top = self.last_top(Self::per_row(cols), page);
+        }
+    }
+
+    /// The bar's track spans the places a top can have: 0 to the last page.
     pub fn jump(&mut self, fraction: f32, cols: usize, page: usize) {
+        if !self.refresh_length() {
+            return;
+        }
         let per = Self::per_row(cols);
-        let at = scroller::place(fraction, 0, self.size);
-        self.top = (at - at % per).min(self.last_top(per, page));
+        let at = scroller::place(fraction, 0, self.last_top(per, page));
+        self.top = at - at % per;
     }
 
     pub fn scroll_bar(&self, page: usize, cols: usize) -> (f32, f32) {
-        let shown = page as u64 * Self::per_row(cols);
-        (scroller::fraction(self.top, 0, self.size), (shown as f32 / self.size.max(1) as f32).clamp(0.02, 1.0))
+        let per = Self::per_row(cols);
+        let shown = page as u64 * per;
+        let last = self.last_top(per, page);
+        let at = if last == 0 { 0.0 } else { scroller::fraction(self.top, 0, last) };
+        (at, (shown as f32 / self.size.max(1) as f32).clamp(0.02, 1.0))
     }
 
     /// The top row's offset: `0x0004_A3F0`.
@@ -104,11 +128,6 @@ impl HexView {
             text.push(c);
         }
         text
-    }
-
-    /// The offset column's width in characters.
-    pub fn gutter(&self, cols: usize) -> usize {
-        self.digits(Self::per_row(cols))
     }
 }
 
@@ -183,10 +202,14 @@ mod tests {
         assert_eq!(v.rows(1, 80)[0].number, "000003B0", "never past the last page");
         v.jump(0.5, 40, 4);
         let rows = v.rows(1, 40);
-        assert_eq!(rows[0].number, "0001F0", "8 bytes and 6 digits in a narrow place");
+        assert_eq!(rows[0].number, "000001E0", "8 bytes a row in a narrow place, halfway to the last page");
+        v.end(80, 4);
+        assert_eq!(v.scroll_bar(4, 80).0, 1.0, "the thumb reaches the bottom");
+        v.jump(1.0, 80, 4);
+        assert_eq!(v.rows(1, 80)[0].number, "000003B0", "the bottom is the last page");
         v.home();
         assert_eq!(v.rows(1, 80)[0].number, "00000000");
-        assert_eq!(HexView::new(&path, 1 << 40).gutter(80), 11);
+        assert_eq!(HexView::new(&path, 1 << 40).gutter(), 11);
         std::fs::remove_file(&path).expect("no handle is held");
     }
 
@@ -211,10 +234,25 @@ mod tests {
                 2 => v.end(cols, page),
                 _ => v.scroll(-(next() as i64 % 1000), cols, page),
             }
-            assert!(v.top <= size.max(1));
+            assert!(v.top <= v.size.max(size).max(1));
             let _ = (v.scroll_bar(page, cols), v.status());
         }
         let _ = v_rows_dont_overread(&path);
+    }
+
+    #[test]
+    fn the_row_width_settles_for_every_room() {
+        // The pane gives the rows its width less the offsets' column: the column must not
+        // depend on the row's bytes, or 8 and 16 would take turns forever.
+        let v = HexView::new(Path::new("x"), 5000);
+        for width in 0..300usize {
+            let cols = |gutter: usize| width.saturating_sub(gutter);
+            let first = HexView::per_row(cols(v.gutter()));
+            let again = HexView::per_row(cols(v.gutter()));
+            assert_eq!(first, again, "{width}");
+            assert_eq!(v.gutter(), 8);
+        }
+        assert!(row_width(16) + 16 <= WIDE_ROW, "a 16-byte row fits where it is chosen");
     }
 
     fn v_rows_dont_overread(path: &Path) -> usize {

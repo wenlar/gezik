@@ -23,9 +23,16 @@ impl Viewer {
     /// Puts the rows and the bar into `info`.
     pub fn fill(&self, info: &mut PreviewInfo, (cols, page): Room) {
         let (bar, rows, text, note, gutter, (pos, size)) = if let Some(hex) = &self.hex {
-            (2, hex.rows(page + 1, cols), hex.status(), "", hex.gutter(cols), hex.scroll_bar(page, cols))
+            (2, hex.rows(page + 1, cols), hex.status(), "", hex.gutter(), hex.scroll_bar(page, cols))
         } else if let Some(view) = &self.text {
-            (1, view.rows(page + 1, cols), view.status(), view.note(), view.gutter(), view.scroll_bar(page))
+            (
+                1,
+                view.rows(page + 1, cols),
+                view.status(cols, page),
+                view.note(),
+                view.gutter(),
+                view.scroll_bar(cols, page),
+            )
         } else {
             // A file shows its picture or icon; Hex is a click away (never by itself).
             let file = matches!(info.kind, 1 | 3) && !info.loading;
