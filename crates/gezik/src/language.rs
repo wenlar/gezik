@@ -37,6 +37,10 @@ pub fn apply(setting: &str, files: &ConfigFiles) -> bool {
     // Before the check below, which skips English at the start: Han characters in the language
     // the reader expects (spec 15 §3.4), set before the first one is drawn.
     i_slint_core::textlayout::sharedparley::set_text_locale(Some(&lang::text_locale(&code, system())));
+    let no_platform = || Err(i_slint_core::platform::PlatformError::NoPlatform);
+    let _ = i_slint_core::context::with_global_context(no_platform, |ctx| {
+        set_last_resort_fonts(&mut ctx.font_context().borrow_mut().collection);
+    });
     let file = file(&code, files).cloned();
     let same = SHOWN.with(|shown| {
         let shown = shown.borrow();
@@ -60,6 +64,28 @@ pub fn apply(setting: &str, files: &ConfigFiles) -> bool {
             .map(std::borrow::Cow::into_owned),
     );
     true
+}
+
+/// The fonts every text falls back to, per glyph, after its own script's fallback: Simplified
+/// Chinese first, then symbols (`⌃`). Those that are installed.
+const LAST_RESORT: &[&str] = if cfg!(windows) {
+    &["Microsoft YaHei UI", "Microsoft YaHei", "DengXian", "SimSun", "Segoe UI Symbol"]
+} else if cfg!(target_os = "macos") {
+    &["PingFang SC", "Hiragino Sans GB", "Heiti SC", "Apple Symbols"]
+} else {
+    &["Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", "WenQuanYi Zen Hei", "DejaVu Sans"]
+};
+
+/// Puts [`LAST_RESORT`] in fontique's Han fallback slot for no language and Simplified Chinese.
+/// fontique adds that slot to every script's fallbacks (parley#597), and the first text shaped
+/// (Latin, with no Han in it) filled it with the system's no-language choice: Yu Gothic on
+/// Windows, which lacks the Simplified-only characters, so they drew blank in any language.
+fn set_last_resort_fonts(collection: &mut i_slint_core::textlayout::sharedparley::parley::fontique::Collection) {
+    use i_slint_core::textlayout::sharedparley::parley::fontique::{FallbackKey, Script};
+    let families: Vec<_> = LAST_RESORT.iter().filter_map(|name| collection.family_id(name)).collect();
+    if !families.is_empty() {
+        collection.set_fallbacks(FallbackKey::new(Script::from_bytes(*b"Hani"), None), families.into_iter());
+    }
 }
 
 /// The language row's choices (spec 15 §5.1): `code — name`, the first part is written.
@@ -104,6 +130,25 @@ pub fn code_of(choice: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn simplified_chinese_and_symbols_draw_after_latin_text() {
+        use i_slint_core::textlayout::sharedparley::{fallback_families_for_tests, parley, set_text_locale};
+        let mut context = parley::FontContext::default();
+        set_text_locale(Some("zh-Hans"));
+        // Latin text first, as at every start: it filled the shared Han slot with Yu Gothic.
+        fallback_families_for_tests(&mut context, "Gezik");
+        set_last_resort_fonts(&mut context.collection);
+        let mut fonts = |text| fallback_families_for_tests(&mut context, text);
+        let (simplified, caret) = (fonts("简体中文 此电脑"), fonts("macOS ⌃1"));
+        if cfg!(windows) {
+            assert!(simplified.iter().any(|f| f.contains("YaHei")), "{simplified:?}");
+            assert!(!simplified.iter().any(|f| f.contains("Yu Gothic")), "{simplified:?}");
+            assert!(caret.iter().any(|f| f == "Segoe UI Symbol"), "{caret:?}");
+        } else {
+            eprintln!("{simplified:?} {caret:?}");
+        }
+    }
 
     #[test]
     fn choices_and_their_codes() {
