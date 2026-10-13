@@ -59,6 +59,8 @@ pub enum Kind {
     Path,
     /// A theme's id: the built-ins and the themes folder's (`theme` also "auto").
     Theme,
+    /// A language's code: "auto", the built-ins, the lang folder's, "pseudo" (spec 15 §5.1).
+    Language,
     /// Written by System Integration (the tray, the global shortcut): shown here, changed there.
     Integration,
     /// A list or tables: counted here, edited in settings.toml (spec 14 decision 4).
@@ -100,11 +102,12 @@ const fn f(table: Option<&'static str>, key: &'static str, page: Page, kind: Kin
 const THREADS: &[&str] =
     &["auto", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"];
 
-use Kind::{Bool, Choice, Int, Integration, List, Path, Text, Theme};
+use Kind::{Bool, Choice, Int, Integration, Language, List, Path, Text, Theme};
 use Page::{Advanced, Appearance, FilesAndTools, General, Keyboard, Layouts, System, Tags};
 
 /// Every setting the window shows, in its order.
 pub const FIELDS: &[Field] = &[
+    f(None, "language", General, Language),
     f(None, "start-folder", General, Path),
     f(None, "max-fps", General, Int),
     f(Some("session"), "restore", General, Bool),
@@ -357,7 +360,7 @@ pub fn literal(kind: Kind, input: &str) -> Option<String> {
         Kind::Choice(_) if matches!(input, "true" | "false") || input.bytes().all(|b| b.is_ascii_digit()) => {
             Some(input.to_owned())
         }
-        Kind::Choice(_) | Kind::Text | Kind::Path | Kind::Theme => {
+        Kind::Choice(_) | Kind::Text | Kind::Path | Kind::Theme | Kind::Language => {
             Some(toml::Value::String(input.to_owned()).to_string())
         }
         Kind::Integration | Kind::List => None,
@@ -424,7 +427,7 @@ mod tests {
             if line {
                 assert!(!described[i].description.is_empty(), "{path} has no comment in the template");
             }
-            if matches!(field.kind, Kind::Bool | Kind::Choice(_) | Kind::Int | Kind::Theme) {
+            if matches!(field.kind, Kind::Bool | Kind::Choice(_) | Kind::Int | Kind::Theme | Kind::Language) {
                 assert!(!described[i].default.is_empty(), "{path} has no default");
             }
         }

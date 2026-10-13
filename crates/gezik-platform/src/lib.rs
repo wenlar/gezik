@@ -49,7 +49,7 @@ pub use known::{KnownFolder, known_folders};
 /// Linux: org.freedesktop.FileManager1 (spec 6.4).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub use linux::file_manager1;
-pub use locale::{language, list_separator};
+pub use locale::{language, list_separator, preferred as preferred_languages};
 /// macOS: the folders LaunchServices hands to Gezik (spec 6.2).
 #[cfg(target_os = "macos")]
 pub use mac::open_urls;

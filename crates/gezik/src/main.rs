@@ -31,6 +31,7 @@ mod frame_limit;
 mod info;
 mod integration;
 mod keys;
+mod language;
 mod media;
 #[cfg(target_os = "macos")]
 mod menu_bar;
@@ -66,6 +67,7 @@ mod tags;
 mod templates;
 mod terminal;
 mod theme_bridge;
+mod translator;
 mod trash_view;
 mod view;
 mod view_options;
@@ -124,6 +126,8 @@ fn run_saved_search(index: i32, new_tab: bool) {
 fn apply_config(files: &ConfigFiles) -> Loaded {
     let dark = windows::with_focused(AppWindow::get_system_dark).unwrap_or_default();
     let loaded = store::resolve(files, dark);
+    // The language first: what the windows are given below is in it (spec 15 §5.3).
+    language::apply(&loaded.settings.language, files);
     // First: a pane told `[session] restore` below writes the tabs as it now says.
     windows::set_loaded(loaded.clone());
     let new = not_printed_yet(&mut PRINTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner), &loaded.warnings);

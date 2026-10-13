@@ -7,6 +7,11 @@ theme = "auto"
 theme-light = "light"   # the light mode's theme with "auto"
 theme-dark = "dark"     # the dark mode's theme with "auto"
 
+# Interface language: "auto" follows the system; or a code: "en", or the name of a
+# file in the lang folder (lang/pl.po -> "pl"). "pseudo" shows every text marked and
+# lengthened, for translators.
+language = "auto"
+
 # Where new tabs open: "{home}", "drives" (This PC), or any folder.
 # Tokens like {home}, {documents}, {downloads} work on every OS.
 start-folder = "{home}"

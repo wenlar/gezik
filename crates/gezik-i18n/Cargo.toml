@@ -1,0 +1,13 @@
+[package]
+name = "gezik-i18n"
+description = "Translations for the Gezik file manager: .po catalogues, plural rules, the language in use"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The built-in languages are deflated in the exe (already linked through flate2).
+miniz_oxide = "0.9.1"
+
+[build-dependencies]
+miniz_oxide = "0.9.1"

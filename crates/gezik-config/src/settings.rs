@@ -351,6 +351,8 @@ pub struct Settings {
     pub theme: ThemeChoice,
     pub theme_light: String,
     pub theme_dark: String,
+    /// `language`: "auto" (the system's), a code ("tr", a lang folder file's) or "pseudo".
+    pub language: String,
     pub sidebar: SidebarPosition,
     pub density: Density,
     /// No fades on hover and popups (`[layout] reduce-motion`).
@@ -414,6 +416,7 @@ impl Default for Settings {
             theme: ThemeChoice::Auto,
             theme_light: "light".to_owned(),
             theme_dark: "dark".to_owned(),
+            language: gezik_i18n::lang::AUTO.to_owned(),
             sidebar: SidebarPosition::Left,
             density: Density::Comfortable,
             reduce_motion: false,
@@ -498,6 +501,7 @@ impl Settings {
             settings.theme_dark = theme;
         }
 
+        let language = text_value(&table, "language", "language");
         let start_folder = text_value(&table, "start-folder", "start-folder");
 
         if let Some(layout) = table.get("layout").and_then(|v| v.as_table()) {
@@ -532,6 +536,13 @@ impl Settings {
         }
 
         // `text_value` borrows `warnings`; it is no longer used from here on.
+        if let Some(language) = language {
+            if gezik_i18n::lang::valid_code(&language) {
+                settings.language = language;
+            } else {
+                warnings.push(Warning::new(file, format!("language: \"{language}\" is not a language code")));
+            }
+        }
         if let Some(value) = table.get("max-fps") {
             match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
                 Some(n) if n == 0 || MAX_FPS_RANGE.contains(&n) => settings.max_fps = n,
@@ -2544,6 +2555,15 @@ reduce-motion = \"yes\"
         assert_eq!(State::parse("[window]\nwidth = -900\nheight = 600\n"), State::default());
         assert_eq!(State::parse("garbage ["), State::default());
         assert_eq!(State::parse(""), State::default());
+    }
+
+    #[test]
+    fn language_is_a_code() {
+        assert_eq!(Settings::default().language, "auto");
+        assert_eq!(parse("language = \"zh-Hans\"\n").0.language, "zh-Hans");
+        let (settings, warnings) = parse("language = \"../x\"\n");
+        assert_eq!(settings.language, "auto");
+        assert_eq!(warnings[0].message, "language: \"../x\" is not a language code");
     }
 
     #[test]

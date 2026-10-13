@@ -29,6 +29,9 @@ next to Gezik keeps everything next to it instead (see [Portable mode](#portable
   computer's id, with the computer's name inside.
 - `tools/` — programs Gezik downloaded on your command (7-Zip, ffmpeg, pdfium). In portable mode
   one folder per system, `tools/<os>-<arch>/` (say `windows-x86_64`), so one drive serves three.
+- `lang/*.po` — interface languages you add or fix (see [Translating Gezik](translating.md)):
+  `lang/pl.po` adds Polish, `lang/tr.po` corrects the built-in Turkish. Gezik reloads one when
+  it is saved and lists its problems (with line numbers) in the status bar's notices.
 - `location.toml`, `settings.local.toml`, `sync-cache/` — only with a sync folder (see
   [Sync folder](#sync-folder)): where it is, this computer's own values, and its last copy.
 
@@ -36,6 +39,13 @@ The top of `settings.toml` holds:
 
 - `theme` — `"auto"` follows the system light/dark mode (with `theme-light` and `theme-dark`),
   or name a theme.
+- `language` — the interface language: `"auto"` (default) follows the system (Windows' display
+  language, macOS' preferred languages, `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG` on Linux), or
+  a code: `"en"`, a built-in language, or a file in `lang/` (`lang/pl.po` → `"pl"`). Texts a
+  language lacks show in English. `"pseudo"` shows every text framed and lengthened
+  (`«Ŝéţţıñĝš ···»`), for translators. A change applies at once, without a restart; the
+  system's language is read when Gezik starts. File contents, settings keys and values,
+  shortcut names in this file and the command line stay English.
 - `start-folder` — where new tabs open: `"{home}"`, `"drives"` (This PC) or any folder.
 - `max-fps` — most frames drawn per second, e.g. while scrolling (default 120; 0 = as many as
   the display refreshes). The software renderer redraws the visible text every frame, so on

@@ -37,6 +37,12 @@ cannot be built outside the Slint repository.
 `i-slint-core` dev-dependency and test in `crates/gezik`. If not, copy the new release here
 and apply the same change to `properties.rs`.
 
+**The translator path (spec 15 §4.4).** Not a patch: Gezik turns on the crate's `tr` feature
+and hands `SlintContext::set_external_translator` its catalogue (`crates/gezik/src/translator.rs`);
+`translations::translate`, which the generated code calls for every `@tr`, asks it first.
+`crates/gezik/tests/slint_translate.rs` fails if an upgrade changes that path; the fallback
+would be a small hook of our own here.
+
 ## unrar-ng 0.7.7 (patched)
 
 The published `unrar-ng` 0.7.7 with the changes below, all in `src/open_archive.rs` (plus
