@@ -439,10 +439,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("Nord.toml"), "").unwrap();
         std::fs::write(dir.join("frost.TOML"), "").unwrap();
+        std::fs::write(dir.join("Dracula 2.toml"), "").unwrap();
         let name = |id| theme_path(&dir, id).file_name().unwrap().to_string_lossy().into_owned();
         assert_eq!(name("nord"), "Nord.toml", "the file the store read, not a second one beside it");
         assert_eq!(name("frost"), "frost.toml", "the store does not read .TOML");
         assert_eq!(name("new"), "new.toml");
+        assert_eq!(name("dracula 2"), "Dracula 2.toml", "a case-sensitive system finds only this one");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

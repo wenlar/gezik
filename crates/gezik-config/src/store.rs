@@ -161,7 +161,7 @@ impl ConfigStore {
         let cache = self.local.join(CACHE);
         let mut files = read_folder(&dirs.shared, Some(&sync_folder::machines(&dirs.shared)));
         if files.settings.is_some() {
-            keep_copy(&cache, &files);
+            keep_copy(&dirs.shared, &cache, &files);
         } else {
             // Not there (a drive not plugged in, Dropbox not running): the last copy, read-only.
             let warnings = std::mem::take(&mut files.warnings);
@@ -399,8 +399,10 @@ fn note_conflicts(mut files: ConfigFiles) -> ConfigFiles {
 }
 
 /// Keeps the sync folder's settings.toml and themes in `cache` (spec 14 §8.4): only files that
-/// changed are written. A failure is not said (the folder itself was read).
-fn keep_copy(cache: &Path, files: &ConfigFiles) {
+/// changed are written. A theme keeps its file's real name (`Dracula 2.toml`, not its id): a
+/// case-sensitive system finds it under that name, and leaving the folder copies it so. A failure
+/// is not said (the folder itself was read).
+fn keep_copy(shared: &Path, cache: &Path, files: &ConfigFiles) {
     let keep = |path: &Path, text: &str| {
         if read_text(path).ok().as_deref() != Some(text) {
             let _ = path.parent().map(std::fs::create_dir_all);
@@ -411,15 +413,24 @@ fn keep_copy(cache: &Path, files: &ConfigFiles) {
         keep(&cache.join("settings.toml"), text);
     }
     let themes = cache.join("themes");
-    for (id, text) in &files.themes {
-        keep(&themes.join(format!("{id}.toml")), text);
+    let mut kept = Vec::new();
+    for entry in std::fs::read_dir(shared.join("themes")).into_iter().flatten().filter_map(Result::ok) {
+        let path = entry.path();
+        let id = path.file_stem().map(|s| s.to_string_lossy().to_lowercase());
+        let text = id.filter(|_| path.extension().is_some_and(|e| e == "toml")).and_then(|id| files.themes.get(&id));
+        if let Some(text) = text {
+            kept.push((entry.file_name(), text));
+        }
     }
-    let Ok(entries) = std::fs::read_dir(&themes) else { return };
-    for entry in entries.filter_map(Result::ok) {
-        let gone = entry.path().file_stem().is_some_and(|s| !files.themes.contains_key(&*s.to_string_lossy()));
-        if gone {
+    // First what the folder lost, or an older copy named by the id (`dracula 2.toml`): on a
+    // case-insensitive system that one is the same file, written again under its real name.
+    for entry in std::fs::read_dir(&themes).into_iter().flatten().filter_map(Result::ok) {
+        if !kept.iter().any(|(name, _)| *name == entry.file_name()) {
             let _ = std::fs::remove_file(entry.path());
         }
+    }
+    for (name, text) in kept {
+        keep(&themes.join(name), text);
     }
 }
 
@@ -905,6 +916,42 @@ theme = \"dark\"
         write(&store, "settings.toml", "theme = \"dark\"\n");
         store.read_files();
         assert!(!cache.join("themes/nord.toml").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `Dracula 2.toml` is theme "dracula 2" and its last copy keeps the real name (a
+    /// case-sensitive system finds it under that name only; leaving the folder copies it so).
+    #[test]
+    fn a_theme_with_capitals_is_kept_under_its_real_name() {
+        let root = crate::test_dir("sync-theme-name");
+        let store = synced_store(&root);
+        write(
+            &store,
+            "settings.toml",
+            "theme = \"dracula 2\"
+",
+        );
+        write(
+            &store,
+            "themes/Dracula 2.toml",
+            "[colors]
+accent = \"#bd93f9\"
+",
+        );
+        let cache = root.join("local").join(CACHE).join("themes");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("dracula 2.toml"), "an older copy named by its id").unwrap();
+        let files = store.read_files();
+        assert_eq!(files.themes.keys().collect::<Vec<_>>(), ["dracula 2"]);
+        assert_eq!(resolve(&files, true).theme.unwrap().id, "dracula 2");
+        let names: Vec<String> =
+            std::fs::read_dir(&cache).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["Dracula 2.toml"], "the real name, and the copy named by the id is gone");
+
+        std::fs::remove_dir_all(root.join("Dropbox")).unwrap();
+        let files = store.read_files();
+        assert!(files.offline);
+        assert_eq!(resolve(&files, true).theme.unwrap().id, "dracula 2", "the last copy still has it");
         let _ = std::fs::remove_dir_all(&root);
     }
 

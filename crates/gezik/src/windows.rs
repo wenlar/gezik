@@ -1693,17 +1693,75 @@ pub(crate) mod tests {
     }
 
     /// Slint without a screen (deviation 18): each window gets a window of its own in memory.
-    struct Headless;
+    /// `true`: with an event loop proxy (one thread of the process at most: Slint keeps one).
+    struct Headless(bool);
 
     impl Platform for Headless {
         fn create_window_adapter(&self) -> Result<Rc<dyn WindowAdapter>, slint::PlatformError> {
-            Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
+            let window = MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer);
+            ADAPTERS.with(|a| a.borrow_mut().push(Rc::downgrade(&window)));
+            Ok(window)
+        }
+
+        fn new_event_loop_proxy(&self) -> Option<Box<dyn slint::platform::EventLoopProxy>> {
+            self.0.then(|| Box::new(Proxy) as Box<dyn slint::platform::EventLoopProxy>)
+        }
+
+        fn debug_log(&self, arguments: std::fmt::Arguments) {
+            LOGGED.with(|l| l.borrow_mut().push(arguments.to_string()));
+        }
+    }
+
+    /// What background threads hand to the UI thread, kept only while a test runs the loop
+    /// itself (`frame`); otherwise refused, as with no event loop at all.
+    static QUEUE: Mutex<Option<Posted>> = Mutex::new(None);
+    type Posted = Vec<Box<dyn FnOnce() + Send>>;
+
+    struct Proxy;
+
+    impl slint::platform::EventLoopProxy for Proxy {
+        fn quit_event_loop(&self) -> Result<(), slint::EventLoopError> {
+            Ok(())
+        }
+
+        fn invoke_from_event_loop(&self, event: Box<dyn FnOnce() + Send>) -> Result<(), slint::EventLoopError> {
+            match QUEUE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut() {
+                Some(queue) => {
+                    queue.push(event);
+                    Ok(())
+                }
+                None => Err(slint::EventLoopError::NoEventLoopProvider),
+            }
+        }
+    }
+
+    thread_local! {
+        /// What Slint logged on this test's thread (its "long callback chain" warnings).
+        pub(crate) static LOGGED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        static ADAPTERS: RefCell<Vec<std::rc::Weak<MinimalSoftwareWindow>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// One turn of an event loop for every headless window: timers, a pointer move, a frame.
+    pub(crate) fn frame(at: (f32, f32)) {
+        let posted = QUEUE.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_mut().map(std::mem::take);
+        for event in posted.unwrap_or_default() {
+            event();
+        }
+        slint::platform::update_timers_and_animations();
+        for window in ADAPTERS.with(|a| a.borrow().iter().filter_map(std::rc::Weak::upgrade).collect::<Vec<_>>()) {
+            window.set_size(slint::PhysicalSize::new(820, 600));
+            let position = slint::LogicalPosition::new(at.0, at.1);
+            window.window().dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+            let mut buffer = vec![slint::platform::software_renderer::Rgb565Pixel::default(); 820 * 600];
+            window.draw_if_needed(|renderer| {
+                renderer.render(&mut buffer, 820);
+            });
         }
     }
 
     /// Sets the headless platform up on this test's thread (Slint's context is the thread's).
     pub(crate) fn platform() {
-        let _ = slint::platform::set_platform(Box::new(Headless));
+        let _ = slint::platform::set_platform(Box::new(Headless(false)));
     }
 
     /// A window put in the register, as main puts the first one.
@@ -1712,6 +1770,131 @@ pub(crate) mod tests {
         let window = AppWindow::new().expect("a headless window");
         let weak = window.as_weak();
         (install(window), weak)
+    }
+
+    /// Slint's "long changed callback chain" warnings came on every event once a row's text
+    /// field in Settings had the keyboard (~700 an import, thousands with a sync folder): a
+    /// whole window and Settings at Import, an import's reload, a sync folder's, its going away.
+    #[test]
+    fn a_reload_with_settings_open_settles() {
+        // Its background results come back through `frame`.
+        slint::platform::set_platform(Box::new(Headless(true))).unwrap();
+        *QUEUE.lock().unwrap() = Some(Vec::new());
+        // Window ids no late result of another test (on another thread) can name.
+        NEXT.with(|n| n.set(500_000));
+        let root = std::env::temp_dir().join(format!("gezik-reload-settles-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let folder = root.join("files");
+        std::fs::create_dir_all(&folder).unwrap();
+        for i in 0..100 {
+            std::fs::write(folder.join(format!("file {i:03}.txt")), "x").unwrap();
+        }
+        let store = ConfigStore::new(root.join("config"));
+        store.ensure_initialized().unwrap();
+        let window = AppWindow::new().unwrap();
+        let id = install(window.clone_strong());
+        let files = store.read_files();
+        crate::apply_config(&files);
+        let defaults = gezik_config::settings::Settings::default();
+        let engine = gezik_ops::Settings {
+            threads: defaults.files.copy_threads,
+            pending_deletes: None,
+            verify: false,
+            max_speed: None,
+            tags_store: None,
+            tags_store_only: true,
+        };
+        let ops = Operations::new(&window, engine, defaults.files, false, Some(store.clone()), Default::default());
+        let process = Rc::new(Process {
+            config: Some(store.clone()),
+            state: Rc::default(),
+            memory: Rc::default(),
+            media: crate::media::Media::idle(),
+            ops,
+            files: Arc::new(Mutex::new(files)),
+            secondary: true,
+            close_requested: Rc::new(|| slint::CloseRequestResponse::HideWindow),
+            save: Rc::new(|| {}),
+        });
+        set_process(process.clone());
+        let at = Location::Path(folder);
+        let plan =
+            StartPlan { session: Session::single(at.clone()), select: Vec::new(), start: at, warnings: Vec::new() };
+        let opening = Opening {
+            plan,
+            right: Session::default(),
+            dual: false,
+            active_pane: 0,
+            sync: false,
+            offset: 0,
+            state: Rc::default(),
+        };
+        open(id, opening);
+        window.show().unwrap();
+        // Import's row is asked for: its field gets the keyboard.
+        crate::settings_window::open_backup(true);
+        // What a turn of frames logs.
+        let settle = || {
+            let before = LOGGED.with(|l| l.borrow().len());
+            for i in 0..12 {
+                frame((300.0, 100.0 + i as f32 * 20.0));
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            LOGGED.with(|l| l.borrow()[before..].to_vec())
+        };
+        // As main's watcher does.
+        let reload = || {
+            let fresh = store.read_files();
+            let mut current = process.files.lock().unwrap();
+            crate::settings_window::keep_last_good(&current);
+            *current = fresh;
+            crate::apply_config_and_start(&mut current, &[], false, None);
+            crate::settings_window::refresh(&current);
+        };
+        let mut said = vec![("open", settle())];
+        let import = "theme = \"dark\"
+max-fps = 60
+[layout]
+density = \"compact\"
+sidebar = \"right\"
+                      [view]
+mode = \"grid\"
+sort = \"size\"
+[files]
+confirm-trash = true
+";
+        std::fs::write(store.shared_dir().join("settings.toml"), import).unwrap();
+        reload();
+        said.push(("import", settle()));
+        let sync = root.join("Dropbox/Gezik");
+        std::fs::create_dir_all(sync.join("themes")).unwrap();
+        std::fs::write(
+            sync.join("settings.toml"),
+            "theme = \"light\"
+",
+        )
+        .unwrap();
+        std::fs::write(
+            sync.join("settings (conflicted copy).toml"),
+            "theme = \"dark\"
+",
+        )
+        .unwrap();
+        store.set_shared(Some(sync));
+        reload();
+        said.push(("sync folder", settle()));
+        std::fs::remove_dir_all(root.join("Dropbox")).unwrap();
+        reload();
+        said.push(("sync folder away", settle()));
+
+        *QUEUE.lock().unwrap() = None;
+        crate::settings_window::close();
+        drop(Release);
+        let _ = std::fs::remove_dir_all(&root);
+        // One while the first frame lays the windows out is Slint's own (start-up).
+        for (when, logged) in said {
+            assert!(logged.len() <= 2, "{when}: {} warnings, e.g. {:?}", logged.len(), logged.first());
+        }
     }
 
     #[test]
