@@ -1,0 +1,10 @@
+# Step 16 on macOS: manual checks
+
+Numbering goes on from `l10n-overflow-macos.md` (it ends at 396). Results go to `../macos-test-results.md`.
+
+### 16a, inside archives
+
+397. **Into a zip and back.** Make `x.zip` with Finder (Compress) from a folder `docs` holding a few files. Double-click it in Gezik: the list shows `docs` (no extraction, nothing new next to the zip). Go into `docs`; the address bar reads `…/x.zip/docs`. ⌘↑ twice: back in the zip's folder with `x.zip` selected. Type `<the folder>/x.zip/docs` in the address bar (⌘L): the same place opens. Right-click `x.zip`: **Open as Folder** and **Open with System App** are there; the latter opens Archive Utility.
+398. **Look inside without extracting.** In a zip with a JPEG and a PDF: select the picture and press Space (Gezik's own Quick Look comes up even when `[system] quick-look = "system"`), arrow to the PDF: both show; the preview pane (Alt+P) shows them too. ⌘C on the PDF, switch to another tab showing a folder, ⌘V: the PDF lands there (⌘Z removes it). Pasting into Finder gives nothing (only the path as text: a known limit). Drag a selection under 256 MB from the zip onto the Desktop in Finder: the files appear there.
+399. **Passwords and archives in archives.** A 7z made with `7z a -mhe=on -pgizli s.7z <files>` (header encrypted): double-click asks for the password; a wrong one asks again, Cancel leaves you where you were; the right one opens it, and opening a file inside does not ask again. A zip holding `src.tar.gz`: double-click the `.tar.gz` inside: its contents show (the status bar counts the entries while a large one is read).
+400. **Back after a restart.** With a tab inside `x.zip/docs`, quit Gezik (⌘Q) and start it: the tab is there again. Quit, move `x.zip` to the Trash in Finder, start Gezik: the tab shows the zip's folder and the status bar says it no longer exists.

@@ -100,9 +100,37 @@ rules on the left and a live preview on the right:
   (7z). **Compress to "name.zip"** skips the layer. **Add to existing archive…** adds to one.
 - Unsafe paths in an archive (`..`, absolute paths) are refused.
 
+### Inside archives
+
+- **Double-click or Enter goes into an archive** as into a folder (**Open as Folder** in the
+  row menu does so whatever double-click is set to; **Open with System App** opens it with
+  its program). Every format above, and anything 7-Zip reads (dmg, wim, vhd, msi, …; 7-Zip is
+  offered when it is missing). Typing or pasting a path through an archive works too:
+  `C:\Backup\old.zip\docs\2024` (macOS and Linux `/home/x/old.zip/docs`), and so do tab
+  sets and restored sessions. Up (Alt+↑ / ⌘↑) from an archive's top goes to its folder with
+  the archive selected.
+- Inside, sort, filter, group, preview (pictures, PDFs, text, sound and video), Quick Look and
+  opening a file with its app work: files up to `[archives] preview-limit` (64 MB) are taken
+  out to a temporary folder by themselves; larger ones only when you open them. Folder sizes
+  show at once, and the **Packed** column (header menu, only inside archives) shows what each
+  file takes packed.
+- **Copy** (Ctrl+C) and paste into a folder, **Copy To…**, or dragging onto a folder in Gezik
+  copies entries out, as one job with conflict questions and one Ctrl+Z. Dragging to another
+  program takes the selection out first (up to 256 MB; use Copy To… for more). Copy Path
+  gives the address inside the archive.
+- An encrypted archive asks for its password once (header-encrypted 7z and rar when it is
+  opened, others when a file is first read); it is kept only while a tab shows the archive.
+- An archive inside an archive opens the same way (up to 8 deep). tar.gz and solid 7z are read
+  through once when opened, the status bar counting the entries; going elsewhere stops it.
+- If the archive changes on disk its contents are read again; if it is deleted, the tab goes to
+  its folder. Nothing is kept once no tab shows an archive (its index, password and
+  temporary files go).
+- Archives are read-only for now: new files, deletes and renames inside them come later.
+
 ```toml
 [archives]
-double-click = "system"   # system | extract-here
+double-click = "browse"   # browse | system | extract-here
+preview-limit = 64        # MB: files inside an archive up to this size are extracted for the preview by themselves
 ```
 
 ## Convert and PDF
