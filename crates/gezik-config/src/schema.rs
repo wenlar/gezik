@@ -255,7 +255,7 @@ mod tests {
         assert!(!described.iter().any(|d| d.description.contains('\u{22ef}')), "the UI font has no ⋯");
         assert_eq!(density.literal.as_deref(), Some("\"comfortable\""));
         let sort = get("view.sort");
-        assert!(sort.description == "Name | modified | created | type | size | tags | rating", "{sort:?}");
+        assert!(sort.description == "name | modified | created | type | size | tags | rating", "{sort:?}");
         let hide = get("view.hide-extensions").description;
         assert_eq!(
             hide,

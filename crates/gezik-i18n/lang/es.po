@@ -6071,7 +6071,6 @@ msgid "the download failed (WinHTTP error {})"
 msgstr "la descarga falló (error de WinHTTP {})"
 
 #: crates/gezik-platform/src/known.rs
-#: crates/gezik/src/sidebar.rs
 #, fuzzy
 msgid "Home"
 msgstr "Carpeta personal"
@@ -9746,12 +9745,14 @@ msgstr "Corrija o elimine primero {}"
 
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/palette.rs
+#: crates/gezik/src/settings_window.rs
 #, fuzzy
 msgid "Off"
 msgstr "Desactivado"
 
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/palette.rs
+#: crates/gezik/src/settings_window.rs
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
 msgid "On"
@@ -11810,6 +11811,36 @@ msgstr "Escriba un número entero"
 #, fuzzy
 msgid "Not one of the choices"
 msgstr "No es una de las opciones"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgctxt "choice:theme"
+msgid "auto"
+msgstr "automático"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgctxt "choice:theme"
+msgid "light"
+msgstr "claro"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgctxt "choice:theme"
+msgid "dark"
+msgstr "oscuro"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgctxt "choice:theme"
+msgid "classic-light"
+msgstr "clásico claro"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgctxt "choice:theme"
+msgid "classic-dark"
+msgstr "clásico oscuro"
 
 #: crates/gezik/src/settings_window.rs
 #, fuzzy
@@ -14768,8 +14799,8 @@ msgstr "Iconos"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.icons"
-msgid "System | gezik (Gezik's own icons, colored by the theme)"
-msgstr "System | gezik (iconos propios de Gezik, coloreados por el tema)"
+msgid "system | gezik (Gezik's own icons, colored by the theme)"
+msgstr "system | gezik (iconos propios de Gezik, coloreados por el tema)"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -14804,8 +14835,8 @@ msgstr "Formato de fecha"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.date-format"
-msgid "Relative | short | iso | system"
-msgstr "Relative | short | iso | system"
+msgid "relative | short | iso | system"
+msgstr "relative | short | iso | system"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -14816,8 +14847,8 @@ msgstr "Formato de tamaño"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.size-format"
-msgid "Binary (1024, KB) | decimal (1000, kB)"
-msgstr "Binary (1024, KB) | decimal (1000, kB)"
+msgid "binary (1024, KB) | decimal (1000, kB)"
+msgstr "binary (1024, KB) | decimal (1000, kB)"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -14852,8 +14883,8 @@ msgstr "Modo"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.mode"
-msgid "List | grid | columns. How folders look. A folder you change keeps its own view; \"Apply to all folders\" in the View menu writes mode, sort, sort-dir, grid-size and group here."
-msgstr "List | grid | columns. El aspecto de las carpetas. Una carpeta que cambie conserva su propia vista; \"Aplicar a todas las carpetas\" del menú Ver escribe aquí mode, sort, sort-dir, grid-size y group."
+msgid "list | grid | columns. How folders look. A folder you change keeps its own view; \"Apply to all folders\" in the View menu writes mode, sort, sort-dir, grid-size and group here."
+msgstr "list | grid | columns. El aspecto de las carpetas. Una carpeta que cambie conserva su propia vista; \"Aplicar a todas las carpetas\" del menú Ver escribe aquí mode, sort, sort-dir, grid-size y group."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -14864,8 +14895,8 @@ msgstr "Orden"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.sort"
-msgid "Name | modified | created | type | size | tags | rating"
-msgstr "Name | modified | created | type | size | tags | rating"
+msgid "name | modified | created | type | size | tags | rating"
+msgstr "name | modified | created | type | size | tags | rating"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -14876,8 +14907,8 @@ msgstr "Dirección de orden"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.sort-dir"
-msgid "Asc | desc"
-msgstr "Asc | desc"
+msgid "asc | desc"
+msgstr "asc | desc"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -14888,8 +14919,8 @@ msgstr "Tamaño de cuadrícula"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.grid-size"
-msgid "Small | medium | large"
-msgstr "Small | medium | large"
+msgid "small | medium | large"
+msgstr "small | medium | large"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -14900,8 +14931,8 @@ msgstr "Grupo"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.group"
-msgid "None | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
-msgstr "None | type | date | size | tag | rating: los grupos de la lista cuando una carpeta no tiene vista propia"
+msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
+msgstr "none | type | date | size | tag | rating: los grupos de la lista cuando una carpeta no tiene vista propia"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15008,8 +15039,8 @@ msgstr "Doble clic"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:archives.double-click"
-msgid "System | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
-msgstr "System | extract-here. Lo que hace un doble clic en un archivo comprimido: abrirlo con el programa del sistema o extraerlo a su lado."
+msgid "system | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
+msgstr "system | extract-here. Lo que hace un doble clic en un archivo comprimido: abrirlo con el programa del sistema o extraerlo a su lado."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15080,8 +15111,8 @@ msgstr "Everything"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:search.everything"
-msgid "Auto | off. Windows: ask Everything (voidtools) for names when it runs; \"off\": Gezik's own scanner always."
-msgstr "Auto | off. Windows: pedir los nombres a Everything (voidtools) cuando se esté ejecutando; \"off\": siempre el escáner propio de Gezik."
+msgid "auto | off. Windows: ask Everything (voidtools) for names when it runs; \"off\": Gezik's own scanner always."
+msgstr "auto | off. Windows: pedir los nombres a Everything (voidtools) cuando se esté ejecutando; \"off\": siempre el escáner propio de Gezik."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15152,8 +15183,8 @@ msgstr "Escritura"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:keyboard.typing"
-msgid "Jump | filter. What typing a letter on the file list does: \"jump\" goes to the first name starting with what you typed; \"filter\" opens the filter (Ctrl+F, or / ) with it."
-msgstr "Jump | filter. Lo que hace escribir una letra en la lista de archivos: \"jump\" va al primer nombre que empieza por lo escrito; \"filter\" abre el filtro (Ctrl+F, o / ) con ello."
+msgid "jump | filter. What typing a letter on the file list does: \"jump\" goes to the first name starting with what you typed; \"filter\" opens the filter (Ctrl+F, or / ) with it."
+msgstr "jump | filter. Lo que hace escribir una letra en la lista de archivos: \"jump\" va al primer nombre que empieza por lo escrito; \"filter\" abre el filtro (Ctrl+F, o / ) con ello."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15182,8 +15213,8 @@ msgstr "Vista rápida"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:system.quick-look"
-msgid "System | gezik. macOS: Space opens the system Quick Look panel (\"system\") or Gezik's own window (\"gezik\"). Windows and Linux always use Gezik's own."
-msgstr "System | gezik. macOS: Espacio abre el panel Vista rápida del sistema (\"system\") o la ventana propia de Gezik (\"gezik\"). Windows y Linux siempre usan la de Gezik."
+msgid "system | gezik. macOS: Space opens the system Quick Look panel (\"system\") or Gezik's own window (\"gezik\"). Windows and Linux always use Gezik's own."
+msgstr "system | gezik. macOS: Espacio abre el panel Vista rápida del sistema (\"system\") o la ventana propia de Gezik (\"gezik\"). Windows y Linux siempre usan la de Gezik."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

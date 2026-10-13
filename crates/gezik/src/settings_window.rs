@@ -204,13 +204,13 @@ impl Shown {
         let field = &FIELDS[i];
         let described = &self.described[i];
         let options: Vec<SharedString> = match field.kind {
-            Kind::Choice(options) => options.iter().map(|o| choice_label(field, o).as_ref().into()).collect(),
+            Kind::Choice(options) => options.iter().map(|o| choice_label(field, o, &[]).as_ref().into()).collect(),
             Kind::Theme => {
                 let auto = (field.key == "theme").then_some("auto");
                 auto.into_iter()
                     .chain(BUILTIN_THEMES)
-                    .chain(self.themes.iter().map(String::as_str))
-                    .map(Into::into)
+                    .map(|id| choice_label(field, id, &[]).as_ref().into())
+                    .chain(self.themes.iter().map(SharedString::from))
                     .collect()
             }
             Kind::Language => self.languages.iter().map(SharedString::from).collect(),
@@ -228,9 +228,9 @@ impl Shown {
             key: field.path().into(),
             // The bundled font has no ▸ (the template's "Group by ▸ Type").
             description: t(&field.context(), &described.description).replace('▸', ">").into(),
-            value: choice_label(field, self.value(i).unwrap_or(&described.default)).as_ref().into(),
+            value: choice_label(field, self.value(i).unwrap_or(&described.default), &self.languages).as_ref().into(),
             is_default: self.value(i).is_none(),
-            default: choice_label(field, &described.default).as_ref().into(),
+            default: choice_label(field, &described.default, &self.languages).as_ref().into(),
             options: ModelRc::new(VecModel::from(options)),
             place: match (&self.backup.synced, self.local_values.get(i).is_some_and(Option::is_some)) {
                 (None, _) => 0,
@@ -275,7 +275,12 @@ impl Shown {
         let input = match field.kind {
             Kind::Language => crate::language::code_of(input),
             Kind::Choice(options) => {
-                options.iter().find(|o| choice_label(field, o) == input.trim()).map_or(input, |o| *o)
+                options.iter().find(|o| choice_label(field, o, &[]) == input.trim()).map_or(input, |o| *o)
+            }
+            // A user's theme shows as it is named; it wins over a built-in's label.
+            Kind::Theme if !self.themes.iter().any(|id| id == input.trim()) => {
+                let builtin = ["auto"].into_iter().chain(BUILTIN_THEMES);
+                builtin.into_iter().find(|id| choice_label(field, id, &[]) == input.trim()).unwrap_or(input)
             }
             _ => input,
         };
@@ -292,10 +297,32 @@ impl Shown {
     }
 }
 
+/// The built-in themes' names as the theme rows show them (a user's theme keeps its name).
+const THEME_LABELS: [&str; 5] = [
+    tx!("choice:theme" => "auto"),
+    tx!("choice:theme" => "light"),
+    tx!("choice:theme" => "dark"),
+    tx!("choice:theme" => "classic-light"),
+    tx!("choice:theme" => "classic-dark"),
+];
+
 /// A choice as the row shows it (spec 15 §6): translated; the value written stays as it is.
-fn choice_label<'a>(field: &Field, value: &'a str) -> std::borrow::Cow<'a, str> {
+/// A language shows its name from `languages` (the row's choices, `tr — Türkçe`).
+fn choice_label<'a>(field: &Field, value: &'a str, languages: &'a [String]) -> std::borrow::Cow<'a, str> {
     match field.kind {
         Kind::Choice(_) => t(&field.choice_context(), value),
+        Kind::Theme if THEME_LABELS.contains(&value) => t("choice:theme", value),
+        Kind::Language => languages
+            .iter()
+            .find(|o| crate::language::code_of(o).eq_ignore_ascii_case(value.trim()))
+            .and_then(|o| o.split(" — ").nth(1))
+            .unwrap_or(value)
+            .into(),
+        Kind::Integration => match value {
+            "true" => t!("On"),
+            "false" => t!("Off"),
+            _ => value.into(),
+        },
         _ => value.into(),
     }
 }
@@ -1568,6 +1595,19 @@ fn end_preview_now() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn themes_languages_and_the_tray_show_words_not_values() {
+        let field = |key: &str| FIELDS.iter().find(|f| f.key == key).unwrap();
+        assert_eq!(choice_label(field("theme"), "my-own", &[]), "my-own");
+        assert!(THEME_LABELS.iter().all(|id| *id == "auto" || BUILTIN_THEMES.contains(id)));
+        assert!(BUILTIN_THEMES.iter().all(|id| THEME_LABELS.contains(id)), "a new built-in theme needs its label");
+        let languages = ["auto — System: English".to_owned(), "tr — Türkçe".to_owned()];
+        assert_eq!(choice_label(field("language"), "tr", &languages), "Türkçe");
+        assert_eq!(choice_label(field("language"), "auto", &languages), "System: English");
+        assert_eq!(choice_label(field("tray"), "false", &[]), "Off");
+        assert_eq!(choice_label(field("hotkey"), "ctrl+alt+g", &[]), "ctrl+alt+g");
+    }
 
     fn shown(text: &str) -> Shown {
         let mut shown =

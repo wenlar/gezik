@@ -140,9 +140,11 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     }
     for p in panes::everywhere() {
         p.nav.set_session_restore(loaded.settings.session.restore);
-        // The window title and the tabs' names ("{} — Gezik", This PC) are made on navigation.
+        // The window title, the tabs' names ("{} — Gezik", This PC) and the status line
+        // ("5 items · 1 selected") are made on navigation and selection.
         if language_changed {
             p.nav.update_chrome();
+            p.view.update_status();
         }
     }
     dual::set_confirm(loaded.settings.panes_confirm);
