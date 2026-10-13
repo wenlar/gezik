@@ -403,7 +403,7 @@ fn read_languages(dir: &Path, warnings: &mut Vec<Warning>) -> Vec<(String, Arc<g
     paths.sort();
     let mut out = Vec::new();
     for path in paths {
-        let Some(code) = path.file_stem().and_then(|s| s.to_str()).filter(|c| gezik_i18n::lang::valid_code(c)) else {
+        let Some(code) = path.file_stem().and_then(|s| s.to_str()).filter(|c| gezik_i18n::lang::file_code(c)) else {
             continue;
         };
         let file = format!("lang/{code}.po");
@@ -762,6 +762,8 @@ mod tests {
         write(&store, "lang/pl.po", pl);
         write(&store, "lang/xx.po", "msgid \"a\"\nmsgstr b\n");
         write(&store, "lang/notes.txt", "");
+        // Named like the setting's own value: never a language.
+        write(&store, "lang/auto.po", "msgid \"\"\nmsgstr \"\"\n");
         let files = store.read_files();
         let codes: Vec<_> = files.languages.iter().map(|(code, layer)| (code.as_str(), layer.name.as_str())).collect();
         assert_eq!(codes, [("pl", "Polski")], "a file that does not read is left out");

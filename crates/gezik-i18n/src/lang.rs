@@ -29,6 +29,12 @@ pub fn valid_code(code: &str) -> bool {
         && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
+/// Whether a lang folder file may be named `code`: a code, but not `auto` or `pseudo` (which
+/// the setting's own values would then mean).
+pub fn file_code(code: &str) -> bool {
+    valid_code(code) && !code.eq_ignore_ascii_case(AUTO) && !code.eq_ignore_ascii_case(PSEUDO)
+}
+
 /// A system's name for a language without its encoding and variant, with `-`:
 /// `zh_CN.UTF-8@x` → `zh-CN`; `C.UTF-8` → `C`.
 pub fn normalize(tag: &str) -> String {
@@ -78,6 +84,9 @@ pub fn choose(preferred: &[String], available: &[&str]) -> String {
 pub fn resolve(setting: &str, preferred: &[String], available: &[&str]) -> String {
     if setting.eq_ignore_ascii_case(PSEUDO) {
         return PSEUDO.to_owned();
+    }
+    if setting.eq_ignore_ascii_case(AUTO) {
+        return choose(preferred, available);
     }
     if setting.eq_ignore_ascii_case("en") {
         return "en".to_owned();
@@ -143,10 +152,12 @@ mod tests {
         assert_eq!(resolve("en", &system, ALL), "en");
         assert_eq!(resolve("pseudo", &system, ALL), "pseudo");
         assert_eq!(resolve("xx", &system, ALL), "tr", "unknown: the system's");
+        assert_eq!(resolve("auto", &system, &["auto", "tr"]), "tr", "a file named auto never wins");
         assert!(known("auto", &[]) && known("pseudo", &[]) && known("en", &[]) && known("pl", &["pl"]));
         assert!(!known("xx", ALL));
         assert!(valid_code("zh-Hans") && valid_code("pt_BR") && !valid_code("../x") && !valid_code("1a"));
         assert!(!valid_code(&"a".repeat(33)) && !valid_code(""));
+        assert!(file_code("pl") && file_code("en") && !file_code("auto") && !file_code("PSEUDO"));
         assert_eq!(endonym("TR"), Some("Türkçe"));
     }
 }

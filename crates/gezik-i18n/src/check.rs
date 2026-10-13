@@ -78,6 +78,10 @@ pub fn load(text: &str, code: &str, keys: &[u64]) -> (Option<Layer>, Report) {
             }
         }
         for form in &entry.strs {
+            if crate::format::unclosed(form) {
+                report.errors.push(issue("a \"{\" without \"}\" (write \"{{\" for a brace)".to_owned()));
+                continue;
+            }
             let mut have = placeholders(form);
             if entry.plural.is_some() {
                 have.remove("{n}");
@@ -207,5 +211,8 @@ msgstr "Zniknął"
         assert_eq!(layer.unwrap().name, "Français", "the built-in's name when the file has none");
         let (_, report) = load("", "xx", &keys(&["a", "b"]));
         assert_eq!((report.missing, report.total), (2, 2));
+        let (layer, report) = load("msgid \"a\"\nmsgstr \"x {y\"\n", "pl", &[]);
+        assert_eq!(report.errors[0].message, "a \"{\" without \"}\" (write \"{{\" for a brace)");
+        assert_eq!(layer.unwrap().translated, 0, "not used");
     }
 }

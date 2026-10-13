@@ -23,7 +23,9 @@ pub mod plural;
 pub mod po;
 pub mod pseudo;
 
+use std::borrow::Cow;
 use std::fmt::Display;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 pub use catalog::{Builtin, Catalog, Layer};
@@ -45,9 +47,22 @@ pub fn keys() -> &'static [u64] {
 /// The language in use; `None` is English.
 static CURRENT: RwLock<Option<Arc<Catalog>>> = RwLock::new(None);
 
+/// No catalogue is set: `t!` gives its text back without taking the lock or allocating.
+static ENGLISH: AtomicBool = AtomicBool::new(true);
+
 /// Makes `catalog` the language in use (`None`: English).
 pub fn set(catalog: Option<Arc<Catalog>>) {
-    *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = catalog;
+    let mut current = CURRENT.write().unwrap_or_else(PoisonError::into_inner);
+    ENGLISH.store(catalog.is_none(), Ordering::Release);
+    *current = catalog;
+}
+
+/// `found` as `'static`: borrowed when it is the source text itself.
+fn keep(found: Cow<'_, str>, source: &'static str) -> Cow<'static, str> {
+    match found {
+        Cow::Borrowed(s) if std::ptr::eq(s, source) => Cow::Borrowed(source),
+        other => Cow::Owned(other.into_owned()),
+    }
 }
 
 /// The language in use; `None` is English.
@@ -56,18 +71,26 @@ pub fn current() -> Option<Arc<Catalog>> {
 }
 
 /// `id` (in `context`, `""` for none) in the language in use. `t!` comes here.
-pub fn t(context: &str, id: &str) -> String {
+/// English costs one atomic load: the text itself, borrowed.
+pub fn t(context: &str, id: &'static str) -> Cow<'static, str> {
+    if ENGLISH.load(Ordering::Acquire) {
+        return Cow::Borrowed(id);
+    }
     match &*CURRENT.read().unwrap_or_else(PoisonError::into_inner) {
-        None => id.to_owned(),
-        Some(catalog) => catalog.get(context, id).into_owned(),
+        None => Cow::Borrowed(id),
+        Some(catalog) => keep(catalog.get(context, id), id),
     }
 }
 
 /// The form of `singular`/`plural` that `n` takes in the language in use. `tn!` comes here.
-pub fn tn(context: &str, singular: &str, plural: &str, n: u64) -> String {
+pub fn tn(context: &str, singular: &'static str, plural: &'static str, n: u64) -> Cow<'static, str> {
+    let english = if n == 1 { singular } else { plural };
+    if ENGLISH.load(Ordering::Acquire) {
+        return Cow::Borrowed(english);
+    }
     match &*CURRENT.read().unwrap_or_else(PoisonError::into_inner) {
-        None => if n == 1 { singular } else { plural }.to_owned(),
-        Some(catalog) => catalog.nget(context, singular, plural, n).into_owned(),
+        None => Cow::Borrowed(english),
+        Some(catalog) => keep(catalog.nget(context, singular, plural, n), english),
     }
 }
 
@@ -126,6 +149,7 @@ mod tests {
     fn english_loads_nothing_and_a_catalogue_changes_every_text() {
         assert!(current().is_none(), "English: no catalogue");
         assert_eq!(t!("Settings"), "Settings");
+        assert!(matches!(t!("Settings"), Cow::Borrowed(_)), "English allocates nothing");
         assert_eq!(tn!("{n} file" | "{n} files", 1), "1 file");
         assert_eq!(tn!("{n} file in {}" | "{n} files in {}", 2, "Docs"), "2 files in Docs");
         set(Some(Arc::new(Catalog::pseudo())));

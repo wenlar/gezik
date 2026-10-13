@@ -24,11 +24,9 @@ pub fn format(template: &str, args: &[&dyn Display], n: Option<u64>) -> String {
             pos = p + 2;
             continue;
         }
-        let Some(end) = template[p..].find('}').map(|e| p + e) else {
-            out.push_str(&template[pos..=p]);
-            pos = p + 1;
-            continue;
-        };
+        // No `}` after it: no placeholder follows either (stopping keeps this linear; Slint's
+        // own formatter would look for one from every later `{`).
+        let Some(end) = template[p..].find('}').map(|e| p + e) else { break };
         out.push_str(&template[pos..p]);
         let name = template[p + 1..end].trim();
         let arg = if end == p + 1 {
@@ -78,9 +76,36 @@ pub fn placeholders(text: &str) -> BTreeSet<String> {
     out
 }
 
+/// Whether `text` has a `{` that no `}` closes (`{{` is a brace): a translation with one is
+/// refused, as Slint's formatter is slow on it.
+pub fn unclosed(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(p) = rest.find('{') {
+        if rest[p + 1..].starts_with('{') {
+            rest = &rest[p + 2..];
+            continue;
+        }
+        let Some(end) = rest[p..].find('}') else { return true };
+        rest = &rest[p + end + 1..];
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unclosed_braces_are_linear() {
+        let long = "{a".repeat(500_000);
+        let start = std::time::Instant::now();
+        assert_eq!(format(&long, &[], None), long);
+        assert!(unclosed(&long));
+        // Quadratic would be ~10^11 steps here; linear is milliseconds even in a debug build.
+        assert!(start.elapsed() < std::time::Duration::from_secs(5), "{:?}", start.elapsed());
+        assert_eq!(format("{} and {", &[&1], None), "1 and {");
+        assert!(!unclosed("{} {{ x }} {n}") && unclosed("ok {} {") && !unclosed(""));
+    }
 
     #[test]
     fn as_slint_formats() {
