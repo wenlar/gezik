@@ -1424,10 +1424,8 @@ enum Subject {
 /// succession (within the delay before it opens, or queued behind its modal loop) do not
 /// show two menus one after the other.
 #[derive(Clone, Default)]
-#[cfg_attr(not(windows), allow(dead_code))]
 struct MenuGate(Rc<Cell<bool>>);
 
-#[cfg_attr(not(windows), allow(dead_code))]
 impl MenuGate {
     /// Claims the gate until the returned claim is dropped; `None` while a menu already
     /// holds it.
@@ -1467,7 +1465,6 @@ pub struct Menus {
     menu_at: Rc<Cell<(f32, f32)>>,
     /// An Open With list that came after its menu had opened (macOS).
     late: crate::finder_menu::Late,
-    #[cfg_attr(not(windows), allow(dead_code))]
     native_menu: MenuGate,
 }
 
@@ -1544,14 +1541,14 @@ impl Menus {
         let Ok(i) = usize::try_from(index) else { return };
         if crate::panes::active_view().shows_trash() {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
-            return self.open_slint(&trash_row_items(), Anchor::point(x, y));
+            return self.open_row_menu(translated(&trash_row_items()), Vec::new(), Anchor::point(x, y));
         }
         if let Some((at, is_dir)) = crate::panes::active_view().vfs_item(i) {
             let one = crate::panes::active_view().selection_count() <= 1;
             // An archive in it opens as a folder too.
             let is_dir = is_dir || crate::archives::browses(std::path::Path::new(&at.name()));
             *self.subject.borrow_mut() = Some(Subject::Inside);
-            return self.open_slint(&inside_row_items(one && is_dir), Anchor::point(x, y));
+            return self.open_row_menu(translated(&inside_row_items(one && is_dir)), Vec::new(), Anchor::point(x, y));
         }
         let at = at_position.then_some((x, y));
         let native = cfg!(windows);
@@ -2055,8 +2052,26 @@ impl Menus {
         } else {
             *self.subject.borrow_mut() = Some(subject);
             let entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
-            self.open_slint_entries(&entries, subs, Anchor::point(x, y));
+            self.open_row_menu(entries, subs, Anchor::point(x, y));
         }
+    }
+
+    /// Like `open_slint_entries`, for a row's menu. A system menu's modal loop keeps the
+    /// window from drawing, so (as `open_native`) it opens once the right-clicked row is
+    /// drawn selected; a request while another is pending or open is dropped.
+    fn open_row_menu(&self, items: Vec<(u32, String, bool)>, subs: Vec<Submenu>, anchor: Anchor) {
+        if !native_menus() {
+            return self.open_slint_entries(&items, subs, anchor);
+        }
+        let Some(claim) = self.native_menu.claim() else { return };
+        let menus = self.clone();
+        slint::Timer::single_shot(
+            std::time::Duration::from_millis(16),
+            crate::windows::bind(move || {
+                menus.open_slint_entries(&items, subs, anchor);
+                drop(claim);
+            }),
+        );
     }
 
     /// Shows the Explorer menu at window position `at` (else at the cursor), with `items` on
@@ -2140,9 +2155,7 @@ impl Menus {
 
     /// Shows `items` (texts marked with `tx!`, translated here) at `at`.
     fn open_slint(&self, items: &[(u32, &'static str)], at: Anchor) {
-        let entries: Vec<(u32, String, bool)> =
-            items.iter().map(|(id, title)| (*id, t("", title).into_owned(), true)).collect();
-        self.open_slint_entries(&entries, Vec::new(), at);
+        self.open_slint_entries(&translated(items), Vec::new(), at);
     }
 
     /// Shows `items` (id, title, enabled), with `subs` among them, at `anchor`.
@@ -2835,6 +2848,11 @@ impl Menus {
             },
         }
     }
+}
+
+/// `items` (texts marked with `tx!`) translated, all enabled.
+fn translated(items: &[(u32, &'static str)]) -> Vec<(u32, String, bool)> {
+    items.iter().map(|(id, title)| (*id, t("", title).into_owned(), true)).collect()
 }
 
 /// Catches up after a system menu closed: no press from before it goes on as a drag, and
