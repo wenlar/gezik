@@ -114,6 +114,8 @@ rules on the left and a live preview on the right:
   out to a temporary folder by themselves; larger ones only when you open them. Folder sizes
   show at once, and the **Packed** column (header menu, only inside archives) shows what each
   file takes packed.
+- **Search** (Ctrl+Shift+F) inside an archive looks through its index by name, size, date and
+  type (not by content or tags); the results open, preview and copy out like the rows.
 - **Copy** (Ctrl+C) and paste into a folder, **Copy To…**, or dragging onto a folder in Gezik
   copies entries out, as one job with conflict questions and one Ctrl+Z. Dragging to another
   program takes the selection out first (up to 256 MB; use Copy To… for more). Copy Path
