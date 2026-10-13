@@ -1,6 +1,6 @@
 # Özellik durumu: rakip özetine göre (2026-10-12)
 
-- **Tarih:** 2026-10-12, 14. adımdan sonra 2026-10-13'te güncellendi. **Taban:** `master` 92f3078 (PR #112: 14f). 5–14. adımlar birleşti: 12 Etiketler (#91–#97), 13 Önizleme 2 (#92, #98–#100, #102, #103), 14 Taşınabilirlik (#104, #105, #108–#110, #112).
+- **Tarih:** 2026-10-12, 14. ve 15. adımlardan sonra 2026-10-13'te güncellendi. **Taban:** `master` e2c5f46 (PR #128: 15e+15f). 5–14. adımlar birleşti: 12 Etiketler (#91–#97), 13 Önizleme 2 (#92, #98–#100, #102, #103), 14 Taşınabilirlik (#104, #105, #108–#110, #112).
 - **Kaynak:** `2026-10-07-rakip-ozet.md` §1 tablosu (1–66), §3 ayırt edici yanlar, önerilmeyenler (§1 ve §6).
 - **Nasıl denetlendi:** her satır `docs/features.md`, `README.md`, adım spec'lerinin "Kapsam dışı" bölümleri, `2026-10-03-ayarlar-ve-tema-followups.md`'deki adım notları ve gerekince kodla (`shortcuts.rs` eylem listesi, `settings.rs`, `preview.rs`, komut yer tutucuları) karşılaştırıldı. PR numaraları `git log --merges`'ten.
 
@@ -10,12 +10,12 @@ Rakip kısaltmaları rakip özetindeki gibi: OC, Fi, DO, FP, Far, FL, PF, TC.
 
 | Durum | §1 tablosu (66 satır) | Önerilmeyenler (13 madde) |
 |---|---|---|
-| ✅ Var | 51 | 0 |
+| ✅ Var | 52 | 0 |
 | 🟡 Kısmen | 7 | 0 |
-| 🔜 Planlı | 7 | 0 |
+| 🔜 Planlı | 6 | 0 |
 | ❌ Yok / bilerek kapsam dışı | 1 | 13 |
 
-Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65).
+Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65); 15. adım satır 9'u.
 
 ## Ana tablo
 
@@ -31,7 +31,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 6 | Sürücü çıkarma, ağ paylaşımı, ağ keşfi | 8/8 | Kısmen | 🟡 Kısmen | 9b6 (#44): çıkarma, Sunucuya Bağlan, Windows sunucu paylaşımları. Ağ keşfi bilerek kapsam dışı (9 spec §1) |
 | 7 | Yolu kopyala: kısayol, biçimler, üç sistem | 7/8 | Kısmen | ✅ Var | 7a (#17): Ctrl+Shift+C, Copy path as ▸ (tırnaklı, `/`, ad, klasör, `file://`, UNC) |
 | 8 | Oturum geri yükleme, sekme setleri | 7/8 | Yok | ✅ Var | 7a (#17): `[session] restore`, `[[tab-sets]]`; çift bölme 10b, pencereler 10g (#71) |
-| 9 | Arayüz çevirisi (önce Türkçe) | 7/8 | Yok | 🔜 Planlı | 15 Yerelleştirme; kodda çeviri altyapısı yok |
+| 9 | Arayüz çevirisi (önce Türkçe) | 7/8 | Yok | ✅ Var | 15 (#120, #123, #125–#128): İngilizce, Türkçe; Almanca, İspanyolca, Fransızca, Çince makine çevirisi; `.po` dosyasıyla yeni dil |
 | 10 | Yol tamamlama, son klasörler, geçmiş, ortam değişkeni | 7/8 | Kısmen (Ctrl+L) | ✅ Var | 6b (#14): tamamlama, Recent/Frequent, `~`, `%AD%` |
 | 11 | Görünüm seçenekleri (gizli/sistem, uzantı, klasörler önce, biçimler) | 7/8 | Kısmen | ✅ Var | 7b (#19): `[view]` ve View menüsü |
 | 12 | Arşivin içinde klasör gibi gezinme | 7/8 | Planlı | 🔜 Planlı | 16 Gelişmiş (VFS) |
@@ -137,12 +137,9 @@ Bu listeye girmeyenler: **görünüm kuralları** (TC'de var, satır 63), **bır
 - 66'nın eksiği: vurgulama kuralında `where`, etiketlerin meta veri alanı kaydına bağlanması
 - macOS ve Linux'ta 12–14. adımlar gerçek cihazda sınanmadı (macOS: `checklists/release-macos.md`, #111; Linux: Docker turu sürüyor)
 
-**15 Yerelleştirme**
-- 9 Arayüz çevirisi
-
 **Yayın hazırlığı**
 - 17 Otomatik güncelleme
-- 65'in eksiği: hazır taşınabilir paket (zip/AppImage), imza
+- 65'in eksiği: imza, AppImage (zip paketleri #121 ile var; 0.1.0-rc.1 imzasız ön sürüm olarak yayımlandı)
 
 **16 Gelişmiş**
 - 12 Arşivin içinde gezinme

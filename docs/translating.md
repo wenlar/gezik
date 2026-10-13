@@ -1,8 +1,5 @@
 # Translating Gezik
 
-> Draft (step 15a): the machinery is in; the interface's texts are marked for translation in
-> 15b and 15c, Turkish comes in 15e and German, Spanish, French and Simplified Chinese in 15f.
-
 Gezik's texts are written in English, and the English text is the key (gettext's way). A
 translation is a gettext `.po` file: plain text that Poedit, Lokalize, Weblate or Crowdin open
 directly, and any text editor too. Missing texts show in English, so a half-done translation
