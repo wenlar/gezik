@@ -15,14 +15,16 @@ PB=/usr/libexec/PlistBuddy
 
 [ -x "$BIN" ] || { echo "no binary at $BIN (cargo build --release -p gezik)" >&2; exit 1; }
 [ -n "$VERSION" ] || { echo "no version" >&2; exit 1; }
+# Apple wants plain numbers here: 0.1.0-rc.1 is written as 0.1.0.
+BUNDLE_VERSION=${VERSION%%[-+]*}
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 install -m 0755 "$BIN" "$APP/Contents/MacOS/gezik"
 PLIST=$APP/Contents/Info.plist
 cp crates/gezik/macos/Info.plist "$PLIST"
-$PB -c "Add :CFBundleShortVersionString string $VERSION" \
-    -c "Add :CFBundleVersion string $VERSION" \
+$PB -c "Add :CFBundleShortVersionString string $BUNDLE_VERSION" \
+    -c "Add :CFBundleVersion string $BUNDLE_VERSION" \
     -c "Add :CFBundleInfoDictionaryVersion string 6.0" \
     -c "Add :CFBundleDevelopmentRegion string en" \
     -c "Add :CFBundleLocalizations array" \
@@ -39,6 +41,6 @@ codesign --force --sign - "$APP"
 
 # Self-check: a valid plist with the version, a signature that verifies.
 plutil -lint "$PLIST" >/dev/null
-[ "$($PB -c 'Print :CFBundleShortVersionString' "$PLIST")" = "$VERSION" ]
+[ "$($PB -c 'Print :CFBundleShortVersionString' "$PLIST")" = "$BUNDLE_VERSION" ]
 codesign --verify --strict "$APP"
 echo "$APP ($VERSION, $(lipo -archs "$APP/Contents/MacOS/gezik"))"
