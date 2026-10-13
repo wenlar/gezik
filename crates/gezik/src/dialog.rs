@@ -464,7 +464,13 @@ impl Dialogs {
                 // Each question starts with its text hidden.
                 window.set_dialog_show_secret(false);
                 let input = question.input.unwrap_or_default();
-                let (note, error) = question.note.as_ref().map(|note| note(&input)).unwrap_or_default();
+                // An empty field is not an error yet: it turns red once edited or answered.
+                let (note, error) = question
+                    .note
+                    .as_ref()
+                    .map(|note| note(&input))
+                    .filter(|(_, error)| !(*error && input.is_empty()))
+                    .unwrap_or_default();
                 window.set_dialog_note(note.into());
                 window.set_dialog_note_error(error);
                 *self.0.open_note.borrow_mut() = question.note;
@@ -602,6 +608,19 @@ mod tests {
         dialogs.ask_text_noted("T", "m", "x", &["OK", "Cancel"], |_| ("bad".to_owned(), true), move |t| p.set(Some(t)));
         window.invoke_dialog_chosen(0);
         assert_eq!(plain.take(), Some(Some("x".to_owned())), "F5's kind of question keeps its behavior");
+    }
+
+    #[test]
+    fn an_empty_field_is_not_red_until_answered() {
+        crate::windows::tests::platform();
+        let window = AppWindow::new().expect("a headless window");
+        let dialogs = Dialogs::new(&window);
+        let note = |t: &str| if t.is_empty() { ("Type a folder".to_owned(), true) } else { (String::new(), false) };
+        dialogs.ask_form("T", "m", (String::new(), Vec::new()), &["Copy", "Cancel"], note, |_| {});
+        assert!(!window.get_dialog_note_error() && window.get_dialog_note().is_empty(), "no error on opening");
+        window.invoke_dialog_chosen(0);
+        assert!(window.get_dialog_open() && window.get_dialog_note_error(), "OK with nothing typed: red");
+        assert_eq!(window.get_dialog_note(), "Type a folder");
     }
 
     #[test]
