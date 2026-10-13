@@ -80,7 +80,9 @@ export component Picker inherits Rectangle {
     TouchArea { }
 
     Rectangle {
-        width: min(480px, root.width - 40px);
+        // Wide enough for System Integration's state lines in longer languages (rows are one
+        // line high, so they elide rather than wrap).
+        width: min(640px, root.width - 40px);
         height: content.preferred-height;
         x: (root.width - self.width) / 2;
         // The top stays where a full list puts it, so the box does not move as the list shrinks.
