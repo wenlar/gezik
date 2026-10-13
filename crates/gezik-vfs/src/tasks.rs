@@ -9,7 +9,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use gezik_batch::tasks::{check_space, confirm_no_trash, plan_archive, put_sources, read_only, replace, rewrite};
+use gezik_batch::tasks::{
+    check_space, confirm_no_trash, plan_archive, put_sources, read_only, real_archive, replace, rewrite,
+};
 use gezik_core::vfs::{Caps, Container, Edit, VfsPath, VfsRoot};
 use gezik_ops::{Answer, Facts, Outcome, PlanItem, Question, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work};
 
@@ -21,24 +23,24 @@ const CONTENT: &str = "x";
 /// The tasks that copy `items` (all in one folder of one place) into `dest`, and what Undo
 /// says. Submit them as one chain.
 pub fn copy_out(items: &[VfsPath], dest: PathBuf) -> (Vec<Box<dyn Task>>, String) {
-    let (tasks, label, _) = take_out(items, dest, false);
+    let (tasks, label, _, _) = take_out(items, dest, false);
     (tasks, label)
 }
 
 /// Like `copy_out`, then the entries placed in `dest` are deleted in the place (Cut, Move To…,
 /// a moving drag): what was skipped or failed stays there.
 pub fn move_out(items: &[VfsPath], dest: PathBuf) -> (Vec<Box<dyn Task>>, String) {
-    let (mut tasks, label, stage) = take_out(items, dest, true);
+    let (mut tasks, label, stage, taken) = take_out(items, dest, true);
     if let Some(first) = items.first() {
         let edits = items.iter().map(|item| Edit::Delete(item.inner.clone())).collect();
         let mut delete = VfsEditTask::new(first.root.clone(), edits);
-        delete.gate = Some(stage);
+        delete.gate = Some((stage, taken));
         tasks.push(Box::new(delete));
     }
     (tasks, label)
 }
 
-fn take_out(items: &[VfsPath], dest: PathBuf, moving: bool) -> (Vec<Box<dyn Task>>, String, Stage_) {
+fn take_out(items: &[VfsPath], dest: PathBuf, moving: bool) -> (Vec<Box<dyn Task>>, String, Stage_, Taken) {
     let (title, label) = match (items, moving) {
         ([one], false) => (gezik_i18n::t!("Copying {}", one.name()), gezik_i18n::t!("Copy {}", one.name())),
         (many, false) => (
@@ -50,12 +52,14 @@ fn take_out(items: &[VfsPath], dest: PathBuf, moving: bool) -> (Vec<Box<dyn Task
         }
     };
     let stage = Arc::new(Mutex::new(None));
+    let taken = Arc::new(Mutex::new(Vec::new()));
     let root = items.first().map(|item| item.root.clone());
     let take = root.map(|root| TakeOutTask {
         root,
         items: items.iter().map(|item| item.inner.clone()).collect(),
         dest: dest.clone(),
         stage: stage.clone(),
+        taken: taken.clone(),
         title: title.clone(),
         kind: if moving { TaskKind::Move } else { TaskKind::Copy },
     });
@@ -64,8 +68,11 @@ fn take_out(items: &[VfsPath], dest: PathBuf, moving: bool) -> (Vec<Box<dyn Task
         tasks.push(Box::new(take));
         tasks.push(gezik_batch::tasks::placing(dest, stage.clone(), TaskKind::Copy, title));
     }
-    (tasks, label, stage)
+    (tasks, label, stage, taken)
 }
+
+/// The entries taken out whole and waiting in the staging folder, each under its last name.
+type Taken = Arc<Mutex<Vec<String>>>;
 
 /// Where taken-out entries wait to be placed (set once they are all there).
 type Stage_ = Arc<Mutex<Option<PathBuf>>>;
@@ -78,6 +85,8 @@ struct TakeOutTask {
     dest: PathBuf,
     /// Set to the staged folder holding them; the placing step reads it.
     stage: Stage_,
+    /// What went into it (a move deletes only those of them that left it).
+    taken: Taken,
     title: String,
     kind: TaskKind,
 }
@@ -115,7 +124,9 @@ impl Task for TakeOutTask {
         let staging = run.staging_dir(&self.dest.join(CONTENT))?;
         let content = staging.join(CONTENT);
         std::fs::create_dir(&content)?;
-        vfs.stage(&self.items, &content, &cx)?;
+        // Every entry whole, or none: a folder missing a child (a link left out, a damaged
+        // entry) must not count as taken out, or a move would delete what did not come out.
+        crate::stage_into(vfs.as_ref(), &self.items, &content, &cx)?;
         // Side by side for the placing step, whatever folders they were in (a search's results);
         // the second of two with one name fails.
         let held = staging.join("y");
@@ -128,6 +139,7 @@ impl Task for TakeOutTask {
                 continue;
             }
             std::fs::rename(&from, &to)?;
+            self.taken.lock().unwrap_or_else(PoisonError::into_inner).push(item.clone());
         }
         // Leaving Gezik: they carry the archive's Mark of the Web.
         crate::motw::mark_like(disk_of(&self.root), &held);
@@ -150,8 +162,8 @@ pub struct VfsEditTask {
     moving: bool,
     /// A put replaces the entry of its name without asking ("Update in Archive").
     replace: bool,
-    /// Deletes only the entries no longer in this folder (a move out: those placed).
-    gate: Option<Stage_>,
+    /// Deletes only the entries taken out and no longer in this folder (a move out: those placed).
+    gate: Option<(Stage_, Taken)>,
     kind: TaskKind,
     title: String,
     count: usize,
@@ -282,10 +294,11 @@ impl VfsEditTask {
         let (file, password) = vfs.archive().ok_or_else(read_only)?;
         match root {
             VfsRoot::Archive(Container::Disk(_)) => {
+                let file = real_archive(&file)?;
                 check_space(&file, &edits)?;
                 let temp = run.temp_file_for(&file);
                 let Some(done) = rewrite(&file, &edits, password, &temp, run, None)? else { return Ok(None) };
-                Ok(Some((replace(&file, &temp, trash, run, None)?, done)))
+                Ok(Some((replace(&file, &temp, trash, done.seen, run, None)?, done)))
             }
             VfsRoot::Archive(Container::Inside(at)) => {
                 // Written in a private folder, then put back into the one it is in in its place.
@@ -331,12 +344,16 @@ impl Task for VfsEditTask {
 
     fn run(&self, _item: &PlanItem, run: &RunCx<'_>) -> io::Result<Outcome> {
         let mut edits = self.edits.clone();
-        if let Some(gate) = &self.gate {
-            // Moved out: only what was placed (it left the staging folder) is deleted here.
-            let held = gate.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some((stage, taken)) = &self.gate {
+            // Moved out: only what was taken out whole and placed (it left the staging folder)
+            // is deleted here; a second entry of one name was never taken.
+            let held = stage.lock().unwrap_or_else(PoisonError::into_inner).clone();
             let Some(held) = held else { return Ok(Outcome::Nothing) };
-            edits
-                .retain(|edit| !matches!(edit, Edit::Delete(name) if held.join(last(name)).symlink_metadata().is_ok()));
+            let taken = taken.lock().unwrap_or_else(PoisonError::into_inner).clone();
+            edits.retain(|edit| match edit {
+                Edit::Delete(name) => taken.contains(name) && held.join(last(name)).symlink_metadata().is_err(),
+                _ => true,
+            });
             if edits.is_empty() {
                 return Ok(Outcome::Nothing);
             }

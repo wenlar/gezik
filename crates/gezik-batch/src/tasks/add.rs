@@ -11,11 +11,12 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use gezik_core::batch::archive::{Codec, Format, detect, volume_set};
 use gezik_core::format_size;
-use gezik_core::ops::names::next_free;
+use gezik_core::ops::names::{NameRules, next_free, validate_name};
 use gezik_core::vfs::Edit;
 use gezik_ops::{
     Answer, Facts, Outcome, PlanItem, Question, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after,
@@ -49,6 +50,8 @@ pub enum Fault {
     Spoil,
     /// The new archive cannot take the old one's name.
     Replace,
+    /// The archive changes on disk after it was read, before it is replaced.
+    Touch,
     /// The drive has no trash.
     NoTrash,
 }
@@ -114,19 +117,20 @@ impl Task for AddToArchiveTask {
     }
 
     fn run(&self, _item: &PlanItem, run: &RunCx<'_>) -> io::Result<Outcome> {
-        let trash = run.has_trash(&self.archive) && self.fault != Some(Fault::NoTrash);
+        let archive = real_archive(&self.archive)?;
+        let trash = run.has_trash(&archive) && self.fault != Some(Fault::NoTrash);
         if !trash && !confirm_no_trash(run)? {
             return Ok(Outcome::Nothing);
         }
         if self.fault == Some(Fault::Space) {
             return Err(io::Error::other("injected"));
         }
-        check_space(&self.archive, &self.edits)?;
-        let temp = run.temp_file_for(&self.archive);
-        if rewrite(&self.archive, &self.edits, self.password.clone(), &temp, run, self.fault)?.is_none() {
+        check_space(&archive, &self.edits)?;
+        let temp = run.temp_file_for(&archive);
+        let Some(done) = rewrite(&archive, &self.edits, self.password.clone(), &temp, run, self.fault)? else {
             return Ok(Outcome::Nothing);
-        }
-        replace(&self.archive, &temp, trash, run, self.fault)
+        };
+        replace(&archive, &temp, trash, done.seen, run, self.fault)
     }
 }
 
@@ -152,6 +156,73 @@ pub fn put_sources(edits: &[Edit]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// The file a rewrite changes: a symbolic link's target. Refused when it is read-only, or has
+/// other names (hard links: they would keep the old contents while this one changed).
+pub fn real_archive(path: &Path) -> io::Result<PathBuf> {
+    let real = if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        plain(std::fs::canonicalize(path)?)
+    } else {
+        path.to_path_buf()
+    };
+    let meta = std::fs::metadata(&real)?;
+    if meta.permissions().readonly() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            gezik_i18n::t!("The archive is read-only; it was not changed"),
+        ));
+    }
+    if gezik_platform::fs::link_count(&real)? > 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            gezik_i18n::t!("The archive has other names (hard links); it was not changed"),
+        ));
+    }
+    Ok(real)
+}
+
+/// A canonical path as Windows users write it (`C:\a`, `\\server\share`), not `\\?\`.
+fn plain(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
+}
+
+/// A new folder of this user only (0700 on Unix) in the system's temporary folder, removed
+/// with what is in it when dropped: what a rewrite unpacks (decrypted) never lands in the
+/// archive's folder, which may be synced or shared. Named as gezik-vfs's areas, so one a crash
+/// leaves is cleared at the next start.
+struct Private(PathBuf);
+
+impl Private {
+    fn new() -> io::Result<Private> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        loop {
+            let n = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!("gezik-vfs-{}-edit{n}", std::process::id()));
+            #[cfg_attr(not(unix), allow(unused_mut))]
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            match builder.create(&path) {
+                Ok(()) => return Ok(Private(path)),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(err) => return Err(err),
+            }
+        }
+    }
+}
+
+impl Drop for Private {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// On a drive without a trash the old archive cannot be kept for undo: asks whether to go on.
 pub fn confirm_no_trash(run: &RunCx<'_>) -> io::Result<bool> {
     let title = gezik_i18n::t!("The old archive cannot be kept for undo").into_owned();
@@ -175,7 +246,13 @@ pub fn check_space(archive: &Path, edits: &[Edit]) -> io::Result<()> {
     for from in put_sources(edits) {
         needed = needed.saturating_add(tree_size(&from));
     }
-    let folder = archive.parent().unwrap_or(Path::new("."));
+    // Next to the archive (the new one), and in the temporary folder (what is unpacked and read
+    // back: at least as much again; a solid 7z or tar.gz unpacks to more).
+    room(archive.parent().unwrap_or(Path::new(".")), needed)?;
+    room(&std::env::temp_dir(), needed)
+}
+
+fn room(folder: &Path, needed: u64) -> io::Result<()> {
     if let Ok(free) = gezik_platform::fs::free_space(folder)
         && needed > free
     {
@@ -202,6 +279,14 @@ fn tree_size(path: &Path) -> u64 {
 pub struct Rewritten {
     /// The files and folders put in whole (a move trashes these, and only these).
     pub sources: Vec<PathBuf>,
+    /// The archive's size and change time when it was read: `replace` refuses if it changed.
+    pub seen: (u64, Option<SystemTime>),
+}
+
+/// A file's size and change time.
+fn facts(path: &Path) -> io::Result<(u64, Option<SystemTime>)> {
+    let meta = std::fs::metadata(path)?;
+    Ok((meta.len(), meta.modified().ok()))
 }
 
 /// Steps 2 and 3: writes `archive` with `edits` applied to `out`, then reads it back and checks
@@ -226,7 +311,29 @@ pub fn rewrite(
 /// old one first steps aside under a noted name (if Gezik stops meanwhile, the next start puts
 /// it back), the new one takes its name, then the old one goes to the trash (`trash`: the
 /// drive has one; else it is deleted). If the new one cannot land, the old one comes back.
-pub fn replace(archive: &Path, temp: &Path, trash: bool, run: &RunCx<'_>, fault: Option<Fault>) -> io::Result<Outcome> {
+pub fn replace(
+    archive: &Path,
+    temp: &Path,
+    trash: bool,
+    seen: (u64, Option<SystemTime>),
+    run: &RunCx<'_>,
+    fault: Option<Fault>,
+) -> io::Result<Outcome> {
+    if fault == Some(Fault::Touch) {
+        std::fs::OpenOptions::new().append(true).open(archive).and_then(|mut f| io::Write::write_all(&mut f, b"!"))?;
+    }
+    // Changed by another program since it was read: what was written would lose that change.
+    if facts(archive).ok() != Some(seen) {
+        let _ = std::fs::remove_file(temp);
+        return Err(io::Error::other(gezik_i18n::t!("The archive changed while it was written; it was not changed")));
+    }
+    // The new file keeps what the old one had besides its contents (permissions, owner, tags,
+    // the Mark of the Web, the creation time); and Gezik's tags kept in its own store.
+    if let Err(err) = gezik_platform::fs::carry_facts(archive, temp) {
+        let _ = std::fs::remove_file(temp);
+        return Err(err);
+    }
+    let tags = run.meta().and_then(|store| store.read(archive).ok()).filter(|tags| !tags.is_empty());
     let aside = run.aside_name(archive);
     run.note_aside(&[(aside.clone(), archive.to_path_buf())]);
     if let Err(err) = gezik_platform::fs::move_entry(archive, &aside) {
@@ -264,6 +371,11 @@ pub fn replace(archive: &Path, temp: &Path, trash: bool, run: &RunCx<'_>, fault:
         }
         Err(err) => keep_aside(archive, &aside, &err, run),
     }
+    if let (Some(store), Some(tags)) = (run.meta(), tags)
+        && store.read(archive).ok().as_ref() != Some(&tags)
+    {
+        let _ = store.write(archive, &tags);
+    }
     outcomes.push(Outcome::Created { path: archive.to_path_buf(), facts: facts_after(archive, false), from: None });
     Ok(Outcome::Several(outcomes))
 }
@@ -283,10 +395,20 @@ impl Rewrite<'_, '_> {
             check_edit(edit)?;
         }
         let kind = kind_of(self.archive)?;
+        let seen = facts(self.archive)?;
+        // What is put in, every name (a move trashes the folder: nothing may stay behind), and
+        // what could not be listed or opened.
         let mut fresh = Vec::new();
+        let unread = RefCell::new(Vec::new());
         for edit in self.edits {
             if let Edit::Put { from, to } = edit {
-                let mut got = write::inputs(std::slice::from_ref(from), &mut |path, err| self.run.fail(path, &err));
+                let mut got = write::collect(std::slice::from_ref(from), false, &mut |path, err| {
+                    self.run.fail(path, &err);
+                    unread.borrow_mut().push(path.to_path_buf());
+                });
+                if got.is_empty() {
+                    unread.borrow_mut().push(from.clone());
+                }
                 let top = got.first().map(|input| input.name.len()).unwrap_or_default();
                 for input in &mut got {
                     input.name = format!("{to}{}", &input.name[top..]);
@@ -294,10 +416,37 @@ impl Rewrite<'_, '_> {
                 fresh.extend(got);
             }
         }
-        match kind {
-            Kind::Zip => self.zip(fresh),
-            _ => self.repack(kind, fresh),
+        // Never the archive itself, nor what is being written.
+        fresh.retain(|input| input.path != self.archive && input.path != self.out);
+        for input in &fresh {
+            if matches!(input.kind, InputKind::File { .. })
+                && let Err(err) = File::open(&input.path)
+            {
+                self.run.fail(&input.path, &err);
+                unread.borrow_mut().push(input.path.clone());
+            }
         }
+        let unread = unread.into_inner();
+        fresh.retain(|input| !unread.contains(&input.path));
+        let done = match kind {
+            Kind::Zip => self.zip(fresh, &unread)?,
+            _ => self.repack(kind, fresh, &unread)?,
+        };
+        Ok(done.map(|sources| Rewritten { sources, seen }))
+    }
+
+    /// A put that replaces an entry, or comes with a delete (Update in Archive, an archive
+    /// written back into its own), must go in whole: else what it replaces would be lost.
+    fn guard(&self, failed: &[PathBuf], replaced: &[String]) -> io::Result<()> {
+        let risky = !replaced.is_empty() || self.edits.iter().any(|edit| matches!(edit, Edit::Delete(_)));
+        let lost = put_sources(self.edits).iter().any(|from| failed.iter().any(|path| path.starts_with(from)));
+        if risky && lost {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                gezik_i18n::t!("Some items to put in could not be read; the archive was not changed"),
+            ));
+        }
+        Ok(())
     }
 
     fn fault(&self, fault: Fault) -> io::Result<()> {
@@ -305,7 +454,7 @@ impl Rewrite<'_, '_> {
     }
 
     /// The zip with the edits: the entries kept are copied as they are (renamed ones too).
-    fn zip(&self, mut fresh: Vec<Input>) -> io::Result<Option<Rewritten>> {
+    fn zip(&self, mut fresh: Vec<Input>, unread: &[PathBuf]) -> io::Result<Option<Vec<PathBuf>>> {
         let mut zip = ZipArchive::new(BufReader::new(File::open(self.archive)?))?;
         // (name, is a folder) of each entry, and the smallest encrypted one: it is read
         // through to check a password.
@@ -328,6 +477,7 @@ impl Rewrite<'_, '_> {
         };
         let changes = Changes::new(self.edits, old.iter().map(|(name, is_dir)| (trimmed(name), *is_dir)))?;
         let Some(replaced) = settle(&mut fresh, &changes.names, self.run)? else { return Ok(None) };
+        self.guard(unread, &replaced)?;
         if fresh.is_empty() && changes.none() {
             return Ok(None);
         }
@@ -343,7 +493,8 @@ impl Rewrite<'_, '_> {
         let cx = Writing::new(self.run);
         self.fault(Fault::Write)?;
         write::rewrite_zip(&mut zip, &keep, &fresh, self.out, password.as_deref(), workers(), &cx)?;
-        let failed = cx.failed.into_inner();
+        let mut failed = cx.failed.into_inner();
+        self.guard(&failed, &replaced)?;
         if changes.none() && failed.len() >= putting.len() {
             // Nothing new could be read: the archive stays as it is.
             return Ok(None);
@@ -362,7 +513,8 @@ impl Rewrite<'_, '_> {
             written.into_iter().filter(|input| matches!(input.kind, InputKind::File { .. })).collect();
         self.spoil()?;
         verify(self.out, self.archive, expected, &checked, password, self.run)?;
-        Ok(Some(Rewritten { sources: whole(self.edits, &putting, &failed) }))
+        failed.extend_from_slice(unread);
+        Ok(Some(whole(self.edits, &putting, &failed)))
     }
 
     /// The password that opens entry `i`: the one given, else asked for until it fits.
@@ -390,22 +542,21 @@ impl Rewrite<'_, '_> {
     }
 
     /// Unpacks the 7z or tar into a staging folder and packs it again with the edits.
-    fn repack(&self, kind: Kind, mut fresh: Vec<Input>) -> io::Result<Option<Rewritten>> {
+    fn repack(&self, kind: Kind, mut fresh: Vec<Input>, unread: &[PathBuf]) -> io::Result<Option<Vec<PathBuf>>> {
         let names_encrypted = kind == Kind::SevenZ
             && matches!(sevenz_rust2::Archive::open(self.archive), Err(sevenz_rust2::Error::PasswordRequired));
-        let stage = self.run.staging_dir(self.out)?;
-        let result = self.repack_in(kind, &mut fresh, names_encrypted, &stage);
-        let _ = std::fs::remove_dir_all(&stage);
-        result
+        let stage = Private::new()?;
+        self.repack_in(kind, &mut fresh, unread, names_encrypted, &stage.0)
     }
 
     fn repack_in(
         &self,
         kind: Kind,
         fresh: &mut Vec<Input>,
+        unread: &[PathBuf],
         names_encrypted: bool,
         stage: &Path,
-    ) -> io::Result<Option<Rewritten>> {
+    ) -> io::Result<Option<Vec<PathBuf>>> {
         let content = stage.join("x");
         std::fs::create_dir(&content)?;
         let unpack = Unpack {
@@ -447,6 +598,7 @@ impl Rewrite<'_, '_> {
         let changes =
             Changes::new(self.edits, old.iter().map(|input| (input.name.as_str(), input.kind == InputKind::Dir)))?;
         let Some(replaced) = settle(fresh, &changes.names, self.run)? else { return Ok(None) };
+        self.guard(unread, &replaced)?;
         if fresh.is_empty() && changes.none() {
             return Ok(None);
         }
@@ -480,7 +632,8 @@ impl Rewrite<'_, '_> {
                 write::write(&old, self.out, &options, workers(), &cx)?;
             }
         };
-        let failed = cx.failed.into_inner();
+        let mut failed = cx.failed.into_inner();
+        self.guard(&failed, &replaced)?;
         if failed.iter().any(|path| path.starts_with(&content)) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -498,7 +651,8 @@ impl Rewrite<'_, '_> {
             written.into_iter().filter(|input| matches!(input.kind, InputKind::File { .. })).collect();
         self.spoil()?;
         verify(self.out, self.archive, expected, &checked, password, self.run)?;
-        Ok(Some(Rewritten { sources: whole(self.edits, &putting, &failed) }))
+        failed.extend_from_slice(unread);
+        Ok(Some(whole(self.edits, &putting, &failed)))
     }
 
     /// The test hook that spoils what was written (one byte in the middle).
@@ -588,7 +742,8 @@ fn verify(
     if checked.is_empty() {
         return Ok(());
     }
-    let dir = run.staging_dir(out)?;
+    let private = Private::new()?;
+    let dir = private.0.clone();
     let result = (|| {
         let names: Vec<String> = checked.iter().map(|input| input.name.clone()).collect();
         archive::open_as(out, &name)?.extract_some(&names, &dir, &cx)?;
@@ -600,7 +755,7 @@ fn verify(
         }
         if cx.failed.get() { Err(bad()) } else { Ok(()) }
     })();
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(private);
     match result {
         Err(_) if run.stopped() => Err(cancelled()),
         Err(_) => Err(bad()),
@@ -660,9 +815,17 @@ fn check_edit(edit: &Edit) -> io::Result<()> {
         Edit::Rename { from, to } => vec![from, to],
     };
     for name in names {
+        // Every part as extracting would take it (no control character; on Windows no `:`, no
+        // device name, no ending dot or space) and as a name on this system.
         let bad = name.is_empty()
-            || name.contains(['\\', '\0'])
-            || name.split('/').any(|part| part.is_empty() || part == "." || part == "..");
+            || name.contains('\\')
+            || gezik_core::batch::archive::safe_join(Path::new("x"), name).is_none()
+            || name.split('/').any(|part| {
+                part.is_empty()
+                    || part.chars().any(char::is_control)
+                    || validate_name(part, NameRules::current()).is_err()
+                    || (cfg!(windows) && (part.contains(':') || part.ends_with(['.', ' '])))
+            });
         if bad {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("Not a usable name: {}", name)));
         }
@@ -820,9 +983,13 @@ impl Changes {
             let Some((parent, _)) = gone.rsplit_once('/') else { continue };
             let filled = puts.iter().any(|to| to.strip_prefix(parent).is_some_and(|rest| rest.starts_with('/')));
             if !filled && !changes.names.has(parent) && !covered(parent, &changes.deleted) {
-                // The folder as the archive spells it.
-                let spelled = old.iter().find_map(|(name, _)| name.get(..parent.len()).filter(|p| key(p) == parent));
-                let spelled = spelled.unwrap_or(parent).to_owned();
+                // The folder as the archive spells it (part by part, as `map`).
+                let depth = parent.split('/').count();
+                let spelled = old.iter().find_map(|(name, _)| {
+                    let parts: Vec<&str> = name.split('/').take(depth).collect();
+                    (parts.len() == depth && key(&parts.join("/")) == parent).then(|| parts.join("/"))
+                });
+                let spelled = spelled.unwrap_or_else(|| parent.to_owned());
                 changes.names.add(key(&spelled), true);
                 changes.dirs.push(spelled);
             }
@@ -841,12 +1008,13 @@ impl Changes {
         if covered(&key(name), &self.deleted) {
             return None;
         }
+        // Part by part: a part folded to lower case may not be as long as it was.
+        let parts: Vec<&str> = name.split('/').collect();
         for (from, to) in &self.renamed {
-            if let Some(head) = name.get(..from.len())
-                && key(head) == key(from)
-                && (name.len() == from.len() || name[from.len()..].starts_with('/'))
-            {
-                return Some(format!("{to}{}", &name[from.len()..]));
+            let head: Vec<&str> = from.split('/').collect();
+            if parts.len() >= head.len() && parts.iter().zip(&head).all(|(a, b)| key(a) == key(b)) {
+                let rest = &parts[head.len()..];
+                return Some(if rest.is_empty() { to.clone() } else { format!("{to}/{}", rest.join("/")) });
             }
         }
         Some(name.to_owned())
@@ -1035,7 +1203,23 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_matches_part_by_part_whatever_lower_case_does_to_lengths() {
+        // `İ` (2 bytes) folds to `i̇` (3 bytes) where case is ignored.
+        let old = [("İ/x.txt", false)];
+        let from = if cfg!(any(windows, target_os = "macos")) { "i\u{307}" } else { "İ" };
+        let c = changes(&[Edit::Rename { from: from.into(), to: "J".into() }], &old).unwrap();
+        assert_eq!(c.map("İ/x.txt").as_deref(), Some("J/x.txt"));
+        let c = changes(&[Edit::Delete("İ/x.txt".into())], &old).unwrap();
+        assert_eq!(c.dirs, ["İ"], "the folder keeps its spelling");
+    }
+
+    #[test]
     fn unsafe_names_are_refused() {
+        let hostile: &[&str] = if cfg!(windows) { &["a:b", "con", "NUL.txt", "x.", "x ", "a/com1/b"] } else { &[] };
+        for name in hostile.iter().copied().chain(["\u{1}x", "a/\u{7f}"]) {
+            assert!(check_edit(&Edit::Put { from: "x".into(), to: name.into() }).is_err(), "{name:?}");
+            assert!(check_edit(&Edit::Rename { from: "a".into(), to: name.into() }).is_err(), "{name:?}");
+        }
         for name in ["", "../x", "a/../b", "/abs", "a//b", "a\\b", "./a", "a/"] {
             assert!(check_edit(&Edit::MakeDir(name.into())).is_err(), "{name:?}");
         }

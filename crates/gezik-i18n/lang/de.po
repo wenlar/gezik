@@ -295,6 +295,16 @@ msgstr "{0} wird zu {1} hinzugefügt"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
+msgid "The archive is read-only; it was not changed"
+msgstr "Das Archiv ist schreibgeschützt; es wurde nicht geändert"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive has other names (hard links); it was not changed"
+msgstr "Das Archiv hat weitere Namen (feste Verknüpfungen); es wurde nicht geändert"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
 msgid "The old archive cannot be kept for undo"
 msgstr "Das alte Archiv kann nicht zum Rückgängigmachen aufbewahrt werden"
 
@@ -357,12 +367,22 @@ msgstr "Abbrechen"
 msgid "{0} needed, {1} free on {2}"
 msgstr "{0} nötig, {1} frei auf {2}"
 
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive changed while it was written; it was not changed"
+msgstr "Das Archiv hat sich beim Schreiben geändert; es wurde nicht geändert"
+
 #. {0} is why it could not be put back, {1} where it is
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/compress.rs
 #, fuzzy
 msgid "{0}; it is at {1}"
 msgstr "{0}; es liegt unter {1}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items to put in could not be read; the archive was not changed"
+msgstr "Einige hinzuzufügende Elemente konnten nicht gelesen werden; das Archiv wurde nicht geändert"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy

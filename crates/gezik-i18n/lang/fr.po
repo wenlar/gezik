@@ -295,6 +295,16 @@ msgstr "Ajout de {0} à {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
+msgid "The archive is read-only; it was not changed"
+msgstr "L'archive est en lecture seule ; elle n'a pas été modifiée"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive has other names (hard links); it was not changed"
+msgstr "L'archive a d'autres noms (liens physiques) ; elle n'a pas été modifiée"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
 msgid "The old archive cannot be kept for undo"
 msgstr "L'ancienne archive ne peut pas être conservée pour annuler"
 
@@ -357,12 +367,22 @@ msgstr "Annuler"
 msgid "{0} needed, {1} free on {2}"
 msgstr "{0} nécessaires, {1} libres sur {2}"
 
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive changed while it was written; it was not changed"
+msgstr "L'archive a changé pendant l'écriture ; elle n'a pas été modifiée"
+
 #. {0} is why it could not be put back, {1} where it is
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/compress.rs
 #, fuzzy
 msgid "{0}; it is at {1}"
 msgstr "{0} ; il se trouve dans {1}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items to put in could not be read; the archive was not changed"
+msgstr "Certains éléments à ajouter n'ont pas pu être lus ; l'archive n'a pas été modifiée"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy

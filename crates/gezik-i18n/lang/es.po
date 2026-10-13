@@ -295,6 +295,16 @@ msgstr "Añadiendo {0} a {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
+msgid "The archive is read-only; it was not changed"
+msgstr "El archivo comprimido es de solo lectura; no se cambió"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive has other names (hard links); it was not changed"
+msgstr "El archivo comprimido tiene otros nombres (vínculos físicos); no se cambió"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
 msgid "The old archive cannot be kept for undo"
 msgstr "No se puede conservar el archivo comprimido anterior para deshacer"
 
@@ -357,12 +367,22 @@ msgstr "Cancelar"
 msgid "{0} needed, {1} free on {2}"
 msgstr "Se necesitan {0}, hay {1} libres en {2}"
 
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive changed while it was written; it was not changed"
+msgstr "El archivo comprimido cambió mientras se escribía; no se cambió"
+
 #. {0} is why it could not be put back, {1} where it is
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/compress.rs
 #, fuzzy
 msgid "{0}; it is at {1}"
 msgstr "{0}; está en {1}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items to put in could not be read; the archive was not changed"
+msgstr "No se pudieron leer algunos elementos que se iban a añadir; el archivo comprimido no se cambió"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy

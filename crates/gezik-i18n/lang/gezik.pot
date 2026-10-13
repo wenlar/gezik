@@ -237,6 +237,14 @@ msgid "Adding {0} to {1}"
 msgstr ""
 
 #: crates/gezik-batch/src/tasks/add.rs
+msgid "The archive is read-only; it was not changed"
+msgstr ""
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "The archive has other names (hard links); it was not changed"
+msgstr ""
+
+#: crates/gezik-batch/src/tasks/add.rs
 msgid "The old archive cannot be kept for undo"
 msgstr ""
 
@@ -294,10 +302,18 @@ msgstr ""
 msgid "{0} needed, {1} free on {2}"
 msgstr ""
 
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "The archive changed while it was written; it was not changed"
+msgstr ""
+
 #. {0} is why it could not be put back, {1} where it is
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/compress.rs
 msgid "{0}; it is at {1}"
+msgstr ""
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "Some items to put in could not be read; the archive was not changed"
 msgstr ""
 
 #: crates/gezik-batch/src/tasks/add.rs

@@ -241,6 +241,14 @@ msgid "Adding {0} to {1}"
 msgstr "Ekleniyor: {0} → {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
+msgid "The archive is read-only; it was not changed"
+msgstr "Arşiv salt okunur; değiştirilmedi"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "The archive has other names (hard links); it was not changed"
+msgstr "Arşivin başka adları var (sabit bağlantılar); değiştirilmedi"
+
+#: crates/gezik-batch/src/tasks/add.rs
 msgid "The old archive cannot be kept for undo"
 msgstr "Eski arşiv geri alma için saklanamıyor"
 
@@ -298,11 +306,19 @@ msgstr "İptal"
 msgid "{0} needed, {1} free on {2}"
 msgstr "{0} gerekli, {2} üzerinde {1} boş"
 
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "The archive changed while it was written; it was not changed"
+msgstr "Arşiv yazılırken değişti; değiştirilmedi"
+
 #. {0} is why it could not be put back, {1} where it is
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/compress.rs
 msgid "{0}; it is at {1}"
 msgstr "{0}; konumu: {1}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "Some items to put in could not be read; the archive was not changed"
+msgstr "Konacak bazı öğeler okunamadı; arşiv değiştirilmedi"
 
 #: crates/gezik-batch/src/tasks/add.rs
 msgid "Some items of the archive could not be read; nothing was changed"

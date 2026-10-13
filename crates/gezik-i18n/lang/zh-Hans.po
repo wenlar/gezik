@@ -295,6 +295,16 @@ msgstr "正在将 {0} 添加到 {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
+msgid "The archive is read-only; it was not changed"
+msgstr "压缩包为只读；未更改"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive has other names (hard links); it was not changed"
+msgstr "压缩包还有其他名称（硬链接）；未更改"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
 msgid "The old archive cannot be kept for undo"
 msgstr "无法保留旧压缩包以便撤销"
 
@@ -357,12 +367,22 @@ msgstr "取消"
 msgid "{0} needed, {1} free on {2}"
 msgstr "需要 {0}，{2} 上可用 {1}"
 
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive changed while it was written; it was not changed"
+msgstr "压缩包在写入时发生了变化；未更改"
+
 #. {0} is why it could not be put back, {1} where it is
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/compress.rs
 #, fuzzy
 msgid "{0}; it is at {1}"
 msgstr "{0}；它位于 {1}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items to put in could not be read; the archive was not changed"
+msgstr "某些要放入的项目无法读取；压缩包未更改"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy

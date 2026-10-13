@@ -238,3 +238,69 @@ impl gezik_vfs::Cx for Quiet {
         panic!("{name}: {error}");
     }
 }
+
+/// A zip whose `docs/bad.txt` has a damaged byte (its checksum fails when read).
+fn damaged_zip(path: &Path) {
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for (name, data) in [("docs/good.txt", &b"good"[..]), ("docs/bad.txt", b"BADBADBADBAD"), ("keep.txt", b"k")] {
+        zip.start_file(name, stored).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    let mut bytes = zip.finish().unwrap().into_inner();
+    let at = bytes.windows(12).position(|w| w == b"BADBADBADBAD").unwrap();
+    bytes[at + 3] = b'X';
+    std::fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn moving_out_keeps_a_folder_that_did_not_come_out_whole() {
+    let d = dir("move-damaged");
+    let archive = d.join("a.zip");
+    damaged_zip(&archive);
+    let before = std::fs::read(&archive).unwrap();
+    let out = d.join("out");
+    std::fs::create_dir(&out).unwrap();
+    let (tasks, _) = move_out(&[VfsPath::archive(archive.clone()).join("docs")], out.clone());
+    let (report, _) = run(&engine(&d), tasks);
+    assert!(!report.failures.is_empty(), "the damaged entry is reported");
+    assert_eq!(std::fs::read(&archive).unwrap(), before, "nothing deleted inside");
+    assert!(leftovers(&d).is_empty() && leftovers(&out).is_empty());
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn moving_out_two_entries_of_one_name_deletes_only_the_one_placed() {
+    let d = dir("move-twins");
+    let archive = d.join("a.zip");
+    zip(&archive, &[("a/x.txt", b"from a"), ("b/x.txt", b"from b")]);
+    let out = d.join("out");
+    std::fs::create_dir(&out).unwrap();
+    let top = VfsPath::archive(archive.clone());
+    let (tasks, _) = move_out(&[top.join("a/x.txt"), top.join("b/x.txt")], out.clone());
+    let (report, _) = run(&engine(&d), tasks);
+    assert_eq!(report.failures.len(), 1, "the second of one name: {:?}", report.failures);
+    assert_eq!(std::fs::read(out.join("x.txt")).unwrap(), b"from a");
+    assert_eq!(names(&std::fs::read(&archive).unwrap()), ["a/", "b/x.txt"], "the one not placed stays");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_folder_moved_in_goes_in_with_every_file_before_it_is_trashed() {
+    let d = dir("move-in-all");
+    let archive = d.join("a.zip");
+    zip(&archive, &[("keep.txt", b"k")]);
+    let folder = d.join("notes");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("a.txt"), b"a").unwrap();
+    // A name like Gezik's own temporary files is the user's file here.
+    std::fs::write(folder.join(".gezik-mine.txt"), b"mine").unwrap();
+    let into = VfsPath::archive(archive.clone());
+    let (report, _) = run(&engine(&d), vec![Box::new(VfsEditTask::put(&into, vec![folder.clone()], true))]);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let now = std::fs::read(&archive).unwrap();
+    assert_eq!(entry(&now, "notes/.gezik-mine.txt"), b"mine");
+    assert_eq!(entry(&now, "notes/a.txt"), b"a");
+    assert!(!folder.exists(), "trashed once all of it is in");
+    let _ = std::fs::remove_dir_all(&d);
+}

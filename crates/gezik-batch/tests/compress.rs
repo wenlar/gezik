@@ -1079,3 +1079,134 @@ fn read_only_formats_are_refused() {
     assert_eq!(std::fs::read(&single).unwrap(), before);
     let _ = std::fs::remove_dir_all(&d);
 }
+
+// --- Review of 16b: nothing the archive held is lost ---
+
+#[test]
+fn a_put_that_fails_never_loses_what_it_replaces() {
+    let d = dir("edit-lost");
+    let src = d.join("src");
+    make(&src, &[("docs/report.txt", b"draft"), ("other.txt", b"o")]);
+    let engine = engine(&d);
+    for format in [OutFormat::Zip, OutFormat::TarGz] {
+        let archive = d.join(format!("r.{}", format.extension()));
+        write::write(&inputs(&children(&src)), &archive, &options(format, Level::Normal), 1, &W::default()).unwrap();
+        let before = std::fs::read(&archive).unwrap();
+        // Update in Archive and a nested write send [Delete, Put]; the file to put is gone.
+        let edits = vec![
+            Edit::Delete("docs/report.txt".into()),
+            Edit::Put { from: d.join("gone.txt"), to: "docs/report.txt".into() },
+        ];
+        let (report, _) = edit(&engine, &archive, edits, None, None, nothing);
+        assert!(!report.failures.is_empty(), "{format:?}");
+        assert_eq!(std::fs::read(&archive).unwrap(), before, "{format:?}: the old entry stays");
+        assert!(leftovers(&d).is_empty(), "{format:?}: {:?}", leftovers(&d));
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn an_archive_changed_meanwhile_is_not_replaced() {
+    let d = dir("edit-touched");
+    let src = d.join("src");
+    make(&src, &[("a.txt", b"a")]);
+    let archive = d.join("t.zip");
+    write::write(&inputs(&children(&src)), &archive, &options(OutFormat::Zip, Level::Normal), 1, &W::default())
+        .unwrap();
+    let mut touched = std::fs::read(&archive).unwrap();
+    touched.push(b'!');
+    let engine = engine(&d);
+    let (report, _) = edit(&engine, &archive, vec![Edit::MakeDir("new".into())], None, Some(Fault::Touch), nothing);
+    assert_eq!(report.failures.len(), 1);
+    assert!(report.failures[0].message.contains("changed while it was written"), "{}", report.failures[0].message);
+    assert_eq!(std::fs::read(&archive).unwrap(), touched, "the other program's change stays");
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_new_archive_keeps_the_old_files_facts_and_links_are_refused() {
+    let d = dir("edit-facts");
+    let src = d.join("src");
+    make(&src, &[("a.txt", b"a")]);
+    let archive = d.join("m.zip");
+    write::write(&inputs(&children(&src)), &archive, &options(OutFormat::Zip, Level::Normal), 1, &W::default())
+        .unwrap();
+    #[cfg(windows)]
+    let mark = {
+        let mut mark = archive.as_os_str().to_owned();
+        mark.push(":Zone.Identifier");
+        std::fs::write(&mark, b"[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
+        mark
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&archive, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let engine = engine(&d);
+    let (report, _) = edit(&engine, &archive, vec![Edit::MakeDir("new".into())], None, None, nothing);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    #[cfg(windows)]
+    assert_eq!(std::fs::read(&mark).unwrap(), b"[ZoneTransfer]\r\nZoneId=3\r\n", "the Mark of the Web stays");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&archive).unwrap().permissions().mode() & 0o777, 0o600, "still private");
+    }
+    // A second name (hard link) would keep the old contents: refused, both untouched.
+    let other = d.join("other.zip");
+    std::fs::hard_link(&archive, &other).unwrap();
+    let before = std::fs::read(&archive).unwrap();
+    let (report, _) = edit(&engine, &archive, vec![Edit::MakeDir("more".into())], None, None, nothing);
+    assert!(report.failures[0].message.contains("hard links"), "{}", report.failures[0].message);
+    assert_eq!(std::fs::read(&archive).unwrap(), before);
+    std::fs::remove_file(&other).unwrap();
+    // Read-only: refused.
+    let mut perms = std::fs::metadata(&archive).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&archive, perms.clone()).unwrap();
+    let (report, _) = edit(&engine, &archive, vec![Edit::MakeDir("more".into())], None, None, nothing);
+    assert!(report.failures[0].message.contains("read-only"), "{}", report.failures[0].message);
+    assert_eq!(std::fs::read(&archive).unwrap(), before);
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&archive, perms).unwrap();
+    // A symbolic link: its target is rewritten, the link stays a link.
+    #[cfg(unix)]
+    {
+        let link = d.join("link.zip");
+        std::os::unix::fs::symlink(&archive, &link).unwrap();
+        let (report, _) = edit(&engine, &link, vec![Edit::MakeDir("via-link".into())], None, None, nothing);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        let zip = zip::ZipArchive::new(std::fs::File::open(&archive).unwrap()).unwrap();
+        assert!(zip.file_names().any(|n| n == "via-link/"));
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn nothing_is_unpacked_next_to_the_archive() {
+    let d = dir("edit-private");
+    let src = d.join("src");
+    let files: Vec<(String, Vec<u8>)> = (0..4).map(|i| (format!("n{i}.bin"), noise(3_000_000, i))).collect();
+    let list: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+    make(&src, &list);
+    let archive = d.join("p.tar.gz");
+    write::write(&inputs(&children(&src)), &archive, &options(OutFormat::TarGz, Level::Fast), 1, &W::default())
+        .unwrap();
+    let engine = engine(&d);
+    let job =
+        engine.submit(Box::new(AddToArchiveTask::edit(archive.clone(), vec![Edit::Delete("n0.bin".into())], None)));
+    // A folder made next to the archive (the unpacked contents) shows while the job runs.
+    let mut seen = Vec::new();
+    let (report, _) = finish(&engine, job, |_, _, _| {
+        seen.extend(std::fs::read_dir(&d).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name()));
+        false
+    });
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    seen.retain(|name| name.to_string_lossy().starts_with(".gezik-"));
+    assert!(seen.is_empty(), "unpacked next to the archive: {seen:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}

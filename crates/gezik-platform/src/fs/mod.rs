@@ -1,6 +1,7 @@
 //! What the system does best for file operations: copying with progress, deleting, moving
 //! without replacing, and what kind of drive a path is on.
 
+mod carry;
 mod describe;
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) mod freedesktop;
@@ -18,6 +19,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+pub use carry::{carry_facts, link_count};
 pub use describe::describe;
 pub use gezik_core::ops::threads::DiskKind;
 #[cfg(unix)]

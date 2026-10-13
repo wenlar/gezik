@@ -166,9 +166,20 @@ fn ask_update(file: PathBuf) {
                     }
                 }
             });
+            // A copy of its own is put back: the file's folder goes if its archive is let go of
+            // before the job reads it.
             if update {
-                let task = gezik_vfs::tasks::VfsEditTask::update(&at, file);
-                submit.submit(Box::new(task), None, crate::operations::After::Nothing);
+                match own_copy(&file) {
+                    Ok(copy) => {
+                        let task = gezik_vfs::tasks::VfsEditTask::update(&at, copy);
+                        submit.submit(Box::new(task), None, crate::operations::After::Nothing);
+                    }
+                    Err(err) => crate::panes::active_view().note(t!(
+                        "Cannot open {}: {}",
+                        at.name(),
+                        gezik_platform::fs::describe(&err)
+                    )),
+                }
             }
         });
     });
@@ -186,10 +197,7 @@ fn ask_on_leaving(opened: Opened) {
             match choice {
                 Some(0) => {
                     // Its folder goes with the archive: what is put back is a copy of its own.
-                    let copy = gezik_vfs::stage::new_folder()
-                        .map(|folder| folder.join(opened.file.file_name().unwrap_or_default()))
-                        .and_then(|copy| std::fs::copy(&opened.file, &copy).map(|_| copy));
-                    match copy {
+                    match own_copy(&opened.file) {
                         Ok(copy) => {
                             let task = gezik_vfs::tasks::VfsEditTask::update(&opened.at, copy);
                             submit.submit(Box::new(task), None, crate::operations::After::Nothing);
@@ -203,6 +211,13 @@ fn ask_on_leaving(opened: Opened) {
             std::thread::spawn(move || drop(opened));
         });
     });
+}
+
+/// `file` copied into a new private folder of the temporary area (kept until Gezik quits).
+fn own_copy(file: &Path) -> std::io::Result<PathBuf> {
+    let copy = gezik_vfs::stage::new_folder()?.join(file.file_name().unwrap_or_default());
+    std::fs::copy(file, &copy)?;
+    Ok(copy)
 }
 
 /// Copies an opened file's changes to Downloads under a free name, saying where.
@@ -347,5 +362,20 @@ impl Cx for UiCx<'_> {
         }
         self.seen.set((count + 1, if due { Some(now) } else { said }));
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn what_is_put_back_is_a_copy_that_outlives_the_opened_files_folder() {
+        let folder = gezik_vfs::stage::new_folder().unwrap();
+        let file = folder.join("notes.txt");
+        std::fs::write(&file, b"saved").unwrap();
+        let copy = super::own_copy(&file).unwrap();
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert_eq!(std::fs::read(&copy).unwrap(), b"saved");
+        assert_eq!(copy.file_name(), file.file_name());
+        let _ = std::fs::remove_dir_all(copy.parent().unwrap());
     }
 }
