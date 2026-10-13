@@ -99,7 +99,7 @@ export component CompressLayer inherits Rectangle {
                 color: Theme.foreground;
             }
             Labeled {
-                label: "Name";
+                label: @tr("Name");
                 name-field := TextField {
                     text <=> root.name-text;
                     edited => { root.edited(); }
@@ -107,7 +107,7 @@ export component CompressLayer inherits Rectangle {
                 }
             }
             Labeled {
-                label: "Folder";
+                label: @tr("Folder");
                 TextField {
                     text <=> root.folder-text;
                     edited => { root.edited(); }
@@ -115,7 +115,7 @@ export component CompressLayer inherits Rectangle {
                 }
             }
             Labeled {
-                label: "Format";
+                label: @tr("Format");
                 HorizontalLayout {
                     spacing: Theme.spacing;
                     for label[i] in root.formats: TextButton {
@@ -128,10 +128,10 @@ export component CompressLayer inherits Rectangle {
                 }
             }
             Labeled {
-                label: "Level";
+                label: @tr("Level");
                 HorizontalLayout {
                     spacing: Theme.spacing;
-                    for label[i] in ["Store", "Fast", "Normal", "Best"]: TextButton {
+                    for label[i] in [@tr("Store"), @tr("Fast"), @tr("Normal"), @tr("Best")]: TextButton {
                         text: label;
                         min-width: 64px;
                         checked: i == root.level;
@@ -141,7 +141,7 @@ export component CompressLayer inherits Rectangle {
                 }
             }
             Labeled {
-                label: "Password";
+                label: @tr("Password");
                 TextField {
                     text <=> root.password;
                     secret: !root.show-password;
@@ -149,7 +149,7 @@ export component CompressLayer inherits Rectangle {
                     edited => { root.edited(); }
                 }
                 Check {
-                    text: "Show";
+                    text: @tr("Show");
                     checked: root.show-password;
                     enabled: root.can-encrypt;
                     toggled => { root.show-password = !root.show-password; }
@@ -158,18 +158,18 @@ export component CompressLayer inherits Rectangle {
             if root.is-7z: Labeled {
                 label: "";
                 Check {
-                    text: "Encrypt file names";
+                    text: @tr("Encrypt file names");
                     checked: root.encrypt-names;
                     enabled: root.password != "";
                     toggled => { root.toggle-encrypt-names(); }
                 }
             }
             if root.is-7z: Labeled {
-                label: "Split";
+                label: @tr("Split");
                 HorizontalLayout {
                     spacing: Theme.spacing;
                     // Each as wide as its text ("4 GB (FAT32)" is the widest).
-                    for label[i] in ["None", "100 MB", "700 MB", "4 GB (FAT32)", "Custom…"]: TextButton {
+                    for label[i] in [@tr("None"), @tr("100 MB"), @tr("700 MB"), @tr("4 GB (FAT32)"), @tr("Custom…")]: TextButton {
                         text: label;
                         checked: i == root.split;
                         clicked => { root.set-split(i); }
@@ -181,7 +181,7 @@ export component CompressLayer inherits Rectangle {
                         edited => { root.edited(); }
                     }
                     if root.split == 4: Text {
-                        text: "MB";
+                        text: @tr("unit" => "MB");
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
@@ -212,7 +212,7 @@ export component CompressLayer inherits Rectangle {
                     accessible-label: link-text.text;
                     accessible-action-default => { root.add-existing(); }
                     link-text := Text {
-                        text: "Add to existing archive…";
+                        text: @tr("Add to existing archive…");
                         vertical-alignment: center;
                         color: Theme.accent;
                     }
@@ -222,9 +222,9 @@ export component CompressLayer inherits Rectangle {
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
-                TextButton { text: "Cancel"; clicked => { root.cancel(); } }
+                TextButton { text: @tr("Cancel"); clicked => { root.cancel(); } }
                 TextButton {
-                    text: "Compress";
+                    text: @tr("Compress");
                     primary: true;
                     clicked => { root.compress(); }
                 }

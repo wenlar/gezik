@@ -108,7 +108,7 @@ export component Dialog inherits Rectangle {
                         edited(text) => { root.edited(text); }
                     }
                     if root.input-secret: Check {
-                        text: "Show";
+                        text: @tr("Show");
                         checked: root.show-secret;
                         toggled => { root.show-secret = !root.show-secret; }
                     }

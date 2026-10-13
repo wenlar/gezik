@@ -116,6 +116,15 @@ mod renderer {
 mod accesskit;
 #[cfg(muda)]
 mod muda;
+
+/// Gezik patch: the macOS app menu's texts (About, Services, Hide, Hide Others, Show All,
+/// Quit), used when the menu bar is made; muda's English otherwise.
+#[cfg(all(muda, target_os = "macos"))]
+pub fn set_app_menu_texts(texts: [String; 6]) {
+    if let Ok(mut slot) = muda::APP_MENU_TEXTS.lock() {
+        *slot = Some(texts);
+    }
+}
 #[cfg(xdg_desktop_settings)]
 mod xdg_desktop_settings;
 

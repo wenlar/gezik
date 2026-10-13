@@ -21,7 +21,7 @@ export component FilterBar inherits Rectangle {
     in property <bool> content-focus;
     in-out property <string> content;
     in property <string> content-error;
-    in property <string> filters: "Filters";
+    in property <string> filters: @tr("Filters");
     in property <bool> running;
     out property <bool> field-focused: field.has-focus || (root.search && root.content-open && root.content-focused);
     // The text-in-files field has the keyboard (it is made only while Content is on).
@@ -53,7 +53,7 @@ export component FilterBar inherits Rectangle {
 
     background: Theme.chrome;
     accessible-role: groupbox;
-    accessible-label: root.search ? "Search" : "Filter";
+    accessible-label: root.search ? @tr("Search") : @tr("Filter");
 
     HorizontalLayout {
         padding-left: Theme.spacing;
@@ -101,7 +101,7 @@ export component FilterBar inherits Rectangle {
                 visible: root.search && root.text == "";
                 x: field.x + Theme.spacing + 2px;
                 height: parent.height;
-                text: "Name, e.g. *.pdf;!*draft*";
+                text: @tr("Name, e.g. *.pdf;!*draft*");
                 color: Theme.foreground-muted;
                 vertical-alignment: center;
                 accessible-role: none;
@@ -139,7 +139,7 @@ export component FilterBar inherits Rectangle {
                 visible: root.content == "";
                 x: content-field.x + Theme.spacing + 2px;
                 height: parent.height;
-                text: "Text in files";
+                text: @tr("Text in files");
                 color: Theme.foreground-muted;
                 vertical-alignment: center;
                 accessible-role: none;
@@ -156,7 +156,7 @@ export component FilterBar inherits Rectangle {
 
         if !root.search && root.text != "": TextButton {
             y: (parent.height - self.height) / 2;
-            text: "Search subfolders";
+            text: @tr("Search subfolders");
             clicked => { root.go(); }
         }
 
@@ -165,7 +165,7 @@ export component FilterBar inherits Rectangle {
             spacing: Theme.spacing;
             TextButton {
                 y: (parent.height - self.height) / 2;
-                text: "Content";
+                text: @tr("Content");
                 checked: root.content-open;
                 clicked => { root.content-toggle(); }
             }
@@ -180,7 +180,7 @@ export component FilterBar inherits Rectangle {
             }
             TextButton {
                 y: (parent.height - self.height) / 2;
-                text: root.running ? "Stop" : "Search";
+                text: root.running ? @tr("Stop") : @tr("Search");
                 primary: !root.running;
                 clicked => { root.go(); }
             }
@@ -188,7 +188,7 @@ export component FilterBar inherits Rectangle {
 
         menu-button := ToolButton {
             y: (parent.height - self.height) / 2;
-            text: root.search ? "More" : "Saved filters";
+            text: root.search ? @tr("More") : @tr("Saved filters");
             icon: "M 4 6 L 8 10 L 12 6";
             clicked => {
                 root.menu(

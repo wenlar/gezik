@@ -49,6 +49,16 @@ pub fn apply(setting: &str, files: &ConfigFiles) {
     let catalog = Catalog::open(&code, file).map(Arc::new);
     gezik_i18n::set(catalog.clone());
     crate::translator::install(catalog);
+    // What Rust holds of the texts: the windows' sidebars, menus and Settings follow the
+    // reload that brought the change (`apply_config`); the tray's menu (macOS keeps it built).
+    crate::resident::refresh_pins();
+    // The app menu Slint asks muda for (About, Hide, Quit Gezik …): made with the first
+    // window, so a later change shows at the next start, as AppKit's own items do.
+    #[cfg(target_os = "macos")]
+    i_slint_backend_winit::set_app_menu_texts(
+        [t!("About Gezik"), t!("Services"), t!("Hide Gezik"), t!("Hide Others"), t!("Show All"), t!("Quit Gezik")]
+            .map(std::borrow::Cow::into_owned),
+    );
 }
 
 /// The language row's choices (spec 15 §5.1): `code — name`, the first part is written.

@@ -89,13 +89,13 @@ pub struct CleanRule {
 
 /// The kinds the "Add rule" menu offers, in its order: (name in files, label).
 pub const KINDS: [(&str, &str); 7] = [
-    ("replace", "Replace text"),
-    ("number", "Number"),
-    ("case", "Change case"),
-    ("add-text", "Add text"),
-    ("extension", "Extension"),
-    ("template", "Name from template"),
-    ("clean", "Clean up"),
+    ("replace", gezik_i18n::tx!("Replace text")),
+    ("number", gezik_i18n::tx!("Number")),
+    ("case", gezik_i18n::tx!("Change case")),
+    ("add-text", gezik_i18n::tx!("Add text")),
+    ("extension", gezik_i18n::tx!("Extension")),
+    ("template", gezik_i18n::tx!("Name from template")),
+    ("clean", gezik_i18n::tx!("Clean up")),
 ];
 
 impl Rule {

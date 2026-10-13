@@ -6,6 +6,2209 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
+#: crates/gezik-config/src/bundle.rs
+msgid "Themes"
+msgstr ""
+
+#: crates/gezik-config/src/bundle.rs
+msgid "Templates"
+msgstr ""
+
+#: crates/gezik-config/src/bundle.rs
+msgid "Folder views"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgid "General"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgid "Appearance"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgid "Files and Tools"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgid "Layouts"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Tags"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgid "Keyboard"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "System"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgid "Advanced"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgid "Sync and Backup"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:files.copy-threads"
+msgid "auto"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:layout.sidebar"
+msgid "left"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:layout.sidebar"
+msgid "right"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:layout.sidebar"
+msgid "hidden"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:layout.density"
+msgid "compact"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:layout.density"
+msgid "comfortable"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.icons"
+msgid "system"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.icons"
+msgid "gezik"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.date-format"
+msgid "relative"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.date-format"
+msgid "short"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.date-format"
+msgid "iso"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.date-format"
+msgid "system"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.size-format"
+msgid "binary"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.size-format"
+msgid "decimal"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.mode"
+msgid "list"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.mode"
+msgid "grid"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.mode"
+msgid "columns"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "name"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "modified"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "created"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "type"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "size"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "tags"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "rating"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort-dir"
+msgid "asc"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort-dir"
+msgid "desc"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.grid-size"
+msgid "small"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.grid-size"
+msgid "medium"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.grid-size"
+msgid "large"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "none"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "type"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "date"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "size"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "tag"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "rating"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.folder-sizes"
+msgid "off"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.folder-sizes"
+msgid "local"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.folder-sizes"
+msgid "all"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:archives.double-click"
+msgid "system"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:archives.double-click"
+msgid "extract-here"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:search.everything"
+msgid "auto"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:search.everything"
+msgid "off"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:tags.dots"
+msgid "auto"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:tags.dots"
+msgid "true"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:tags.dots"
+msgid "false"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:keyboard.typing"
+msgid "jump"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:keyboard.typing"
+msgid "filter"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:system.quick-look"
+msgid "system"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:system.quick-look"
+msgid "gezik"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik-platform/src/tray.rs
+#: crates/gezik/src/language.rs
+msgid "Quit Gezik"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/language.rs
+msgid "Hide Gezik"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/language.rs
+msgid "Hide Others"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Minimize"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "New Tab"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "New Window"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Close Tab"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show Next Tab"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show Previous Tab"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Back"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Forward"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Enclosing Folder"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Go to Folder…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Refresh"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Select All"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "View as List"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "View as Grid"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "View as Columns"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show Preview"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Quick Look"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Copy"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Cut"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Paste"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Move Item Here"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Move to Trash"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Delete Immediately…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Rename"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "New Folder"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Duplicate"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/ui/app.slint
+msgid "Undo"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Redo"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Rename Items…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show Hidden Items"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Filter…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Invert Selection"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Select by Pattern…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Deselect by Pattern…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Select Same Type"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Restore Selection"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 1"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 2"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 3"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 4"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 5"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 6"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 7"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tab 8"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Last Tab"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Reopen Closed Tab"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show All Tabs…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Lock or Unlock Tab"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Clear Folder History"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Open Terminal"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Open Terminal as Administrator"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Copy Path"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Save Tabs As…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 1"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 2"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 3"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 4"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 5"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 6"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 7"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 8"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Pinned 9"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "New Folder with Selection"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Add to Drop Stack"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Drop Stack"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Operation History"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Find…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Flat View"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show in Folder"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Copy with Folders"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Cut with Folders"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Command Palette…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Quick Open…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Calculate Folder Sizes"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Save Search…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Make Alias"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Show Package Contents"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Share…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show Trash"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Put Back"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Empty Trash…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/settings.slint
+msgid "System Integration…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+msgid "Download Now"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Always Keep on This Device"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+msgid "Remove Download"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Free Up Space"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Get Info"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Connect to Server…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Eject"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Group by None"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Group by Type"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Group by Date"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Group by Size"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Collapse All Groups"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Expand All Groups"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Show in Sidebar Tree"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Two Panes"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Switch to the Other Pane"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Copy to the Other Pane"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Move to the Other Pane"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Move Tab to the Other Pane"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Sync Browsing"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Swap Panes"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Same Folder in the Other Pane"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Move Tab to New Window"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Compare"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Select Differences"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Export List…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Size Map"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Calculate Checksums…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Verify Checksums"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Find Duplicates"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Copy To…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Move To…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Split File…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Join Files"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Tags…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Toggle Tag 1"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Toggle Tag 2"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Toggle Tag 3"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Toggle Tag 4"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Toggle Tag 5"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Toggle Tag 6"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Toggle Tag 7"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Clear Tags"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Comment…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Clean Up Tag Store…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Show Preview as Hex"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Play/Pause Preview"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "More Columns…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Settings…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Keyboard Shortcuts…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Get Theme…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Export Settings…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Import Settings…"
+msgstr ""
+
+#: crates/gezik-core/src/batch/rules.rs
+msgid "Replace text"
+msgstr ""
+
+#: crates/gezik-core/src/batch/rules.rs
+msgid "Number"
+msgstr ""
+
+#: crates/gezik-core/src/batch/rules.rs
+msgid "Change case"
+msgstr ""
+
+#: crates/gezik-core/src/batch/rules.rs
+msgid "Add text"
+msgstr ""
+
+#: crates/gezik-core/src/batch/rules.rs
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Extension"
+msgstr ""
+
+#: crates/gezik-core/src/batch/rules.rs
+msgid "Name from template"
+msgstr ""
+
+#: crates/gezik-core/src/batch/rules.rs
+msgid "Clean up"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik/src/settings_window/shortcuts.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/convert.slint
+msgid "None"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Type"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Date"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Size"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik/ui/app.slint
+msgid "Tag"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Rating"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+msgid "Duplicates"
+msgstr ""
+
+#: crates/gezik-core/src/meta.rs
+msgid "Gray"
+msgstr ""
+
+#: crates/gezik-core/src/meta.rs
+msgid "Green"
+msgstr ""
+
+#: crates/gezik-core/src/meta.rs
+msgid "Purple"
+msgstr ""
+
+#: crates/gezik-core/src/meta.rs
+msgid "Blue"
+msgstr ""
+
+#: crates/gezik-core/src/meta.rs
+msgid "Yellow"
+msgstr ""
+
+#: crates/gezik-core/src/meta.rs
+msgid "Red"
+msgstr ""
+
+#: crates/gezik-core/src/meta.rs
+msgid "Orange"
+msgstr ""
+
+#: crates/gezik-core/src/ops/conflict.rs
+#: crates/gezik/src/settings_window.rs
+#: crates/gezik/src/settings_window/themes.rs
+#: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Replace"
+msgstr ""
+
+#: crates/gezik-core/src/ops/conflict.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Skip"
+msgstr ""
+
+#: crates/gezik-core/src/ops/conflict.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Keep both"
+msgstr ""
+
+#: crates/gezik-core/src/ops/conflict.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "If newer"
+msgstr ""
+
+#: crates/gezik-core/src/ops/conflict.rs
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Merge"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Action"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Command"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/pane.slint
+msgid "View"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Pinned"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Recent"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Tab"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Tab set"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Saved search"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Saved filter"
+msgstr ""
+
+#: crates/gezik-core/src/palette.rs
+msgid "Sync profile"
+msgstr ""
+
+#: crates/gezik-core/src/path_text.rs
+msgid "Full path"
+msgstr ""
+
+#: crates/gezik-core/src/path_text.rs
+msgid "Quoted"
+msgstr ""
+
+#: crates/gezik-core/src/path_text.rs
+msgid "With forward slashes"
+msgstr ""
+
+#: crates/gezik-core/src/path_text.rs
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/conflict-list.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/rename-field.slint
+#: crates/gezik/ui/widgets/tool-table.slint
+msgid "Name"
+msgstr ""
+
+#: crates/gezik-core/src/path_text.rs
+msgid "Folder path"
+msgstr ""
+
+#: crates/gezik-core/src/path_text.rs
+msgid "file:// URL"
+msgstr ""
+
+#: crates/gezik-core/src/path_text.rs
+msgid "UNC path"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Any type"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+#: crates/gezik/ui/widgets/file-view.slint
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Files"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Folders"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Pictures"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Videos"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Audio"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Documents"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Archives"
+msgstr ""
+
+#: crates/gezik-core/src/search.rs
+msgid "Code"
+msgstr ""
+
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "Relative"
+msgstr ""
+
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "Short"
+msgstr ""
+
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "ISO"
+msgstr ""
+
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "Binary (1 KB = 1024 bytes)"
+msgstr ""
+
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "Decimal (1 kB = 1000 bytes)"
+msgstr ""
+
+#: crates/gezik-platform/src/tray.rs
+msgid "Show Gezik"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Extract here"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Extract to \"{}\""
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Extract each to its own folder"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Extract to…"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Compress…"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Compress to \"{}\""
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open in new tab"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open with default app"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move up"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move down"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Rename…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move to other pane"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move to new window"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Unlock tab"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Lock tab"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/diff.slint
+#: crates/gezik/ui/widgets/ops-panel.slint
+#: crates/gezik/ui/widgets/size-map.slint
+msgid "Close"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Close other tabs"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Save tabs as…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Size at least…{}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Size at most…{}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Properties…{}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Name is a regular expression"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Content is a regular expression"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Match case"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Include hidden items"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Include skipped folders"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Tags…{}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Comment…{}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Clear filters"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Between…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Any rating"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Modified"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Search in new tab"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Clear"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "{n} folder could not be read…"
+msgid_plural "{n} folders could not be read…"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Save search…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Delete \"{}\""
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide {}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Download ffmpeg…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Download pdfium…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Previous Page"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Next Page"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Go to Page…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Play/Pause"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Back 10 Seconds"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Forward 10 Seconds"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Mute/Unmute"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Zoom In"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Zoom Out"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Fit"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Actual Size"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show as Text"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show as Hex"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Wrap Lines"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show {}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Reset columns"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Modified"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Modified"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Created"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Created"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Type"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Type"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Size"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Size"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Match"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Match"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Tags"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Tags"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Rating"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Rating"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Comment"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Comment"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Disconnect"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Connect to {}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Search this folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Search everywhere"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Filter this folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Remove from list"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "New tag…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "No color"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Color"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Select differences"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Calculate checksums…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Verify checksums"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Find duplicates"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Export list…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Tools"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Delete Permanently…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Empty Recycle Bin…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Verify copies"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "No limit"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "{} MB/s"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Speed limit"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Speed limit ({})"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Start now"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Select all but the newest in each group"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Select all but the oldest in each group"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Select all but the first in each group"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Select all in this folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Keep this one, select its copies"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Show in folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show in folder in new tab"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Copy with folders"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Cut with folders"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Paste into folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Rename items…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Delete permanently"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Undo {}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Redo {}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Paste image as file"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Paste text as file"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "New folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "New file"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Text file"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Markdown file"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open templates folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "New from template"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "New"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Create link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Shortcut"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Junction"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Symbolic link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Loading…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "{} (default)"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Other…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open With"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Quick Actions"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open terminal here"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open terminal as administrator"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "List"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Grid"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Columns"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Small icons"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Medium icons"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Large icons"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by name"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by date modified"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by date created"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by type"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by size"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by tags"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by rating"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by {}…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sort by property…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Ascending"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Descending"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Preview pane"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Drop stack"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Operation history"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/palette.rs
+msgid "Hide extensions"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/palette.rs
+msgid "Folders first"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/palette.rs
+msgid "Single-click to open"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show hidden items"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/palette.rs
+msgid "Show system items"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Apply to all folders"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Reset this folder"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show in sidebar tree"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "View rule {} applies"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Reset to rule {}"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Date format"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Size format"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Group by"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Save current rules as…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Save as…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Replace tabs with \"{}\""
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Unpin from sidebar"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Pin to sidebar"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "New group…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "No group"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move group up"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move group down"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Rename group…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Ungroup"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Properties"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "New folder with selection"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Rename {n} item…"
+msgid_plural "Rename {n} items…"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Search in \"{}\"…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Calculate folder sizes"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/app.slint
+msgid "Commands"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Search in this folder…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Copy path as"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Run in new tab"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Delete"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move to group"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Move to window"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Open tab set"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Flat view"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Two panes"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Sync browsing"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Swap panes"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Same folder in other pane"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Tag dots"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Copy Value"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Column"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Add to archive"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Copy here"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Move here"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Create link here"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/ops-panel.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Cancel"
+msgstr ""
+
+#: crates/gezik/src/convert.rs
+msgid "Convert…"
+msgstr ""
+
+#: crates/gezik/src/convert.rs
+msgid "Images to PDF…"
+msgstr ""
+
+#: crates/gezik/src/copy_to.rs
+msgid "Copy to…"
+msgstr ""
+
+#: crates/gezik/src/copy_to.rs
+msgid "Move to…"
+msgstr ""
+
+#: crates/gezik/src/copy_to.rs
+msgid "Split file…"
+msgstr ""
+
+#: crates/gezik/src/copy_to.rs
+msgid "Join files"
+msgstr ""
+
+#: crates/gezik/src/field_picker.rs
+msgid "More columns"
+msgstr ""
+
+#: crates/gezik/src/field_picker.rs
+msgid "Sort by property"
+msgstr ""
+
+#: crates/gezik/src/field_picker.rs
+msgid "Group by property"
+msgstr ""
+
+#: crates/gezik/src/field_picker.rs
+msgid "No properties match"
+msgstr ""
+
+#: crates/gezik/src/field_picker.rs
+msgid "Shown"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Make Gezik the default file manager"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Restore the system file manager"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Add gezik to PATH"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Remove gezik from PATH"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Undo all system changes"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Turn on tray icon"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Turn off tray icon"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Set a global shortcut"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Turn off the global shortcut"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Start Gezik at login"
+msgstr ""
+
+#: crates/gezik/src/integration.rs
+msgid "Do not start Gezik at login"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "About Gezik"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "Services"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "Show All"
+msgstr ""
+
 #: crates/gezik/src/language.rs
 msgid "System: {}"
 msgstr ""
@@ -26,6 +2229,2021 @@ msgstr ""
 msgid "{} % translated"
 msgstr ""
 
+#: crates/gezik/src/palette.rs
+msgid "Command palette"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Quick open"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "No commands match"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Nothing matches"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Toggle Tag: {}"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+#: crates/gezik/src/settings_window/backup.rs
+msgid "On"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Off"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Date format: {}"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Size format: {}"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Sync: {}"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "This PC"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Search for \"{}\" in {}"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Search"
+msgstr ""
+
+#: crates/gezik/src/panes.rs
+#: crates/gezik/src/search.rs
+#: crates/gezik/ui/widgets/filter-bar.slint
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Filters"
+msgstr ""
+
+#: crates/gezik/src/search.rs
+msgid "Filters ({})"
+msgstr ""
+
+#: crates/gezik/src/settings_window.rs
+msgid "Open settings.toml"
+msgstr ""
+
+#: crates/gezik/src/settings_window.rs
+msgid "Open Config Folder"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Import"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Open Data Folder"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Open Settings Folder"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Check Again"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Stop Keeping Settings There"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Use the Settings in This Folder"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Replace Them with This Computer's"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Review…"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "This copy"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Other copy"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "A gezik-portable file next to Gezik keeps everything in this folder. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Portable: settings are kept in {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "This folder has Gezik settings already"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Choose"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Use them: this computer's settings are backed up to backups/ and the folder's are used. Replace them: the folder's are backed up to backups/, then this computer's are written there. Nothing is merged."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "A sync service made it when two computers changed a theme at once. Review lists each key the two copies differ in and you choose which to keep; nothing is merged on its own."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "A sync service made it when two computers changed settings.toml at once. Review lists each key the two copies differ in and you choose which to keep; nothing is merged on its own."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Conflicting copy: {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Not reviewed"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "(not set)"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "This copy: {}  —  other copy: {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Merge {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{n} key from the other copy"
+msgid_plural "{n} keys from the other copy"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Merge writes the keys set to Other copy above into {} (the rest stays as it is) and leaves the copy where it is (its name may be one of yours). Cancel leaves both as they are."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Merge writes the keys set to Other copy above into {} (the rest stays as it is) and moves the conflicting copy to the trash. Cancel leaves both as they are."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Export Settings"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Writes settings.toml and the themes (and what is ticked below) to this zip: change the path if you like and press Enter. state.toml, the tag store, the system changes, the tools and the backups stay on this computer."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Export Templates"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "The New > templates (at most 256 MB)"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Export Folder Views"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "views.toml: the view each folder was left in (their paths are this computer's)"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Import Settings"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Type or paste the path of a zip made by Export Settings and press Enter: the rows below show what it would change, and nothing is written until you choose Import. Each file replaces the one here (nothing is merged), after a backup."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "These run programs on this computer"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{} in settings.toml"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{}. Import only files you trust: nothing runs while importing."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Looking…"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "No backups yet"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{n} backup"
+msgid_plural "{n} backups"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Restore Backup"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Before each import Gezik backs up the files it replaces here (the last 10 are kept): choose one to see what it would put back, then Import."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Undo Import"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Imported"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Puts back the files the last import replaced, byte for byte, from backups/{}, and removes those it added"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "(say, {})"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Keep Settings in a Folder"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Type a folder in OneDrive, Dropbox, iCloud Drive or Syncthing{} and press Enter: settings.toml, the themes and the templates are kept there for every computer that uses it. State, folder views, tools, backups and the tag store stay on this computer, and so do [system] and what you mark Only on This Computer (right-click a setting)."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{n} change waits for it."
+msgid_plural "{n} changes wait for it."
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Not available"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Not available — {n} change waits"
+msgid_plural "Not available — {n} changes wait"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "The folder cannot be read (a drive not plugged in, the sync app not running): the last copy is used and the settings are read-only.{} Check Again looks once more."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Shared by the computers that use this folder; this computer's own values are in settings.local.toml. Stop copies the folder's settings back here (after a backup) and leaves the folder as it is."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Settings are kept in {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{} new"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{} replaces"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{} and {} more"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{} the same here"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Import {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "The same"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "The files it replaces are backed up to backups/ first; Undo Import puts them back."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{n} entry that may not come in is left out: {}."
+msgid_plural "{n} entries that may not come in are left out: {}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Exported on {}: paths written without a {{token}} may not be on this computer."
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Import from {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Nothing to import"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "{n} file to write"
+msgid_plural "{n} files to write"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/settings_window/shortcuts.rs
+msgid "Command: {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/shortcuts.rs
+msgid "macOS keeps this key"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Use Now"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Check for Updates"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Open Source Page"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Delete Theme"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Install"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Keep Both"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Get Theme"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Paste a GitHub repository (github.com/owner/repo, …/tree/<branch>/<folder>, …/blob/…/x.toml) or an https address of a .toml file and press Enter. A theme is data only: colors, sizes and a font's name."
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "{n} of its values is wrong and is skipped."
+msgid_plural "{n} of its values are wrong and are skipped."
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Cannot install"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Installed"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "The same as themes/{}.toml"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Not installed"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Installs as themes/{}.toml; point at Install to preview it.{}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "Differs"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "themes/{0}.toml is there and differs: Replace writes over it, Keep Both installs this as themes/{1}.toml; point at either to preview it.{2}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/themes.rs
+msgid "From {} ({})"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "LOCATIONS"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "DRIVES"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "CLOUD"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "TAGS"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "Files tagged {}; drop files here to tag them"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "FOLDERS"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "PINNED"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "SEARCHES"
+msgstr ""
+
+#: crates/gezik/src/sidebar_model.rs
+msgid "Leads back to a folder above it"
+msgstr ""
+
+#: crates/gezik/src/tab_tools.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/picker.slint
+msgid "Tabs"
+msgstr ""
+
+#: crates/gezik/src/tab_tools.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/picker.slint
+msgid "No tabs match"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "File"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Edit"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "as List"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "as Grid"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "as Columns"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Group By"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Property…"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Sort by Property…"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Tag Dots"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Hide Extensions"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Folders First"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Single-Click to Open"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Date Format"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Size Format"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Go"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Window"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Zoom"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Unlock Tab"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Lock Tab"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Open Tab Set"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "History"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Close the compare"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "{} — Gezik"
+msgstr ""
+
+#: crates/gezik/ui/widgets/breadcrumb.slint
+msgid "Address"
+msgstr ""
+
+#: crates/gezik/ui/widgets/column-view.slint
+#: crates/gezik/ui/widgets/file-view.slint
+msgid "{}, tags {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Format"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Level"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Store"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Fast"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Normal"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Best"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Password"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/dialog.slint
+msgid "Show"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Encrypt file names"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Split"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "100 MB"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "700 MB"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "4 GB (FAT32)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Custom…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgctxt "unit"
+msgid "MB"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Add to existing archive…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/compress.slint
+msgid "Compress"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgctxt "button"
+msgid "Replace"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Apply to:"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Selected"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "All"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Show identical ({})"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Hide identical ({})"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Source"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Target"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "{}  (folder)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "{}  (file and folder)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "identical"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "{}  {}  (newer)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgid "Cancel operation"
+msgstr ""
+
+#: crates/gezik/ui/widgets/conflict-list.slint
+msgctxt "button"
+msgid "Start"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Preset"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Image"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Quality"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Resize"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Longest side"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Width"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Height"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Percent"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Never enlarge"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Rotate by EXIF"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Remove metadata (incl. location)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Background"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "for transparent parts (#rrggbb)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Text"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "From"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "To"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Byte order mark (BOM)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Line endings"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "As they are"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Remove trailing spaces"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "One line ending at the end"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Page order"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Merge order"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Drag a name to change the order."
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Page"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Picture size"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Letter"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Margin"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Small"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Large"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Each page"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Every"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Pages in each file"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "pages"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Ranges"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Pages"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "e.g. 1-3, 5, 8-"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Resolution"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "{} dpi"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Output"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Same folder, new name"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Subfolder \"converted\""
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Choose…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Replace originals"
+msgstr ""
+
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Convert"
+msgstr ""
+
+#: crates/gezik/ui/widgets/diff.slint
+msgid "Ignore whitespace"
+msgstr ""
+
+#: crates/gezik/ui/widgets/diff.slint
+msgid "Ignore case"
+msgstr ""
+
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Drop files here"
+msgstr ""
+
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Drag all {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Remove {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgid "sorted descending"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgid "sorted ascending"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Name"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Original location"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Folder"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Match"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Date deleted"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Modified"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Created"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Type"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Size"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Tags"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Rating"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Comment"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgid "{}, collapsed"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgid "{}, expanded"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Filter"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Name, e.g. *.pdf;!*draft*"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Text in files"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Search subfolders"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Content"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Stop"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "More"
+msgstr ""
+
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Saved filters"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Sharing & Permissions"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Owner"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Group"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Your groups"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Everyone"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Read"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Write"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Execute"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Hidden"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+#: crates/gezik/ui/widgets/tab-bar.slint
+msgid "Locked"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Octal"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Open with"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Change All…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Apply to enclosed items…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Change as administrator…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Done"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Current"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "No operations yet"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Operations"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Details"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Retry"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Pause"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Resume"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+#: crates/gezik/ui/widgets/size-map.slint
+msgid "Up"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Left pane, {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Right pane, {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/path-suggestions.slint
+msgid "Suggestions"
+msgstr ""
+
+#: crates/gezik/ui/widgets/picker.slint
+msgid "{}, on all items"
+msgstr ""
+
+#: crates/gezik/ui/widgets/picker.slint
+msgid "{}, on some items"
+msgstr ""
+
+#: crates/gezik/ui/widgets/picker.slint
+msgid "{n} star"
+msgid_plural "{n} stars"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Page {} of {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Select a file to preview"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Hex"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Wrap"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Wrap lines, on"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Wrap lines, off"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Position"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Mute"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Mute, on"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Mute, off"
+msgstr ""
+
+#: crates/gezik/ui/widgets/preview-pane.slint
+msgid "Volume"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Presets"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Rules"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "+ Add rule"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Remove rule"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Find"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Regex"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Start"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Step"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Digits"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Separator"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "At start"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "At end"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Per folder"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgctxt "case"
+msgid "lower"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgctxt "case"
+msgid "UPPER"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgctxt "case"
+msgid "Title"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgctxt "case"
+msgid "Sentence"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Before"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "After"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Fields"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Trim spaces at the ends"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Collapse repeated spaces"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "_ . - become spaces"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Spaces become _"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Include extension"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Preview"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Sort by"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Only changed"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Old name"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "New name"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "{} to {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Reset to rules"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "this computer"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "default"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "default {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "{} changed in settings.toml: {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Reset to Default"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Copy Key"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Edit in settings.toml"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Use the Shared Value"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Only on This Computer"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Press keys…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Set Key…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Set Key for {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Press the keys for {}: Esc cancels, Backspace leaves it no key"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Press the keys for {}: Escape cancels, Backspace leaves it no key"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Menu of {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Choices for {}"
+msgstr ""
+
 #: crates/gezik/ui/widgets/settings.slint
 msgid "Settings — Gezik"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Settings pages: {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Search settings"
+msgstr ""
+
+#: crates/gezik/ui/widgets/sidebar.slint
+msgid "Places"
+msgstr ""
+
+#: crates/gezik/ui/widgets/sidebar.slint
+msgid "Level {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/tab-bar.slint
+msgid "Close {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/tab-bar.slint
+msgid "New tab"
+msgstr ""
+
+#: crates/gezik/ui/widgets/tool-table.slint
+msgid "Status"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:language"
+msgid "Language"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:language"
+msgid "Interface language: \"auto\" follows the system; or a code: \"en\", or the name of a file in the lang folder (lang/pl.po -> \"pl\"). \"pseudo\" shows every text marked and lengthened, for translators."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:start-folder"
+msgid "Start folder"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:start-folder"
+msgid "Where new tabs open: \"{home}\", \"drives\" (This PC), or any folder. Tokens like {home}, {documents}, {downloads} work on every OS."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:max-fps"
+msgid "Max fps"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:max-fps"
+msgid "Most frames drawn per second, e.g. while scrolling. Lower saves CPU on high refresh rate displays; 0 draws as many as the display shows."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:session.restore"
+msgid "Restore"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:session.restore"
+msgid "Open the tabs of last time at start, in order, with the one in front and the locks (kept in state.toml, this computer's own). false: one tab in start-folder, the kept tabs forgotten."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:history.remember"
+msgid "Remember"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:history.remember"
+msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.confirm-trash"
+msgid "Confirm trash"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.confirm-trash"
+msgid "Ask before moving to the trash (Delete)."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.copy-threads"
+msgid "Copy threads"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.copy-threads"
+msgid "Files copied or deleted at once: \"auto\" (SSD 6, spinning disk 1, network 4) or 1-16."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.verify"
+msgid "Verify"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.verify"
+msgid "Read each copied file back and compare it with the original (copies take about twice as long); a file that differs is copied once more. Each job can change it in its ... menu."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.max-speed"
+msgid "Max speed"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:files.max-speed"
+msgid "The most a copy or move may take, as \"20 MB/s\", \"500 KB/s\" or \"1.5 GB/s\" (1 MB = 1,000,000 bytes); empty = no limit. Each job can change it in its ... menu."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:theme"
+msgid "Theme"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:theme"
+msgid "\"auto\" follows the system light/dark mode. Or name a theme: \"light\", \"dark\", or the file name of a theme in the themes folder (themes/nord.toml -> \"nord\")."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:theme-light"
+msgid "Theme light"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:theme-light"
+msgid "The light mode's theme with \"auto\""
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:theme-dark"
+msgid "Theme dark"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:theme-dark"
+msgid "The dark mode's theme with \"auto\""
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:layout.sidebar"
+msgid "Sidebar"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:layout.sidebar"
+msgid "left | right | hidden"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:layout.density"
+msgid "Density"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:layout.density"
+msgid "compact | comfortable"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:layout.reduce-motion"
+msgid "Reduce motion"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:layout.reduce-motion"
+msgid "true: no fades on hover and popups."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.icons"
+msgid "Icons"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.icons"
+msgid "System | gezik (Gezik's own icons, colored by the theme)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.thumbnails"
+msgid "Thumbnails"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.thumbnails"
+msgid "Pictures and videos show a preview in the grid"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.hide-extensions"
+msgid "Hide extensions"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.hide-extensions"
+msgid "Show names without their extension. The same in every folder; the View menu changes these here too."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.date-format"
+msgid "Date format"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.date-format"
+msgid "Relative | short | iso | system"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.size-format"
+msgid "Size format"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.size-format"
+msgid "Binary (1024, KB) | decimal (1000, kB)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.show-hidden"
+msgid "Show hidden"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.show-hidden"
+msgid "Dot names and Windows' hidden items; default true (macOS: false)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.show-system"
+msgid "Show system"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.show-system"
+msgid "Windows only: protected system items (desktop.ini, $RECYCLE.BIN)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.mode"
+msgid "Mode"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.mode"
+msgid "List | grid | columns. How folders look. A folder you change keeps its own view; \"Apply to all folders\" in the View menu writes mode, sort, sort-dir, grid-size and group here."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.sort"
+msgid "Sort"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.sort"
+msgid "Name | modified | created | type | size | tags | rating"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.sort-dir"
+msgid "Sort dir"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.sort-dir"
+msgid "Asc | desc"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.grid-size"
+msgid "Grid size"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.grid-size"
+msgid "Small | medium | large"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.group"
+msgid "Group"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.group"
+msgid "None | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.folders-first"
+msgid "Folders first"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.folders-first"
+msgid "Folders before files in every sort"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.single-click-open"
+msgid "Single click open"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.single-click-open"
+msgid "One click opens; Ctrl (Cmd) and Shift clicks still select"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.folder-sizes"
+msgid "Folder sizes"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view.folder-sizes"
+msgid "Sizes of the folders shown: off (only when asked) | local (not on network folders) | all"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.confirm"
+msgid "Confirm"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.confirm"
+msgid "F5/F6 ask before copying or moving to the other pane (its folder can be changed there)."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:sidebar.cloud"
+msgid "Cloud"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:sidebar.cloud"
+msgid "OneDrive, iCloud Drive, Dropbox, Google Drive … under CLOUD, found by Gezik. Rows in these folders show whether a file is only in the cloud either way."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:sidebar.tags"
+msgid "Tags"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:sidebar.tags"
+msgid "TAGS: your [tags] list, a click shows the files with that tag (macOS: Spotlight)."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:sidebar.tree-follow"
+msgid "Tree follow"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:sidebar.tree-follow"
+msgid "The sidebar's folder tree opens down to the folder shown, as Explorer's \"Expand to open folder\" (each closed folder above it is read once). Off: Show in Sidebar Tree does it once."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.properties"
+msgid "Properties"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.properties"
+msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:archives.double-click"
+msgid "Double click"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:archives.double-click"
+msgid "System | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:convert.ffmpeg"
+msgid "Ffmpeg"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:convert.ffmpeg"
+msgid "Path to ffmpeg; empty = Gezik's download, then PATH"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.download"
+msgid "Download"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.download"
+msgid "Offer to download 7-Zip, ffmpeg and pdfium when needed"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.seven-zip"
+msgid "Seven zip"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.seven-zip"
+msgid "Path to 7-Zip; empty = Gezik's download, then PATH"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.diff"
+msgid "Diff"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.diff"
+msgid "An external compare program (WinMerge, Meld, Beyond Compare, FileMerge's opendiff…): a full path, a name on PATH or a macOS .app; empty = Gezik's own"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.folder-diff"
+msgid "Folder diff"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.folder-diff"
+msgid "Also hand it two folders (otherwise Gezik compares folders itself)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.everything"
+msgid "Everything"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.everything"
+msgid "Auto | off. Windows: ask Everything (voidtools) for names when it runs; \"off\": Gezik's own scanner always."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.max-results"
+msgid "Max results"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.max-results"
+msgid "1000-2000000; a search stops there"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.content-max-size"
+msgid "Content max size"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.content-max-size"
+msgid "Larger files are not read for text"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tags.write-to-files"
+msgid "Write to files"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tags.write-to-files"
+msgid "false: keep every tag in Gezik's own store, never in the files (read when Gezik starts)."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tags.dots"
+msgid "Dots"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tags.dots"
+msgid "Tag dots beside names: \"auto\" (macOS: on; else on once you tag a file), true or false."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tags.list"
+msgid "List"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tags.list"
+msgid "Your tags, in order: the first seven get the keys Alt+Shift+1…7 (macOS ⌃1…⌃7). color: red, orange, yellow, green, blue, purple, gray or none."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:keyboard.typing"
+msgid "Typing"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:keyboard.typing"
+msgid "Jump | filter. What typing a letter on the file list does: \"jump\" goes to the first name starting with what you typed; \"filter\" opens the filter (Ctrl+F, or / ) with it."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:shortcuts"
+msgid "Shortcuts"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.single-instance"
+msgid "Single instance"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.single-instance"
+msgid "A second `gezik` (a folder from the command line, a script, another app) opens in the window used last instead of a new process; `gezik --new-window` opens a new window in it. Off: every `gezik` is a process of its own. Read at start."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.quick-look"
+msgid "Quick look"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.quick-look"
+msgid "System | gezik. macOS: Space opens the system Quick Look panel (\"system\") or Gezik's own window (\"gezik\"). Windows and Linux always use Gezik's own."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.tray"
+msgid "Tray"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.tray"
+msgid "An icon in the notification area (macOS: menu bar; Linux: tray). With it, closing the window keeps Gezik running; quit from the icon's menu. Turned on in System Integration."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.hotkey"
+msgid "Hotkey"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:system.hotkey"
+msgid "A system-wide shortcut that shows or hides Gezik from any app, e.g. \"win+shift+e\" (macOS \"cmd+alt+e\", Linux \"super+shift+e\"). \"\" is off; there is no default. A letter, a digit or F1-F12 with Win/Super, or with Ctrl+Shift or Alt+Shift (one modifier alone is every app's own: Ctrl+C, Alt+F4); Ctrl+Alt is not used (AltGr); Win+L, D, E, R and Win+<digit> are the system's. macOS: Cmd or Ctrl with Option or Shift (Cmd alone is every app's own)."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:pinned"
+msgid "Pinned"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:pinned"
+msgid "Folders pinned to the sidebar: a path, or { path, name, group } for an alias and a group: Gezik updates this list when you pin, unpin, rename, group or reorder folders; your comments elsewhere in this file are kept. Comments inside the pinned list itself are not kept when Gezik updates it."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.diff-args"
+msgid "Diff args"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tools.diff-args"
+msgid "Its arguments; {left} and {right} become the two paths"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:terminal.command"
+msgid "Command"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:terminal.command"
+msgid "The terminal \"Open terminal\" runs: a program and its arguments, {dir} is the folder (\"{{\" and \"}}\" are braces). Unset: Gezik finds one (Windows Terminal, else PowerShell; Terminal on macOS; $TERMINAL, x-terminal-emulator or a terminal it knows on Linux). Through cmd or a .bat/.cmd file, a folder with % & | < > ^ \" ( ) ! in its name is refused. Give {dir} as an argument of its own (or a flag's value), never inside code for a shell ([\"powershell\", \"-Command\", \"cd {dir}\"], [\"bash\", \"-c\", \"cd {dir}\"], cmd /c): the folder's name would run there as code, as administrator too."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.skip"
+msgid "Skip"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:search.skip"
+msgid "Folders a search does not go into (by name)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:rename-presets"
+msgid "Rename presets"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:filters"
+msgid "Filters"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:tab-sets"
+msgid "Tab sets"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:searches"
+msgid "Searches"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:sync-profiles"
+msgid "Sync profiles"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:view-rules"
+msgid "View rules"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:highlight-rules"
+msgid "Highlight rules"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:commands"
+msgid "Commands"
 msgstr ""

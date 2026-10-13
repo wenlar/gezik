@@ -145,7 +145,11 @@ fn node_row(id: NodeId, node: &tree::Node, current: Option<&Path>) -> SidebarRow
         section: SECTION_TREE,
         index: index_of(id),
         active: current.is_some_and(|c| same_path(c, &node.path)),
-        tip: if node.state == tree::State::Loop { "Leads back to a folder above it".into() } else { "".into() },
+        tip: if node.state == tree::State::Loop {
+            gezik_i18n::t!("Leads back to a folder above it").as_ref().into()
+        } else {
+            "".into()
+        },
         icon: ICON_FOLDER,
         depth: i32::from(node.depth),
         arrow: node.state.arrow(),

@@ -10,3 +10,9 @@ Numbering goes on from `../macos-test.md` (it ends at 387). Results go to `../ma
 ### 15d, CJK font fallback
 
 395. **Han characters.** A folder with `测试这检查对齐.txt` and `日本語のファイル.txt`, English system: the Chinese name draws in PingFang SC with no empty boxes (`这`, `对`); the Japanese name's kana in Hiragino. Then System Settings ▸ General ▸ Language & Region: add 日本語 below English, restart Gezik: the Kanji of both names take the Japanese forms (Hiragino; `这` may fall back), and nothing else changes. Remove 日本語 afterwards.
+
+### 15b, the interface's texts
+
+390. **Menus in the pseudo language.** `language = "pseudo"`: every menu of the menu bar (File, Edit, View, Go, Tools, Commands, Window and their submenus: Tags, Rating, Group By, Date Format, Size Format, Open Tab Set) shows every item framed and accented, none cut off. The app menu's About/Hide/Quit Gezik items Slint/muda put there: note whether they are framed (if not, they are muda's own English and stay so until 15e's `CFBundleLocalizations`). A right-click on a file, the empty list, a tab, the sidebar and a column header: framed. Back to `auto`: plain English at once.
+391. **VoiceOver in the pseudo language.** With VoiceOver on (⌘F5), move to the toolbar's Back button, a tab's close button, the address bar and a file row: VoiceOver reads the accented (pseudo) names, not the English ones.
+392. **Settings in the pseudo language.** ⌘,: the page names, each row's title and description (the description from the template comment), a choice's label (`layout.sidebar` shows the framed `left`/`right`/`hidden`) and the right-click menu are framed. Choose `right`: `settings.toml` says `sidebar = "right"` (the English value), the row shows the framed label. The Keyboard page: action titles framed; typing `copy pa` in the search box still finds Copy Path. ⌘⇧P: the palette finds Copy Path by its framed title and by `copy pa`.

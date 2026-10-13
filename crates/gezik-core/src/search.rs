@@ -262,15 +262,15 @@ impl KindFilter {
 
     pub fn label(self) -> &'static str {
         match self {
-            KindFilter::Any => "Any type",
-            KindFilter::Files => "Files",
-            KindFilter::Folders => "Folders",
-            KindFilter::Pictures => "Pictures",
-            KindFilter::Videos => "Videos",
-            KindFilter::Audio => "Audio",
-            KindFilter::Documents => "Documents",
-            KindFilter::Archives => "Archives",
-            KindFilter::Code => "Code",
+            KindFilter::Any => gezik_i18n::tx!("Any type"),
+            KindFilter::Files => gezik_i18n::tx!("Files"),
+            KindFilter::Folders => gezik_i18n::tx!("Folders"),
+            KindFilter::Pictures => gezik_i18n::tx!("Pictures"),
+            KindFilter::Videos => gezik_i18n::tx!("Videos"),
+            KindFilter::Audio => gezik_i18n::tx!("Audio"),
+            KindFilter::Documents => gezik_i18n::tx!("Documents"),
+            KindFilter::Archives => gezik_i18n::tx!("Archives"),
+            KindFilter::Code => gezik_i18n::tx!("Code"),
         }
     }
 

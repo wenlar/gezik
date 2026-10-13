@@ -19,6 +19,7 @@ use gezik_config::shortcuts::Platform;
 use gezik_config::store::{ConfigFiles, ConfigStore};
 use gezik_config::theme::{BUILTIN_THEMES, ResolvedTheme};
 use gezik_core::nav::Location;
+use gezik_i18n::{t, tx};
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
@@ -202,7 +203,7 @@ impl Shown {
         let field = &FIELDS[i];
         let described = &self.described[i];
         let options: Vec<SharedString> = match field.kind {
-            Kind::Choice(options) => options.iter().map(|o| SharedString::from(*o)).collect(),
+            Kind::Choice(options) => options.iter().map(|o| choice_label(field, o).as_ref().into()).collect(),
             Kind::Theme => {
                 let auto = (field.key == "theme").then_some("auto");
                 auto.into_iter()
@@ -222,13 +223,13 @@ impl Shown {
                 Kind::List => 3,
                 Kind::Integration => 4,
             },
-            title: field.title().into(),
+            title: t(&field.context(), &field.title()).as_ref().into(),
             key: field.path().into(),
             // The bundled font has no ▸ (the template's "Group by ▸ Type").
-            description: described.description.replace('▸', ">").into(),
-            value: self.value(i).unwrap_or(&described.default).into(),
+            description: t(&field.context(), &described.description).replace('▸', ">").into(),
+            value: choice_label(field, self.value(i).unwrap_or(&described.default)).as_ref().into(),
             is_default: self.value(i).is_none(),
-            default: described.default.as_str().into(),
+            default: choice_label(field, &described.default).as_ref().into(),
             options: ModelRc::new(VecModel::from(options)),
             place: match (&self.backup.synced, self.local_values.get(i).is_some_and(Option::is_some)) {
                 (None, _) => 0,
@@ -266,8 +267,14 @@ impl Shown {
             return Err(why.to_owned());
         }
         let field = &FIELDS[i];
-        // A language's choice says its name after the code.
-        let input = if field.kind == Kind::Language { crate::language::code_of(input) } else { input };
+        // A language's choice says its name after the code; another choice is shown translated.
+        let input = match field.kind {
+            Kind::Language => crate::language::code_of(input),
+            Kind::Choice(options) => {
+                options.iter().find(|o| choice_label(field, o) == input.trim()).map_or(input, |o| *o)
+            }
+            _ => input,
+        };
         let shown = self.value(i).unwrap_or(&self.described[i].default);
         if input.trim() == shown && self.value(i).is_some() {
             return Ok(None);
@@ -278,6 +285,14 @@ impl Shown {
         })?;
         schema::check(field, &literal)?;
         Ok(Some(value_change(field, Some(literal))))
+    }
+}
+
+/// A choice as the row shows it (spec 15 §6): translated; the value written stays as it is.
+fn choice_label<'a>(field: &Field, value: &'a str) -> std::borrow::Cow<'a, str> {
+    match field.kind {
+        Kind::Choice(_) => t(&field.choice_context(), value),
+        _ => value.into(),
     }
 }
 
@@ -351,9 +366,7 @@ pub fn open() {
     shown.backup.export_to = zip.display().to_string();
     shown.backup.suggest = crate::cloud::first_root();
     shown.pick_rows();
-    let links = ["Open settings.toml", "Open Config Folder"];
-    let pages: Vec<SharedString> = Page::ALL.iter().map(|p| p.title()).chain(links).map(Into::into).collect();
-    window.set_pages(ModelRc::new(VecModel::from(pages)));
+    set_pages(&window);
     let open = Rc::new(Open {
         window,
         shown: RefCell::new(shown),
@@ -439,9 +452,19 @@ pub fn close() {
     end_preview_now();
 }
 
-/// The config files were read again (settings.toml or a theme changed): the rows follow.
+/// The pages and the two links after them, in the language in use.
+fn set_pages(window: &SettingsWindow) {
+    let links = [tx!("Open settings.toml"), tx!("Open Config Folder")];
+    let pages: Vec<SharedString> =
+        Page::ALL.iter().map(|p| p.title()).chain(links).map(|title| t("", title).as_ref().into()).collect();
+    window.set_pages(ModelRc::new(VecModel::from(pages)));
+}
+
+/// The config files were read again (settings.toml, a theme or a language changed): the rows
+/// follow.
 pub fn refresh(files: &ConfigFiles) {
     let Some(open) = current() else { return };
+    set_pages(&open.window);
     with_settings(|settings| open.shown.borrow_mut().read(files, settings));
     open.shown.borrow_mut().pick_rows();
     show_rows(&open, false);
@@ -553,7 +576,7 @@ fn bind(open: &Rc<Open>) {
             if let Some(key) = key {
                 let pending = open.shown.borrow_mut().pending.take();
                 say(&open, "");
-                if let Some((_, changes)) = pending.filter(|(of, _)| *of == key && text == "Replace") {
+                if let Some((_, changes)) = pending.filter(|(of, _)| *of == key && text == t!("Replace")) {
                     changes.into_iter().for_each(write);
                 }
                 return;
@@ -566,7 +589,8 @@ fn bind(open: &Rc<Open>) {
                 }
                 Ok(None) => {}
                 Err(why) => {
-                    let title = open.shown.borrow().rows.get(row).map(|&i| FIELDS[i].title()).unwrap_or_default();
+                    let field = open.shown.borrow().rows.get(row).map(|&i| &FIELDS[i]);
+                    let title = field.map(|f| t(&f.context(), &f.title()).into_owned()).unwrap_or_default();
                     say_bad(&open, &format!("{title}: {why} — not written"));
                 }
             }
@@ -793,7 +817,41 @@ fn edit_file() {
 
 /// A theme row's choice: Get Theme's address, a theme found's Install, Replace or Keep Both, an
 /// installed theme's Use Now, Check for Updates, Open Source Page or Delete Theme.
+/// The English option a row's translated choice stands for (the option consts and Cancel);
+/// any other text (a typed path, a backup's name, a box's true/false) as it is.
+fn source_of(text: &str) -> &str {
+    const OPTIONS: [&str; 20] = [
+        themes::USE_NOW,
+        themes::CHECK,
+        themes::SOURCE_PAGE,
+        themes::DELETE,
+        themes::INSTALL,
+        themes::REPLACE,
+        themes::KEEP_BOTH,
+        backup::IMPORT,
+        backup::UNDO,
+        backup::OPEN_DATA,
+        backup::OPEN_SYNC,
+        backup::CHECK_AGAIN,
+        backup::STOP,
+        backup::USE,
+        backup::REPLACE,
+        backup::REVIEW,
+        backup::THIS_COPY,
+        backup::OTHER_COPY,
+        backup::MERGE,
+        backup::CANCEL,
+    ];
+    for option in OPTIONS {
+        if t("", option) == text {
+            return option;
+        }
+    }
+    text
+}
+
 fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
+    let text = source_of(text);
     match row {
         themes::Row::Get => fetch(open, text.trim()),
         themes::Row::Found(i) => {
@@ -911,6 +969,7 @@ fn fetch(open: &Open, address: &str) {
 /// A Sync and Backup row's change: an export's or import's path, a box, Import or Cancel, a
 /// backup to restore, Undo.
 fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
+    let text = source_of(text);
     use backup::Row;
     use gezik_config::bundle::Group;
     let path = || gezik_config::paths::KnownDirs::system().expand(text.trim().trim_matches('"'));

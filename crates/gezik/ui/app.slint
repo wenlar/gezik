@@ -86,176 +86,176 @@ export component AppWindow inherits Window {
     callback menu-command(string);
     if root.native-menu-bar: MenuBar {
         Menu {
-            title: "File";
-            MenuItem { title: "New Window"; shortcut: root.menu-keys ? root.bar-key("new-window", root.keys-version) : @keys(); activated => { root.menu-command("new-window"); } }
-            MenuItem { title: "New Tab"; shortcut: root.menu-keys ? root.bar-key("new-tab", root.keys-version) : @keys(); activated => { root.menu-command("new-tab"); } }
-            MenuItem { title: "New Folder"; shortcut: root.menu-keys ? root.bar-key("new-folder", root.keys-version) : @keys(); activated => { root.menu-command("new-folder"); } }
-            MenuItem { title: "New Folder with Selection"; shortcut: root.menu-keys ? root.bar-key("new-folder-with-selection", root.keys-version) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
-            MenuItem { title: "Open Terminal"; shortcut: root.menu-keys ? root.bar-key("open-terminal", root.keys-version) : @keys(); activated => { root.menu-command("open-terminal"); } }
+            title: @tr("File");
+            MenuItem { title: @tr("New Window"); shortcut: root.menu-keys ? root.bar-key("new-window", root.keys-version) : @keys(); activated => { root.menu-command("new-window"); } }
+            MenuItem { title: @tr("New Tab"); shortcut: root.menu-keys ? root.bar-key("new-tab", root.keys-version) : @keys(); activated => { root.menu-command("new-tab"); } }
+            MenuItem { title: @tr("New Folder"); shortcut: root.menu-keys ? root.bar-key("new-folder", root.keys-version) : @keys(); activated => { root.menu-command("new-folder"); } }
+            MenuItem { title: @tr("New Folder with Selection"); shortcut: root.menu-keys ? root.bar-key("new-folder-with-selection", root.keys-version) : @keys(); activated => { root.menu-command("new-folder-with-selection"); } }
+            MenuItem { title: @tr("Open Terminal"); shortcut: root.menu-keys ? root.bar-key("open-terminal", root.keys-version) : @keys(); activated => { root.menu-command("open-terminal"); } }
             MenuSeparator { }
-            MenuItem { title: "Get Info"; shortcut: root.menu-keys ? root.bar-key("get-info", root.keys-version) : @keys(); activated => { root.menu-command("get-info"); } }
-            MenuItem { title: "Quick Look"; activated => { root.menu-command("quick-look"); } }
-            MenuItem { title: "Rename"; activated => { root.menu-command("rename"); } }
-            MenuItem { title: "Rename Items…"; activated => { root.menu-command("batch-rename"); } }
-            MenuItem { title: "Duplicate"; shortcut: root.menu-keys ? root.bar-key("duplicate", root.keys-version) : @keys(); activated => { root.menu-command("duplicate"); } }
-            MenuItem { title: "Copy to the Other Pane"; activated => { root.menu-command("copy-to-other-pane"); } }
-            MenuItem { title: "Move to the Other Pane"; activated => { root.menu-command("move-to-other-pane"); } }
-            MenuItem { title: "Make Alias"; shortcut: root.menu-keys ? root.bar-key("make-alias", root.keys-version) : @keys(); activated => { root.menu-command("make-alias"); } }
-            MenuItem { title: "Show Package Contents"; activated => { root.menu-command("show-package-contents"); } }
-            MenuItem { title: "Share…"; activated => { root.menu-command("share"); } }
-            MenuItem { title: "Eject"; shortcut: root.menu-keys ? root.bar-key("eject", root.keys-version) : @keys(); activated => { root.menu-command("eject"); } }
+            MenuItem { title: @tr("Get Info"); shortcut: root.menu-keys ? root.bar-key("get-info", root.keys-version) : @keys(); activated => { root.menu-command("get-info"); } }
+            MenuItem { title: @tr("Quick Look"); activated => { root.menu-command("quick-look"); } }
+            MenuItem { title: @tr("Rename"); activated => { root.menu-command("rename"); } }
+            MenuItem { title: @tr("Rename Items…"); activated => { root.menu-command("batch-rename"); } }
+            MenuItem { title: @tr("Duplicate"); shortcut: root.menu-keys ? root.bar-key("duplicate", root.keys-version) : @keys(); activated => { root.menu-command("duplicate"); } }
+            MenuItem { title: @tr("Copy to the Other Pane"); activated => { root.menu-command("copy-to-other-pane"); } }
+            MenuItem { title: @tr("Move to the Other Pane"); activated => { root.menu-command("move-to-other-pane"); } }
+            MenuItem { title: @tr("Make Alias"); shortcut: root.menu-keys ? root.bar-key("make-alias", root.keys-version) : @keys(); activated => { root.menu-command("make-alias"); } }
+            MenuItem { title: @tr("Show Package Contents"); activated => { root.menu-command("show-package-contents"); } }
+            MenuItem { title: @tr("Share…"); activated => { root.menu-command("share"); } }
+            MenuItem { title: @tr("Eject"); shortcut: root.menu-keys ? root.bar-key("eject", root.keys-version) : @keys(); activated => { root.menu-command("eject"); } }
             Menu {
-                title: "Tags";
+                title: @tr("Tags");
                 for entry in root.bar-tags: MenuItem {
                     title: entry.title;
                     activated => { root.menu-command("tag:" + entry.id); }
                 }
                 MenuSeparator { }
-                MenuItem { title: "Tags…"; shortcut: root.menu-keys ? root.bar-key("tags", root.keys-version) : @keys(); activated => { root.menu-command("tags"); } }
-                MenuItem { title: "Clear Tags"; shortcut: root.menu-keys ? root.bar-key("clear-tags", root.keys-version) : @keys(); activated => { root.menu-command("clear-tags"); } }
+                MenuItem { title: @tr("Tags…"); shortcut: root.menu-keys ? root.bar-key("tags", root.keys-version) : @keys(); activated => { root.menu-command("tags"); } }
+                MenuItem { title: @tr("Clear Tags"); shortcut: root.menu-keys ? root.bar-key("clear-tags", root.keys-version) : @keys(); activated => { root.menu-command("clear-tags"); } }
                 MenuSeparator { }
                 Menu {
-                    title: "Rating";
-                    MenuItem { title: "None"; activated => { root.menu-command("rating:0"); } }
+                    title: @tr("Rating");
+                    MenuItem { title: @tr("None"); activated => { root.menu-command("rating:0"); } }
                     MenuItem { title: "★"; activated => { root.menu-command("rating:1"); } }
                     MenuItem { title: "★★"; activated => { root.menu-command("rating:2"); } }
                     MenuItem { title: "★★★"; activated => { root.menu-command("rating:3"); } }
                     MenuItem { title: "★★★★"; activated => { root.menu-command("rating:4"); } }
                     MenuItem { title: "★★★★★"; activated => { root.menu-command("rating:5"); } }
                 }
-                MenuItem { title: "Comment…"; activated => { root.menu-command("edit-comment"); } }
+                MenuItem { title: @tr("Comment…"); activated => { root.menu-command("edit-comment"); } }
                 MenuSeparator { }
-                MenuItem { title: "Clean Up Tag Store…"; activated => { root.menu-command("clean-tag-store"); } }
+                MenuItem { title: @tr("Clean Up Tag Store…"); activated => { root.menu-command("clean-tag-store"); } }
             }
             MenuSeparator { }
-            MenuItem { title: "Put Back"; activated => { root.menu-command("put-back"); } }
-            MenuItem { title: "Empty Trash…"; shortcut: root.menu-keys ? root.bar-key("empty-trash", root.keys-version) : @keys(); activated => { root.menu-command("empty-trash"); } }
-            MenuItem { title: "Move to Trash"; shortcut: root.menu-keys ? root.bar-key("trash", root.keys-version) : @keys(); activated => { root.menu-command("trash"); } }
-            MenuItem { title: "Delete Immediately…"; shortcut: root.menu-keys ? root.bar-key("delete-permanently", root.keys-version) : @keys(); activated => { root.menu-command("delete-permanently"); } }
+            MenuItem { title: @tr("Put Back"); activated => { root.menu-command("put-back"); } }
+            MenuItem { title: @tr("Empty Trash…"); shortcut: root.menu-keys ? root.bar-key("empty-trash", root.keys-version) : @keys(); activated => { root.menu-command("empty-trash"); } }
+            MenuItem { title: @tr("Move to Trash"); shortcut: root.menu-keys ? root.bar-key("trash", root.keys-version) : @keys(); activated => { root.menu-command("trash"); } }
+            MenuItem { title: @tr("Delete Immediately…"); shortcut: root.menu-keys ? root.bar-key("delete-permanently", root.keys-version) : @keys(); activated => { root.menu-command("delete-permanently"); } }
             MenuSeparator { }
-            MenuItem { title: "Close Tab"; shortcut: root.menu-keys ? root.bar-key("close-tab", root.keys-version) : @keys(); activated => { root.menu-command("close-tab"); } }
+            MenuItem { title: @tr("Close Tab"); shortcut: root.menu-keys ? root.bar-key("close-tab", root.keys-version) : @keys(); activated => { root.menu-command("close-tab"); } }
         }
         Menu {
-            title: "Edit";
-            MenuItem { title: "Undo"; shortcut: root.menu-keys ? root.bar-key("undo", root.keys-version) : @keys(); activated => { root.menu-command("undo"); } }
-            MenuItem { title: "Redo"; shortcut: root.menu-keys ? root.bar-key("redo", root.keys-version) : @keys(); activated => { root.menu-command("redo"); } }
+            title: @tr("Edit");
+            MenuItem { title: @tr("Undo"); shortcut: root.menu-keys ? root.bar-key("undo", root.keys-version) : @keys(); activated => { root.menu-command("undo"); } }
+            MenuItem { title: @tr("Redo"); shortcut: root.menu-keys ? root.bar-key("redo", root.keys-version) : @keys(); activated => { root.menu-command("redo"); } }
             MenuSeparator { }
-            MenuItem { title: "Cut"; shortcut: root.menu-keys ? root.bar-key("cut", root.keys-version) : @keys(); activated => { root.menu-command("cut"); } }
-            MenuItem { title: "Copy"; shortcut: root.menu-keys ? root.bar-key("copy", root.keys-version) : @keys(); activated => { root.menu-command("copy"); } }
-            MenuItem { title: "Copy with Folders"; activated => { root.menu-command("copy-with-folders"); } }
-            MenuItem { title: "Cut with Folders"; activated => { root.menu-command("cut-with-folders"); } }
-            MenuItem { title: "Copy Path"; shortcut: root.menu-keys ? root.bar-key("copy-path", root.keys-version) : @keys(); activated => { root.menu-command("copy-path"); } }
-            MenuItem { title: "Add to Drop Stack"; shortcut: root.menu-keys ? root.bar-key("add-to-stack", root.keys-version) : @keys(); activated => { root.menu-command("add-to-stack"); } }
-            MenuItem { title: "Paste"; shortcut: root.menu-keys ? root.bar-key("paste", root.keys-version) : @keys(); activated => { root.menu-command("paste"); } }
-            MenuItem { title: "Move Item Here"; shortcut: root.menu-keys ? root.bar-key("paste-move", root.keys-version) : @keys(); activated => { root.menu-command("paste-move"); } }
-            MenuItem { title: "Select All"; shortcut: root.menu-keys ? root.bar-key("select-all", root.keys-version) : @keys(); activated => { root.menu-command("select-all"); } }
+            MenuItem { title: @tr("Cut"); shortcut: root.menu-keys ? root.bar-key("cut", root.keys-version) : @keys(); activated => { root.menu-command("cut"); } }
+            MenuItem { title: @tr("Copy"); shortcut: root.menu-keys ? root.bar-key("copy", root.keys-version) : @keys(); activated => { root.menu-command("copy"); } }
+            MenuItem { title: @tr("Copy with Folders"); activated => { root.menu-command("copy-with-folders"); } }
+            MenuItem { title: @tr("Cut with Folders"); activated => { root.menu-command("cut-with-folders"); } }
+            MenuItem { title: @tr("Copy Path"); shortcut: root.menu-keys ? root.bar-key("copy-path", root.keys-version) : @keys(); activated => { root.menu-command("copy-path"); } }
+            MenuItem { title: @tr("Add to Drop Stack"); shortcut: root.menu-keys ? root.bar-key("add-to-stack", root.keys-version) : @keys(); activated => { root.menu-command("add-to-stack"); } }
+            MenuItem { title: @tr("Paste"); shortcut: root.menu-keys ? root.bar-key("paste", root.keys-version) : @keys(); activated => { root.menu-command("paste"); } }
+            MenuItem { title: @tr("Move Item Here"); shortcut: root.menu-keys ? root.bar-key("paste-move", root.keys-version) : @keys(); activated => { root.menu-command("paste-move"); } }
+            MenuItem { title: @tr("Select All"); shortcut: root.menu-keys ? root.bar-key("select-all", root.keys-version) : @keys(); activated => { root.menu-command("select-all"); } }
             MenuSeparator { }
-            MenuItem { title: "Find…"; shortcut: root.menu-keys ? root.bar-key("search", root.keys-version) : @keys(); activated => { root.menu-command("search"); } }
-            MenuItem { title: "Filter…"; shortcut: root.menu-keys ? root.bar-key("filter", root.keys-version) : @keys(); activated => { root.menu-command("filter"); } }
-            MenuItem { title: "Invert Selection"; shortcut: root.menu-keys ? root.bar-key("invert-selection", root.keys-version) : @keys(); activated => { root.menu-command("invert-selection"); } }
-            MenuItem { title: "Select by Pattern…"; shortcut: root.menu-keys ? root.bar-key("select-pattern", root.keys-version) : @keys(); activated => { root.menu-command("select-pattern"); } }
-            MenuItem { title: "Deselect by Pattern…"; shortcut: root.menu-keys ? root.bar-key("deselect-pattern", root.keys-version) : @keys(); activated => { root.menu-command("deselect-pattern"); } }
-            MenuItem { title: "Select Same Type"; activated => { root.menu-command("select-same-type"); } }
-            MenuItem { title: "Restore Selection"; activated => { root.menu-command("restore-selection"); } }
+            MenuItem { title: @tr("Find…"); shortcut: root.menu-keys ? root.bar-key("search", root.keys-version) : @keys(); activated => { root.menu-command("search"); } }
+            MenuItem { title: @tr("Filter…"); shortcut: root.menu-keys ? root.bar-key("filter", root.keys-version) : @keys(); activated => { root.menu-command("filter"); } }
+            MenuItem { title: @tr("Invert Selection"); shortcut: root.menu-keys ? root.bar-key("invert-selection", root.keys-version) : @keys(); activated => { root.menu-command("invert-selection"); } }
+            MenuItem { title: @tr("Select by Pattern…"); shortcut: root.menu-keys ? root.bar-key("select-pattern", root.keys-version) : @keys(); activated => { root.menu-command("select-pattern"); } }
+            MenuItem { title: @tr("Deselect by Pattern…"); shortcut: root.menu-keys ? root.bar-key("deselect-pattern", root.keys-version) : @keys(); activated => { root.menu-command("deselect-pattern"); } }
+            MenuItem { title: @tr("Select Same Type"); activated => { root.menu-command("select-same-type"); } }
+            MenuItem { title: @tr("Restore Selection"); activated => { root.menu-command("restore-selection"); } }
         }
         Menu {
-            title: "View";
-            MenuItem { title: "as List"; shortcut: root.menu-keys ? root.bar-key("view-list", root.keys-version) : @keys(); activated => { root.menu-command("view-list"); } }
-            MenuItem { title: "as Grid"; shortcut: root.menu-keys ? root.bar-key("view-grid", root.keys-version) : @keys(); activated => { root.menu-command("view-grid"); } }
-            MenuItem { title: "as Columns"; shortcut: root.menu-keys ? root.bar-key("view-columns", root.keys-version) : @keys(); activated => { root.menu-command("view-columns"); } }
+            title: @tr("View");
+            MenuItem { title: @tr("as List"); shortcut: root.menu-keys ? root.bar-key("view-list", root.keys-version) : @keys(); activated => { root.menu-command("view-list"); } }
+            MenuItem { title: @tr("as Grid"); shortcut: root.menu-keys ? root.bar-key("view-grid", root.keys-version) : @keys(); activated => { root.menu-command("view-grid"); } }
+            MenuItem { title: @tr("as Columns"); shortcut: root.menu-keys ? root.bar-key("view-columns", root.keys-version) : @keys(); activated => { root.menu-command("view-columns"); } }
             Menu {
-                title: "Group By";
-                MenuItem { title: "None"; activated => { root.menu-command("group-none"); } }
-                MenuItem { title: "Type"; activated => { root.menu-command("group-type"); } }
-                MenuItem { title: "Date"; activated => { root.menu-command("group-date"); } }
-                MenuItem { title: "Size"; activated => { root.menu-command("group-size"); } }
-                MenuItem { title: "Tag"; activated => { root.menu-command("group-tag"); } }
-                MenuItem { title: "Rating"; activated => { root.menu-command("group-rating"); } }
-                MenuItem { title: "Property…"; activated => { root.menu-command("group-property"); } }
+                title: @tr("Group By");
+                MenuItem { title: @tr("None"); activated => { root.menu-command("group-none"); } }
+                MenuItem { title: @tr("Type"); activated => { root.menu-command("group-type"); } }
+                MenuItem { title: @tr("Date"); activated => { root.menu-command("group-date"); } }
+                MenuItem { title: @tr("Size"); activated => { root.menu-command("group-size"); } }
+                MenuItem { title: @tr("Tag"); activated => { root.menu-command("group-tag"); } }
+                MenuItem { title: @tr("Rating"); activated => { root.menu-command("group-rating"); } }
+                MenuItem { title: @tr("Property…"); activated => { root.menu-command("group-property"); } }
             }
-            MenuItem { title: "Sort by Property…"; activated => { root.menu-command("sort-property"); } }
-            MenuItem { title: "More Columns…"; activated => { root.menu-command("more-columns"); } }
-            MenuItem { title: "Collapse All Groups"; activated => { root.menu-command("collapse-groups"); } }
-            MenuItem { title: "Expand All Groups"; activated => { root.menu-command("expand-groups"); } }
+            MenuItem { title: @tr("Sort by Property…"); activated => { root.menu-command("sort-property"); } }
+            MenuItem { title: @tr("More Columns…"); activated => { root.menu-command("more-columns"); } }
+            MenuItem { title: @tr("Collapse All Groups"); activated => { root.menu-command("collapse-groups"); } }
+            MenuItem { title: @tr("Expand All Groups"); activated => { root.menu-command("expand-groups"); } }
             MenuSeparator { }
-            MenuItem { title: "Flat View"; shortcut: root.menu-keys ? root.bar-key("flat-view", root.keys-version) : @keys(); activated => { root.menu-command("flat-view"); } }
-            MenuItem { title: "Show Preview"; activated => { root.menu-command("toggle-preview"); } }
-            MenuItem { title: "Show Preview as Hex"; activated => { root.menu-command("preview-hex"); } }
-            MenuItem { title: "Play/Pause Preview"; activated => { root.menu-command("preview-play"); } }
-            MenuItem { title: "Two Panes"; checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? root.bar-key("toggle-dual-pane", root.keys-version) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
-            MenuItem { title: "Sync Browsing"; checkable: true; checked <=> root.view-sync; activated => { root.menu-command("sync-browsing"); } }
-            MenuItem { title: "Swap Panes"; shortcut: root.menu-keys ? root.bar-key("swap-panes", root.keys-version) : @keys(); activated => { root.menu-command("swap-panes"); } }
-            MenuItem { title: "Same Folder in the Other Pane"; activated => { root.menu-command("other-pane-same-folder"); } }
-            MenuItem { title: "Drop Stack"; activated => { root.menu-command("toggle-stack"); } }
-            MenuItem { title: "Operation History"; activated => { root.menu-command("show-history"); } }
-            MenuItem { title: "Calculate Folder Sizes"; activated => { root.menu-command("calculate-folder-sizes"); } }
-            MenuItem { title: "Show in Sidebar Tree"; activated => { root.menu-command("reveal-in-tree"); } }
-            MenuItem { title: "Tag Dots"; checkable: true; checked <=> root.view-tag-dots; activated => { root.menu-command("tag-dots"); } }
-            MenuItem { title: "Show Hidden Items"; checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? root.bar-key("toggle-hidden", root.keys-version) : @keys(); activated => { root.menu-command("toggle-hidden"); } }
-            MenuItem { title: "Hide Extensions"; checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
-            MenuItem { title: "Folders First"; checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
-            MenuItem { title: "Single-Click to Open"; checkable: true; checked <=> root.view-single-click; activated => { root.menu-command("view-option:1302"); } }
+            MenuItem { title: @tr("Flat View"); shortcut: root.menu-keys ? root.bar-key("flat-view", root.keys-version) : @keys(); activated => { root.menu-command("flat-view"); } }
+            MenuItem { title: @tr("Show Preview"); activated => { root.menu-command("toggle-preview"); } }
+            MenuItem { title: @tr("Show Preview as Hex"); activated => { root.menu-command("preview-hex"); } }
+            MenuItem { title: @tr("Play/Pause Preview"); activated => { root.menu-command("preview-play"); } }
+            MenuItem { title: @tr("Two Panes"); checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? root.bar-key("toggle-dual-pane", root.keys-version) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
+            MenuItem { title: @tr("Sync Browsing"); checkable: true; checked <=> root.view-sync; activated => { root.menu-command("sync-browsing"); } }
+            MenuItem { title: @tr("Swap Panes"); shortcut: root.menu-keys ? root.bar-key("swap-panes", root.keys-version) : @keys(); activated => { root.menu-command("swap-panes"); } }
+            MenuItem { title: @tr("Same Folder in the Other Pane"); activated => { root.menu-command("other-pane-same-folder"); } }
+            MenuItem { title: @tr("Drop Stack"); activated => { root.menu-command("toggle-stack"); } }
+            MenuItem { title: @tr("Operation History"); activated => { root.menu-command("show-history"); } }
+            MenuItem { title: @tr("Calculate Folder Sizes"); activated => { root.menu-command("calculate-folder-sizes"); } }
+            MenuItem { title: @tr("Show in Sidebar Tree"); activated => { root.menu-command("reveal-in-tree"); } }
+            MenuItem { title: @tr("Tag Dots"); checkable: true; checked <=> root.view-tag-dots; activated => { root.menu-command("tag-dots"); } }
+            MenuItem { title: @tr("Show Hidden Items"); checkable: true; checked <=> root.view-show-hidden; shortcut: root.menu-keys ? root.bar-key("toggle-hidden", root.keys-version) : @keys(); activated => { root.menu-command("toggle-hidden"); } }
+            MenuItem { title: @tr("Hide Extensions"); checkable: true; checked <=> root.view-hide-extensions; activated => { root.menu-command("view-option:1300"); } }
+            MenuItem { title: @tr("Folders First"); checkable: true; checked <=> root.view-folders-first; activated => { root.menu-command("view-option:1301"); } }
+            MenuItem { title: @tr("Single-Click to Open"); checkable: true; checked <=> root.view-single-click; activated => { root.menu-command("view-option:1302"); } }
             Menu {
-                title: "Date Format";
-                MenuItem { title: "Relative"; checkable: true; checked <=> root.view-date-relative; activated => { root.menu-command("view-option:1310"); } }
-                MenuItem { title: "Short"; checkable: true; checked <=> root.view-date-short; activated => { root.menu-command("view-option:1311"); } }
-                MenuItem { title: "ISO"; checkable: true; checked <=> root.view-date-iso; activated => { root.menu-command("view-option:1312"); } }
-                MenuItem { title: "System"; checkable: true; checked <=> root.view-date-system; activated => { root.menu-command("view-option:1313"); } }
+                title: @tr("Date Format");
+                MenuItem { title: @tr("Relative"); checkable: true; checked <=> root.view-date-relative; activated => { root.menu-command("view-option:1310"); } }
+                MenuItem { title: @tr("Short"); checkable: true; checked <=> root.view-date-short; activated => { root.menu-command("view-option:1311"); } }
+                MenuItem { title: @tr("ISO"); checkable: true; checked <=> root.view-date-iso; activated => { root.menu-command("view-option:1312"); } }
+                MenuItem { title: @tr("System"); checkable: true; checked <=> root.view-date-system; activated => { root.menu-command("view-option:1313"); } }
             }
             Menu {
-                title: "Size Format";
-                MenuItem { title: "Binary (1 KB = 1024 bytes)"; checkable: true; checked <=> root.view-size-binary; activated => { root.menu-command("view-option:1320"); } }
-                MenuItem { title: "Decimal (1 kB = 1000 bytes)"; checkable: true; checked <=> root.view-size-decimal; activated => { root.menu-command("view-option:1321"); } }
+                title: @tr("Size Format");
+                MenuItem { title: @tr("Binary (1 KB = 1024 bytes)"); checkable: true; checked <=> root.view-size-binary; activated => { root.menu-command("view-option:1320"); } }
+                MenuItem { title: @tr("Decimal (1 kB = 1000 bytes)"); checkable: true; checked <=> root.view-size-decimal; activated => { root.menu-command("view-option:1321"); } }
             }
             MenuSeparator { }
-            MenuItem { title: "Refresh"; shortcut: root.menu-keys ? root.bar-key("refresh", root.keys-version) : @keys(); activated => { root.menu-command("refresh"); } }
-            MenuItem { title: "System Integration…"; activated => { root.menu-command("system-integration"); } }
-            MenuItem { title: "Settings…"; shortcut: root.menu-keys ? root.bar-key("settings", root.keys-version) : @keys(); activated => { root.menu-command("settings"); } }
+            MenuItem { title: @tr("Refresh"); shortcut: root.menu-keys ? root.bar-key("refresh", root.keys-version) : @keys(); activated => { root.menu-command("refresh"); } }
+            MenuItem { title: @tr("System Integration…"); activated => { root.menu-command("system-integration"); } }
+            MenuItem { title: @tr("Settings…"); shortcut: root.menu-keys ? root.bar-key("settings", root.keys-version) : @keys(); activated => { root.menu-command("settings"); } }
         }
         Menu {
-            title: "Go";
-            MenuItem { title: "Back"; shortcut: root.menu-keys ? root.bar-key("back", root.keys-version) : @keys(); activated => { root.menu-command("back"); } }
-            MenuItem { title: "Forward"; shortcut: root.menu-keys ? root.bar-key("forward", root.keys-version) : @keys(); activated => { root.menu-command("forward"); } }
-            MenuItem { title: "Enclosing Folder"; shortcut: root.menu-keys ? root.bar-key("up", root.keys-version) : @keys(); activated => { root.menu-command("up"); } }
-            MenuItem { title: "Show in Folder"; shortcut: root.menu-keys ? root.bar-key("show-in-folder", root.keys-version) : @keys(); activated => { root.menu-command("show-in-folder"); } }
-            MenuItem { title: "Show Trash"; activated => { root.menu-command("show-trash"); } }
-            MenuItem { title: "Connect to Server…"; shortcut: root.menu-keys ? root.bar-key("connect-to-server", root.keys-version) : @keys(); activated => { root.menu-command("connect-to-server"); } }
+            title: @tr("Go");
+            MenuItem { title: @tr("Back"); shortcut: root.menu-keys ? root.bar-key("back", root.keys-version) : @keys(); activated => { root.menu-command("back"); } }
+            MenuItem { title: @tr("Forward"); shortcut: root.menu-keys ? root.bar-key("forward", root.keys-version) : @keys(); activated => { root.menu-command("forward"); } }
+            MenuItem { title: @tr("Enclosing Folder"); shortcut: root.menu-keys ? root.bar-key("up", root.keys-version) : @keys(); activated => { root.menu-command("up"); } }
+            MenuItem { title: @tr("Show in Folder"); shortcut: root.menu-keys ? root.bar-key("show-in-folder", root.keys-version) : @keys(); activated => { root.menu-command("show-in-folder"); } }
+            MenuItem { title: @tr("Show Trash"); activated => { root.menu-command("show-trash"); } }
+            MenuItem { title: @tr("Connect to Server…"); shortcut: root.menu-keys ? root.bar-key("connect-to-server", root.keys-version) : @keys(); activated => { root.menu-command("connect-to-server"); } }
             MenuSeparator { }
-            MenuItem { title: "Go to Folder…"; shortcut: root.menu-keys ? root.bar-key("focus-path", root.keys-version) : @keys(); activated => { root.menu-command("focus-path"); } }
-            MenuItem { title: "Quick Open…"; shortcut: root.menu-keys ? root.bar-key("quick-open", root.keys-version) : @keys(); activated => { root.menu-command("quick-open"); } }
-            MenuItem { title: "Command Palette…"; shortcut: root.menu-keys ? root.bar-key("command-palette", root.keys-version) : @keys(); activated => { root.menu-command("command-palette"); } }
+            MenuItem { title: @tr("Go to Folder…"); shortcut: root.menu-keys ? root.bar-key("focus-path", root.keys-version) : @keys(); activated => { root.menu-command("focus-path"); } }
+            MenuItem { title: @tr("Quick Open…"); shortcut: root.menu-keys ? root.bar-key("quick-open", root.keys-version) : @keys(); activated => { root.menu-command("quick-open"); } }
+            MenuItem { title: @tr("Command Palette…"); shortcut: root.menu-keys ? root.bar-key("command-palette", root.keys-version) : @keys(); activated => { root.menu-command("command-palette"); } }
             MenuSeparator { }
-            MenuItem { title: "Pinned 1"; shortcut: root.menu-keys ? root.bar-key("pin-1", root.keys-version) : @keys(); activated => { root.menu-command("pin-1"); } }
-            MenuItem { title: "Pinned 2"; shortcut: root.menu-keys ? root.bar-key("pin-2", root.keys-version) : @keys(); activated => { root.menu-command("pin-2"); } }
-            MenuItem { title: "Pinned 3"; shortcut: root.menu-keys ? root.bar-key("pin-3", root.keys-version) : @keys(); activated => { root.menu-command("pin-3"); } }
-            MenuItem { title: "Pinned 4"; shortcut: root.menu-keys ? root.bar-key("pin-4", root.keys-version) : @keys(); activated => { root.menu-command("pin-4"); } }
-            MenuItem { title: "Pinned 5"; shortcut: root.menu-keys ? root.bar-key("pin-5", root.keys-version) : @keys(); activated => { root.menu-command("pin-5"); } }
-            MenuItem { title: "Pinned 6"; shortcut: root.menu-keys ? root.bar-key("pin-6", root.keys-version) : @keys(); activated => { root.menu-command("pin-6"); } }
-            MenuItem { title: "Pinned 7"; shortcut: root.menu-keys ? root.bar-key("pin-7", root.keys-version) : @keys(); activated => { root.menu-command("pin-7"); } }
-            MenuItem { title: "Pinned 8"; shortcut: root.menu-keys ? root.bar-key("pin-8", root.keys-version) : @keys(); activated => { root.menu-command("pin-8"); } }
-            MenuItem { title: "Pinned 9"; shortcut: root.menu-keys ? root.bar-key("pin-9", root.keys-version) : @keys(); activated => { root.menu-command("pin-9"); } }
+            MenuItem { title: @tr("Pinned 1"); shortcut: root.menu-keys ? root.bar-key("pin-1", root.keys-version) : @keys(); activated => { root.menu-command("pin-1"); } }
+            MenuItem { title: @tr("Pinned 2"); shortcut: root.menu-keys ? root.bar-key("pin-2", root.keys-version) : @keys(); activated => { root.menu-command("pin-2"); } }
+            MenuItem { title: @tr("Pinned 3"); shortcut: root.menu-keys ? root.bar-key("pin-3", root.keys-version) : @keys(); activated => { root.menu-command("pin-3"); } }
+            MenuItem { title: @tr("Pinned 4"); shortcut: root.menu-keys ? root.bar-key("pin-4", root.keys-version) : @keys(); activated => { root.menu-command("pin-4"); } }
+            MenuItem { title: @tr("Pinned 5"); shortcut: root.menu-keys ? root.bar-key("pin-5", root.keys-version) : @keys(); activated => { root.menu-command("pin-5"); } }
+            MenuItem { title: @tr("Pinned 6"); shortcut: root.menu-keys ? root.bar-key("pin-6", root.keys-version) : @keys(); activated => { root.menu-command("pin-6"); } }
+            MenuItem { title: @tr("Pinned 7"); shortcut: root.menu-keys ? root.bar-key("pin-7", root.keys-version) : @keys(); activated => { root.menu-command("pin-7"); } }
+            MenuItem { title: @tr("Pinned 8"); shortcut: root.menu-keys ? root.bar-key("pin-8", root.keys-version) : @keys(); activated => { root.menu-command("pin-8"); } }
+            MenuItem { title: @tr("Pinned 9"); shortcut: root.menu-keys ? root.bar-key("pin-9", root.keys-version) : @keys(); activated => { root.menu-command("pin-9"); } }
             MenuSeparator { }
-            MenuItem { title: "Clear Folder History"; activated => { root.menu-command("clear-history"); } }
+            MenuItem { title: @tr("Clear Folder History"); activated => { root.menu-command("clear-history"); } }
         }
         Menu {
-            title: "Tools";
-            MenuItem { title: "Compare"; shortcut: root.menu-keys ? root.bar-key("compare", root.keys-version) : @keys(); activated => { root.menu-command("compare"); } }
-            MenuItem { title: "Select Differences"; activated => { root.menu-command("select-differences"); } }
+            title: @tr("Tools");
+            MenuItem { title: @tr("Compare"); shortcut: root.menu-keys ? root.bar-key("compare", root.keys-version) : @keys(); activated => { root.menu-command("compare"); } }
+            MenuItem { title: @tr("Select Differences"); activated => { root.menu-command("select-differences"); } }
             MenuSeparator { }
-            MenuItem { title: "Calculate Checksums…"; activated => { root.menu-command("checksums"); } }
-            MenuItem { title: "Verify Checksums"; activated => { root.menu-command("verify-checksums"); } }
-            MenuItem { title: "Find Duplicates"; activated => { root.menu-command("find-duplicates"); } }
-            MenuItem { title: "Size Map"; activated => { root.menu-command("size-map"); } }
+            MenuItem { title: @tr("Calculate Checksums…"); activated => { root.menu-command("checksums"); } }
+            MenuItem { title: @tr("Verify Checksums"); activated => { root.menu-command("verify-checksums"); } }
+            MenuItem { title: @tr("Find Duplicates"); activated => { root.menu-command("find-duplicates"); } }
+            MenuItem { title: @tr("Size Map"); activated => { root.menu-command("size-map"); } }
             MenuSeparator { }
-            MenuItem { title: "Export List…"; activated => { root.menu-command("export-list"); } }
+            MenuItem { title: @tr("Export List…"); activated => { root.menu-command("export-list"); } }
             MenuSeparator { }
-            MenuItem { title: "Copy To…"; activated => { root.menu-command("copy-to"); } }
-            MenuItem { title: "Move To…"; activated => { root.menu-command("move-to"); } }
-            MenuItem { title: "Split File…"; activated => { root.menu-command("split-file"); } }
-            MenuItem { title: "Join Files"; activated => { root.menu-command("join-files"); } }
+            MenuItem { title: @tr("Copy To…"); activated => { root.menu-command("copy-to"); } }
+            MenuItem { title: @tr("Move To…"); activated => { root.menu-command("move-to"); } }
+            MenuItem { title: @tr("Split File…"); activated => { root.menu-command("split-file"); } }
+            MenuItem { title: @tr("Join Files"); activated => { root.menu-command("join-files"); } }
         }
         if root.bar-commands.length > 0: Menu {
-            title: "Commands";
+            title: @tr("Commands");
             for entry in root.bar-commands: MenuItem {
                 title: entry.title;
                 enabled: entry.enabled;
@@ -263,21 +263,21 @@ export component AppWindow inherits Window {
             }
         }
         Menu {
-            title: "Window";
-            MenuItem { title: "Minimize"; shortcut: root.menu-keys ? @keys(Control + M) : @keys(); activated => { root.menu-command("minimize"); } }
-            MenuItem { title: "Zoom"; activated => { root.menu-command("zoom"); } }
+            title: @tr("Window");
+            MenuItem { title: @tr("Minimize"); shortcut: root.menu-keys ? @keys(Control + M) : @keys(); activated => { root.menu-command("minimize"); } }
+            MenuItem { title: @tr("Zoom"); activated => { root.menu-command("zoom"); } }
             MenuSeparator { }
-            MenuItem { title: "Show Next Tab"; activated => { root.menu-command("next-tab"); } }
-            MenuItem { title: "Show Previous Tab"; activated => { root.menu-command("prev-tab"); } }
+            MenuItem { title: @tr("Show Next Tab"); activated => { root.menu-command("next-tab"); } }
+            MenuItem { title: @tr("Show Previous Tab"); activated => { root.menu-command("prev-tab"); } }
             MenuSeparator { }
-            MenuItem { title: "Reopen Closed Tab"; shortcut: root.menu-keys ? root.bar-key("reopen-tab", root.keys-version) : @keys(); activated => { root.menu-command("reopen-tab"); } }
-            MenuItem { title: "Show All Tabs…"; shortcut: root.menu-keys ? root.bar-key("tab-picker", root.keys-version) : @keys(); activated => { root.menu-command("tab-picker"); } }
-            MenuItem { title: root.active-tab-locked ? "Unlock Tab" : "Lock Tab"; activated => { root.menu-command("toggle-tab-lock"); } }
-            MenuItem { title: "Move Tab to New Window"; activated => { root.menu-command("move-tab-to-new-window"); } }
+            MenuItem { title: @tr("Reopen Closed Tab"); shortcut: root.menu-keys ? root.bar-key("reopen-tab", root.keys-version) : @keys(); activated => { root.menu-command("reopen-tab"); } }
+            MenuItem { title: @tr("Show All Tabs…"); shortcut: root.menu-keys ? root.bar-key("tab-picker", root.keys-version) : @keys(); activated => { root.menu-command("tab-picker"); } }
+            MenuItem { title: root.active-tab-locked ? @tr("Unlock Tab") : @tr("Lock Tab"); activated => { root.menu-command("toggle-tab-lock"); } }
+            MenuItem { title: @tr("Move Tab to New Window"); activated => { root.menu-command("move-tab-to-new-window"); } }
             MenuSeparator { }
-            MenuItem { title: "Save Tabs As…"; activated => { root.menu-command("save-tab-set"); } }
+            MenuItem { title: @tr("Save Tabs As…"); activated => { root.menu-command("save-tab-set"); } }
             if root.bar-tab-sets.length > 0: Menu {
-                title: "Open Tab Set";
+                title: @tr("Open Tab Set");
                 for entry in root.bar-tab-sets: MenuItem {
                     title: entry.title;
                     enabled: entry.enabled;
@@ -285,15 +285,15 @@ export component AppWindow inherits Window {
                 }
             }
             MenuSeparator { }
-            MenuItem { title: "Tab 1"; shortcut: root.menu-keys ? root.bar-key("tab-1", root.keys-version) : @keys(); activated => { root.menu-command("tab-1"); } }
-            MenuItem { title: "Tab 2"; shortcut: root.menu-keys ? root.bar-key("tab-2", root.keys-version) : @keys(); activated => { root.menu-command("tab-2"); } }
-            MenuItem { title: "Tab 3"; shortcut: root.menu-keys ? root.bar-key("tab-3", root.keys-version) : @keys(); activated => { root.menu-command("tab-3"); } }
-            MenuItem { title: "Tab 4"; shortcut: root.menu-keys ? root.bar-key("tab-4", root.keys-version) : @keys(); activated => { root.menu-command("tab-4"); } }
-            MenuItem { title: "Tab 5"; shortcut: root.menu-keys ? root.bar-key("tab-5", root.keys-version) : @keys(); activated => { root.menu-command("tab-5"); } }
-            MenuItem { title: "Tab 6"; shortcut: root.menu-keys ? root.bar-key("tab-6", root.keys-version) : @keys(); activated => { root.menu-command("tab-6"); } }
-            MenuItem { title: "Tab 7"; shortcut: root.menu-keys ? root.bar-key("tab-7", root.keys-version) : @keys(); activated => { root.menu-command("tab-7"); } }
-            MenuItem { title: "Tab 8"; shortcut: root.menu-keys ? root.bar-key("tab-8", root.keys-version) : @keys(); activated => { root.menu-command("tab-8"); } }
-            MenuItem { title: "Last Tab"; shortcut: root.menu-keys ? root.bar-key("tab-last", root.keys-version) : @keys(); activated => { root.menu-command("tab-last"); } }
+            MenuItem { title: @tr("Tab 1"); shortcut: root.menu-keys ? root.bar-key("tab-1", root.keys-version) : @keys(); activated => { root.menu-command("tab-1"); } }
+            MenuItem { title: @tr("Tab 2"); shortcut: root.menu-keys ? root.bar-key("tab-2", root.keys-version) : @keys(); activated => { root.menu-command("tab-2"); } }
+            MenuItem { title: @tr("Tab 3"); shortcut: root.menu-keys ? root.bar-key("tab-3", root.keys-version) : @keys(); activated => { root.menu-command("tab-3"); } }
+            MenuItem { title: @tr("Tab 4"); shortcut: root.menu-keys ? root.bar-key("tab-4", root.keys-version) : @keys(); activated => { root.menu-command("tab-4"); } }
+            MenuItem { title: @tr("Tab 5"); shortcut: root.menu-keys ? root.bar-key("tab-5", root.keys-version) : @keys(); activated => { root.menu-command("tab-5"); } }
+            MenuItem { title: @tr("Tab 6"); shortcut: root.menu-keys ? root.bar-key("tab-6", root.keys-version) : @keys(); activated => { root.menu-command("tab-6"); } }
+            MenuItem { title: @tr("Tab 7"); shortcut: root.menu-keys ? root.bar-key("tab-7", root.keys-version) : @keys(); activated => { root.menu-command("tab-7"); } }
+            MenuItem { title: @tr("Tab 8"); shortcut: root.menu-keys ? root.bar-key("tab-8", root.keys-version) : @keys(); activated => { root.menu-command("tab-8"); } }
+            MenuItem { title: @tr("Last Tab"); shortcut: root.menu-keys ? root.bar-key("tab-last", root.keys-version) : @keys(); activated => { root.menu-command("tab-last"); } }
             MenuSeparator { }
             for entry in root.bar-windows: MenuItem {
                 title: entry.title;
@@ -767,8 +767,8 @@ export component AppWindow inherits Window {
     property <int> tp-focus-seq;
     in-out property <string> tp-query;
     in property <[PickRow]> tp-rows;
-    in property <string> tp-label: "Tabs";
-    in property <string> tp-empty: "No tabs match";
+    in property <string> tp-label: @tr("Tabs");
+    in property <string> tp-empty: @tr("No tabs match");
     in property <int> tp-current;
     callback tp-edited(string);
     callback tp-chosen(int);
@@ -1413,7 +1413,7 @@ export component AppWindow inherits Window {
                         background: history-touch.has-hover ? Theme.hover : transparent;
                         animate background { duration: Theme.motion-hover; }
                         accessible-role: button;
-                        accessible-label: "History";
+                        accessible-label: @tr("History");
                         accessible-action-default => { root.history-toggle(); }
                         Path {
                             x: 4px;
@@ -1430,7 +1430,7 @@ export component AppWindow inherits Window {
                         history-text := Text {
                             x: 22px;
                             height: parent.height;
-                            text: "History";
+                            text: @tr("History");
                             font-size: Theme.font-size-small;
                             vertical-alignment: center;
                             color: Theme.foreground-muted;
@@ -1463,7 +1463,7 @@ export component AppWindow inherits Window {
                             x: parent.width - 22px;
                             width: 20px;
                             accessible-role: button;
-                            accessible-label: "Close the compare";
+                            accessible-label: @tr("Close the compare");
                             accessible-action-default => { root.tool-chip-close(); }
                             // Drawn: the UI font may lack ✕.
                             Path {
@@ -1887,7 +1887,7 @@ export component AppWindow inherits Window {
 export component QuickLookWindow inherits Window {
     in property <PreviewInfo> info;
     in property <string> mono-font;
-    title: root.info.title == "" ? "Gezik" : root.info.title + " — Gezik";
+    title: root.info.title == "" ? "Gezik" : @tr("{} — Gezik", root.info.title);
     background: Theme.background;
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;

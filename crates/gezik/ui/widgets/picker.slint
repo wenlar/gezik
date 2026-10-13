@@ -24,8 +24,8 @@ export component Picker inherits Rectangle {
     in property <bool> dialog-open;
     in-out property <string> query;
     in property <[PickRow]> rows;
-    in property <string> label: "Tabs";
-    in property <string> empty-text: "No tabs match";
+    in property <string> label: @tr("Tabs");
+    in property <string> empty-text: @tr("No tabs match");
     // The row Enter picks (shown selected).
     in property <int> current;
     in property <int> focus-request;
@@ -115,7 +115,7 @@ export component Picker inherits Rectangle {
                     border-radius: Theme.radius;
                     background: i == root.current ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
                     accessible-role: list-item;
-                    accessible-label: row.title + (row.check == 2 ? ", on all items" : row.check == 1 ? ", on some items" : "");
+                    accessible-label: row.check == 2 ? @tr("{}, on all items", row.title) : row.check == 1 ? @tr("{}, on some items", row.title) : row.title;
                     accessible-item-selectable: true;
                     accessible-item-selected: i == root.current;
                     accessible-action-default => { root.chosen(i); }
@@ -145,7 +145,7 @@ export component Picker inherits Rectangle {
                                 opacity: row.stars > 5 ? 0.45 : 1;
                                 color: i == root.current ? Theme.selection-foreground : Theme.foreground;
                                 accessible-role: button;
-                                accessible-label: (n + 1) + " stars";
+                                accessible-label: @tr("{n} star" | "{n} stars" % (n + 1));
                                 accessible-action-default => { root.starred(n + 1); }
                                 TouchArea {
                                     clicked => { root.starred(n + 1); }

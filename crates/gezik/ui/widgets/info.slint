@@ -125,12 +125,12 @@ export component InfoLayer inherits Rectangle {
                     rows: root.view.properties;
                 }
                 Text {
-                    text: "Sharing & Permissions";
+                    text: @tr("Sharing & Permissions");
                     font-weight: 600;
                     color: Theme.foreground;
                 }
                 Labeled {
-                    label: "Owner";
+                    label: @tr("Owner");
                     TextField {
                         text <=> root.owner;
                         enabled: root.view.ids-enabled;
@@ -138,7 +138,7 @@ export component InfoLayer inherits Rectangle {
                     }
                 }
                 Labeled {
-                    label: "Group";
+                    label: @tr("Group");
                     TextField {
                         text <=> root.group;
                         enabled: root.view.ids-enabled;
@@ -146,7 +146,7 @@ export component InfoLayer inherits Rectangle {
                     }
                     TextButton {
                         icon: root.menu-arrow;
-                        label: "Your groups";
+                        label: @tr("Your groups");
                         clicked => { root.group-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                     }
                 }
@@ -159,7 +159,7 @@ export component InfoLayer inherits Rectangle {
                         y: 0;
                         width: 80px;
                         height: Theme.row-height;
-                        text: "Owner";
+                        text: @tr("Owner");
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
@@ -168,7 +168,7 @@ export component InfoLayer inherits Rectangle {
                         y: 1 * Theme.row-height;
                         width: 80px;
                         height: Theme.row-height;
-                        text: "Group";
+                        text: @tr("Group");
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
@@ -177,13 +177,13 @@ export component InfoLayer inherits Rectangle {
                         y: 2 * Theme.row-height;
                         width: 80px;
                         height: Theme.row-height;
-                        text: "Everyone";
+                        text: @tr("Everyone");
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
                     for label[i] in root.view.show-flags
-                        ? ["Read", "Write", "Execute", "Read", "Write", "Execute", "Read", "Write", "Execute", "Hidden", "Locked"]
-                        : ["Read", "Write", "Execute", "Read", "Write", "Execute", "Read", "Write", "Execute"]: Check {
+                        ? [@tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute"), @tr("Hidden"), @tr("Locked")]
+                        : [@tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute")]: Check {
                         property <int> state: i < 9 ? mod(floor(root.view.perms / pow(3, i)), 3) : i == 9 ? root.view.hidden : root.view.locked;
                         x: 80px + Theme.spacing * 2 + mod(i, 3) * 84px - (i < 9 ? 0 : 80px + Theme.spacing * 2);
                         y: floor(i / 3) * Theme.row-height;
@@ -202,7 +202,7 @@ export component InfoLayer inherits Rectangle {
                     }
                 }
                 Labeled {
-                    label: "Octal";
+                    label: @tr("Octal");
                     TextField {
                         width: 72px;
                         text <=> root.octal;
@@ -218,21 +218,21 @@ export component InfoLayer inherits Rectangle {
                     }
                 }
                 if root.view.app != "": Labeled {
-                    label: "Open with";
+                    label: @tr("Open with");
                     TextButton {
                         text: root.view.app;
                         icon: root.menu-arrow;
                         clicked => { root.app-menu(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                     }
                     TextButton {
-                        text: "Change All…";
+                        text: @tr("Change All…");
                         clicked => { root.change-all(); }
                     }
                 }
                 if root.view.enclosed: HorizontalLayout {
                     alignment: start;
                     TextButton {
-                        text: "Apply to enclosed items…";
+                        text: @tr("Apply to enclosed items…");
                         clicked => { root.enclosed(); }
                     }
                 }
@@ -247,11 +247,11 @@ export component InfoLayer inherits Rectangle {
                         color: root.view.error ? Theme.danger : Theme.foreground-muted;
                     }
                     if root.view.admin: TextButton {
-                        text: "Change as administrator…";
+                        text: @tr("Change as administrator…");
                         clicked => { root.as-admin(); }
                     }
                     done := TextButton {
-                        text: "Done";
+                        text: @tr("Done");
                         primary: true;
                         clicked => { root.close(); }
                     }

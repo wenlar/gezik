@@ -186,14 +186,14 @@ export component ToolTable inherits Rectangle {
                     padding-left: Theme.spacing;
                     padding-right: 10px;
                     spacing: Theme.spacing * 2;
-                    Text { text: "Name"; width: header.name-width; color: Theme.foreground-muted; }
+                    Text { text: @tr("Name"); width: header.name-width; color: Theme.foreground-muted; }
                     Text {
                         text: root.columns;
                         font-family: root.mono-font;
                         overflow: elide;
                         color: Theme.foreground-muted;
                     }
-                    Text { text: "Status"; width: 110px; color: Theme.foreground-muted; }
+                    Text { text: @tr("Status"); width: 110px; color: Theme.foreground-muted; }
                 }
                 Rectangle { height: 1px; background: Theme.border; }
 

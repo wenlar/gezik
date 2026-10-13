@@ -169,7 +169,7 @@ export component ConvertLayer inherits Rectangle {
                 color: Theme.foreground;
             }
             Labeled {
-                label: "Preset";
+                label: @tr("Preset");
                 preset-button := TextButton {
                     text: root.view.preset;
                     icon: root.menu-arrow;
@@ -188,9 +188,9 @@ export component ConvertLayer inherits Rectangle {
             }
 
             // Pictures.
-            if root.view.kind == 1: Heading { text: "Image"; }
+            if root.view.kind == 1: Heading { text: @tr("Image"); }
             if root.view.kind == 1: Labeled {
-                label: "Format";
+                label: @tr("Format");
                 HorizontalLayout {
                     spacing: Theme.spacing;
                     for label[i] in root.view.formats: TextButton {
@@ -202,7 +202,7 @@ export component ConvertLayer inherits Rectangle {
                 }
             }
             if root.view.kind == 1 && root.view.show-quality: Labeled {
-                label: "Quality";
+                label: @tr("Quality");
                 TextField {
                     width: 72px;
                     horizontal-stretch: 0;
@@ -218,10 +218,10 @@ export component ConvertLayer inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
             }
             if root.view.kind == 1: Labeled {
-                label: "Resize";
+                label: @tr("Resize");
                 HorizontalLayout {
                     spacing: Theme.spacing;
-                    for label[i] in ["None", "Longest side", "Width", "Height", "Percent"]: TextButton {
+                    for label[i] in [@tr("None"), @tr("Longest side"), @tr("Width"), @tr("Height"), @tr("Percent")]: TextButton {
                         text: label;
                         checked: i == root.view.resize;
                         clicked => { root.set-resize(i); }
@@ -244,25 +244,25 @@ export component ConvertLayer inherits Rectangle {
             if root.view.kind == 1: Labeled {
                 label: "";
                 Check {
-                    text: "Never enlarge";
+                    text: @tr("Never enlarge");
                     checked: root.view.never-enlarge;
                     enabled: root.view.resize > 0;
                     toggled => { root.toggle("enlarge"); }
                 }
                 Check {
-                    text: "Rotate by EXIF";
+                    text: @tr("Rotate by EXIF");
                     checked: root.view.rotate;
                     toggled => { root.toggle("rotate"); }
                 }
                 Check {
-                    text: "Remove metadata (incl. location)";
+                    text: @tr("Remove metadata (incl. location)");
                     checked: root.view.strip;
                     toggled => { root.toggle("strip"); }
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
             if root.view.kind == 1 && root.view.show-background: Labeled {
-                label: "Background";
+                label: @tr("Background");
                 TextField {
                     width: 96px;
                     horizontal-stretch: 0;
@@ -271,7 +271,7 @@ export component ConvertLayer inherits Rectangle {
                     accepted => { root.convert(); }
                 }
                 Text {
-                    text: "for transparent parts (#rrggbb)";
+                    text: @tr("for transparent parts (#rrggbb)");
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
@@ -279,9 +279,9 @@ export component ConvertLayer inherits Rectangle {
             }
 
             // Text.
-            if root.view.kind == 2: Heading { text: "Text"; }
+            if root.view.kind == 2: Heading { text: @tr("Text"); }
             if root.view.kind == 2: Labeled {
-                label: "From";
+                label: @tr("From");
                 TextButton {
                     text: root.view.from;
                     icon: root.menu-arrow;
@@ -297,7 +297,7 @@ export component ConvertLayer inherits Rectangle {
                 }
             }
             if root.view.kind == 2: Labeled {
-                label: "To";
+                label: @tr("To");
                 TextButton {
                     text: root.view.to;
                     icon: root.menu-arrow;
@@ -305,17 +305,17 @@ export component ConvertLayer inherits Rectangle {
                     clicked => { root.to(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                 }
                 Check {
-                    text: "Byte order mark (BOM)";
+                    text: @tr("Byte order mark (BOM)");
                     checked: root.view.bom;
                     toggled => { root.toggle("bom"); }
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
             if root.view.kind == 2: Labeled {
-                label: "Line endings";
+                label: @tr("Line endings");
                 HorizontalLayout {
                     spacing: Theme.spacing;
-                    for label[i] in ["As they are", "LF", "CRLF", "CR"]: TextButton {
+                    for label[i] in [@tr("As they are"), "LF", "CRLF", "CR"]: TextButton {
                         text: label;
                         checked: i == root.view.eol;
                         clicked => { root.set-eol(i); }
@@ -326,12 +326,12 @@ export component ConvertLayer inherits Rectangle {
             if root.view.kind == 2: Labeled {
                 label: "";
                 Check {
-                    text: "Remove trailing spaces";
+                    text: @tr("Remove trailing spaces");
                     checked: root.view.trim;
                     toggled => { root.toggle("trim"); }
                 }
                 Check {
-                    text: "One line ending at the end";
+                    text: @tr("One line ending at the end");
                     checked: root.view.final-newline;
                     toggled => { root.toggle("final"); }
                 }
@@ -340,7 +340,7 @@ export component ConvertLayer inherits Rectangle {
 
             // PDF.
             if root.view.kind == 5 && root.view.pdf-order.length > 0: Heading {
-                text: root.view.pdf-op == 0 ? "Page order" : "Merge order";
+                text: root.view.pdf-op == 0 ? @tr("Page order") : @tr("Merge order");
             }
             if root.view.kind == 5 && root.view.pdf-order.length > 0: Rectangle {
                 height: min(root.view.pdf-order.length, 8) * Theme.row-height + 2px;
@@ -353,7 +353,7 @@ export component ConvertLayer inherits Rectangle {
                     width: parent.width - 2px;
                     height: parent.height - 2px;
                     accessible-role: list;
-                    accessible-label: root.view.pdf-op == 0 ? "Page order" : "Merge order";
+                    accessible-label: root.view.pdf-op == 0 ? @tr("Page order") : @tr("Merge order");
                     for name[i] in root.view.pdf-order: line := Rectangle {
                         height: Theme.row-height;
                         background: handle-touch.pressed && root.drag-from == i ? Theme.hover : transparent;
@@ -421,15 +421,15 @@ export component ConvertLayer inherits Rectangle {
             if root.view.kind == 5 && root.view.pdf-order.length > 1: Labeled {
                 label: "";
                 Text {
-                    text: "Drag a name to change the order.";
+                    text: @tr("Drag a name to change the order.");
                     color: Theme.foreground-muted;
                 }
             }
             if root.view.kind == 5 && root.view.pdf-op == 0: Labeled {
-                label: "Page";
+                label: @tr("Page");
                 HorizontalLayout {
                     spacing: Theme.spacing;
-                    for label[i] in ["Picture size", "A4", "Letter"]: TextButton {
+                    for label[i] in [@tr("Picture size"), "A4", @tr("Letter")]: TextButton {
                         text: label;
                         checked: i == root.view.pdf-page;
                         clicked => { root.pdf-set("page", i); }
@@ -438,10 +438,10 @@ export component ConvertLayer inherits Rectangle {
                 }
             }
             if root.view.kind == 5 && root.view.pdf-op == 0: Labeled {
-                label: "Margin";
+                label: @tr("Margin");
                 HorizontalLayout {
                     spacing: Theme.spacing;
-                    for label[i] in ["None", "Small", "Large"]: TextButton {
+                    for label[i] in [@tr("None"), @tr("Small"), @tr("Large")]: TextButton {
                         text: label;
                         checked: i == root.view.pdf-margin;
                         clicked => { root.pdf-set("margin", i); }
@@ -450,16 +450,16 @@ export component ConvertLayer inherits Rectangle {
                 }
             }
             if root.view.kind == 5 && root.view.pdf-op == 2: Labeled {
-                label: "Split";
+                label: @tr("Split");
                 HorizontalLayout {
                     spacing: Theme.spacing;
                     TextButton {
-                        text: "Each page";
+                        text: @tr("Each page");
                         checked: root.view.pdf-split == 0;
                         clicked => { root.pdf-set("split", 0); }
                     }
                     TextButton {
-                        text: "Every";
+                        text: @tr("Every");
                         checked: root.view.pdf-split == 1;
                         clicked => { root.pdf-set("split", 1); }
                     }
@@ -467,7 +467,7 @@ export component ConvertLayer inherits Rectangle {
                         width: 64px;
                         horizontal-stretch: 0;
                         text <=> root.pdf-every;
-                        accessible-label: "Pages in each file";
+                        accessible-label: @tr("Pages in each file");
                         edited => {
                             if root.view.pdf-split != 1 { root.pdf-set("split", 1); }
                             root.edited();
@@ -475,12 +475,12 @@ export component ConvertLayer inherits Rectangle {
                         accepted => { root.convert(); }
                     }
                     Text {
-                        text: "pages";
+                        text: @tr("pages");
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
                     TextButton {
-                        text: "Ranges";
+                        text: @tr("Ranges");
                         checked: root.view.pdf-split == 2;
                         clicked => { root.pdf-set("split", 2); }
                     }
@@ -488,24 +488,24 @@ export component ConvertLayer inherits Rectangle {
                 }
             }
             if root.view.kind == 5 && ((root.view.pdf-op == 2 && root.view.pdf-split == 2) || root.view.pdf-op == 4): Labeled {
-                label: root.view.pdf-op == 4 ? "Pages" : "Ranges";
+                label: root.view.pdf-op == 4 ? @tr("Pages") : @tr("Ranges");
                 TextField {
                     width: 220px;
                     horizontal-stretch: 0;
                     text <=> root.pdf-ranges;
-                    accessible-label: "Pages";
+                    accessible-label: @tr("Pages");
                     edited => { root.edited(); }
                     accepted => { root.convert(); }
                 }
                 Text {
-                    text: "e.g. 1-3, 5, 8-";
+                    text: @tr("e.g. 1-3, 5, 8-");
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
             if root.view.kind == 5 && root.view.pdf-op == 3: Labeled {
-                label: "Format";
+                label: @tr("Format");
                 HorizontalLayout {
                     spacing: Theme.spacing;
                     for label[i] in ["PNG", "JPEG"]: TextButton {
@@ -517,10 +517,10 @@ export component ConvertLayer inherits Rectangle {
                 }
             }
             if root.view.kind == 5 && root.view.pdf-op == 3: Labeled {
-                label: "Resolution";
+                label: @tr("Resolution");
                 HorizontalLayout {
                     spacing: Theme.spacing;
-                    for label[i] in ["72 dpi", "150 dpi", "300 dpi"]: TextButton {
+                    for label[i] in [@tr("{} dpi", 72), @tr("{} dpi", 150), @tr("{} dpi", 300)]: TextButton {
                         text: label;
                         checked: i == root.view.pdf-dpi;
                         clicked => { root.pdf-set("dpi", i); }
@@ -546,23 +546,23 @@ export component ConvertLayer inherits Rectangle {
             }
 
             // Where the outputs go.
-            if root.view.show-output: Heading { text: "Output"; }
+            if root.view.show-output: Heading { text: @tr("Output"); }
             if root.view.show-output: Labeled {
                 label: "";
                 HorizontalLayout {
                     spacing: Theme.spacing;
                     TextButton {
-                        text: "Same folder, new name";
+                        text: @tr("Same folder, new name");
                         checked: root.view.output == 0;
                         clicked => { root.set-output(0); }
                     }
                     TextButton {
-                        text: "Subfolder \"converted\"";
+                        text: @tr("Subfolder \"converted\"");
                         checked: root.view.output == 1;
                         clicked => { root.set-output(1); }
                     }
                     TextButton {
-                        text: "Choose…";
+                        text: @tr("Choose…");
                         checked: root.view.output == 2;
                         clicked => { root.set-output(2); }
                     }
@@ -580,7 +580,7 @@ export component ConvertLayer inherits Rectangle {
             if root.view.show-output: Labeled {
                 label: "";
                 DisablableButton {
-                    text: "Replace originals";
+                    text: @tr("Replace originals");
                     checked: root.view.output == 3;
                     enabled: root.view.can-replace;
                     clicked => { root.set-output(3); }
@@ -614,9 +614,9 @@ export component ConvertLayer inherits Rectangle {
                 Rectangle { horizontal-stretch: 1; }
                 HorizontalLayout {
                     spacing: Theme.spacing;
-                    TextButton { text: "Cancel"; clicked => { root.cancel(); } }
+                    TextButton { text: @tr("Cancel"); clicked => { root.cancel(); } }
                     TextButton {
-                        text: "Convert";
+                        text: @tr("Convert");
                         primary: true;
                         clicked => { root.convert(); }
                     }

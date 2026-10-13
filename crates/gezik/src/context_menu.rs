@@ -22,6 +22,8 @@ use gezik_core::view::{
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
+use gezik_i18n::{t, tn, tx};
+
 use crate::operations::Operations;
 use crate::popup::Anchor;
 use crate::preview::Preview;
@@ -70,49 +72,49 @@ pub fn items(place: Place, native_shell: bool) -> Vec<(u32, &'static str)> {
     let mut out = Vec::new();
     match place {
         Place::Row { is_dir: true, pinned } => {
-            out.push((OPEN_IN_NEW_TAB, "Open in new tab"));
+            out.push((OPEN_IN_NEW_TAB, tx!("Open in new tab")));
             out.push(pin_toggle(pinned));
         }
         Place::Row { is_dir: false, .. } => {
             // On Windows the Explorer menu already opens files ("Open", "Open with").
             if !native_shell {
-                out.push((OPEN, "Open"));
-                out.push((OPEN_DEFAULT, "Open with default app"));
+                out.push((OPEN, tx!("Open")));
+                out.push((OPEN_DEFAULT, tx!("Open with default app")));
             }
         }
         // The Explorer menu acts on all of them; elsewhere Gezik can open them.
         Place::Rows => {
             if !native_shell {
-                out.push((OPEN, "Open"));
+                out.push((OPEN, tx!("Open")));
             }
         }
         Place::Sidebar { pinned_section, pinned, first, last } => {
-            out.push((OPEN_IN_NEW_TAB, "Open in new tab"));
+            out.push((OPEN_IN_NEW_TAB, tx!("Open in new tab")));
             out.push(pin_toggle(pinned));
             if pinned_section && !first {
-                out.push((MOVE_UP, "Move up"));
+                out.push((MOVE_UP, tx!("Move up")));
             }
             if pinned_section && !last {
-                out.push((MOVE_DOWN, "Move down"));
+                out.push((MOVE_DOWN, tx!("Move down")));
             }
             if pinned_section {
-                out.push((RENAME_PIN, "Rename…"));
+                out.push((RENAME_PIN, tx!("Rename…")));
             }
         }
         Place::Tab { only_tab, locked } => {
-            out.push((DUPLICATE_TAB, "Duplicate"));
-            out.push((MOVE_TAB_OTHER, "Move to other pane"));
-            out.push((MOVE_TAB_WINDOW, "Move to new window"));
+            out.push((DUPLICATE_TAB, tx!("Duplicate")));
+            out.push((MOVE_TAB_OTHER, tx!("Move to other pane")));
+            out.push((MOVE_TAB_WINDOW, tx!("Move to new window")));
             if locked {
-                out.push((UNLOCK_TAB, "Unlock tab"));
+                out.push((UNLOCK_TAB, tx!("Unlock tab")));
             } else {
-                out.push((LOCK_TAB, "Lock tab"));
-                out.push((CLOSE_TAB, "Close"));
+                out.push((LOCK_TAB, tx!("Lock tab")));
+                out.push((CLOSE_TAB, tx!("Close")));
             }
             if !only_tab {
-                out.push((CLOSE_OTHER_TABS, "Close other tabs"));
+                out.push((CLOSE_OTHER_TABS, tx!("Close other tabs")));
             }
-            out.push((SAVE_TAB_SET, "Save tabs as…"));
+            out.push((SAVE_TAB_SET, tx!("Save tabs as…")));
         }
     }
     out
@@ -162,9 +164,9 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
         if text.is_empty() { String::new() } else { format!(" ({text})") }
     }
     let mut items = vec![
-        (SIZE_MIN, format!("Size at least…{}", size(spec.size.min)), true),
-        (SIZE_MAX, format!("Size at most…{}", size(spec.size.max)), true),
-        (SEARCH_PROPERTIES, format!("Properties…{}", bracketed(spec.fields.trim())), true),
+        (SIZE_MIN, t!("Size at least…{}", size(spec.size.min)), true),
+        (SIZE_MAX, t!("Size at most…{}", size(spec.size.max)), true),
+        (SEARCH_PROPERTIES, t!("Properties…{}", bracketed(spec.fields.trim())), true),
     ];
     let options = [
         spec.name_regex,
@@ -174,23 +176,23 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
         spec.skipped,
     ];
     let titles = [
-        "Name is a regular expression",
-        "Content is a regular expression",
-        "Match case",
-        "Include hidden items",
-        "Include skipped folders",
+        t!("Name is a regular expression"),
+        t!("Content is a regular expression"),
+        t!("Match case"),
+        t!("Include hidden items"),
+        t!("Include skipped folders"),
     ];
     for (i, (on, title)) in options.into_iter().zip(titles).enumerate() {
-        items.push((OPTION_FIRST + i as u32, marked(on, title), true));
+        items.push((OPTION_FIRST + i as u32, marked(on, &title), true));
     }
     let mut tags: Vec<String> = spec.tags.clone();
     if spec.untagged {
         tags.push("none".to_owned());
     }
     let shown = |text: String| if text.is_empty() { text } else { format!(" ({text})") };
-    items.push((SEARCH_TAGS, format!("Tags…{}", shown(tags.join(", "))), true));
-    items.push((SEARCH_COMMENT, format!("Comment…{}", shown(spec.comment.clone())), true));
-    items.push((FILTERS_CLEAR, "Clear filters".to_owned(), spec.filter_count() > 0));
+    items.push((SEARCH_TAGS, t!("Tags…{}", shown(tags.join(", "))), true));
+    items.push((SEARCH_COMMENT, t!("Comment…{}", shown(spec.comment.clone())), true));
+    items.push((FILTERS_CLEAR, t!("Clear filters").into_owned(), spec.filter_count() > 0));
     let mut modified: Vec<(u32, String, bool)> = MODIFIED_PRESETS
         .iter()
         .enumerate()
@@ -198,24 +200,24 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
         .collect();
     let between = match spec.modified {
         DateRange::Between(..) => marked(true, &spec.modified.label()),
-        _ => marked(false, "Between…"),
+        _ => marked(false, &t!("Between…")),
     };
     modified.push((MODIFIED_BETWEEN, between, true));
     let kinds = gezik_core::search::KindFilter::ALL
         .iter()
         .enumerate()
-        .map(|(i, kind)| (KIND_FIRST + i as u32, marked(spec.kind == *kind, kind.label()), true))
+        .map(|(i, kind)| (KIND_FIRST + i as u32, marked(spec.kind == *kind, &t("", kind.label())), true))
         .collect();
     let ratings = (0..=5u8)
         .map(|stars| {
-            let title = if stars == 0 { "Any rating".to_owned() } else { "★".repeat(usize::from(stars)) };
+            let title = if stars == 0 { t!("Any rating").into_owned() } else { "★".repeat(usize::from(stars)) };
             (SEARCH_RATING_FIRST + u32::from(stars), marked(spec.min_rating == stars, &title), true)
         })
         .collect();
     let subs = vec![
-        Submenu { title: "Modified".to_owned(), at: 0, items: modified },
-        Submenu { title: "Type".to_owned(), at: 0, items: kinds },
-        Submenu { title: "Rating".to_owned(), at: 0, items: ratings },
+        Submenu { title: t!("Modified").into_owned(), at: 0, items: modified },
+        Submenu { title: t!("Type").into_owned(), at: 0, items: kinds },
+        Submenu { title: t!("Rating").into_owned(), at: 0, items: ratings },
     ];
     (items, subs)
 }
@@ -223,16 +225,18 @@ pub fn search_filter_items(spec: &SearchSpec) -> (Vec<(u32, String, bool)>, Vec<
 /// The search bar's ▾ menu (spec 4.2, 8): in a new tab, Clear, the folders the last search
 /// could not read, "Save search…", the saved searches, then a Delete item for each (sapma 20).
 pub fn search_more_items(problems: usize, saved: &[String], can_save: bool) -> Vec<(u32, String, bool)> {
-    let mut items =
-        vec![(SEARCH_NEW_TAB, "Search in new tab".to_owned(), true), (SEARCH_CLEAR, "Clear".to_owned(), true)];
+    let mut items = vec![
+        (SEARCH_NEW_TAB, t!("Search in new tab").into_owned(), true),
+        (SEARCH_CLEAR, t!("Clear").into_owned(), true),
+    ];
     if problems > 0 {
-        let what = if problems == 1 { "1 folder".to_owned() } else { format!("{problems} folders") };
-        items.push((SEARCH_PROBLEMS, format!("{what} could not be read…"), true));
+        let what = tn!("{n} folder could not be read…" | "{n} folders could not be read…", problems);
+        items.push((SEARCH_PROBLEMS, what, true));
     }
-    items.push((SAVE_SEARCH, "Save search…".to_owned(), can_save));
+    items.push((SAVE_SEARCH, t!("Save search…").into_owned(), can_save));
     let shown = saved.iter().take(SAVED_SEARCH_MAX as usize).enumerate();
     items.extend(shown.clone().map(|(i, name)| (SAVED_SEARCH_FIRST + i as u32, name.clone(), true)));
-    items.extend(shown.map(|(i, name)| (SAVED_SEARCH_DELETE_FIRST + i as u32, format!("Delete \"{name}\""), true)));
+    items.extend(shown.map(|(i, name)| (SAVED_SEARCH_DELETE_FIRST + i as u32, t!("Delete \"{}\"", name), true)));
     items
 }
 
@@ -334,11 +338,11 @@ fn field_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
         .iter()
         .filter(|c| c.visible)
         .filter_map(|c| match c.key {
-            ColumnKey::Field(id) => Some((FIELD_COLUMN_FIRST + id.number() as u32, format!("Hide {}", id.def().label))),
+            ColumnKey::Field(id) => Some((FIELD_COLUMN_FIRST + id.number() as u32, t!("Hide {}", id.def().label))),
             _ => None,
         })
         .collect();
-    out.push((COLUMNS_MORE, "More Columns…".to_owned()));
+    out.push((COLUMNS_MORE, t!("More Columns…").into_owned()));
     out
 }
 
@@ -353,34 +357,34 @@ pub fn preview_items(
     let mut items = Vec::new();
     match link {
         "" => {}
-        "Download" if surface == 6 => items.push((PREVIEW_LINK, "Download ffmpeg…".to_owned(), true)),
-        "Download" => items.push((PREVIEW_LINK, "Download pdfium…".to_owned(), true)),
+        "Download" if surface == 6 => items.push((PREVIEW_LINK, t!("Download ffmpeg…").into_owned(), true)),
+        "Download" => items.push((PREVIEW_LINK, t!("Download pdfium…").into_owned(), true)),
         link => items.push((PREVIEW_LINK, link.to_owned(), true)),
     }
     if surface == 4 {
-        items.push((PREVIEW_PREVIOUS_PAGE, "Previous Page".to_owned(), true));
-        items.push((PREVIEW_NEXT_PAGE, "Next Page".to_owned(), true));
-        items.push((PREVIEW_GO_TO_PAGE, "Go to Page…".to_owned(), true));
+        items.push((PREVIEW_PREVIOUS_PAGE, t!("Previous Page").into_owned(), true));
+        items.push((PREVIEW_NEXT_PAGE, t!("Next Page").into_owned(), true));
+        items.push((PREVIEW_GO_TO_PAGE, t!("Go to Page…").into_owned(), true));
     }
     if surface == 6 {
-        items.push((PREVIEW_PLAY, "Play/Pause".to_owned(), true));
-        items.push((PREVIEW_BACK, "Back 10 Seconds".to_owned(), true));
-        items.push((PREVIEW_FORWARD, "Forward 10 Seconds".to_owned(), true));
-        items.push((PREVIEW_MUTE, "Mute/Unmute".to_owned(), true));
+        items.push((PREVIEW_PLAY, t!("Play/Pause").into_owned(), true));
+        items.push((PREVIEW_BACK, t!("Back 10 Seconds").into_owned(), true));
+        items.push((PREVIEW_FORWARD, t!("Forward 10 Seconds").into_owned(), true));
+        items.push((PREVIEW_MUTE, t!("Mute/Unmute").into_owned(), true));
     }
     if surface == 4 || surface == 5 {
-        items.push((PREVIEW_ZOOM_IN, "Zoom In".to_owned(), true));
-        items.push((PREVIEW_ZOOM_OUT, "Zoom Out".to_owned(), true));
-        items.push((PREVIEW_FIT, "Fit".to_owned(), true));
-        items.push((PREVIEW_ACTUAL_SIZE, "Actual Size".to_owned(), true));
+        items.push((PREVIEW_ZOOM_IN, t!("Zoom In").into_owned(), true));
+        items.push((PREVIEW_ZOOM_OUT, t!("Zoom Out").into_owned(), true));
+        items.push((PREVIEW_FIT, t!("Fit").into_owned(), true));
+        items.push((PREVIEW_ACTUAL_SIZE, t!("Actual Size").into_owned(), true));
     }
     if hex {
-        items.push((PREVIEW_TEXT, "Show as Text".to_owned(), true));
+        items.push((PREVIEW_TEXT, t!("Show as Text").into_owned(), true));
     } else if file {
-        items.push((PREVIEW_HEX, "Show as Hex".to_owned(), true));
+        items.push((PREVIEW_HEX, t!("Show as Hex").into_owned(), true));
     }
     if let Some(on) = wrap {
-        items.push((PREVIEW_WRAP, marked(on, "Wrap Lines"), true));
+        items.push((PREVIEW_WRAP, marked(on, &t!("Wrap Lines")), true));
     }
     items
 }
@@ -393,11 +397,11 @@ pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
         .map(|(i, key)| {
             let shown = columns.iter().any(|c| c.key == *key && c.visible);
             let id = meta_column_id(*key).unwrap_or(RESULT_COLUMN_FIRST + i as u32);
-            (id, format!("{} {}", if shown { "Hide" } else { "Show" }, key.title()))
+            (id, if shown { t!("Hide {}", key.title()) } else { t!("Show {}", key.title()) })
         })
         .collect();
     out.extend(field_header_items(columns));
-    out.push((RESULT_COLUMNS_RESET, "Reset columns".to_owned()));
+    out.push((RESULT_COLUMNS_RESET, t!("Reset columns").into_owned()));
     out
 }
 
@@ -424,31 +428,31 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
             let id = meta_column_id(c.key)
                 .unwrap_or_else(|| TOGGLE_COLUMN_FIRST + u32::try_from(c.key.index() - 1).unwrap_or(0));
             let title = match (c.key, c.visible) {
-                (ColumnKey::Modified, true) => "Hide Modified",
-                (ColumnKey::Modified, false) => "Show Modified",
-                (ColumnKey::Created, true) => "Hide Created",
-                (ColumnKey::Created, false) => "Show Created",
-                (ColumnKey::Type, true) => "Hide Type",
-                (ColumnKey::Type, false) => "Show Type",
-                (ColumnKey::Size, true) => "Hide Size",
-                (ColumnKey::Size, false) => "Show Size",
-                (ColumnKey::Folder, true) => "Hide Folder",
-                (ColumnKey::Folder, false) => "Show Folder",
-                (ColumnKey::Match, true) => "Hide Match",
-                (ColumnKey::Match, false) => "Show Match",
-                (ColumnKey::Tags, true) => "Hide Tags",
-                (ColumnKey::Tags, false) => "Show Tags",
-                (ColumnKey::Rating, true) => "Hide Rating",
-                (ColumnKey::Rating, false) => "Show Rating",
-                (ColumnKey::Comment, true) => "Hide Comment",
-                (ColumnKey::Comment, false) => "Show Comment",
+                (ColumnKey::Modified, true) => tx!("Hide Modified"),
+                (ColumnKey::Modified, false) => tx!("Show Modified"),
+                (ColumnKey::Created, true) => tx!("Hide Created"),
+                (ColumnKey::Created, false) => tx!("Show Created"),
+                (ColumnKey::Type, true) => tx!("Hide Type"),
+                (ColumnKey::Type, false) => tx!("Show Type"),
+                (ColumnKey::Size, true) => tx!("Hide Size"),
+                (ColumnKey::Size, false) => tx!("Show Size"),
+                (ColumnKey::Folder, true) => tx!("Hide Folder"),
+                (ColumnKey::Folder, false) => tx!("Show Folder"),
+                (ColumnKey::Match, true) => tx!("Hide Match"),
+                (ColumnKey::Match, false) => tx!("Show Match"),
+                (ColumnKey::Tags, true) => tx!("Hide Tags"),
+                (ColumnKey::Tags, false) => tx!("Show Tags"),
+                (ColumnKey::Rating, true) => tx!("Hide Rating"),
+                (ColumnKey::Rating, false) => tx!("Show Rating"),
+                (ColumnKey::Comment, true) => tx!("Hide Comment"),
+                (ColumnKey::Comment, false) => tx!("Show Comment"),
                 (ColumnKey::Field(_), _) => "",
             };
-            (id, title.to_owned())
+            (id, t("", title).into_owned())
         })
         .collect();
     out.extend(field_header_items(columns));
-    out.push((RESET_COLUMNS, "Reset columns".to_owned()));
+    out.push((RESET_COLUMNS, t!("Reset columns").into_owned()));
     out
 }
 
@@ -616,8 +620,8 @@ pub fn drive_items(way: Option<gezik_platform::eject::EjectWay>, native: bool) -
     use gezik_platform::eject::EjectWay;
     match (way, native) {
         (_, true) | (None, _) => Vec::new(),
-        (Some(EjectWay::Eject), false) => vec![(EJECT, "Eject".to_owned())],
-        (Some(EjectWay::Disconnect), false) => vec![(DISCONNECT, "Disconnect".to_owned())],
+        (Some(EjectWay::Eject), false) => vec![(EJECT, t!("Eject").into_owned())],
+        (Some(EjectWay::Disconnect), false) => vec![(DISCONNECT, t!("Disconnect").into_owned())],
     }
 }
 
@@ -628,13 +632,13 @@ pub const RECENT_SERVER_MAX: u32 = 10;
 
 /// This PC's empty space: Connect to Server… and each recent address.
 pub fn drives_background_items(recent: &[String]) -> Vec<(u32, String, bool)> {
-    let mut out = vec![(CONNECT_SERVER, "Connect to Server…".to_owned(), true)];
+    let mut out = vec![(CONNECT_SERVER, t!("Connect to Server…").into_owned(), true)];
     out.extend(
         recent
             .iter()
             .take(RECENT_SERVER_MAX as usize)
             .zip(RECENT_SERVER_FIRST..)
-            .map(|(text, id)| (id, format!("Connect to {text}"), true)),
+            .map(|(text, id)| (id, t!("Connect to {}", text), true)),
     );
     out
 }
@@ -755,17 +759,17 @@ pub const SEARCH_RATING_FIRST: u32 = 2510;
 /// Filter, Rename…, Color ▸ (marked), the moves, Remove from list, New tag….
 pub fn tag_row_items(tag: &Tag, first: bool, last: bool) -> (Vec<(u32, String, bool)>, Vec<Submenu>) {
     let items: Vec<(u32, String, bool)> = [
-        (TAG_SEARCH_HERE, "Search this folder", true),
-        (TAG_SEARCH_EVERYWHERE, "Search everywhere", true),
-        (TAG_FILTER, "Filter this folder", true),
-        (TAG_RENAME, "Rename…", true),
-        (TAG_UP, "Move up", !first),
-        (TAG_DOWN, "Move down", !last),
-        (TAG_REMOVE, "Remove from list", true),
-        (TAGS_NEW, "New tag…", true),
+        (TAG_SEARCH_HERE, t!("Search this folder"), true),
+        (TAG_SEARCH_EVERYWHERE, t!("Search everywhere"), true),
+        (TAG_FILTER, t!("Filter this folder"), true),
+        (TAG_RENAME, t!("Rename…"), true),
+        (TAG_UP, t!("Move up"), !first),
+        (TAG_DOWN, t!("Move down"), !last),
+        (TAG_REMOVE, t!("Remove from list"), true),
+        (TAGS_NEW, t!("New tag…"), true),
     ]
     .into_iter()
-    .map(|(id, title, on)| (id, title.to_owned(), on))
+    .map(|(id, title, on)| (id, title.into_owned(), on))
     .collect();
     // Finder's order: the colours, then none.
     let colors = [
@@ -780,11 +784,11 @@ pub fn tag_row_items(tag: &Tag, first: bool, last: bool) -> (Vec<(u32, String, b
     ]
     .into_iter()
     .map(|color| {
-        let title = if color == TagColor::None { "No color" } else { color.default_name() };
-        (TAG_COLOR_FIRST + u32::from(color.number()), marked(tag.color == color, title), true)
+        let title = if color == TagColor::None { t!("No color") } else { t("", color.default_name()) };
+        (TAG_COLOR_FIRST + u32::from(color.number()), marked(tag.color == color, &title), true)
     })
     .collect();
-    (items, vec![Submenu { title: "Color".to_owned(), at: 4, items: colors }])
+    (items, vec![Submenu { title: t!("Color").into_owned(), at: 4, items: colors }])
 }
 
 /// `Tools ▸` (spec 11 §3.3) at place `at`: only what applies: Compare for the selection when it
@@ -795,38 +799,41 @@ pub fn tag_row_items(tag: &Tag, first: bool, last: bool) -> (Vec<(u32, String, b
 pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
-        items.push((TOOLS_COMPARE, "Compare".to_owned(), true));
+        items.push((TOOLS_COMPARE, t!("Compare").into_owned(), true));
     }
     if crate::dual::is_open() {
-        items.push((TOOLS_SELECT_DIFFERENCES, "Select differences".to_owned(), true));
+        items.push((TOOLS_SELECT_DIFFERENCES, t!("Select differences").into_owned(), true));
     }
     if !rows.is_empty() {
-        items.push((TOOLS_CHECKSUMS, "Calculate checksums…".to_owned(), true));
+        items.push((TOOLS_CHECKSUMS, t!("Calculate checksums…").into_owned(), true));
     }
     if let [(path, false)] = rows
         && crate::checksums::is_checksum_file(path)
     {
-        items.push((TOOLS_VERIFY, "Verify checksums".to_owned(), true));
+        items.push((TOOLS_VERIFY, t!("Verify checksums").into_owned(), true));
     }
     if size_map {
-        items.push((TOOLS_DUPLICATES, "Find duplicates".to_owned(), true));
-        items.push((TOOLS_SIZE_MAP, "Size Map".to_owned(), true));
+        items.push((TOOLS_DUPLICATES, t!("Find duplicates").into_owned(), true));
+        items.push((TOOLS_SIZE_MAP, t!("Size Map").into_owned(), true));
     }
-    items.push((TOOLS_EXPORT_LIST, "Export list…".to_owned(), true));
+    items.push((TOOLS_EXPORT_LIST, t!("Export list…").into_owned(), true));
     items.extend(crate::copy_to::menu_items(rows).into_iter().map(|(id, title)| (id, title, true)));
-    Submenu { title: "Tools".to_owned(), at, items }
+    Submenu { title: t!("Tools").into_owned(), at, items }
 }
 
 /// `Tags ▸` for `paths` right after `Tools ▸` (which drives and the trash have not: no tags
 /// there). Gezik's own menus have `MAX_SUBMENUS` places: there the tags go at the end of Tools ▸,
 /// under a greyed "Tags" (plan 12b sapma 11).
 fn add_tags(subs: &mut Vec<Submenu>, paths: &[PathBuf], native: bool) {
-    let Some(tools) = subs.iter_mut().find(|sub| sub.title == "Tools") else { return };
+    // Tools ▸ by its one item that is always there (its title is translated).
+    let Some(tools) = subs.iter_mut().find(|sub| sub.items.iter().any(|(id, _, _)| *id == TOOLS_EXPORT_LIST)) else {
+        return;
+    };
     let tags = crate::tags::menu_sub(paths, tools.at);
     if native {
         subs.push(tags);
     } else {
-        tools.items.push((HEADING, "Tags".to_owned(), false));
+        tools.items.push((HEADING, t!("Tags").into_owned(), false));
         tools.items.extend(tags.items);
     }
 }
@@ -834,12 +841,12 @@ fn add_tags(subs: &mut Vec<Submenu>, paths: &[PathBuf], native: bool) {
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
 pub fn trash_row_items() -> [(u32, &'static str); 2] {
-    [(PUT_BACK, "Put Back"), (TRASH_DELETE, "Delete Permanently…")]
+    [(PUT_BACK, tx!("Put Back")), (TRASH_DELETE, tx!("Delete Permanently…"))]
 }
 
 /// "Empty Recycle Bin…" on Windows, "Empty Trash…" elsewhere.
 fn empty_title() -> String {
-    format!("Empty {}…", gezik_core::nav::TRASH_NAME)
+    if cfg!(windows) { t!("Empty Recycle Bin…") } else { t!("Empty Trash…") }.into_owned()
 }
 /// Group headings in a Slint menu: shown greyed, never chosen.
 pub const HEADING: u32 = 0;
@@ -873,24 +880,24 @@ pub fn job_items(
     let mut items = Vec::new();
     let mut subs = Vec::new();
     if copies {
-        items.push((JOB_VERIFY, marked(options.verify, "Verify copies"), true));
+        items.push((JOB_VERIFY, marked(options.verify, &t!("Verify copies")), true));
         let speed = options.speed.unwrap_or(0);
         let speeds = JOB_SPEEDS.iter().enumerate().map(|(i, &mb)| {
-            let title = if mb == 0 { "No limit".to_owned() } else { format!("{mb} MB/s") };
+            let title = if mb == 0 { t!("No limit").into_owned() } else { t!("{} MB/s", mb) };
             (JOB_SPEED_FIRST + i as u32, marked(speed == mb * 1_000_000, &title), true)
         });
         let title = if JOB_SPEEDS.iter().any(|&mb| speed == mb * 1_000_000) {
-            "Speed limit".to_owned()
+            t!("Speed limit").into_owned()
         } else {
             let rate = gezik_core::ops::rate::format_rate(speed as f64, gezik_core::view::SizeFormat::Decimal);
-            format!("Speed limit ({rate})")
+            t!("Speed limit ({})", rate)
         };
         subs.push(Submenu { title, at: items.len(), items: speeds.collect() });
     }
     if waiting {
-        items.push((JOB_UP, "Move up".to_owned(), options.can_up));
-        items.push((JOB_DOWN, "Move down".to_owned(), options.can_down));
-        items.push((JOB_START_NOW, "Start now".to_owned(), true));
+        items.push((JOB_UP, t!("Move up").into_owned(), options.can_up));
+        items.push((JOB_DOWN, t!("Move down").into_owned(), options.can_down));
+        items.push((JOB_START_NOW, t!("Start now").into_owned(), true));
     }
     (items, subs)
 }
@@ -899,11 +906,11 @@ pub fn job_items(
 /// result row's menu.
 pub fn duplicate_select_items() -> Vec<(u32, &'static str)> {
     [
-        "Select all but the newest in each group",
-        "Select all but the oldest in each group",
-        "Select all but the first in each group",
-        "Select all in this folder",
-        "Keep this one, select its copies",
+        tx!("Select all but the newest in each group"),
+        tx!("Select all but the oldest in each group"),
+        tx!("Select all but the first in each group"),
+        tx!("Select all in this folder"),
+        tx!("Keep this one, select its copies"),
     ]
     .into_iter()
     .enumerate()
@@ -914,10 +921,10 @@ pub fn duplicate_select_items() -> Vec<(u32, &'static str)> {
 /// What a search result's row menu adds.
 pub fn result_row_items() -> Vec<(u32, &'static str)> {
     vec![
-        (SHOW_IN_FOLDER, "Show in folder"),
-        (SHOW_IN_FOLDER_NEW_TAB, "Show in folder in new tab"),
-        (COPY_WITH_FOLDERS, "Copy with folders"),
-        (CUT_WITH_FOLDERS, "Cut with folders"),
+        (SHOW_IN_FOLDER, tx!("Show in folder")),
+        (SHOW_IN_FOLDER_NEW_TAB, tx!("Show in folder in new tab")),
+        (COPY_WITH_FOLDERS, tx!("Copy with folders")),
+        (CUT_WITH_FOLDERS, tx!("Cut with folders")),
     ]
 }
 
@@ -929,14 +936,14 @@ pub fn one_folder(paths: &[PathBuf]) -> bool {
 /// Gezik's file items for rows on macOS and Linux; Windows has them in its own menu (and
 /// Gezik takes them over, see `Menus::run_verb`).
 pub fn file_items(single: bool, folder: bool, can_paste: bool) -> Vec<(u32, &'static str)> {
-    let mut out = vec![(CUT, "Cut"), (COPY, "Copy")];
+    let mut out = vec![(CUT, tx!("Cut")), (COPY, tx!("Copy"))];
     if folder && can_paste {
-        out.push((PASTE_INTO, "Paste into folder"));
+        out.push((PASTE_INTO, tx!("Paste into folder")));
     }
-    out.push((DUPLICATE, "Duplicate"));
-    out.push((RENAME, if single { "Rename" } else { "Rename items…" }));
-    out.push((TRASH, "Move to Trash"));
-    out.push((DELETE_PERMANENTLY, "Delete permanently"));
+    out.push((DUPLICATE, tx!("Duplicate")));
+    out.push((RENAME, if single { tx!("Rename") } else { tx!("Rename items…") }));
+    out.push((TRASH, tx!("Move to Trash")));
+    out.push((DELETE_PERMANENTLY, tx!("Delete permanently")));
     out
 }
 
@@ -951,22 +958,22 @@ pub fn background_items(
 ) -> Vec<(u32, String)> {
     let mut out = Vec::new();
     if let Some(label) = undo {
-        out.push((UNDO, format!("Undo {label}")));
+        out.push((UNDO, t!("Undo {}", label)));
     }
     if let Some(label) = redo {
-        out.push((REDO, format!("Redo {label}")));
+        out.push((REDO, t!("Redo {}", label)));
     }
     match (can_paste, paste_as) {
-        (true, _) => out.push((PASTE, "Paste".to_owned())),
-        (false, Some(PasteKind::Image)) => out.push((PASTE_AS_FILE, "Paste image as file".to_owned())),
-        (false, Some(PasteKind::Text)) => out.push((PASTE_AS_FILE, "Paste text as file".to_owned())),
+        (true, _) => out.push((PASTE, t!("Paste").into_owned())),
+        (false, Some(PasteKind::Image)) => out.push((PASTE_AS_FILE, t!("Paste image as file").into_owned())),
+        (false, Some(PasteKind::Text)) => out.push((PASTE_AS_FILE, t!("Paste text as file").into_owned())),
         (false, None) => {}
     }
     if windows {
-        out.push((NEW_FOLDER, "New folder".to_owned()));
-        out.push((NEW_FILE, "New file".to_owned()));
+        out.push((NEW_FOLDER, t!("New folder").into_owned()));
+        out.push((NEW_FILE, t!("New file").into_owned()));
     }
-    out.push((REFRESH, "Refresh".to_owned()));
+    out.push((REFRESH, t!("Refresh").into_owned()));
     out
 }
 
@@ -976,10 +983,10 @@ pub fn background_items(
 pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu {
     let mut items = Vec::new();
     if !windows {
-        items.push((NEW_FOLDER, "Folder".to_owned(), true));
-        items.push((NEW_FILE, "Text file".to_owned(), true));
+        items.push((NEW_FOLDER, t!("Folder").into_owned(), true));
+        items.push((NEW_FILE, t!("Text file").into_owned(), true));
     }
-    items.push((NEW_MARKDOWN, "Markdown file".to_owned(), true));
+    items.push((NEW_MARKDOWN, t!("Markdown file").into_owned(), true));
     items.extend(
         templates
             .iter()
@@ -987,9 +994,9 @@ pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu {
             .enumerate()
             .map(|(i, template)| (TEMPLATE_FIRST + i as u32, template.label.clone(), true)),
     );
-    items.push((OPEN_TEMPLATES, "Open templates folder".to_owned(), true));
-    let title = if windows { "New from template" } else { "New" };
-    Submenu { title: title.to_owned(), at, items }
+    items.push((OPEN_TEMPLATES, t!("Open templates folder").into_owned(), true));
+    let title = if windows { t!("New from template") } else { t!("New") };
+    Submenu { title: title.into_owned(), at, items }
 }
 
 /// Create link ▸ on Windows (Shortcut; Junction for local folders; Symbolic link when it can
@@ -999,17 +1006,17 @@ pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Ve
     if !windows {
         let mut out = Vec::new();
         if mac {
-            out.push((MAKE_ALIAS, "Make Alias".to_owned(), true));
+            out.push((MAKE_ALIAS, t!("Make Alias").into_owned(), true));
         }
-        out.push((LINK_SYMLINK, "Create link".to_owned(), true));
+        out.push((LINK_SYMLINK, t!("Create link").into_owned(), true));
         return out;
     }
-    let mut out = vec![(LINK_SHORTCUT, "Shortcut".to_owned(), true)];
+    let mut out = vec![(LINK_SHORTCUT, t!("Shortcut").into_owned(), true)];
     if junction {
-        out.push((LINK_JUNCTION, "Junction".to_owned(), true));
+        out.push((LINK_JUNCTION, t!("Junction").into_owned(), true));
     }
     if symlink {
-        out.push((LINK_SYMLINK, "Symbolic link".to_owned(), true));
+        out.push((LINK_SYMLINK, t!("Symbolic link").into_owned(), true));
     }
     out
 }
@@ -1019,26 +1026,26 @@ pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Ve
 pub fn package_item(path: &Path, is_dir: bool, mac: bool) -> Option<(u32, String)> {
     let package =
         mac && is_dir && path.file_name().is_some_and(|n| gezik_core::kind::is_package_name(&n.to_string_lossy()));
-    package.then(|| (SHOW_PACKAGE, "Show Package Contents".to_owned()))
+    package.then(|| (SHOW_PACKAGE, t!("Show Package Contents").into_owned()))
 }
 
 /// Open With ▸ (macOS): `apps` by place, or a greyed Loading… while they are not known, then
 /// Other…; at place `at`.
 pub fn open_with_sub(apps: Option<&[gezik_platform::open_with::AppChoice]>, at: usize) -> Submenu {
     let mut items: Vec<(u32, String, bool)> = match apps {
-        None => vec![(HEADING, "Loading…".to_owned(), false)],
+        None => vec![(HEADING, t!("Loading…").into_owned(), false)],
         Some(apps) => apps
             .iter()
             .take(OPEN_WITH_MAX as usize)
             .enumerate()
             .map(|(i, app)| {
-                let title = if app.default { format!("{} (default)", app.name) } else { app.name.clone() };
+                let title = if app.default { t!("{} (default)", app.name) } else { app.name.clone() };
                 (OPEN_WITH_FIRST + i as u32, title, true)
             })
             .collect(),
     };
-    items.push((OPEN_WITH_OTHER, "Other…".to_owned(), true));
-    Submenu { title: "Open With".to_owned(), at, items }
+    items.push((OPEN_WITH_OTHER, t!("Other…").into_owned(), true));
+    Submenu { title: t!("Open With").into_owned(), at, items }
 }
 
 /// Share… and Quick Actions ▸ (macOS) for rows, the submenu right after Share… (`at` is where
@@ -1052,7 +1059,7 @@ pub fn finder_items(
         return (Vec::new(), None);
     }
     let sub = services.filter(|s| !s.is_empty()).map(|services| Submenu {
-        title: "Quick Actions".to_owned(),
+        title: t!("Quick Actions").into_owned(),
         at: at + 1,
         items: services
             .iter()
@@ -1061,7 +1068,7 @@ pub fn finder_items(
             .map(|(i, s)| (QUICK_ACTION_FIRST + i as u32, s.title.clone(), true))
             .collect(),
     });
-    (vec![(SHARE, "Share…".to_owned())], sub)
+    (vec![(SHARE, t!("Share…").into_owned())], sub)
 }
 
 /// Whether Junction is offered for `rows`: all folders, none on a share or on one of
@@ -1078,9 +1085,9 @@ pub fn junction_offered(rows: &[(PathBuf, bool)], network_drives: &[PathBuf]) ->
 
 /// "Open terminal here", and on Windows "Open terminal as administrator" under it.
 pub fn terminal_items(windows: bool) -> Vec<(u32, &'static str)> {
-    let mut out = vec![(OPEN_TERMINAL, "Open terminal here")];
+    let mut out = vec![(OPEN_TERMINAL, tx!("Open terminal here"))];
     if windows {
-        out.push((OPEN_TERMINAL_ADMIN, "Open terminal as administrator"));
+        out.push((OPEN_TERMINAL_ADMIN, tx!("Open terminal as administrator")));
     }
     out
 }
@@ -1092,13 +1099,13 @@ pub fn copy_path_items(windows: bool, unc: bool) -> Vec<(u32, String, bool)> {
         .iter()
         .enumerate()
         .filter(|(_, kind)| kind.offered(windows, unc))
-        .map(|(i, kind)| (COPY_PATH_FIRST + i as u32, kind.label().to_owned(), true))
+        .map(|(i, kind)| (COPY_PATH_FIRST + i as u32, t("", kind.label()).into_owned(), true))
         .collect()
 }
 
-/// `items` with owned labels, to add items whose labels are made at run time.
+/// `items` (marked with `tx!`) translated and owned, to add items whose labels are made at run time.
 fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
-    items.into_iter().map(|(id, title)| (id, title.to_owned())).collect()
+    items.into_iter().map(|(id, title)| (id, t("", title).into_owned())).collect()
 }
 
 /// The View menu; the current choices are marked with a bullet. `options`: `[view]`'s options
@@ -1114,51 +1121,52 @@ pub fn view_items(
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
     let grid = view.mode == ViewMode::Grid;
     let mut out = vec![
-        (VIEW_LIST, mark(view.mode == ViewMode::List, "List")),
-        (VIEW_GRID, mark(grid, "Grid")),
-        (VIEW_COLUMNS, mark(view.mode == ViewMode::Columns, "Columns")),
+        (VIEW_LIST, mark(view.mode == ViewMode::List, &t!("List"))),
+        (VIEW_GRID, mark(grid, &t!("Grid"))),
+        (VIEW_COLUMNS, mark(view.mode == ViewMode::Columns, &t!("Columns"))),
     ];
     if grid {
-        out.push((GRID_SMALL, mark(view.grid_size == GridSize::Small, "Small icons")));
-        out.push((GRID_MEDIUM, mark(view.grid_size == GridSize::Medium, "Medium icons")));
-        out.push((GRID_LARGE, mark(view.grid_size == GridSize::Large, "Large icons")));
+        out.push((GRID_SMALL, mark(view.grid_size == GridSize::Small, &t!("Small icons"))));
+        out.push((GRID_MEDIUM, mark(view.grid_size == GridSize::Medium, &t!("Medium icons"))));
+        out.push((GRID_LARGE, mark(view.grid_size == GridSize::Large, &t!("Large icons"))));
     }
     let sorts = [
-        (SORT_BY_NAME, SortKey::Name, "Sort by name"),
-        (SORT_BY_MODIFIED, SortKey::Modified, "Sort by date modified"),
-        (SORT_BY_CREATED, SortKey::Created, "Sort by date created"),
-        (SORT_BY_TYPE, SortKey::Type, "Sort by type"),
-        (SORT_BY_SIZE, SortKey::Size, "Sort by size"),
-        (SORT_BY_TAGS, SortKey::Tags, "Sort by tags"),
-        (SORT_BY_RATING, SortKey::Rating, "Sort by rating"),
+        (SORT_BY_NAME, SortKey::Name, tx!("Sort by name")),
+        (SORT_BY_MODIFIED, SortKey::Modified, tx!("Sort by date modified")),
+        (SORT_BY_CREATED, SortKey::Created, tx!("Sort by date created")),
+        (SORT_BY_TYPE, SortKey::Type, tx!("Sort by type")),
+        (SORT_BY_SIZE, SortKey::Size, tx!("Sort by size")),
+        (SORT_BY_TAGS, SortKey::Tags, tx!("Sort by tags")),
+        (SORT_BY_RATING, SortKey::Rating, tx!("Sort by rating")),
     ];
     for (id, key, title) in sorts {
-        out.push((id, mark(view.sort.key == key, title)));
+        out.push((id, mark(view.sort.key == key, &t("", title))));
     }
     let by_field = match view.sort.key {
-        SortKey::Field(id) => format!("Sort by {}…", id.def().label.to_lowercase()),
-        _ => "Sort by property…".to_owned(),
+        // shortcut: the field label is English until 15c translates it, so lowercasing it is safe.
+        SortKey::Field(id) => t!("Sort by {}…", id.def().label.to_lowercase()),
+        _ => t!("Sort by property…").into_owned(),
     };
     out.push((SORT_BY_MORE, mark(matches!(view.sort.key, SortKey::Field(_)), &by_field)));
-    out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, "Ascending")));
-    out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, "Descending")));
-    out.push((PREVIEW_PANE, mark(preview_open, "Preview pane")));
-    out.push((PREVIEW_HEX, "    Show Preview as Hex".to_owned()));
-    out.push((PREVIEW_PLAY, "    Play/Pause Preview".to_owned()));
-    out.push((TOGGLE_STACK, mark(stack_open, "Drop stack")));
-    out.push((SHOW_HISTORY, "    Operation history".to_owned()));
-    out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, "Hide extensions")));
-    out.push((FOLDERS_FIRST, mark(options.folders_first, "Folders first")));
-    out.push((SINGLE_CLICK_OPEN, mark(options.single_click_open, "Single-click to open")));
-    out.push((SHOW_HIDDEN, mark(options.show_hidden, "Show hidden items")));
+    out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, &t!("Ascending"))));
+    out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, &t!("Descending"))));
+    out.push((PREVIEW_PANE, mark(preview_open, &t!("Preview pane"))));
+    out.push((PREVIEW_HEX, mark(false, &t!("Show Preview as Hex"))));
+    out.push((PREVIEW_PLAY, mark(false, &t!("Play/Pause Preview"))));
+    out.push((TOGGLE_STACK, mark(stack_open, &t!("Drop stack"))));
+    out.push((SHOW_HISTORY, mark(false, &t!("Operation history"))));
+    out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, &t!("Hide extensions"))));
+    out.push((FOLDERS_FIRST, mark(options.folders_first, &t!("Folders first"))));
+    out.push((SINGLE_CLICK_OPEN, mark(options.single_click_open, &t!("Single-click to open"))));
+    out.push((SHOW_HIDDEN, mark(options.show_hidden, &t!("Show hidden items"))));
     if windows {
-        out.push((SHOW_SYSTEM, mark(options.show_system, "Show system items")));
+        out.push((SHOW_SYSTEM, mark(options.show_system, &t!("Show system items"))));
     }
-    out.push((APPLY_TO_ALL, "Apply to all folders".to_owned()));
-    out.push((RESET_FOLDER, "Reset this folder".to_owned()));
-    out.push((SYSTEM_INTEGRATION, "    System Integration…".to_owned()));
-    out.push((SETTINGS, "    Settings…".to_owned()));
-    out.push((REVEAL_IN_TREE, "    Show in sidebar tree".to_owned()));
+    out.push((APPLY_TO_ALL, t!("Apply to all folders").into_owned()));
+    out.push((RESET_FOLDER, t!("Reset this folder").into_owned()));
+    out.push((SYSTEM_INTEGRATION, mark(false, &t!("System Integration…"))));
+    out.push((SETTINGS, mark(false, &t!("Settings…"))));
+    out.push((REVEAL_IN_TREE, mark(false, &t!("Show in sidebar tree"))));
     out
 }
 
@@ -1170,9 +1178,9 @@ fn rule_items(entries: &mut Vec<(u32, String, bool)>, rule: Option<(usize, bool)
     let Some((number, applies)) = rule else { return };
     let Some(at) = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER) else { return };
     if applies {
-        entries.insert(at, (VIEW_RULE_APPLIES, format!("    View rule {number} applies"), false));
+        entries.insert(at, (VIEW_RULE_APPLIES, format!("    {}", t!("View rule {} applies", number)), false));
     } else {
-        entries[at] = (RESET_TO_RULE, format!("Reset to rule {number}"), true);
+        entries[at] = (RESET_TO_RULE, t!("Reset to rule {}", number), true);
     }
 }
 
@@ -1182,16 +1190,16 @@ pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
     let dates = DateFormat::ALL
         .iter()
         .enumerate()
-        .map(|(i, f)| (DATE_FORMAT_FIRST + i as u32, mark(*f == options.date_format, f.label()), true))
+        .map(|(i, f)| (DATE_FORMAT_FIRST + i as u32, mark(*f == options.date_format, &t("", f.label())), true))
         .collect();
     let sizes = SizeFormat::ALL
         .iter()
         .enumerate()
-        .map(|(i, f)| (SIZE_FORMAT_FIRST + i as u32, mark(*f == options.size_format, f.label()), true))
+        .map(|(i, f)| (SIZE_FORMAT_FIRST + i as u32, mark(*f == options.size_format, &t("", f.label())), true))
         .collect();
     vec![
-        Submenu { title: "Date format".to_owned(), at, items: dates },
-        Submenu { title: "Size format".to_owned(), at, items: sizes },
+        Submenu { title: t!("Date format").into_owned(), at, items: dates },
+        Submenu { title: t!("Size format").into_owned(), at, items: sizes },
     ]
 }
 
@@ -1202,19 +1210,19 @@ pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
     let items = [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG, GROUP_BY_RATING]
         .into_iter()
         .zip(GroupBy::ALL)
-        .map(|(id, by)| (id, mark(by == current, by.title()), true))
+        .map(|(id, by)| (id, mark(by == current, &t("", by.title())), true))
         .chain(
             groupable_fields()
                 .zip(GROUP_BY_FIELD_FIRST..)
                 .map(|(field, id)| (id, mark(current == GroupBy::Field(field), field.def().label), true)),
         )
         .collect();
-    Submenu { title: "Group by".to_owned(), at, items }
+    Submenu { title: t!("Group by").into_owned(), at, items }
 }
 
 /// A group header's menu, before Group by ▸.
 pub fn group_header_items() -> Vec<(u32, &'static str)> {
-    vec![(COLLAPSE_GROUPS, "Collapse All Groups"), (EXPAND_GROUPS, "Expand All Groups")]
+    vec![(COLLAPSE_GROUPS, tx!("Collapse All Groups")), (EXPAND_GROUPS, tx!("Expand All Groups"))]
 }
 
 /// What View menu item `id` changes, from `options` as they are now.
@@ -1239,13 +1247,13 @@ pub fn view_option_for(id: u32, options: ViewOptions) -> Option<ViewOption> {
 pub fn preset_items(names: &[String]) -> Vec<(u32, String)> {
     let mut list: Vec<(u32, String)> =
         names.iter().enumerate().take(PRESET_MAX as usize).map(|(i, n)| (PRESET_FIRST + i as u32, n.clone())).collect();
-    list.push((PRESET_SAVE, "Save current rules as…".to_owned()));
+    list.push((PRESET_SAVE, t!("Save current rules as…").into_owned()));
     list.extend(
         names
             .iter()
             .enumerate()
             .take(PRESET_MAX as usize)
-            .map(|(i, n)| (PRESET_DELETE_FIRST + i as u32, format!("Delete \"{n}\""))),
+            .map(|(i, n)| (PRESET_DELETE_FIRST + i as u32, t!("Delete \"{}\"", n))),
     );
     list
 }
@@ -1256,8 +1264,8 @@ pub fn filter_items(names: &[String], can_save: bool) -> Vec<(u32, String, bool)
     let shown = names.iter().take(FILTER_MAX as usize).enumerate();
     let mut list: Vec<(u32, String, bool)> =
         shown.clone().map(|(i, name)| (FILTER_FIRST + i as u32, name.clone(), true)).collect();
-    list.push((FILTER_SAVE, "Save as…".to_owned(), can_save));
-    list.extend(shown.map(|(i, name)| (FILTER_DELETE_FIRST + i as u32, format!("Delete \"{name}\""), true)));
+    list.push((FILTER_SAVE, t!("Save as…").into_owned(), can_save));
+    list.extend(shown.map(|(i, name)| (FILTER_DELETE_FIRST + i as u32, t!("Delete \"{}\"", name), true)));
     list
 }
 
@@ -1273,16 +1281,14 @@ pub fn tab_set_items(names: &[String]) -> Vec<(u32, String, bool)> {
     let mut list: Vec<(u32, String, bool)> =
         shown.clone().map(|(i, name)| (TAB_SET_OPEN_FIRST + i as u32, name.clone(), true)).collect();
     list.extend(
-        shown
-            .clone()
-            .map(|(i, name)| (TAB_SET_REPLACE_FIRST + i as u32, format!("Replace tabs with \"{name}\""), true)),
+        shown.clone().map(|(i, name)| (TAB_SET_REPLACE_FIRST + i as u32, t!("Replace tabs with \"{}\"", name), true)),
     );
-    list.extend(shown.map(|(i, name)| (TAB_SET_DELETE_FIRST + i as u32, format!("Delete \"{name}\""), true)));
+    list.extend(shown.map(|(i, name)| (TAB_SET_DELETE_FIRST + i as u32, t!("Delete \"{}\"", name), true)));
     list
 }
 
 fn pin_toggle(pinned: bool) -> (u32, &'static str) {
-    if pinned { (UNPIN, "Unpin from sidebar") } else { (PIN, "Pin to sidebar") }
+    if pinned { (UNPIN, tx!("Unpin from sidebar")) } else { (PIN, tx!("Pin to sidebar")) }
 }
 
 /// "Move to group ▸" for a pin in group `own`: the groups shown but its own (by their place
@@ -1295,9 +1301,9 @@ pub fn group_items(groups: &[String], own: Option<&str>) -> Vec<(u32, String, bo
         .filter(|(_, group)| own.is_none_or(|own| !gezik_config::pins::same_group(own, group)))
         .map(|(i, group)| (GROUP_MOVE_FIRST + i as u32, group.clone(), true))
         .collect();
-    out.push((GROUP_NEW, "New group…".to_owned(), true));
+    out.push((GROUP_NEW, t!("New group…").into_owned(), true));
     if own.is_some() {
-        out.push((GROUP_NONE, "No group".to_owned(), true));
+        out.push((GROUP_NONE, t!("No group").into_owned(), true));
     }
     out
 }
@@ -1306,20 +1312,20 @@ pub fn group_items(groups: &[String], own: Option<&str>) -> Vec<(u32, String, bo
 pub fn group_heading_items(first: bool, last: bool) -> Vec<(u32, &'static str)> {
     let mut out = Vec::new();
     if !first {
-        out.push((GROUP_UP, "Move group up"));
+        out.push((GROUP_UP, tx!("Move group up")));
     }
     if !last {
-        out.push((GROUP_DOWN, "Move group down"));
+        out.push((GROUP_DOWN, tx!("Move group down")));
     }
-    out.push((GROUP_RENAME, "Rename group…"));
-    out.push((UNGROUP, "Ungroup"));
+    out.push((GROUP_RENAME, tx!("Rename group…")));
+    out.push((UNGROUP, tx!("Ungroup")));
     out
 }
 
 /// Get Info in the menus Gezik draws (macOS "Get Info", elsewhere "Properties"); none in
 /// Explorer's own, which has Properties.
 pub fn info_item(native: bool, mac: bool) -> Option<(u32, String)> {
-    (!native).then(|| (GET_INFO, if mac { "Get Info" } else { "Properties" }.to_owned()))
+    (!native).then(|| (GET_INFO, if mac { t!("Get Info") } else { t!("Properties") }.into_owned()))
 }
 
 /// The cloud items of a row menu: in Gezik's menu (macOS) under a cloud root. Windows shows
@@ -1328,7 +1334,7 @@ pub fn cloud_items(under_root: bool, native: bool, mac: bool) -> Vec<(u32, Strin
     if !under_root || native || !mac {
         return Vec::new();
     }
-    vec![(KEEP_OFFLINE, "Download Now".to_owned()), (FREE_UP, "Remove Download".to_owned())]
+    vec![(KEEP_OFFLINE, t!("Download Now").into_owned()), (FREE_UP, t!("Remove Download").into_owned())]
 }
 
 /// What a menu was opened for, captured when it opens. Items run later (the Slint menu
@@ -1530,10 +1536,10 @@ impl Menus {
                     list.extend(owned(duplicate_select_items()));
                 }
             } else if !crate::panes::active_view().shows_drives() {
-                list.push((NEW_FOLDER_WITH_SELECTION, "New folder with selection".to_owned()));
+                list.push((NEW_FOLDER_WITH_SELECTION, t!("New folder with selection").into_owned()));
             }
             if native && !crate::panes::active_view().shows_drives() {
-                list.push((BATCH_RENAME, format!("Rename {} items…", paths.len())));
+                list.push((BATCH_RENAME, tn!("Rename {n} item…" | "Rename {n} items…", paths.len())));
             }
             return self.open_as(native, Subject::Rows(paths.clone()), list, subs, MenuTarget::Items(paths), x, y, at);
         }
@@ -1546,10 +1552,10 @@ impl Menus {
         if is_dir {
             list.push((
                 SEARCH_HERE,
-                format!("Search in \"{}\"…", crate::operations::items_text(std::slice::from_ref(&path))),
+                t!("Search in \"{}\"…", crate::operations::items_text(std::slice::from_ref(&path))),
             ));
             if matches!(crate::panes::active_nav().active_location(), Location::Path(_)) {
-                list.push((CALC_FOLDER_SIZES, "Calculate folder sizes".to_owned()));
+                list.push((CALC_FOLDER_SIZES, t!("Calculate folder sizes").into_owned()));
             }
         }
         list.extend(owned(terminal_items(native)));
@@ -1601,7 +1607,11 @@ impl Menus {
             }
         }
         subs.push(tools);
-        subs.extend(commands.map(|items| Submenu { title: "Commands".to_owned(), at: start + extra.len(), items }));
+        subs.extend(commands.map(|items| Submenu {
+            title: t!("Commands").into_owned(),
+            at: start + extra.len(),
+            items,
+        }));
         if native {
             list.splice(0..0, extra);
         } else {
@@ -1616,7 +1626,7 @@ impl Menus {
         if crate::panes::active_view().shows_drives() {
             Vec::new()
         } else if native {
-            vec![(DUPLICATE, "Duplicate".to_owned())]
+            vec![(DUPLICATE, t!("Duplicate").into_owned())]
         } else {
             owned(file_items(single, folder, self.ops.can_paste()))
         }
@@ -1706,7 +1716,7 @@ impl Menus {
             gezik_platform::link::symlinks_allowed(),
         );
         if native {
-            subs.push(Submenu { title: "Create link".to_owned(), at: list.len(), items });
+            subs.push(Submenu { title: t!("Create link").into_owned(), at: list.len(), items });
         } else {
             list.extend(items.into_iter().map(|(id, title, _)| (id, title)));
         }
@@ -1757,18 +1767,18 @@ impl Menus {
         let new_at = list.iter().position(|(id, _)| *id == REFRESH).unwrap_or(list.len());
         let mut subs = vec![new_sub(&templates, windows, new_at)];
         *self.menu_templates.borrow_mut() = templates;
-        list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
+        list.push((SEARCH_HERE, t!("Search in this folder…").into_owned()));
         list.extend(owned(terminal_items(windows)));
         subs.push(self.copy_path_sub(std::slice::from_ref(&dir), list.len()));
         subs.push(tools_sub(list.len(), crate::diff::offered(), &[], true));
-        list.push((SETTINGS, "Settings…".to_owned()));
+        list.push((SETTINGS, t!("Settings…").into_owned()));
         self.open(Subject::Background(dir.clone()), list, subs, MenuTarget::Background(dir), x, y, at);
     }
 
     /// "Copy path as ▸" for `paths`, at place `at` among the items.
     fn copy_path_sub(&self, paths: &[PathBuf], at: usize) -> Submenu {
         let unc = crate::copy_path::unc_offered(paths.first().map(PathBuf::as_path));
-        Submenu { title: "Copy path as".to_owned(), at, items: copy_path_items(cfg!(windows), unc) }
+        Submenu { title: t!("Copy path as").into_owned(), at, items: copy_path_items(cfg!(windows), unc) }
     }
 
     /// Right-click on sidebar entry (`section`, `index`), at window position `x`, `y`; on a
@@ -1785,7 +1795,11 @@ impl Menus {
             let names = crate::saved_searches::names();
             let Some(name) = usize::try_from(index).ok().and_then(|i| names.get(i).cloned()) else { return };
             *self.subject.borrow_mut() = Some(Subject::SavedSearch(name));
-            let list = [(RUN_SEARCH_NEW_TAB, "Run in new tab"), (RENAME_SEARCH, "Rename…"), (DELETE_SEARCH, "Delete")];
+            let list = [
+                (RUN_SEARCH_NEW_TAB, tx!("Run in new tab")),
+                (RENAME_SEARCH, tx!("Rename…")),
+                (DELETE_SEARCH, tx!("Delete")),
+            ];
             return self.open_slint(&list, Anchor::point(x, y));
         }
         if section == crate::sidebar::SECTION_TAGS {
@@ -1797,7 +1811,7 @@ impl Menus {
         }
         if section == crate::sidebar::SECTION_TRASH {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
-            return self.open_slint(&[(EMPTY_TRASH, empty_title())], Anchor::point(x, y));
+            return self.open_slint_entries(&[(EMPTY_TRASH, empty_title(), true)], Vec::new(), Anchor::point(x, y));
         }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
@@ -1809,7 +1823,7 @@ impl Menus {
             let groups = self.sidebar.shown_groups();
             let own = self.sidebar.group_of(&path);
             subs.push(Submenu {
-                title: "Move to group".to_owned(),
+                title: t!("Move to group").into_owned(),
                 at: list.len(),
                 items: group_items(&groups, own.as_deref()),
             });
@@ -1818,7 +1832,7 @@ impl Menus {
         if section == crate::sidebar::SECTION_DRIVES && !cfg!(windows) {
             list.extend(drive_items(crate::eject::way_at(&path), false));
         }
-        list.push((SEARCH_HERE, "Search in this folder…".to_owned()));
+        list.push((SEARCH_HERE, t!("Search in this folder…").into_owned()));
         list.extend(owned(terminal_items(cfg!(windows))));
         subs.push(self.copy_path_sub(std::slice::from_ref(&path), list.len()));
         // At the point given (the pointer, or under the row for the menu key), not at the pointer.
@@ -1842,15 +1856,15 @@ impl Menus {
             locked: crate::panes::active_nav().is_tab_locked(index),
         };
         let list: Vec<(u32, String, bool)> =
-            items(place, false).into_iter().map(|(id, title)| (id, title.to_owned(), true)).collect();
+            owned(items(place, false)).into_iter().map(|(id, title)| (id, title, true)).collect();
         let names = crate::tab_sets::names();
         let others = crate::windows::others();
         let titles: Vec<String> = others.iter().map(|(_, title)| title.clone()).collect();
         // Right after Move to new window.
         let at = list.iter().position(|(id, _, _)| *id == MOVE_TAB_WINDOW).map_or(list.len(), |i| i + 1);
         let subs = vec![
-            Submenu { title: "Move to window".to_owned(), at, items: window_items(&titles) },
-            Submenu { title: "Open tab set".to_owned(), at: list.len(), items: tab_set_items(&names) },
+            Submenu { title: t!("Move to window").into_owned(), at, items: window_items(&titles) },
+            Submenu { title: t!("Open tab set").into_owned(), at: list.len(), items: tab_set_items(&names) },
         ];
         *self.subject.borrow_mut() = Some(Subject::Tab(id, names, others.into_iter().map(|(id, _)| id).collect()));
         self.open_slint_entries(&list, subs, Anchor::point(x, y));
@@ -1882,7 +1896,7 @@ impl Menus {
     pub fn group_header(&self, x: f32, y: f32) {
         *self.subject.borrow_mut() = Some(Subject::View);
         let items: Vec<(u32, String, bool)> =
-            group_header_items().into_iter().map(|(id, t)| (id, t.to_owned(), true)).collect();
+            owned(group_header_items()).into_iter().map(|(id, title)| (id, title, true)).collect();
         let at = items.len();
         self.open_slint_entries(
             &items,
@@ -1910,10 +1924,7 @@ impl Menus {
         let location = crate::panes::active_nav().active_location();
         let flat = matches!(location, Location::Flat(_));
         let at_flat = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).unwrap_or(entries.len());
-        entries.insert(
-            at_flat,
-            (FLAT_VIEW, format!("{}Flat view", if flat { "• " } else { "    " }), location.folder().is_some()),
-        );
+        entries.insert(at_flat, (FLAT_VIEW, marked(flat, &t!("Flat view")), location.folder().is_some()));
         // Two panes (spec 10 §10.3), right after the preview pane.
         let at_panes = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).map_or(entries.len(), |i| i + 1);
         let dual = crate::dual::is_open();
@@ -1921,21 +1932,21 @@ impl Menus {
         entries.splice(
             at_panes..at_panes,
             [
-                (TWO_PANES, format!("{}Two panes", if dual { "• " } else { "    " }), true),
-                (SYNC_BROWSING, format!("{}Sync browsing", if sync { "• " } else { "    " }), dual),
-                (SWAP_PANES, "    Swap panes".to_owned(), dual),
-                (SAME_FOLDER, "    Same folder in other pane".to_owned(), dual),
+                (TWO_PANES, marked(dual, &t!("Two panes")), true),
+                (SYNC_BROWSING, marked(sync, &t!("Sync browsing")), dual),
+                (SWAP_PANES, marked(false, &t!("Swap panes")), dual),
+                (SAME_FOLDER, marked(false, &t!("Same folder in other pane")), dual),
             ],
         );
         // After "Apply to all folders" (the formats' place stays): only in a folder.
         if matches!(location, Location::Path(_)) {
             let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
-            entries.insert(at_calc, (CALC_FOLDER_SIZES, "    Calculate folder sizes".to_owned(), true));
+            entries.insert(at_calc, (CALC_FOLDER_SIZES, marked(false, &t!("Calculate folder sizes")), true));
         }
         // Group by ▸ right after the sort's direction; a grouped view's Collapse/Expand All after it.
         let at_group = entries.iter().position(|(id, _, _)| *id == SORT_DESC).map_or(entries.len(), |i| i + 1);
         let shift = if crate::panes::active_view().grouped() {
-            let all = group_header_items().into_iter().map(|(id, t)| (id, format!("    {t}"), true));
+            let all = owned(group_header_items()).into_iter().map(|(id, title)| (id, marked(false, &title), true));
             entries.splice(at_group..at_group, all);
             group_header_items().len()
         } else {
@@ -1944,7 +1955,7 @@ impl Menus {
         rule_items(&mut entries, crate::panes::active_view().rule_state());
         // Last, so the submenus' places above stay (spec 12 §5.4; plan 12b sapma 8).
         let dots = crate::tags::dots_on();
-        entries.push((TAG_DOTS, format!("{}Tag dots", if dots { "• " } else { "    " }), true));
+        entries.push((TAG_DOTS, marked(dots, &t!("Tag dots")), true));
         let mut subs = format_subs(options, place + 2 + shift);
         subs.push(group_by_sub(crate::panes::active_view().view_settings().group, at_group));
         self.open_slint_entries(&entries, subs, at);
@@ -2067,9 +2078,10 @@ impl Menus {
     ) {
     }
 
-    fn open_slint<S: AsRef<str>>(&self, items: &[(u32, S)], at: Anchor) {
+    /// Shows `items` (texts marked with `tx!`, translated here) at `at`.
+    fn open_slint(&self, items: &[(u32, &'static str)], at: Anchor) {
         let entries: Vec<(u32, String, bool)> =
-            items.iter().map(|(id, title)| (*id, title.as_ref().to_owned(), true)).collect();
+            items.iter().map(|(id, title)| (*id, t("", title).into_owned(), true)).collect();
         self.open_slint_entries(&entries, Vec::new(), at);
     }
 
@@ -2145,9 +2157,9 @@ impl Menus {
     pub fn preview_value_menu(&self, label: &str, value: String, at: Anchor) {
         let field = gezik_core::fields::all().find(|id| id.def().label == label);
         *self.subject.borrow_mut() = Some(Subject::PreviewValue(value, field));
-        let mut items = vec![(PREVIEW_COPY, "Copy Value".to_owned(), true)];
+        let mut items = vec![(PREVIEW_COPY, t!("Copy Value").into_owned(), true)];
         if field.is_some() {
-            items.push((PREVIEW_SHOW_COLUMN, "Show Column".to_owned(), true));
+            items.push((PREVIEW_SHOW_COLUMN, t!("Show Column").into_owned(), true));
         }
         self.open_slint_entries(&items, Vec::new(), at);
     }
@@ -2175,21 +2187,21 @@ impl Menus {
     ) {
         let mut list = Vec::new();
         if archive.is_some() {
-            list.push((ADD_TO_ARCHIVE, "Add to archive"));
+            list.push((ADD_TO_ARCHIVE, tx!("Add to archive")));
         }
         if can_copy {
-            list.push((COPY_HERE, "Copy here"));
+            list.push((COPY_HERE, tx!("Copy here")));
         }
         if can_move {
-            list.push((MOVE_HERE, "Move here"));
+            list.push((MOVE_HERE, tx!("Move here")));
         }
         if can_link {
-            list.push((CREATE_LINK_HERE, "Create link here"));
+            list.push((CREATE_LINK_HERE, tx!("Create link here")));
         }
         if list.is_empty() {
             return;
         }
-        list.push((CANCEL_DROP, "Cancel"));
+        list.push((CANCEL_DROP, tx!("Cancel")));
         *self.subject.borrow_mut() = Some(Subject::Drop(paths, dir, archive));
         self.open_slint(&list, Anchor::point(x, y));
     }
@@ -2230,9 +2242,10 @@ impl Menus {
     /// "Presets ▾": the saved sets, save, delete.
     pub fn presets(&self, at: Anchor) {
         let names = crate::batch_rename::preset_names();
-        let list = preset_items(&names);
+        let list: Vec<(u32, String, bool)> =
+            preset_items(&names).into_iter().map(|(id, title)| (id, title, true)).collect();
         *self.subject.borrow_mut() = Some(Subject::BatchRename(names));
-        self.open_slint(&list, at);
+        self.open_slint_entries(&list, Vec::new(), at);
     }
 
     /// The filter bar's ▾ menu, under its button: the saved filters, "Save as…", Delete.
@@ -4009,7 +4022,7 @@ mod tests {
         let dates = DateFormat::ALL.iter().enumerate().map(|(k, f)| (f.label(), DATE_FORMAT_FIRST + k as u32));
         let sizes = SizeFormat::ALL.iter().enumerate().map(|(k, f)| (f.label(), SIZE_FORMAT_FIRST + k as u32));
         for (label, id) in dates.chain(sizes) {
-            let title = format!("title: \"{label}\";");
+            let title = format!("title: @tr(\"{label}\");");
             let command = format!("\"view-option:{id}\"");
             assert!(bar.lines().any(|line| line.contains(&title) && line.contains(&command)), "{label} ({id})");
         }

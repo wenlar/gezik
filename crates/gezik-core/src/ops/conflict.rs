@@ -45,11 +45,11 @@ pub enum Decision {
 impl Decision {
     pub fn label(self) -> &'static str {
         match self {
-            Decision::Replace => "Replace",
-            Decision::Skip => "Skip",
-            Decision::KeepBoth => "Keep both",
-            Decision::IfNewer => "If newer",
-            Decision::Merge => "Merge",
+            Decision::Replace => gezik_i18n::tx!("Replace"),
+            Decision::Skip => gezik_i18n::tx!("Skip"),
+            Decision::KeepBoth => gezik_i18n::tx!("Keep both"),
+            Decision::IfNewer => gezik_i18n::tx!("If newer"),
+            Decision::Merge => gezik_i18n::tx!("Merge"),
         }
     }
 }

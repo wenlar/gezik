@@ -9,6 +9,8 @@ use gezik_config::shortcuts::{
     Action, Chord, Key, KeyOwner, MENU_BAR_KEYS, Platform, chord_text, parse_chord, refused,
 };
 
+use gezik_i18n::t;
+
 use crate::SettingItem;
 use crate::keys::chord_label;
 
@@ -53,7 +55,8 @@ pub(super) enum Pressed {
 pub(super) fn rows(settings: &Settings, platform: Platform) -> Vec<KeyRow> {
     let shortcuts = &settings.shortcuts;
     let mut actions: Vec<Action> = Action::ALL.to_vec();
-    actions.sort_by_key(|a| a.title());
+    // By the title shown (spec 15): the English one still finds it (`with_haystack`).
+    actions.sort_by_cached_key(|a| t("", a.title()).into_owned());
     let mut rows: Vec<KeyRow> = actions
         .into_iter()
         .map(|action| {
@@ -61,20 +64,20 @@ pub(super) fn rows(settings: &Settings, platform: Platform) -> Vec<KeyRow> {
                 action.default_texts(platform).iter().filter_map(|t| parse_chord(t, platform).ok().flatten()).collect();
             let row = KeyRow {
                 owner: Owner::Action(action),
-                title: action.title().to_owned(),
+                title: t("", action.title()).into_owned(),
                 path: format!("shortcuts.{}", action.name()),
                 keys: shortcuts.chords_for(action),
                 is_default: !shortcuts.is_written(action),
                 default: labels(&defaults, platform),
                 haystack: String::new(),
             };
-            with_haystack(row, action.name(), platform)
+            with_haystack(row, &format!("{} {}", action.name(), action.title()), platform)
         })
         .collect();
     for (index, command) in settings.commands.iter().enumerate() {
         let row = KeyRow {
             owner: Owner::Command(index, command.name.clone()),
-            title: format!("Command: {}", command.name),
+            title: t!("Command: {}", command.name),
             path: "commands.shortcut".to_owned(),
             keys: shortcuts.command_chord(index).into_iter().collect(),
             is_default: command.shortcut.is_none(),
@@ -88,14 +91,14 @@ pub(super) fn rows(settings: &Settings, platform: Platform) -> Vec<KeyRow> {
             let keys: Vec<Chord> = parse_chord(text, platform).ok().flatten().into_iter().collect();
             let row = KeyRow {
                 owner: Owner::Fixed,
-                title: title.to_owned(),
+                title: t("", title).into_owned(),
                 path: String::new(),
                 default: labels(&keys, platform),
                 keys,
                 is_default: true,
                 haystack: String::new(),
             };
-            rows.push(with_haystack(row, "", platform));
+            rows.push(with_haystack(row, title, platform));
         }
     }
     rows
@@ -118,7 +121,7 @@ pub(super) fn matches(row: &KeyRow, query: &str) -> bool {
 /// The keys as a menu shows them, or "None".
 fn labels(keys: &[Chord], platform: Platform) -> String {
     if keys.is_empty() {
-        return "None".to_owned();
+        return t!("None").into_owned();
     }
     keys.iter().map(|c| chord_label(c, platform)).collect::<Vec<_>>().join(", ")
 }
@@ -129,7 +132,7 @@ pub(super) fn item(row: &KeyRow, platform: Platform) -> SettingItem {
         kind: if fixed { 6 } else { 5 },
         title: row.title.as_str().into(),
         key: row.path.as_str().into(),
-        description: if fixed { "macOS keeps this key".into() } else { Default::default() },
+        description: if fixed { t!("macOS keeps this key").as_ref().into() } else { Default::default() },
         value: labels(&row.keys, platform).into(),
         is_default: row.is_default,
         default: row.default.as_str().into(),
@@ -207,8 +210,8 @@ fn claim(
             },
         };
         owners.push(match &owner {
-            Owner::Command(_, name) => format!("Command: {name}"),
-            Owner::Action(action) => action.title().to_owned(),
+            Owner::Command(_, name) => t!("Command: {}", name),
+            Owner::Action(action) => t("", action.title()).into_owned(),
             Owner::Fixed => String::new(),
         });
         changes.extend(change(&owner, keeps, platform));

@@ -101,7 +101,7 @@ fn new_data() -> PaneData {
         focus_row: -1,
         grid_size: 96.0,
         renaming_index: -1,
-        search_filters: "Filters".into(),
+        search_filters: gezik_i18n::t!("Filters").as_ref().into(),
         reveal_index: -1,
         ..Default::default()
     }

@@ -92,8 +92,8 @@ here and apply the remaining changes.
 ## i-slint-backend-winit 1.18.1 (patched)
 
 The published `i-slint-backend-winit` 1.18.1, unchanged except for four changes marked
-"Gezik patch", all for Windows only (`cfg(target_os = "windows")`). The root `Cargo.toml`
-uses it through `[patch.crates-io]`.
+"Gezik patch" for Windows only (`cfg(target_os = "windows")`) and one for macOS (5, below). The
+root `Cargo.toml` uses it through `[patch.crates-io]`.
 
 **The problem.** The software renderer draws into softbuffer's surface, which keeps one DIB of
 width x height x 4 bytes (4 MB at 1280x800). On Windows, Slint keeps the native window and
@@ -136,6 +136,13 @@ and without `GEZIK_SOFTBUFFER` are identical; idle memory and `scripts/perf/stre
 **Updating Slint.** If the new release frees the software renderer's surface while hidden or
 minimized on Windows, drop 1-3; if not, copy the new release here and apply the changes again.
 4 stays as long as softbuffer keeps a full-window buffer on Windows.
+
+5. `muda.rs`, `create_default_app_menu`, and `lib.rs`, `set_app_menu_texts` (macOS, step 15b):
+   muda writes the app menu's About, Hide, Hide Others, Show All, Services and Quit in English
+   (`"Quit {app name}"`). Gezik hands the texts in its language before the first window
+   (`language.rs`); without them muda's English stays. The menu is made once, so a language
+   change shows there at the next start (as AppKit's own items). **Updating Slint:** if Slint
+   lets the app menu's texts be set, use that and drop 5; else apply it again.
 
 ## i-slint-renderer-software 1.18.1 (patched)
 

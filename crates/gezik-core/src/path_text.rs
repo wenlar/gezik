@@ -30,13 +30,13 @@ impl PathFormat {
 
     pub fn label(self) -> &'static str {
         match self {
-            PathFormat::Full => "Full path",
-            PathFormat::Quoted => "Quoted",
-            PathFormat::ForwardSlashes => "With forward slashes",
-            PathFormat::Name => "Name",
-            PathFormat::Folder => "Folder path",
-            PathFormat::FileUrl => "file:// URL",
-            PathFormat::Unc => "UNC path",
+            PathFormat::Full => gezik_i18n::tx!("Full path"),
+            PathFormat::Quoted => gezik_i18n::tx!("Quoted"),
+            PathFormat::ForwardSlashes => gezik_i18n::tx!("With forward slashes"),
+            PathFormat::Name => gezik_i18n::tx!("Name"),
+            PathFormat::Folder => gezik_i18n::tx!("Folder path"),
+            PathFormat::FileUrl => gezik_i18n::tx!("file:// URL"),
+            PathFormat::Unc => gezik_i18n::tx!("UNC path"),
         }
     }
 

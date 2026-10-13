@@ -194,7 +194,7 @@ export component TabBar inherits Rectangle {
                             width: 8px;
                             height: 8px;
                             accessible-role: image;
-                            accessible-label: "Locked";
+                            accessible-label: @tr("Locked");
                             Path {
                                 width: parent.width;
                                 height: parent.height;
@@ -229,7 +229,7 @@ export component TabBar inherits Rectangle {
                             background: close-touch.has-hover ? Theme.hover : transparent;
                             animate background { duration: Theme.motion-hover; }
                             accessible-role: button;
-                            accessible-label: "Close " + item.title;
+                            accessible-label: @tr("Close {}", item.title);
                             accessible-action-default => { root.close(i); }
                             // Drawn, not a "×" glyph: the software renderer has no font fallback.
                             Path {
@@ -304,7 +304,7 @@ export component TabBar inherits Rectangle {
         width: root.height;
         height: root.height;
         accessible-role: button;
-        accessible-label: "New tab";
+        accessible-label: @tr("New tab");
         accessible-action-default => { root.new-tab(); }
         Rectangle {
             x: 4px;

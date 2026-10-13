@@ -60,14 +60,14 @@ impl GroupBy {
     /// Its item in Group by ▸.
     pub fn title(self) -> &'static str {
         match self {
-            GroupBy::None => "None",
-            GroupBy::Type => "Type",
-            GroupBy::Date => "Date",
-            GroupBy::Size => "Size",
-            GroupBy::Tag => "Tag",
-            GroupBy::Rating => "Rating",
+            GroupBy::None => gezik_i18n::tx!("None"),
+            GroupBy::Type => gezik_i18n::tx!("Type"),
+            GroupBy::Date => gezik_i18n::tx!("Date"),
+            GroupBy::Size => gezik_i18n::tx!("Size"),
+            GroupBy::Tag => gezik_i18n::tx!("Tag"),
+            GroupBy::Rating => gezik_i18n::tx!("Rating"),
             GroupBy::Field(id) => id.def().label,
-            GroupBy::Duplicates => "Duplicates",
+            GroupBy::Duplicates => gezik_i18n::tx!("Duplicates"),
         }
     }
 }

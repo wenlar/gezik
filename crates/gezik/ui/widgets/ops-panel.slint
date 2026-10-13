@@ -110,14 +110,14 @@ export component OpsPanel inherits Rectangle {
             accessible-role: tab-list;
             current := LinkButton {
                 x: 0;
-                text: "Current";
+                text: @tr("Current");
                 checked: root.tab == 0;
                 accessible-role: AccessibleRole.tab;
                 clicked => { root.tab-chosen(0); }
             }
             LinkButton {
                 x: current.width + Theme.spacing;
-                text: "History";
+                text: @tr("History");
                 checked: root.tab == 1;
                 accessible-role: AccessibleRole.tab;
                 clicked => { root.tab-chosen(1); }
@@ -126,7 +126,7 @@ export component OpsPanel inherits Rectangle {
         Text {
             height: root.tab == 1 && root.history.length == 0 ? Theme.row-height + 2px : 0px;
             visible: root.tab == 1 && root.history.length == 0;
-            text: "No operations yet";
+            text: @tr("No operations yet");
             vertical-alignment: center;
             color: Theme.foreground-muted;
             accessible-role: text;
@@ -134,7 +134,7 @@ export component OpsPanel inherits Rectangle {
         Rectangle {
             height: root.list-height;
             accessible-role: list;
-            accessible-label: root.tab == 0 ? "Operations" : "Operation history";
+            accessible-label: root.tab == 0 ? @tr("Operations") : @tr("Operation history");
             TouchArea {
                 scroll-event(event) => {
                     rows-list.content-y = clamp(rows-list.content-y + event.delta-y, root.scroll-min, 0px);
@@ -197,19 +197,19 @@ export component OpsPanel inherits Rectangle {
                     }
                     Rectangle { width: Theme.spacing; }
                     LinkButton {
-                        text: "Show in folder";
+                        text: @tr("Show in folder");
                         shown: row.can-show;
                         visible: row.can-show;
                         clicked => { root.history-show(row.id); }
                     }
                     LinkButton {
-                        text: "Start now";
+                        text: @tr("Start now");
                         shown: row.can-start-now;
                         visible: row.can-start-now;
                         clicked => { root.start-now(row.id); }
                     }
                     LinkButton {
-                        text: "Details";
+                        text: @tr("Details");
                         shown: row.can-details;
                         visible: row.can-details;
                         clicked => {
@@ -221,7 +221,7 @@ export component OpsPanel inherits Rectangle {
                         }
                     }
                     LinkButton {
-                        text: "Retry";
+                        text: @tr("Retry");
                         shown: row.can-retry;
                         visible: row.can-retry;
                         clicked => { root.retry(row.id); }
@@ -230,7 +230,7 @@ export component OpsPanel inherits Rectangle {
                         width: row.can-pause || row.can-resume ? self.height : 0px;
                         visible: row.can-pause || row.can-resume;
                         changed focused => { if self.focused { root.reveal(index); } }
-                        text: row.can-pause ? "Pause" : "Resume";
+                        text: row.can-pause ? @tr("Pause") : @tr("Resume");
                         icon: row.can-pause ? "M 5 3 L 5 13 M 11 3 L 11 13" : "M 5 3 L 13 8 L 5 13 Z";
                         clicked => {
                             if row.can-pause {
@@ -244,7 +244,7 @@ export component OpsPanel inherits Rectangle {
                         width: row.can-more ? self.height : 0px;
                         visible: row.can-more;
                         changed focused => { if self.focused { root.reveal(index); } }
-                        text: "More";
+                        text: @tr("More");
                         icon: "M 3 8 L 3.5 8 M 7.75 8 L 8.25 8 M 12.5 8 L 13 8";
                         clicked => {
                             root.more(row.id, self.absolute-position.x, self.absolute-position.y + self.height,
@@ -256,7 +256,7 @@ export component OpsPanel inherits Rectangle {
                         width: row.history ? 0px : self.height;
                         visible: !row.history;
                         changed focused => { if self.focused { root.reveal(index); } }
-                        text: row.finished ? "Close" : "Cancel";
+                        text: row.finished ? @tr("Close") : @tr("Cancel");
                         icon: "M 4 4 L 12 12 M 12 4 L 4 12";
                         clicked => {
                             if row.finished {

@@ -34,6 +34,10 @@ open = "5.3"
 i-slint-core = { version = "=1.18.1", default-features = false, features = ["std", "tr", "shared-parley"] }
 notify = "8"
 
+# The macOS app menu's texts in Gezik's language (vendor patch, spec 15 §10.2).
+[target.'cfg(target_os = "macos")'.dependencies]
+i-slint-backend-winit = { version = "=1.18.1", default-features = false }
+
 [features]
 default = ["rar"]
 # RAR archives through UnRAR's C++ (needs a C++ compiler for the target); without it 7-Zip

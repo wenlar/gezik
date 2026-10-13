@@ -94,10 +94,10 @@ export component DiffLayer inherits Rectangle {
                     color: Theme.foreground;
                 }
                 for b[k] in [
-                    { t: "Ignore whitespace", on: root.view.ignore-whitespace, l: "Ignore whitespace", i: "" },
-                    { t: "Ignore case", on: root.view.ignore-case, l: "Ignore case", i: "" },
+                    { t: @tr("Ignore whitespace"), on: root.view.ignore-whitespace, l: @tr("Ignore whitespace"), i: "" },
+                    { t: @tr("Ignore case"), on: root.view.ignore-case, l: @tr("Ignore case"), i: "" },
                     // The tab's close glyph: the UI font may have no ✕.
-                    { t: "", on: false, l: "Close", i: Glyph.close },
+                    { t: "", on: false, l: @tr("Close"), i: Glyph.close },
                 ]: TextButton {
                     compact: k == 2;
                     text: b.t;

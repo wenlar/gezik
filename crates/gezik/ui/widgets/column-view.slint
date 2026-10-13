@@ -149,7 +149,7 @@ export component ColumnView inherits Rectangle {
                         border-width: row.drop ? 1px : 0px;
                         border-color: Theme.accent;
                         accessible-role: list-item;
-                        accessible-label: row.file.name + (row.file.tag-names != "" ? ", tags " + row.file.tag-names : "");
+                        accessible-label: row.file.tag-names != "" ? @tr("{}, tags {}", row.file.name, row.file.tag-names) : row.file.name;
                         accessible-item-selectable: true;
                         accessible-item-selected: row.file.selected;
                         HorizontalLayout {

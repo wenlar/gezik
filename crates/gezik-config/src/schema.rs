@@ -4,175 +4,16 @@
 //! the three (the template, this list and `Settings::parse`), so a setting added to the template
 //! fails them until it is placed here.
 
+mod table;
+
+use std::borrow::Cow;
+
+use gezik_i18n::t;
+
 use crate::Warning;
 use crate::settings::Settings;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Page {
-    General,
-    Appearance,
-    FilesAndTools,
-    Layouts,
-    Tags,
-    Keyboard,
-    System,
-    Advanced,
-    /// Export, import and the backups (no fields: `settings_window`'s rows).
-    SyncAndBackup,
-}
-
-impl Page {
-    pub const ALL: [Page; 9] = [
-        Page::General,
-        Page::Appearance,
-        Page::FilesAndTools,
-        Page::Layouts,
-        Page::Tags,
-        Page::Keyboard,
-        Page::System,
-        Page::Advanced,
-        Page::SyncAndBackup,
-    ];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Page::General => "General",
-            Page::Appearance => "Appearance",
-            Page::FilesAndTools => "Files and Tools",
-            Page::Layouts => "Layouts",
-            Page::Tags => "Tags",
-            Page::Keyboard => "Keyboard",
-            Page::System => "System",
-            Page::Advanced => "Advanced",
-            Page::SyncAndBackup => "Sync and Backup",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Kind {
-    Bool,
-    /// One of these; "true"/"false" are written as booleans, digits as a number.
-    Choice(&'static [&'static str]),
-    Int,
-    Text,
-    Path,
-    /// A theme's id: the built-ins and the themes folder's (`theme` also "auto").
-    Theme,
-    /// A language's code: "auto", the built-ins, the lang folder's, "pseudo" (spec 15 §5.1).
-    Language,
-    /// Written by System Integration (the tray, the global shortcut): shown here, changed there.
-    Integration,
-    /// A list or tables: counted here, edited in settings.toml (spec 14 decision 4).
-    List,
-}
-
-/// One setting: `key` in `[table]`, or at the top with no table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Field {
-    pub table: Option<&'static str>,
-    pub key: &'static str,
-    pub page: Page,
-    pub kind: Kind,
-}
-
-impl Field {
-    /// `layout.density`, `theme`: Copy Key's text.
-    pub fn path(&self) -> String {
-        match self.table {
-            Some(table) => format!("{table}.{}", self.key),
-            None => self.key.to_owned(),
-        }
-    }
-
-    /// `reduce-motion` → "Reduce motion".
-    pub fn title(&self) -> String {
-        let mut title = self.key.replace('-', " ");
-        if let Some(first) = title.get_mut(..1) {
-            first.make_ascii_uppercase();
-        }
-        title
-    }
-}
-
-const fn f(table: Option<&'static str>, key: &'static str, page: Page, kind: Kind) -> Field {
-    Field { table, key, page, kind }
-}
-
-const THREADS: &[&str] =
-    &["auto", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"];
-
-use Kind::{Bool, Choice, Int, Integration, Language, List, Path, Text, Theme};
-use Page::{Advanced, Appearance, FilesAndTools, General, Keyboard, Layouts, System, Tags};
-
-/// Every setting the window shows, in its order.
-pub const FIELDS: &[Field] = &[
-    f(None, "language", General, Language),
-    f(None, "start-folder", General, Path),
-    f(None, "max-fps", General, Int),
-    f(Some("session"), "restore", General, Bool),
-    f(Some("history"), "remember", General, Bool),
-    f(Some("files"), "confirm-trash", General, Bool),
-    f(Some("files"), "copy-threads", General, Choice(THREADS)),
-    f(Some("files"), "verify", General, Bool),
-    f(Some("files"), "max-speed", General, Text),
-    f(None, "theme", Appearance, Theme),
-    f(None, "theme-light", Appearance, Theme),
-    f(None, "theme-dark", Appearance, Theme),
-    f(Some("layout"), "sidebar", Appearance, Choice(&["left", "right", "hidden"])),
-    f(Some("layout"), "density", Appearance, Choice(&["compact", "comfortable"])),
-    f(Some("layout"), "reduce-motion", Appearance, Bool),
-    f(Some("view"), "icons", Appearance, Choice(&["system", "gezik"])),
-    f(Some("view"), "thumbnails", Appearance, Bool),
-    f(Some("view"), "hide-extensions", Appearance, Bool),
-    f(Some("view"), "date-format", Appearance, Choice(&["relative", "short", "iso", "system"])),
-    f(Some("view"), "size-format", Appearance, Choice(&["binary", "decimal"])),
-    f(Some("view"), "show-hidden", Appearance, Bool),
-    f(Some("view"), "show-system", Appearance, Bool),
-    f(Some("view"), "mode", Layouts, Choice(&["list", "grid", "columns"])),
-    f(Some("view"), "sort", Layouts, Choice(&["name", "modified", "created", "type", "size", "tags", "rating"])),
-    f(Some("view"), "sort-dir", Layouts, Choice(&["asc", "desc"])),
-    f(Some("view"), "grid-size", Layouts, Choice(&["small", "medium", "large"])),
-    f(Some("view"), "group", Layouts, Choice(&["none", "type", "date", "size", "tag", "rating"])),
-    f(Some("view"), "folders-first", Layouts, Bool),
-    f(Some("view"), "single-click-open", Layouts, Bool),
-    f(Some("view"), "folder-sizes", Layouts, Choice(&["off", "local", "all"])),
-    f(Some("panes"), "confirm", Layouts, Bool),
-    f(Some("sidebar"), "cloud", Layouts, Bool),
-    f(Some("sidebar"), "tags", Layouts, Bool),
-    f(Some("sidebar"), "tree-follow", Layouts, Bool),
-    f(Some("preview"), "properties", Layouts, Bool),
-    f(Some("archives"), "double-click", FilesAndTools, Choice(&["system", "extract-here"])),
-    f(Some("convert"), "ffmpeg", FilesAndTools, Path),
-    f(Some("tools"), "download", FilesAndTools, Bool),
-    f(Some("tools"), "seven-zip", FilesAndTools, Path),
-    f(Some("tools"), "diff", FilesAndTools, Path),
-    f(Some("tools"), "folder-diff", FilesAndTools, Bool),
-    f(Some("search"), "everything", FilesAndTools, Choice(&["auto", "off"])),
-    f(Some("search"), "max-results", FilesAndTools, Int),
-    f(Some("search"), "content-max-size", FilesAndTools, Text),
-    f(Some("tags"), "write-to-files", Tags, Bool),
-    f(Some("tags"), "dots", Tags, Choice(&["auto", "true", "false"])),
-    f(Some("tags"), "list", Tags, List),
-    f(Some("keyboard"), "typing", Keyboard, Choice(&["jump", "filter"])),
-    f(None, "shortcuts", Keyboard, List),
-    f(Some("system"), "single-instance", System, Bool),
-    f(Some("system"), "quick-look", System, Choice(&["system", "gezik"])),
-    f(Some("system"), "tray", System, Integration),
-    f(Some("system"), "hotkey", System, Integration),
-    f(None, "pinned", Advanced, List),
-    f(Some("tools"), "diff-args", Advanced, List),
-    f(Some("terminal"), "command", Advanced, List),
-    f(Some("search"), "skip", Advanced, List),
-    f(None, "rename-presets", Advanced, List),
-    f(None, "filters", Advanced, List),
-    f(None, "tab-sets", Advanced, List),
-    f(None, "searches", Advanced, List),
-    f(None, "sync-profiles", Advanced, List),
-    f(None, "view-rules", Advanced, List),
-    f(None, "highlight-rules", Advanced, List),
-    f(None, "commands", Advanced, List),
-];
+use table::template_lines;
+pub use table::{FIELDS, Field, Kind, Page};
 
 /// What the template says of a field.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -184,66 +25,6 @@ pub struct Described {
     /// The default as TOML, written by Reset to Default; `None` for a key the template only
     /// names in a comment (its default is the key's absence: Reset takes it out).
     pub literal: Option<String>,
-}
-
-/// One key line of the template: `key = …`, or `# key = …` (a setting left at its default).
-struct TemplateLine<'a> {
-    table: Option<&'a str>,
-    key: &'a str,
-    commented: bool,
-    /// The line without its `#`.
-    body: &'a str,
-    /// The comment lines right above it.
-    above: Vec<&'a str>,
-}
-
-/// `[name]` or `[[name]]`, also commented out: the name.
-fn header(body: &str) -> Option<&str> {
-    let name = body.strip_prefix('[')?.trim_start_matches('[');
-    let name = name.trim_end().strip_suffix(']')?.trim_end_matches(']');
-    (!name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')).then_some(name)
-}
-
-/// `key = …`: the key.
-fn key_of(body: &str) -> Option<&str> {
-    let (key, _) = body.split_once('=')?;
-    let key = key.trim_end();
-    (!key.is_empty() && key.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')).then_some(key)
-}
-
-/// The template's key lines, outside the commented `[[…]]` examples.
-fn template_lines(template: &str) -> Vec<TemplateLine<'_>> {
-    let mut out = Vec::new();
-    let (mut table, mut in_list, mut above) = (None, false, Vec::new());
-    for line in template.lines() {
-        let line = line.trim_end();
-        if line.trim().is_empty() {
-            above.clear();
-            continue;
-        }
-        let (commented, body) = match line.strip_prefix('#') {
-            Some(rest) => (true, rest.trim()),
-            None => (false, line.trim()),
-        };
-        if let Some(name) = header(body) {
-            (table, in_list) = (Some(name), body.starts_with("[["));
-            above.clear();
-            continue;
-        }
-        match key_of(body) {
-            // A commented example (`# pinned = […]`) leaves the comment above to the key's own line.
-            Some(key) if !in_list && commented => {
-                out.push(TemplateLine { table, key, commented, body, above: above.clone() })
-            }
-            Some(key) if !in_list => {
-                out.push(TemplateLine { table, key, commented, body, above: std::mem::take(&mut above) })
-            }
-            Some(_) => above.clear(),
-            None if commented => above.push(body),
-            None => above.clear(),
-        }
-    }
-    out
 }
 
 /// A value as the window shows it: text bare, a list or table by its count.
@@ -272,12 +53,8 @@ pub fn describe(template: &str) -> Vec<Described> {
     FIELDS
         .iter()
         .map(|field| {
-            // The key's own line wins over a commented example of it (`# pinned = […]`).
-            let mine = |l: &&TemplateLine<'_>| l.table == field.table && l.key == field.key;
-            let Some(line) = lines.iter().filter(mine).min_by_key(|l| l.commented) else {
-                return Described::default();
-            };
-            let mut description = line.above.join(" ");
+            let Some(line) = table::line_of(&lines, field) else { return Described::default() };
+            let description = table::description(line);
             let value = line
                 .body
                 .parse::<toml_edit::DocumentMut>()
@@ -286,21 +63,6 @@ pub fn describe(template: &str) -> Vec<Described> {
             let mut literal = None;
             let mut default = String::new();
             if let Some(mut value) = value {
-                let hint = value.decor().suffix().and_then(|s| s.as_str()).unwrap_or_default();
-                let hint = hint.trim().trim_start_matches('#').trim();
-                // The comment after the value first, as a sentence: it is about this key, the
-                // lines above may be about the ones below it too.
-                if !hint.is_empty() {
-                    let mut first = hint.to_owned();
-                    if let Some(letter) = first.get_mut(..1) {
-                        letter.make_ascii_uppercase();
-                    }
-                    if !description.is_empty() {
-                        let stop = if first.ends_with(['.', ')', ':']) { " " } else { ". " };
-                        first.push_str(stop);
-                    }
-                    description.insert_str(0, &first);
-                }
                 value.decor_mut().clear();
                 let text = value.to_string();
                 default = text.parse::<toml::Value>().map(|v| shown(&v)).unwrap_or_default();
@@ -385,7 +147,13 @@ pub fn check(field: &Field, literal: &str) -> Result<(), String> {
 /// Whether the search box's `query` finds `field`: in its title, its key or its description
 /// (case ignored; every word somewhere).
 pub fn matches(field: &Field, described: &Described, query: &str) -> bool {
-    let haystack = format!("{} {} {}", field.title(), field.path(), described.description).to_lowercase();
+    let (title, context) = (field.title(), field.context());
+    // The English texts, and the translated ones when they differ (spec 15).
+    let shown = [t(&context, &title), t(&context, &described.description)];
+    let shown = shown.iter().filter_map(|s| matches!(s, Cow::Owned(_)).then_some(s.as_ref()));
+    let haystack: String =
+        [title.as_str(), &field.path(), &described.description].into_iter().chain(shown).collect::<Vec<_>>().join(" ");
+    let haystack = haystack.to_lowercase();
     query.to_lowercase().split_whitespace().all(|word| haystack.contains(word))
 }
 
@@ -538,6 +306,51 @@ mod tests {
         assert!(found("7-zip").contains(&"tools.seven-zip".to_owned()), "by its description");
         assert!(found("").len() > 60, "an empty search shows everything");
         assert!(found("no such setting").is_empty());
+    }
+
+    /// Spec 15 §13.2: the window's titles, descriptions, choices and pages, and every action's
+    /// title, are in the translations' template (`gezik-lang extract` puts them there); the
+    /// pseudo language frames an action's title.
+    #[test]
+    fn every_shown_text_is_in_the_pot() {
+        let pot = gezik_i18n::po::parse(include_str!("../../gezik-i18n/lang/gezik.pot")).unwrap();
+        let keys: std::collections::HashSet<String> = pot.entries.iter().map(|e| e.key()).collect();
+        let has = |context: &str, id: &str| keys.contains(&gezik_i18n::po::key(context, id));
+        let described = describe(SETTINGS_TEMPLATE);
+        for (i, field) in fields() {
+            assert!(has(&field.context(), &field.title()), "{}'s title", field.path());
+            let description = &described[i].description;
+            assert!(description.is_empty() || has(&field.context(), description), "{}'s description", field.path());
+            if let Kind::Choice(options) = field.kind {
+                for option in options.iter().filter(|o| o.parse::<u32>().is_err()) {
+                    assert!(has(&field.choice_context(), option), "{}'s {option}", field.path());
+                }
+            }
+        }
+        assert!(Page::ALL.iter().all(|p| has("", p.title())));
+        let pseudo = gezik_i18n::Catalog::pseudo();
+        for action in crate::shortcuts::Action::ALL {
+            assert!(has("", action.title()), "{}", action.name());
+            assert!(pseudo.get("", action.title()).starts_with('«'), "{}", action.name());
+        }
+    }
+
+    /// The comment after a value is read without toml_edit (gezik-lang reads it too): the same
+    /// as toml_edit's for every line of the template.
+    #[test]
+    fn the_comment_after_a_value_is_toml_edits() {
+        for line in template_lines(SETTINGS_TEMPLATE) {
+            // A value over several lines (`list = [`) has no comment after it on its line.
+            let Ok(doc) = line.body.parse::<toml_edit::DocumentMut>() else { continue };
+            let value = doc.get(line.key).and_then(|item| item.as_value()).unwrap();
+            let hint = value.decor().suffix().and_then(|s| s.as_str()).unwrap_or_default();
+            let hint = hint.trim().trim_start_matches('#').trim();
+            let description = table::description(&line);
+            assert_eq!(description.get(1..hint.len()), hint.get(1..), "{:?}.{}", line.table, line.key);
+            if hint.is_empty() {
+                assert_eq!(description, line.above.join(" "));
+            }
+        }
     }
 
     #[test]

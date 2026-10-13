@@ -57,15 +57,18 @@ pub fn menu_items(items: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
     // A raw part (`film.mkv.001`, made by Split File) is no archive: Join Files takes it.
     let extracts = |name: &str| looks_like_archive(name) && split_ending(name) != Some("");
     if items.iter().all(|(path, is_dir)| !is_dir && extracts(&name_of(path))) {
-        out.push((EXTRACT_HERE, "Extract here".to_owned()));
+        out.push((EXTRACT_HERE, gezik_i18n::t!("Extract here").into_owned()));
         match items {
-            [(one, _)] => out.push((EXTRACT_TO_OWN, format!("Extract to \"{}{MAIN_SEPARATOR}\"", stem_of(one)))),
-            _ => out.push((EXTRACT_TO_OWN, "Extract each to its own folder".to_owned())),
+            [(one, _)] => out.push((
+                EXTRACT_TO_OWN,
+                gezik_i18n::t!("Extract to \"{}\"", format!("{}{MAIN_SEPARATOR}", stem_of(one))),
+            )),
+            _ => out.push((EXTRACT_TO_OWN, gezik_i18n::t!("Extract each to its own folder").into_owned())),
         }
-        out.push((EXTRACT_TO, "Extract to…".to_owned()));
+        out.push((EXTRACT_TO, gezik_i18n::t!("Extract to…").into_owned()));
     }
-    out.push((COMPRESS, "Compress…".to_owned()));
-    out.push((COMPRESS_TO, format!("Compress to \"{}\"", quick_compress(items).0)));
+    out.push((COMPRESS, gezik_i18n::t!("Compress…").into_owned()));
+    out.push((COMPRESS_TO, gezik_i18n::t!("Compress to \"{}\"", quick_compress(items).0)));
     out
 }
 
