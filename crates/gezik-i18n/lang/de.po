@@ -32,6 +32,12 @@ msgid "the image is damaged: {}"
 msgstr "das Abbild ist beschädigt: {}"
 
 #: crates/gezik-batch/src/archive/mod.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+#, fuzzy
+msgid "The archive has more than {} entries"
+msgstr "Das Archiv hat mehr als {} Einträge"
+
+#: crates/gezik-batch/src/archive/mod.rs
 #, fuzzy
 msgid "not a known archive"
 msgstr "kein bekanntes Archiv"
@@ -6297,6 +6303,11 @@ msgstr "Die Suche konnte nicht starten"
 #, fuzzy
 msgid "7-Zip could not read it"
 msgstr "7-Zip konnte es nicht lesen"
+
+#: crates/gezik-vfs/src/lib.rs
+#, fuzzy
+msgid "Some items could not be taken out of the archive"
+msgstr "Einige Elemente konnten nicht aus dem Archiv geholt werden"
 
 #: crates/gezik-vfs/src/lib.rs
 #, fuzzy

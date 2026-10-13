@@ -31,6 +31,11 @@ pub fn list(
                 return Err(io::ErrorKind::Interrupted.into());
             }
             entries.line(&line);
+            if entries.entries.len() > gezik_batch::archive::MAX_LISTED {
+                child.kill_tree();
+                let why = gezik_i18n::t!("The archive has more than {} entries", gezik_batch::archive::MAX_LISTED);
+                return Err(io::Error::other(why));
+            }
         }
         let status = child.wait_or_stop(|| cx.stopped())?.ok_or(io::ErrorKind::Interrupted)?;
         let errors = child.stderr_text();
@@ -54,7 +59,10 @@ pub fn extract_some(
     cx: &dyn ExtractCx,
     password: &mut Option<String>,
 ) -> io::Result<()> {
-    let list = dest.join(".gezik-names.txt");
+    // The names in a private folder of their own (never among what is extracted, never shared
+    // by two extractions), removed however this ends.
+    let folder = ListFolder(crate::stage::new_folder()?);
+    let list = folder.0.join("names.txt");
     std::fs::write(&list, names.join("\n"))?;
     let mut out = OsString::from("-o");
     out.push(dest.as_os_str());
@@ -64,13 +72,14 @@ pub fn extract_some(
         ["x", "-y", "-spd", "-bso0", "-bsp0", "-scsUTF-8"].into_iter().map(OsString::from).collect();
     args.extend([out, include, "--".into(), archive.as_os_str().to_owned()]);
     let mut retry = false;
-    let result = loop {
+    loop {
         let input = format!("{}\n", password.as_deref().unwrap_or_default()).into_bytes();
         let mut child = ChildProcess::spawn_with_input(program, &args, None, Some(input))?;
         let Some(status) = child.wait_or_stop(|| cx.stopped())? else { break Err(io::ErrorKind::Interrupted.into()) };
         let errors = child.stderr_text();
         match status.code() {
-            Some(0) => break Ok(()),
+            // 1: a warning; the caller checks that what was asked for came out.
+            Some(0 | 1) => break Ok(()),
             Some(2) if wrong_password(&errors) => match cx.password(retry) {
                 Some(text) => {
                     *password = Some(text);
@@ -80,9 +89,16 @@ pub fn extract_some(
             },
             _ => break Err(io::Error::other(message(&errors))),
         }
-    };
-    let _ = std::fs::remove_file(&list);
-    result
+    }
+}
+
+/// The list file's folder, removed with it.
+struct ListFolder(std::path::PathBuf);
+
+impl Drop for ListFolder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 fn no_password() -> io::Error {

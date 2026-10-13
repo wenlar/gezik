@@ -66,7 +66,7 @@ impl ArchiveVfs {
             index,
             seven_zip,
             password: Mutex::new(password),
-            stage: crate::stage::new_folder(),
+            stage: crate::stage::new_folder()?,
             _outer: outer,
         })
     }

@@ -24,6 +24,11 @@ msgid "the image is damaged: {}"
 msgstr ""
 
 #: crates/gezik-batch/src/archive/mod.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+msgid "The archive has more than {} entries"
+msgstr ""
+
+#: crates/gezik-batch/src/archive/mod.rs
 msgid "not a known archive"
 msgstr ""
 
@@ -5154,6 +5159,10 @@ msgstr ""
 
 #: crates/gezik-vfs/src/archive/sevenzip_list.rs
 msgid "7-Zip could not read it"
+msgstr ""
+
+#: crates/gezik-vfs/src/lib.rs
+msgid "Some items could not be taken out of the archive"
 msgstr ""
 
 #: crates/gezik-vfs/src/lib.rs

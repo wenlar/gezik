@@ -47,8 +47,10 @@ impl Index {
         // (parts, its entry): sorted part by part, a folder comes right before what it holds.
         let mut paths: Vec<(Vec<String>, Listed)> = entries
             .into_iter()
-            .filter_map(|entry| {
+            .filter_map(|mut entry| {
                 let parts = parts(&entry.name)?;
+                // Kept as parts only: the whole name would double what this list holds.
+                entry.name = String::new();
                 (!parts.is_empty()).then_some((parts, entry))
             })
             .collect();

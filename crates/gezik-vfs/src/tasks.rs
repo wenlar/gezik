@@ -101,6 +101,8 @@ impl Task for TakeOutTask {
             }
             std::fs::rename(&from, &to)?;
         }
+        // Leaving Gezik: they carry the archive's Mark of the Web.
+        crate::motw::mark_like(VfsPath { root: self.root.clone(), inner: String::new() }.disk(), &held);
         *self.stage.lock().unwrap_or_else(PoisonError::into_inner) = Some(held);
         // What lands is reported by the placing step.
         Ok(Outcome::Nothing)

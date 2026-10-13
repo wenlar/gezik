@@ -624,22 +624,28 @@ impl Drags {
         let row = view.file_row(index);
         let items = view.selected_vfs_items();
         if let Some(vfs) = items.first().and_then(|(at, _)| gezik_vfs::mounted(&at.root)) {
-            let shown: Vec<(PathBuf, bool)> =
-                items.iter().map(|(at, is_dir)| (vfs.staged(&at.inner), *is_dir)).collect();
             let large = view.selected_bytes() > MAX_DRAGGED_OUT;
+            // A fresh folder of the drag's own: what another program gets is whole, never a
+            // folder a preview half filled.
+            let fresh = (!large).then(gezik_vfs::stage::new_folder).and_then(Result::ok);
+            let shown: Vec<(PathBuf, bool)> = items
+                .iter()
+                .map(|(at, is_dir)| match &fresh {
+                    Some(folder) => (gezik_vfs::under(folder, &at.inner), *is_dir),
+                    None => (vfs.staged(&at.inner), *is_dir),
+                })
+                .collect();
             let ready = Arc::new(AtomicBool::new(false));
             let items: Vec<VfsPath> = items.into_iter().map(|(at, _)| at).collect();
-            if !large && !items.is_empty() {
+            if let Some(folder) = fresh.filter(|_| !items.is_empty()) {
                 // Taken out while the drag is in the window: ready for another program by the time
-                // it leaves (a small selection is).
-                let (vfs, names, done) =
-                    (vfs.clone(), items.iter().map(|at| at.inner.clone()).collect::<Vec<_>>(), ready.clone());
+                // it leaves (a small selection is), only once every item came out whole.
+                let (names, done) = (items.iter().map(|at| at.inner.clone()).collect::<Vec<_>>(), ready.clone());
                 let at = items[0].clone();
                 std::thread::spawn(move || {
                     let cx = crate::vfs_mounts::UiCx::new(&at, Box::new(|| false));
-                    if names.iter().all(|name| vfs.staged(name).exists())
-                        || vfs.stage(&names, &vfs.staged(""), &cx).is_ok()
-                    {
+                    if gezik_vfs::stage_into(vfs.as_ref(), &names, &folder, &cx).is_ok() {
+                        gezik_vfs::motw::mark_like(at.disk(), &folder);
                         done.store(true, Ordering::SeqCst);
                     }
                 });

@@ -22,7 +22,7 @@ thread_local! {
 pub fn hold(vfs: Arc<dyn Vfs>) {
     HELD.with(|held| {
         let mut held = held.borrow_mut();
-        held.retain(|kept| kept.root() != vfs.root() || Arc::ptr_eq(kept, &vfs));
+        held.retain(|kept| !gezik_vfs::same_root(kept.root(), vfs.root()) || Arc::ptr_eq(kept, &vfs));
         if !held.iter().any(|kept| Arc::ptr_eq(kept, &vfs)) {
             held.push(vfs);
         }
@@ -48,7 +48,9 @@ pub fn sweep() {
         .collect();
     let gone: Vec<Arc<dyn Vfs>> = HELD.with(|held| {
         let mut held = held.borrow_mut();
-        let (keep, gone) = std::mem::take(&mut *held).into_iter().partition(|vfs| shown.contains(vfs.root()));
+        let (keep, gone) = std::mem::take(&mut *held)
+            .into_iter()
+            .partition(|vfs| shown.iter().any(|root| gezik_vfs::same_root(root, vfs.root())));
         *held = keep;
         gone
     });
@@ -67,6 +69,10 @@ pub fn open_file(at: VfsPath) {
     std::thread::spawn(move || {
         let cx = UiCx::new(&at, Box::new(|| false));
         let result = gezik_vfs::stage_here(vfs.as_ref(), &at.inner, &cx);
+        // Handed to another program: it carries the archive's Mark of the Web.
+        if let Ok(path) = &result {
+            gezik_vfs::motw::mark_like(at.disk(), path);
+        }
         crate::windows::post(window, move || {
             let view = crate::panes::active_view();
             match result.and_then(|path| open::that_detached(&path).map(|()| path)) {

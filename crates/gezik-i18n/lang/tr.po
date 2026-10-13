@@ -28,6 +28,11 @@ msgid "the image is damaged: {}"
 msgstr "kalıp bozuk: {}"
 
 #: crates/gezik-batch/src/archive/mod.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+msgid "The archive has more than {} entries"
+msgstr "Arşivde {} girdiden fazlası var"
+
+#: crates/gezik-batch/src/archive/mod.rs
 msgid "not a known archive"
 msgstr "bilinen bir arşiv değil"
 
@@ -5110,6 +5115,10 @@ msgstr "Arama başlatılamadı"
 #: crates/gezik-vfs/src/archive/sevenzip_list.rs
 msgid "7-Zip could not read it"
 msgstr "7-Zip okuyamadı"
+
+#: crates/gezik-vfs/src/lib.rs
+msgid "Some items could not be taken out of the archive"
+msgstr "Bazı öğeler arşivden çıkarılamadı"
 
 #: crates/gezik-vfs/src/lib.rs
 msgid "Archives nested more than {} deep are not opened"

@@ -976,7 +976,9 @@ impl Operations {
     fn vfs_to_paste(&self) -> Option<Vec<VfsPath>> {
         let saved = self.0.vfs_clip.borrow();
         let (items, sequence) = saved.as_ref()?;
-        (*sequence == 0 || *sequence == clipboard::sequence()).then(|| items.clone())
+        // No change numbers here (0): only while the clipboard holds no files of another program.
+        let current = if *sequence == 0 { self.clipboard().is_none() } else { *sequence == clipboard::sequence() };
+        current.then(|| items.clone())
     }
 
     /// Copies `items` (entries of one folder inside an archive) into folder `dir`, as one job

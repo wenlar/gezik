@@ -32,6 +32,12 @@ msgid "the image is damaged: {}"
 msgstr "映像已损坏：{}"
 
 #: crates/gezik-batch/src/archive/mod.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+#, fuzzy
+msgid "The archive has more than {} entries"
+msgstr "压缩包中的条目超过 {} 个"
+
+#: crates/gezik-batch/src/archive/mod.rs
 #, fuzzy
 msgid "not a known archive"
 msgstr "不是已知的压缩包"
@@ -6244,6 +6250,11 @@ msgstr "无法开始搜索"
 #, fuzzy
 msgid "7-Zip could not read it"
 msgstr "7-Zip 无法读取"
+
+#: crates/gezik-vfs/src/lib.rs
+#, fuzzy
+msgid "Some items could not be taken out of the archive"
+msgstr "部分项目无法从压缩包中取出"
 
 #: crates/gezik-vfs/src/lib.rs
 #, fuzzy

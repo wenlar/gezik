@@ -92,14 +92,28 @@ pub trait ArchiveSource {
 
 /// Every entry of `source`: its list, or for a stream (tar.*, .gz, cpio, deb) one pass that
 /// writes nothing.
+/// More than [`MAX_LISTED`] entries is an error: a stream stops being read there.
 pub fn list_all(source: &mut dyn ArchiveSource, cx: &dyn ExtractCx) -> IoResult<Vec<Entry>> {
+    list_at_most(source, cx, MAX_LISTED)
+}
+
+fn list_at_most(source: &mut dyn ArchiveSource, cx: &dyn ExtractCx, max: usize) -> IoResult<Vec<Entry>> {
+    let too_many = || IoError::other(gezik_i18n::t!("The archive has more than {} entries", max));
     if let Some(entries) = source.list(cx)? {
-        return Ok(entries);
+        return if entries.len() > max { Err(too_many()) } else { Ok(entries) };
     }
-    let lister = Lister { cx, found: Default::default() };
-    source.extract(Path::new(""), &lister)?;
+    let lister = Lister { cx, found: Default::default(), max };
+    let read = source.extract(Path::new(""), &lister);
+    if lister.found.borrow().len() > max {
+        return Err(too_many());
+    }
+    read?;
     Ok(lister.found.into_inner())
 }
+
+/// The most entries an archive opened as a folder may have (10 times the spec's large case,
+/// whose index takes 8 MB).
+pub const MAX_LISTED: usize = 1_000_000;
 
 /// An entry's name as `extract_some` matches it: `/` between parts, none at the end, no `./`.
 pub fn entry_key(name: &str) -> String {
@@ -117,6 +131,8 @@ struct Only<'a> {
 struct Lister<'a> {
     cx: &'a dyn ExtractCx,
     found: std::cell::RefCell<Vec<Entry>>,
+    /// Past this many the pass stops.
+    max: usize,
 }
 
 /// The calls both pass on to the job's own `cx`.
@@ -127,9 +143,6 @@ macro_rules! pass_on {
         }
         fn entry_done(&self) {
             self.cx.entry_done();
-        }
-        fn stopped(&self) -> bool {
-            self.cx.stopped()
         }
         fn password(&self, retry: bool) -> Option<String> {
             self.cx.password(retry)
@@ -145,6 +158,9 @@ macro_rules! pass_on {
 
 impl ExtractCx for Only<'_> {
     pass_on!();
+    fn stopped(&self) -> bool {
+        self.cx.stopped()
+    }
     fn wants(&self, entry: &Entry) -> bool {
         let key = entry_key(&entry.name);
         self.names
@@ -156,6 +172,9 @@ impl ExtractCx for Only<'_> {
 
 impl ExtractCx for Lister<'_> {
     pass_on!();
+    fn stopped(&self) -> bool {
+        self.cx.stopped() || self.found.borrow().len() > self.max
+    }
     fn wants(&self, entry: &Entry) -> bool {
         // Shown to the job's own `cx` too, which may count them (progress); never written.
         let _ = self.cx.wants(entry);
@@ -669,6 +688,52 @@ fn seconds(parts: DateParts) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stream of endless one-byte entries, read until `cx` says stop.
+    struct Endless;
+
+    impl ArchiveSource for Endless {
+        fn list(&mut self, _: &dyn ExtractCx) -> IoResult<Option<Vec<Entry>>> {
+            Ok(None)
+        }
+        fn extract(&mut self, _: &Path, cx: &dyn ExtractCx) -> IoResult<()> {
+            for i in 0.. {
+                if cx.stopped() {
+                    return Err(cancelled());
+                }
+                let entry = Entry {
+                    name: format!("{i}"),
+                    is_dir: false,
+                    size: Some(1),
+                    packed: None,
+                    encrypted: false,
+                    modified: None,
+                };
+                cx.wants(&entry);
+            }
+            Ok(())
+        }
+    }
+
+    struct Calm;
+
+    impl ExtractCx for Calm {
+        fn add_bytes(&self, _: u64) {}
+        fn entry_done(&self) {}
+        fn stopped(&self) -> bool {
+            false
+        }
+        fn password(&self, _: bool) -> Option<String> {
+            None
+        }
+        fn entry_failed(&self, _: &str, _: &IoError) {}
+    }
+
+    #[test]
+    fn a_stream_with_too_many_entries_stops_being_read() {
+        let err = list_at_most(&mut Endless, &Calm, 10).unwrap_err();
+        assert_eq!(err.to_string(), "The archive has more than 10 entries");
+    }
 
     #[test]
     fn seconds_count_from_1970() {
