@@ -4193,15 +4193,18 @@ tags = [\"a,b\"]")
 
     #[test]
     fn hotkey_settings_warn() {
-        let (settings, warnings) = parse("[system]\ntray = \"yes\"\nhotkey = \"ctrl+alt+e\"\n");
+        // ⌃⌥ is no AltGr on macOS: there ⌘ alone is refused instead.
+        let (hotkey, why) = if cfg!(target_os = "macos") {
+            ("cmd+e", "needs ⌘ (cmd) or ⌃ (ctrl) with ⌥ (alt) or ⇧ (shift) on macOS")
+        } else {
+            ("ctrl+alt+e", "uses Ctrl+Alt, which types AltGr characters")
+        };
+        let (settings, warnings) = parse(&format!("[system]\ntray = \"yes\"\nhotkey = \"{hotkey}\"\n"));
         assert!(!settings.system.tray && settings.system.hotkey.is_none(), "bad values keep the defaults");
         let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
         assert_eq!(
             messages,
-            [
-                "system.tray: expected true or false, got \"yes\"",
-                "system.hotkey: \"ctrl+alt+e\" uses Ctrl+Alt, which types AltGr characters",
-            ]
+            ["system.tray: expected true or false, got \"yes\"", &format!("system.hotkey: \"{hotkey}\" {why}")]
         );
         let (_, warnings) = parse("[system]\nhotkey = 5\n");
         assert_eq!(warnings[0].message, "system.hotkey: expected text such as \"win+shift+e\", got 5");

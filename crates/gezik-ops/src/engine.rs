@@ -1816,6 +1816,8 @@ mod tests {
     }
 
     fn verifying_engine(spoil: u32) -> Engine {
+        // A clone (APFS) is not read back: these test a byte copy.
+        gezik_platform::fs::CLONES.store(false, Ordering::SeqCst);
         Engine::new(Settings { verify: true, spoil, ..Settings::default() }, || {})
     }
 

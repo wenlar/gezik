@@ -27,7 +27,7 @@ pub fn copy_file(from: &Path, to: &Path, size: u64, progress: &mut dyn FnMut(u64
     }
     // The clone is instant, so the first word comes after it, as below once the copy exists.
     #[cfg(target_os = "macos")]
-    if clone_file(from, to).is_ok() {
+    if super::CLONES.load(std::sync::atomic::Ordering::Relaxed) && clone_file(from, to).is_ok() {
         return if progress(0) {
             Ok(true)
         } else {
@@ -77,7 +77,9 @@ fn copy_contents(
 ) -> io::Result<bool> {
     use std::os::fd::AsRawFd;
     // Btrfs and XFS clone in one call; other file systems refuse and we copy.
-    if unsafe { libc::ioctl(target.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } == 0 {
+    if super::CLONES.load(std::sync::atomic::Ordering::Relaxed)
+        && unsafe { libc::ioctl(target.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } == 0
+    {
         return if progress(0) { Ok(true) } else { Err(cancelled()) };
     }
     let mut done = 0u64;
@@ -355,7 +357,10 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
 
     let absolute = std::path::absolute(path)?;
     let dev = std::fs::symlink_metadata(&absolute)?.dev();
-    let trash_dir = trash_dir_for(&absolute, dev)?;
+    let (trash_dir, top) = trash_dir_for(&absolute, dev)?;
+    // A volume's own trash keeps the path relative to its top folder (freedesktop.org; the
+    // reader refuses an absolute one there).
+    let recorded = top.as_deref().and_then(|top| absolute.strip_prefix(top).ok()).unwrap_or(&absolute);
     let (files, info) = (trash_dir.join("files"), trash_dir.join("info"));
     // Private, so other users cannot read or swap what is in the trash.
     for dir in [&files, &info] {
@@ -375,7 +380,7 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
         let info_path = info_of(&candidate);
         match OpenOptions::new().write(true).create_new(true).open(&info_path) {
             Ok(mut file) => {
-                if let Err(err) = file.write_all(info_text(absolute.as_os_str().as_bytes(), &local_now()).as_bytes()) {
+                if let Err(err) = file.write_all(info_text(recorded.as_os_str().as_bytes(), &local_now()).as_bytes()) {
                     drop(file);
                     let _ = std::fs::remove_file(&info_path);
                     return Err(err);
@@ -404,13 +409,14 @@ pub(crate) fn home_trash() -> Option<PathBuf> {
         .map(|data| data.join("Trash"))
 }
 
-/// The home trash if `path` is on the same device, else `.Trash-<uid>` at its mount point.
+/// The home trash if `path` is on the same device, else `.Trash-<uid>` at its mount point (and
+/// that mount point).
 #[cfg(target_os = "linux")]
-fn trash_dir_for(path: &Path, dev: u64) -> io::Result<PathBuf> {
+fn trash_dir_for(path: &Path, dev: u64) -> io::Result<(PathBuf, Option<PathBuf>)> {
     let home_trash = home_trash().ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let home_dev = nearest_existing(&home_trash).and_then(|p| std::fs::metadata(p).ok()).map(|m| m.dev());
     if home_dev == Some(dev) {
-        return Ok(home_trash);
+        return Ok((home_trash, None));
     }
     let top = drive_root(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let uid = unsafe { libc::getuid() };
@@ -419,8 +425,8 @@ fn trash_dir_for(path: &Path, dev: u64) -> io::Result<PathBuf> {
         Ok(meta) if !meta.file_type().is_dir() || meta.uid() != uid => {
             Err(io::Error::new(io::ErrorKind::PermissionDenied, "unsafe trash folder"))
         }
-        Ok(_) => Ok(top_trash),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(top_trash),
+        Ok(_) => Ok((top_trash, Some(top))),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok((top_trash, Some(top))),
         Err(err) => Err(err),
     }
 }

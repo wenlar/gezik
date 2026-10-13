@@ -252,7 +252,8 @@ mod tests {
     #[test]
     fn a_missing_folder_is_made_again() {
         let dir = test_dir("restore-missing-folder");
-        let original = dir.join("gone").join("deeper").join("x.txt");
+        // A name of its own: the tests share the bin, and another test's x.txt could take the freed name.
+        let original = dir.join("gone").join("deeper").join("missing-folder.txt");
         write(&original, "x");
         let trashed = fs::trash(&original).unwrap().unwrap();
         std::fs::remove_dir_all(dir.join("gone")).unwrap();

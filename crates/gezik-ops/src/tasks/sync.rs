@@ -517,7 +517,11 @@ mod tests {
         let (report, _) = finish(&engine, engine.submit_chain(vec![Box::new(task)], None), no_conflicts);
         assert!(report.failures.is_empty() && report.notes.is_empty(), "{report:?}");
         assert_eq!(read(&r.join("both.txt")), "left, newer");
-        assert_eq!(engine.meta().read(&r.join("both.txt")).unwrap(), blue, "the new file's tags, not the old one's");
+        assert_eq!(
+            engine.meta().read(&r.join("both.txt")).unwrap(),
+            crate::testing::as_kept(blue),
+            "the new file's tags, not the old one's"
+        );
         let store = std::fs::read_to_string(dir.join("config/tags-store.tsv")).unwrap();
         assert_eq!(store.lines().count(), 2, "one entry, none under a temporary name: {store}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -645,7 +649,9 @@ mod tests {
         write(&r.join("a.txt"), "old");
         write(&r.join("b.txt"), "only right");
         let steps = vec![copy(l.join("a.txt"), r.join("a.txt")), trash(r.join("b.txt"))];
-        // Every copy is spoiled after it is written: the first and the one try again differ.
+        // Every copy is spoiled after it is written: the first and the one try again differ. A
+        // clone (APFS) is not read back, so this needs a byte copy.
+        gezik_platform::fs::CLONES.store(false, std::sync::atomic::Ordering::SeqCst);
         let engine = crate::Engine::new(crate::Settings { spoil: 2, ..crate::Settings::default() }, || {});
         let task = SyncTask::new(l.clone(), r.clone(), steps, [false; 2]);
         let job = engine.submit_chain_verifying(vec![Box::new(task)], None, Some(true));

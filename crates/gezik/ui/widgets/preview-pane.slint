@@ -173,9 +173,13 @@ export component PropRows inherits VerticalLayout {
             }
             // Placed by hand, not in a layout: a layout measures the wrapped value at the row's
             // width, not its own, and the list came out too short to scroll (13d screen test).
-            height: max(label.preferred-height, value.preferred-height);
+            // The software renderer cuts glyphs at a Text's own box: the texts start `accents`
+            // higher, so the dots of a capital Ö or Ü are not cut off (macOS checklist R36).
+            property <length> accents: 3px;
+            height: max(label.preferred-height, value.preferred-height) + self.accents;
             label := Text {
                 x: 0;
+                y: parent.accents;
                 width: 96px;
                 text: row.label;
                 overflow: elide;
@@ -183,7 +187,10 @@ export component PropRows inherits VerticalLayout {
             }
             value := Text {
                 x: 96px + Theme.spacing * 2;
+                y: 0;
                 width: parent.width - self.x;
+                height: self.preferred-height + parent.accents;
+                vertical-alignment: bottom;
                 text: row.value;
                 wrap: word-wrap;
                 color: Theme.foreground;

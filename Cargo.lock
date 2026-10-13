@@ -1740,6 +1740,7 @@ dependencies = [
  "open",
  "slint",
  "slint-build",
+ "toml",
  "zip",
 ]
 

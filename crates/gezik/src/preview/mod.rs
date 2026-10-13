@@ -164,9 +164,11 @@ pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
     if !wanted() {
         return Body::None;
     }
-    // A PDF is never shown as text (an uncompressed one is all ASCII): its pages are.
+    // A PDF is never shown as text (an uncompressed one is all ASCII): its pages are. Nor is a
+    // video or sound file: the player says when it cannot play one (macOS checklist R33).
     if local
         && ext != "pdf"
+        && !media_kind(*kind)
         && let Some(text) = read_text(path).filter(|text| !text.starts_with("%PDF-"))
     {
         return Body::Text(text);
@@ -2378,6 +2380,13 @@ Some folders could not be read"
         let renamed = dir.join("plain.txt");
         std::fs::rename(&pdf, &renamed).unwrap();
         assert!(!matches!(load(&entry(renamed, false), 64), Body::Text(_)), "%PDF- however it is named");
+        let broken = dir.join("broken.mp4");
+        std::fs::write(&broken, "not a video").unwrap();
+        let mut video = entry(broken, false);
+        if let Target::Entry { kind, .. } = &mut video {
+            *kind = gezik_core::kind::Kind::Video.index();
+        }
+        assert!(!matches!(load(&video, 64), Body::Text(_)), "a video is played, not read as text");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

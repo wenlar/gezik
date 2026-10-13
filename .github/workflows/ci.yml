@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The project needs a bigger stack than the default (used for its local checks too).
+  RUST_MIN_STACK: "67108864"
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # Linux runs in Debian trixie: the Linux build targets its glibc (2.41).
+    container: ${{ matrix.container }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          # Arm64; Xcode's command line tools compile UnRAR's C++, so the default `rar`
+          # feature stays on (the `--no-default-features` clippy runs were cross-checks from
+          # Windows, which has no macOS C++ toolchain).
+          - name: macOS
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-24.04
+            # --init: a PID 1 that reaps orphans (process_tree_is_killed waits for the
+            # killed shell's children to be gone, not left as zombies).
+            container:
+              image: rust:1-trixie
+              options: --init
+    steps:
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        # The build and run-time libraries from scripts/linux/Dockerfile, without its
+        # screen-test tools (Xvfb, sway, xdotool, ...).
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            g++ pkg-config libfontconfig-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
+            libxcb1 libxcursor1 libxi6 libxrandr2 libx11-6 libx11-xcb1 \
+            fonts-dejavu-core dbus
+
+      - uses: actions/checkout@v7.0.1
+
+      # dtolnay/rust-toolchain has no release tags: pinned to the `stable` branch's commit.
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2.9.2
+
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      # The runner's TEMP is a short 8.3 path (C:\Users\RUNNER~1); links, the Recycle Bin and
+      # PowerShell give back the long one, so the tests comparing them would differ.
+      - name: Use a long TEMP path
+        if: runner.os == 'Windows'
+        run: |
+          "TEMP=${{ runner.temp }}" >> $env:GITHUB_ENV
+          "TMP=${{ runner.temp }}" >> $env:GITHUB_ENV
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # #[ignore]d tests (real devices, network, Everything, pdfium) stay out.
+      - name: Test
+        run: cargo test --workspace --no-fail-fast

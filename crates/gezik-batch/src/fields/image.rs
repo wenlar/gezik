@@ -1,5 +1,6 @@
 //! A picture's size from its header (the `image` crate), as it shows: a photo turned by its EXIF
-//! orientation has width and height swapped. HEIF and AVIF from their `ispe` box.
+//! orientation has width and height swapped. HEIF and AVIF from their `ispe` box, turned by
+//! their `irot` box.
 
 use std::io::{BufRead, Seek};
 use std::path::Path;
@@ -30,11 +31,13 @@ fn header_size(path: &Path) -> Option<(u32, u32)> {
 }
 
 /// The largest `ispe` (image spatial extent) in `meta/iprp/ipco`: a HEIC photo's tiles each
-/// have one, the whole picture the largest.
+/// have one, the whole picture the largest. An `irot` of a quarter or three quarters turn (an
+/// upright iPhone photo, stored on its side) swaps width and height, as the picture shows.
 fn ispe<R: BufRead + Seek>(r: &mut R) -> Option<(u32, u32)> {
     let len = r.seek(std::io::SeekFrom::End(0)).ok()?;
     let meta = super::mp4::find_top(r, len, *b"meta", super::FRAME_MAX)?;
     let mut best: Option<(u32, u32)> = None;
+    let mut turned = false;
     // `meta` is a full box: its children start after the version and flags.
     let body = meta.get(4..)?;
     for (kind, iprp) in super::mp4::boxes(body) {
@@ -46,6 +49,10 @@ fn ispe<R: BufRead + Seek>(r: &mut R) -> Option<(u32, u32)> {
                 continue;
             }
             for (kind, prop) in super::mp4::boxes(ipco) {
+                // The angle in its low two bits, anticlockwise in quarter turns.
+                if kind == *b"irot" && prop.first().is_some_and(|angle| angle & 1 == 1) {
+                    turned = true;
+                }
                 if kind == *b"ispe"
                     && let (Some(w), Some(h)) = (super::be32(prop, 4), super::be32(prop, 8))
                     && best.is_none_or(|(bw, bh)| u64::from(w) * u64::from(h) > u64::from(bw) * u64::from(bh))
@@ -55,7 +62,7 @@ fn ispe<R: BufRead + Seek>(r: &mut R) -> Option<(u32, u32)> {
             }
         }
     }
-    best
+    best.map(|(w, h)| if turned { (h, w) } else { (w, h) })
 }
 
 #[cfg(test)]
@@ -68,13 +75,22 @@ mod tests {
 
     /// A HEIC's start: `ftyp`, then `meta` with a 512 × 512 tile and the 4032 × 3024 picture.
     pub fn heic() -> Vec<u8> {
+        heic_turned(None)
+    }
+
+    /// [`heic`] with an `irot` of `angle` quarter turns.
+    fn heic_turned(angle: Option<u8>) -> Vec<u8> {
         let ispe = |w: u32, h: u32| {
             let mut body = vec![0; 4];
             body.extend(w.to_be_bytes());
             body.extend(h.to_be_bytes());
             make_box(b"ispe", &body)
         };
-        let ipco = make_box(b"ipco", &[ispe(512, 512), ispe(4032, 3024)].concat());
+        let mut props = [ispe(512, 512), ispe(4032, 3024)].concat();
+        if let Some(angle) = angle {
+            props.extend(make_box(b"irot", &[angle]));
+        }
+        let ipco = make_box(b"ipco", &props);
         let iprp = make_box(b"iprp", &ipco);
         let mut meta = vec![0; 4];
         meta.extend(make_box(b"hdlr", &[0; 24]));
@@ -91,6 +107,16 @@ mod tests {
         read(&mut Cursor::new(heic()), Path::new("x.heic"), "heic", &mut out);
         let fields = out.finish(0);
         assert_eq!(fields.text(f::DIMENSIONS).as_deref(), Some("4032 × 3024"));
+    }
+
+    #[test]
+    fn a_turned_heic_says_its_shown_size() {
+        // An upright iPhone photo (macOS checklist R35): stored on its side, turned by `irot`.
+        for (angle, size) in [(1, "3024 × 4032"), (3, "3024 × 4032"), (2, "4032 × 3024"), (0, "4032 × 3024")] {
+            let mut out = Out::new(f::FieldSet::ALL);
+            read(&mut Cursor::new(heic_turned(Some(angle))), Path::new("x.heic"), "heic", &mut out);
+            assert_eq!(out.finish(0).text(f::DIMENSIONS).as_deref(), Some(size), "irot {angle}");
+        }
     }
 
     #[test]

@@ -949,8 +949,14 @@ mod tests {
         assert_eq!(first(DefaultState::Moved { old: "x".into() }).2, "Update");
         assert_eq!(first(DefaultState::Changed).2, "Repair");
         assert_eq!(first(DefaultState::Taken { why: "w".into() }).3, RowAction::Nothing);
+        // On a Mac without its own default change the row speaks of Reveal in Finder only.
         let taken = Snapshot { dbus_taken: true, ..with_default(DefaultState::On) };
-        assert!(rows(&taken)[0].0.detail.ends_with("(another file manager answers \"Show in folder\")"));
+        let detail = rows(&taken).swap_remove(0).0.detail;
+        if cfg!(target_os = "macos") {
+            assert_eq!(detail, "Reveal in Finder opens in Gezik; macOS keeps folders for Finder");
+        } else {
+            assert!(detail.ends_with("(another file manager answers \"Show in folder\")"), "{detail}");
+        }
     }
 
     #[test]

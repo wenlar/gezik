@@ -43,12 +43,16 @@ fn tag(xml: &str, local: &str) -> Option<String> {
     let mut rest = xml;
     while let Some(i) = rest.find('<') {
         rest = rest.get(i + 1..)?;
-        // Names are short: a long run without an end is no tag (and is not scanned again and
-        // again: 256 KB of `<` would take minutes).
-        let Some((end, _)) = rest.char_indices().take(128).find(|(_, c)| *c == '>' || *c == '/' || c.is_whitespace())
+        // Names are short and hold no `<`: a long run without an end is no tag, and the scan stops
+        // at the next `<` (else each `<` of 256 KB of them reads the next 128 characters).
+        let Some((end, stop)) =
+            rest.char_indices().take(128).find(|(_, c)| matches!(c, '<' | '>' | '/') || c.is_whitespace())
         else {
             continue;
         };
+        if stop == '<' {
+            continue;
+        }
         let name = rest.get(..end)?;
         if name.rsplit(':').next() == Some(local) {
             let open = rest.find('>')?;

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use gezik_config::lock;
 use gezik_config::store::ConfigStore;
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 /// Editors often write a file several times per save; wait this long for quiet.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -54,12 +54,14 @@ pub fn watch_config(
             found.unwrap_or_else(|| path.to_path_buf())
         };
         // (settings or a theme, a template) a change touched.
+        // Opens and closes are no change: inotify reports the reload's own reads, which would
+        // start the next reload.
         let touched = |event: &notify::Result<notify::Event>| match event {
-            Ok(e) => (
+            Ok(e) if !matches!(e.kind, EventKind::Access(_)) => (
                 e.paths.iter().any(|path| store.is_config_file(&as_given(path))),
                 e.paths.iter().any(|path| store.is_template_path(&as_given(path))),
             ),
-            Err(_) => (false, false),
+            _ => (false, false),
         };
         while let Ok(event) = rx.recv() {
             let (mut config, mut templates) = touched(&event);
