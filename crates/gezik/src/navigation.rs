@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gezik_core::kind::is_package_name;
 use gezik_core::nav::{Closed, Crumb, History, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
@@ -137,7 +137,7 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
 /// the load is overtaken.
 fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResult {
     if let Some(file) = at.disk()
-        && !file.is_file()
+        && !comes_back(file, ARCHIVE_GAP, &|| gezik_vfs::Cx::stopped(cx))
     {
         // Gone with its archive: as a gone folder.
         return match mode {
@@ -169,6 +169,25 @@ fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResu
             }))
         }
         None => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
+    }
+}
+
+/// How long an archive file may be missing while it is written anew (spec 16 §6.2: the old
+/// one goes to the trash, then the new one takes its name) before its tab counts it as gone.
+const ARCHIVE_GAP: Duration = Duration::from_secs(3);
+
+/// Whether the file `file` is there, or comes back within `grace` (looked at every 50 ms,
+/// until `stopped`).
+fn comes_back(file: &Path, grace: Duration, stopped: &dyn Fn() -> bool) -> bool {
+    let until = Instant::now() + grace;
+    loop {
+        if file.is_file() {
+            return true;
+        }
+        if Instant::now() >= until || stopped() {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -1751,6 +1770,23 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_archive_written_anew_is_not_taken_for_gone() {
+        let dir = std::env::temp_dir().join(format!("gezik-nav-gap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("w.zip");
+        let later = file.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            std::fs::write(later, b"new").unwrap();
+        });
+        assert!(comes_back(&file, Duration::from_secs(3), &|| false), "back within the gap");
+        writer.join().unwrap();
+        assert!(!comes_back(&dir.join("gone.zip"), Duration::from_millis(100), &|| false));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_note_given_while_a_folder_loads_waits_for_it() {
