@@ -249,7 +249,27 @@ pub(crate) fn item_names(paths: &[PathBuf]) -> Vec<String> {
 
 /// `copy-to` / `move-to` on the view's selection (else its focused item).
 pub fn copy_to(view: &crate::view::View, moving: bool) {
+    if view.shows_vfs() {
+        return copy_out_to(view, moving);
+    }
     copy_to_paths(view.selected_entries().into_iter().map(|(path, _)| path).collect(), moving);
+}
+
+/// `copy-to` inside an archive (spec 16 §4.6): the selection (else the focused entry) into a
+/// typed folder (the other pane's with two panes); no mask or filter there.
+fn copy_out_to(view: &crate::view::View, moving: bool) {
+    if moving {
+        return view.note(t("", crate::operations::ONLY_COPIED).into_owned());
+    }
+    let mut items: Vec<_> = view.selected_vfs_items().into_iter().map(|(at, _)| at).collect();
+    items.extend(view.focus().filter(|_| items.is_empty()).and_then(|i| view.vfs_item(i)).map(|(at, _)| at));
+    let Some(first) = items.first() else { return };
+    let other = other_folder();
+    let base = other.clone().or_else(|| first.disk().and_then(Path::parent).map(Path::to_path_buf)).unwrap_or_default();
+    let field = other.map(|folder| folder.display().to_string()).unwrap_or_default();
+    let names: Vec<PathBuf> = items.iter().map(|at| PathBuf::from(at.name())).collect();
+    let question = Ask { moving: false, base, field, dont_ask: None, filter: false, verify: None, items: names };
+    ask(question, move |to, _, _| with_current(|ops| ops.copy_out(items, to)));
 }
 
 /// Where Split and Join put what they make: the other pane's folder, else `path`'s own.

@@ -6,6 +6,8 @@
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use gezik_core::drag::{
@@ -15,6 +17,7 @@ use gezik_core::drag::{
 use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
 use gezik_core::ops::paths::is_within;
+use gezik_core::vfs::VfsPath;
 use gezik_platform::DriveKind;
 use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OnEnd, OutsideDrag, VirtualFiles};
 use slint::winit_030::WinitWindowAccessor;
@@ -70,7 +73,23 @@ struct Dragging {
     virtual_count: usize,
     /// Those items, once dropped.
     virtual_files: Option<VirtualFiles>,
+    /// Entries inside an archive (spec 16 §4.6): copied out by a drop in Gezik; `sources` is
+    /// where they are taken out to for another program.
+    inside: Option<Inside>,
 }
+
+/// A drag of entries inside an archive.
+#[derive(Clone)]
+struct Inside {
+    items: Vec<VfsPath>,
+    /// Taken out to the temporary area (for a drop in another program).
+    ready: Arc<AtomicBool>,
+    /// Too large to take out for another program.
+    large: bool,
+}
+
+/// The most a drag out of an archive takes out for another program (spec 16 §4.6).
+const MAX_DRAGGED_OUT: u64 = 256 << 20;
 
 enum Phase {
     Idle,
@@ -267,7 +286,7 @@ fn current_spans(stored: &[(String, f32, f32)], labels: &[String]) -> Vec<(f32, 
 fn path_of(location: Location) -> Option<PathBuf> {
     match location {
         Location::Path(path) => Some(path),
-        Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
+        Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash | Location::Vfs(_) => None,
     }
 }
 
@@ -476,6 +495,7 @@ impl Drags {
             from_stack: false,
             virtual_count: 0,
             virtual_files: None,
+            inside: None,
         };
         if let Some(effect) = self.effect(&d, &dir) {
             self.0.ops.transfer(d.sources, dir, effect);
@@ -600,8 +620,37 @@ impl Drags {
 
     /// The pointer went far enough from the press on entry `index`: drag the selection.
     fn start(&self, index: usize, right: bool, keys: Keys) {
-        let items = crate::panes::active_view().selected_items();
-        let row = crate::panes::active_view().file_row(index);
+        let view = crate::panes::active_view();
+        let row = view.file_row(index);
+        if let Some(dir) = view.vfs_dir() {
+            let items = view.selected_vfs_items();
+            let shown: Vec<(PathBuf, bool)> =
+                items.iter().map(|(at, is_dir)| (dir.vfs.staged(&at.inner), *is_dir)).collect();
+            let large = view.selected_bytes() > MAX_DRAGGED_OUT;
+            let ready = Arc::new(AtomicBool::new(false));
+            let items: Vec<VfsPath> = items.into_iter().map(|(at, _)| at).collect();
+            if !large && !items.is_empty() {
+                // Taken out while the drag is in the window: ready for another program by the time
+                // it leaves (a small selection is).
+                let (vfs, names, done) =
+                    (dir.vfs.clone(), items.iter().map(|at| at.inner.clone()).collect::<Vec<_>>(), ready.clone());
+                let at = dir.at.clone();
+                std::thread::spawn(move || {
+                    let cx = crate::vfs_mounts::UiCx::new(&at, Box::new(|| false));
+                    if names.iter().all(|name| vfs.staged(name).exists())
+                        || vfs.stage(&names, &vfs.staged(""), &cx).is_ok()
+                    {
+                        done.store(true, Ordering::SeqCst);
+                    }
+                });
+            }
+            self.start_with(shown, row, right, keys, Some(index), false);
+            if let Phase::Dragging(d) = &mut *self.0.phase.borrow_mut() {
+                d.inside = Some(Inside { items, ready, large });
+            }
+            return;
+        }
+        let items = view.selected_items();
         self.start_with(items, row, right, keys, Some(index), false);
     }
 
@@ -651,6 +700,7 @@ impl Drags {
             from_stack,
             virtual_count: 0,
             virtual_files: None,
+            inside: None,
         });
     }
 
@@ -856,6 +906,10 @@ impl Drags {
         if d.virtual_count > 0 && !virtual_allows(hit) {
             return Target::none(hit);
         }
+        // Out of an archive only into folders (no pin, tag, stack or archive).
+        if d.inside.is_some() && !virtual_allows(hit) {
+            return Target::none(hit);
+        }
         let pane = hit.pane().and_then(|place| crate::panes::at(index(place)));
         let (hit, dir) = match (hit, &pane) {
             // Nothing goes into the bins but by a delete.
@@ -863,7 +917,7 @@ impl Drags {
             (Hit::Entry(p, i), Some(pane)) => match pane.view.entry_path(i) {
                 Some((path, true)) => (hit, Some(path)),
                 // A zip, 7z or tar file (not one of those dragged): the files are added to it.
-                Some((path, false)) if d.virtual_count == 0 && self.can_add_to(d, &path) => {
+                Some((path, false)) if d.virtual_count == 0 && d.inside.is_none() && self.can_add_to(d, &path) => {
                     let folder = path.parent().map(Path::to_path_buf);
                     let action = folder.as_deref().is_some_and(|f| self.writable(f)).then_some(Action::AddToArchive);
                     return Target { hit, dir: folder, action, archive: Some(path) };
@@ -881,7 +935,8 @@ impl Drags {
             (Hit::Sidebar(row), _)
                 if window.get_sidebar_rows().row_data(row).is_some_and(|r| r.section == SECTION_TAGS && !r.header) =>
             {
-                let action = (d.virtual_count == 0 && !d.sources.is_empty()).then_some(Action::Tag);
+                let action =
+                    (d.virtual_count == 0 && d.inside.is_none() && !d.sources.is_empty()).then_some(Action::Tag);
                 return Target { action, ..Target::none(hit) };
             }
             (Hit::Sidebar(row), _) => {
@@ -912,7 +967,7 @@ impl Drags {
         if !self.writable(dir) {
             return None;
         }
-        if d.virtual_count > 0 {
+        if d.virtual_count > 0 || d.inside.is_some() {
             // Nothing to move or link: what has no file behind it is copied.
             return Some(Effect::Copy);
         }
@@ -1166,6 +1221,14 @@ impl Drags {
             }
             return None;
         };
+        if let Some(inside) = d.inside {
+            // Copied out of the archive by a job (spec 16 §4.6); no menu: a copy is all it can be.
+            if target.action != Some(Action::Transfer(Effect::Copy)) {
+                return None;
+            }
+            self.0.ops.copy_out(inside.items, dir);
+            return Some(Effect::Copy);
+        }
         if d.virtual_count > 0 {
             // Written into `dir` by a job (spec 9 §8.1); no menu: a copy is all it can be.
             let files = d.virtual_files?;
@@ -1201,6 +1264,20 @@ impl Drags {
                 return;
             }
         };
+        // Out of an archive: what was taken out goes; too large or not taken out yet, it stays in.
+        if let Some(inside) = &d.inside
+            && (inside.large || !inside.ready.load(Ordering::SeqCst))
+        {
+            let note = if inside.large {
+                self.0.handoff_failed.set(true);
+                gezik_i18n::t!("Use Copy To… for large selections")
+            } else {
+                gezik_i18n::t!("Still taking the items out of the archive…")
+            };
+            crate::panes::active_view().note(note.into_owned());
+            *self.0.phase.borrow_mut() = Phase::Dragging(d);
+            return;
+        }
         // The window's events may be all that follows this drag (a tab opened under it): that
         // stays so outside the window and when it comes back.
         let grab_lost = self.0.grab_lost.get();
@@ -1402,6 +1479,7 @@ impl Drags {
                         from_stack: false,
                         virtual_count: offer.virtual_count,
                         virtual_files: None,
+                        inside: None,
                     })
                 }
                 // Gezik's own drag (or a press) is under way: not an offer from outside.
@@ -1556,6 +1634,7 @@ mod tests {
             from_stack: false,
             virtual_count: 0,
             virtual_files: None,
+            inside: None,
         }
     }
 

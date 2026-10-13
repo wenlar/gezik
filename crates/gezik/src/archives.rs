@@ -29,7 +29,9 @@ use gezik_ops::{JobId, Report};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::AppWindow;
-use crate::context_menu::{COMPRESS, COMPRESS_TO, EXTRACT_HERE, EXTRACT_TO, EXTRACT_TO_OWN};
+use crate::context_menu::{
+    BROWSE_ARCHIVE, COMPRESS, COMPRESS_TO, EXTRACT_HERE, EXTRACT_TO, EXTRACT_TO_OWN, OPEN_SYSTEM_APP,
+};
 use crate::dialog::Dialogs;
 use crate::operations::{After, Operations};
 
@@ -58,6 +60,11 @@ pub fn menu_items(items: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
     // A raw part (`film.mkv.001`, made by Split File) is no archive: Join Files takes it.
     let extracts = |name: &str| looks_like_archive(name) && split_ending(name) != Some("");
     if items.iter().all(|(path, is_dir)| !is_dir && extracts(&name_of(path))) {
+        // Whatever double-click does, both ways are offered (spec 16 §5.1).
+        if items.len() == 1 {
+            out.push((BROWSE_ARCHIVE, gezik_i18n::t!("Open as Folder").into_owned()));
+            out.push((OPEN_SYSTEM_APP, gezik_i18n::t!("Open with System App").into_owned()));
+        }
         out.push((EXTRACT_HERE, gezik_i18n::t!("Extract here").into_owned()));
         match items {
             [(one, _)] => out.push((
@@ -587,8 +594,34 @@ thread_local! {
 }
 
 /// settings.toml changed: `[tools]` and `[archives]`.
+/// `[archives] preview-limit` in bytes: read by the preview's thread.
+static PREVIEW_LIMIT: AtomicU64 = AtomicU64::new(64 << 20);
+
 pub fn set_settings(tools: ToolsSettings, archives: ArchivesSettings) {
+    PREVIEW_LIMIT.store(archives.preview_limit << 20, Ordering::Relaxed);
     SETTINGS.with(|s| *s.borrow_mut() = (tools, archives));
+}
+
+/// The largest file inside an archive the preview takes out by itself (spec 16 §4.5).
+pub fn preview_limit() -> u64 {
+    PREVIEW_LIMIT.load(Ordering::Relaxed)
+}
+
+/// Whether opening the file `path` goes into it as into a folder (`[archives] double-click =
+/// "browse"`, spec 16 §5.1): an archive by its name, not a raw part (`film.mkv.001`).
+pub fn browses(path: &Path) -> bool {
+    let name = name_of(path);
+    looks_like_archive(&name)
+        && split_ending(&name) != Some("")
+        && SETTINGS.with(|s| s.borrow().1.double_click == DoubleClick::Browse)
+}
+
+/// Tells the places inside archives where 7-Zip is looked for (before one is opened).
+pub fn tell_vfs_tools() {
+    let configured = tools_settings().seven_zip.map(PathBuf::from);
+    let dir =
+        crate::windows::config().map_or_else(|| std::env::temp_dir().join("gezik").join("tools"), |s| s.tools_dir());
+    gezik_vfs::set_seven_zip(dir, configured);
 }
 
 pub fn tools_settings() -> ToolsSettings {
@@ -836,6 +869,12 @@ impl Archives {
     /// taking away the failed row `row` if there is one. `hint`: what to install first for
     /// downloading to work (found on a thread). While the box is on screen, more that need
     /// ffmpeg join it.
+    /// 7-Zip for an archive with this ending that was to be opened as a folder; `again` opens
+    /// it once 7-Zip is there.
+    pub fn offer_seven_zip(&self, ending: String, again: Rc<dyn Fn()>) {
+        self.offer(Need::Archive(ending), None, Then::Again { again, row: None });
+    }
+
     pub fn offer_ffmpeg(&self, need: Need, hint: Option<String>, again: Rc<dyn Fn()>, row: Option<JobId>) {
         self.offer(need, hint, Then::Again { again, row });
     }
@@ -1152,9 +1191,12 @@ mod tests {
         let folder = (PathBuf::from("d").join("Belgeler"), true);
 
         let one = menu_items(std::slice::from_ref(&zip));
-        assert_eq!(ids(&one), [EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO]);
-        assert_eq!(one[1].1, format!("Extract to \"Fotolar{MAIN_SEPARATOR}\""));
-        assert_eq!(one[4].1, "Compress to \"Fotolar.zip\"");
+        assert_eq!(
+            ids(&one),
+            [BROWSE_ARCHIVE, OPEN_SYSTEM_APP, EXTRACT_HERE, EXTRACT_TO_OWN, EXTRACT_TO, COMPRESS, COMPRESS_TO]
+        );
+        assert_eq!(one[3].1, format!("Extract to \"Fotolar{MAIN_SEPARATOR}\""));
+        assert_eq!(one[6].1, "Compress to \"Fotolar.zip\"");
 
         let two = menu_items(&[zip.clone(), rar]);
         assert_eq!(two[1].1, "Extract each to its own folder");
@@ -1170,7 +1212,7 @@ mod tests {
         let part = (PathBuf::from("d").join("film.mkv.001"), false);
         assert_eq!(ids(&menu_items(&[part])), [COMPRESS, COMPRESS_TO]);
         let zip_part = (PathBuf::from("d").join("a.zip.001"), false);
-        assert_eq!(ids(&menu_items(&[zip_part]))[0], EXTRACT_HERE);
+        assert_eq!(ids(&menu_items(&[zip_part]))[..3], [BROWSE_ARCHIVE, OPEN_SYSTEM_APP, EXTRACT_HERE]);
     }
 
     #[test]

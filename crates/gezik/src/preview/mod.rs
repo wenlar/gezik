@@ -83,7 +83,10 @@ pub const MAX_COUNTED: usize = 10_000;
 pub enum Target {
     Nothing,
     Entry {
+        /// Inside an archive: where it is once taken out to the temporary area.
         path: PathBuf,
+        /// Inside an archive: where it is there (taken out before it is read, spec 16 §4.5).
+        inside: Option<gezik_core::vfs::VfsPath>,
         is_dir: bool,
         name: String,
         type_name: String,
@@ -135,9 +138,24 @@ pub fn load(target: &Target, px: u32) -> Body {
 /// before each slow step once `wanted` says the result is no longer needed. Runs on a
 /// worker thread; never panics on bad files.
 pub fn load_while(target: &Target, px: u32, wanted: &dyn Fn() -> bool) -> Body {
-    let Target::Entry { path, is_dir, counts, kind, .. } = target else { return Body::None };
+    let Target::Entry { path, is_dir, counts, kind, inside, size, .. } = target else { return Body::None };
     if !wanted() {
         return Body::None;
+    }
+    if let Some(at) = inside {
+        let Some(vfs) = gezik_vfs::mounted(&at.root) else { return Body::None };
+        if *is_dir {
+            let count = vfs.list(&at.inner).map_or(0, |entries| entries.len());
+            return Body::Folder { count, more: false };
+        }
+        // Larger than `[archives] preview-limit`: not taken out by itself.
+        if size.is_none_or(|size| size > crate::archives::preview_limit()) {
+            return Body::None;
+        }
+        let cx = crate::vfs_mounts::UiCx::new(at, Box::new(|| !wanted()));
+        if gezik_vfs::stage_here(vfs.as_ref(), &at.inner, &cx).is_err() || !wanted() {
+            return Body::None;
+        }
     }
     if *is_dir {
         if counts.is_some() {
@@ -776,7 +794,12 @@ impl Preview {
     /// Space on the list: opens quick look, or closes it.
     pub fn toggle_quick_look(&self) {
         #[cfg(target_os = "macos")]
-        if SYSTEM_PANEL.with(Cell::get) && !self.quick_look_open() && self.toggle_system_panel() {
+        // Inside an archive Gezik's own window shows what it took out (the panel wants real files).
+        if SYSTEM_PANEL.with(Cell::get)
+            && !self.quick_look_open()
+            && !crate::panes::active_view().shows_vfs()
+            && self.toggle_system_panel()
+        {
             return;
         }
         if self.quick_look_open() {
@@ -2124,6 +2147,7 @@ mod tests {
         Target::Entry {
             name: path.file_name().unwrap().to_string_lossy().into_owned(),
             path,
+            inside: None,
             is_dir,
             type_name: "Thing".into(),
             size: (!is_dir).then_some(2048),
@@ -2277,6 +2301,7 @@ mod tests {
     fn a_sized_folder_shows_its_size_and_counts() {
         let target = Target::Entry {
             path: "/w/d".into(),
+            inside: None,
             is_dir: true,
             name: "d".into(),
             type_name: "Folder".into(),

@@ -9,7 +9,7 @@ mod model;
 
 pub use columns::LIST_ONLY;
 use folder_tags::FolderTags;
-pub use listing::Listing;
+pub use listing::{Listing, VfsDir};
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -33,6 +33,7 @@ use gezik_core::ops::paths::same_path;
 use gezik_core::pattern::Pattern;
 use gezik_core::selection::Selection;
 use gezik_core::sort::{SortDir, SortKey, SortSpec, sort_entries_grouped};
+use gezik_core::vfs::VfsPath;
 use gezik_core::view::{
     ColumnKey, ColumnState, GridSize, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, ViewMode, ViewSettings, default_columns,
     normalize_columns,
@@ -505,11 +506,16 @@ impl View {
                 None => return Target::Nothing,
             },
         };
-        let Some((path, is_dir)) = data.listing.path_at(index) else { return Target::Nothing };
+        // Inside an archive: where it is once taken out (the preview takes it out first).
+        let inside = data.listing.item_at(index);
+        let at_disk =
+            inside.as_ref().zip(data.listing.vfs()).map(|((at, is_dir), dir)| (dir.vfs.staged(&at.inner), *is_dir));
+        let Some((path, is_dir)) = data.listing.path_at(index).or(at_disk) else { return Target::Nothing };
         let entry = data.listing.entry(index);
         let entry = entry.as_deref();
-        let counts = if is_dir { crate::folder_sizes::counts(&path) } else { None };
+        let counts = if is_dir && inside.is_none() { crate::folder_sizes::counts(&path) } else { None };
         Target::Entry {
+            inside: inside.map(|(at, _)| at),
             name: data.listing.shown_name_at(index).unwrap_or_default().to_owned(),
             path,
             is_dir,
@@ -541,6 +547,8 @@ impl View {
         self.0.media.forget_fields();
         let folder = match &listing {
             Listing::Results(set) => Some(if set.is_trash() { TRASH_KEY } else { RESULTS_KEY }.to_owned()),
+            // A folder in an archive keeps its view as a folder does (by its address).
+            Listing::Vfs(dir, _) => Some(dir.at.text()),
             _ => listing.folder().map(|p| p.display().to_string()),
         };
         // Only a reload of the same folder keeps a rename.
@@ -559,10 +567,7 @@ impl View {
         let listing = listing.without_hidden(options.show_hidden, options.show_system);
         // The view is chosen before any row of this listing is drawn: a content rule counts the
         // names about to show (spec 10 §8.2), hidden ones left out.
-        let entries = match &listing {
-            Listing::Files(_, entries) => Some(entries.as_slice()),
-            _ => None,
-        };
+        let entries = listing.entries().map(|entries| entries.as_slice());
         let kept = same_folder.then(|| self.0.applied.get());
         let (mut settings, rule) =
             decide(own, kept, &self.0.rules.borrow(), &place, entries, self.0.defaults.get().view);
@@ -591,15 +596,16 @@ impl View {
         let cleared = self.0.cleared.replace(false);
         let live = same_folder && !cleared;
         let (full, listing, rows, results_set) = match listing {
-            Listing::Files(dir, full) if !dir.as_os_str().is_empty() => {
+            listing if listing.is_folder_like() => {
+                let full = listing.entries().cloned().unwrap_or_default();
                 let filter = if live {
                     self.0.filter.borrow_mut().take()
                 } else {
                     state.filter.as_deref().map(|text| FilterState::new(text, None))
                 };
                 let (shown, rows) = match &filter {
-                    Some(filter) => self.filter_files(&dir, &full, &filter.pattern, &filter.tags, &filter.fields),
-                    None => (Listing::Files(dir, full.clone()), None),
+                    Some(filter) => self.filter_files(&listing, &full, &filter.pattern, &filter.tags, &filter.fields),
+                    None => (listing, None),
                 };
                 *self.0.filter.borrow_mut() = filter;
                 (full, shown, rows, None)
@@ -710,7 +716,9 @@ impl View {
         let data = self.0.data.borrow();
         let same = |other: &str| listing::same_name(other, name);
         match &data.listing {
-            Listing::Files(..) => name_taken(&data.full, name, data.listing.name_at(except).unwrap_or_default()),
+            Listing::Files(..) | Listing::Vfs(..) => {
+                name_taken(&data.full, name, data.listing.name_at(except).unwrap_or_default())
+            }
             // Only the results in the same folder are known (spec 4.6): the engine says the rest.
             Listing::Results(set) => {
                 let folder = set.folder(except);
@@ -729,7 +737,7 @@ impl View {
     pub fn all_names(&self) -> Vec<String> {
         let data = self.0.data.borrow();
         match data.listing {
-            Listing::Files(..) => return data.full.iter().map(|e| e.name.clone()).collect(),
+            Listing::Files(..) | Listing::Vfs(..) => return data.full.iter().map(|e| e.name.clone()).collect(),
             // Batch rename reads the folders itself in the results (Task 8).
             Listing::Results(_) => return Vec::new(),
             Listing::Drives(_) => {}
@@ -890,11 +898,12 @@ impl View {
     pub fn set_filter(&self, text: Option<&str>) {
         let Some(window) = self.0.window.upgrade() else { return };
         let results = self.0.data.borrow().results.clone();
-        let dir = match &self.0.data.borrow().listing {
-            Listing::Files(dir, _) => dir.clone(),
-            _ => PathBuf::new(),
+        // The shape of the listing (a folder's, an archive's) the filtered one is made like.
+        let shape = {
+            let data = self.0.data.borrow();
+            data.listing.is_folder_like().then(|| data.listing.with_entries(Rc::default()))
         };
-        if dir.as_os_str().is_empty() && results.is_none() {
+        if shape.is_none() && results.is_none() {
             // "This PC" and the empty listing: no filter.
             self.0.filter.borrow_mut().take();
             return self.sync_filter_bar(&window);
@@ -933,7 +942,10 @@ impl View {
             let full_len = results.as_ref().map_or(full.len(), |set| set.len());
             let (shown, rows) = match &results {
                 Some(set) => filtered_results(set, &new_pattern.0),
-                None => self.filter_files(&dir, &full, &new_pattern.0, &new_pattern.1, &new_pattern.2),
+                None => {
+                    let shape = shape.unwrap_or_default();
+                    self.filter_files(&shape, &full, &new_pattern.0, &new_pattern.1, &new_pattern.2)
+                }
             };
             // What was selected and still shows stays selected, carried by position through
             // the full list (no names: Ctrl+A in 100k entries, then typing, stays fast). Closing
@@ -1017,6 +1029,33 @@ impl View {
         self.0.data.borrow().listing.path_at(index)
     }
 
+    /// Entry `index` inside an archive, and whether it is a folder (spec 16 §4.7).
+    pub fn vfs_item(&self, index: usize) -> Option<(VfsPath, bool)> {
+        self.0.data.borrow().listing.item_at(index)
+    }
+
+    /// The selected entries inside an archive, in list order.
+    pub fn selected_vfs_items(&self) -> Vec<(VfsPath, bool)> {
+        let data = self.0.data.borrow();
+        data.selection.iter().filter_map(|i| data.listing.item_at(i)).collect()
+    }
+
+    /// The bytes of the selected files and sized folders.
+    pub fn selected_bytes(&self) -> u64 {
+        let data = self.0.data.borrow();
+        selection_size(&data.listing, data.selection.iter()).0.unwrap_or(0)
+    }
+
+    /// The place inside an archive shown.
+    pub fn vfs_dir(&self) -> Option<Rc<VfsDir>> {
+        self.0.data.borrow().listing.vfs().cloned()
+    }
+
+    /// A place inside an archive is shown.
+    pub fn shows_vfs(&self) -> bool {
+        matches!(self.0.data.borrow().listing, Listing::Vfs(..))
+    }
+
     /// The selected entries' paths, and whether each is a folder, in list order.
     pub fn selected_items(&self) -> Vec<(PathBuf, bool)> {
         let data = self.0.data.borrow();
@@ -1049,8 +1088,12 @@ impl View {
     /// The columns on screen right of Name, in their order (Match only when a result has a line).
     pub fn shown_column_keys(&self) -> Vec<ColumnKey> {
         let matches = self.results().is_some_and(|set| set.has_matches());
+        let vfs = self.shows_vfs();
         let shown = self.columns_shown().into_iter().filter(|c| c.visible);
-        shown.map(|c| c.key).filter(|&key| key != ColumnKey::Match || matches).collect()
+        shown
+            .map(|c| c.key)
+            .filter(|&key| (key != ColumnKey::Match || matches) && (key != ColumnKey::Packed || vfs))
+            .collect()
     }
 
     /// The rows an export writes (spec 11 §11): each entry shown (the filter's, in list order),
@@ -1083,7 +1126,10 @@ impl View {
             for (cell, column) in cells.iter_mut().zip(columns) {
                 *cell = match column {
                     Column::Name => listing.name_at(i).unwrap_or_default().to_owned(),
-                    Column::Path => listing.path_at(i).map(|(path, _)| path.display().to_string()).unwrap_or_default(),
+                    Column::Path => match listing.item_at(i) {
+                        Some((at, _)) => at.text(),
+                        None => listing.path_at(i).map(|(path, _)| path.display().to_string()).unwrap_or_default(),
+                    },
                     Column::Shown(ColumnKey::Folder) => match listing {
                         Listing::Results(set) => set.shown_folder(i).unwrap_or_default().to_owned(),
                         _ => String::new(),
@@ -1102,6 +1148,7 @@ impl View {
                     Column::Shown(ColumnKey::Modified) => date(entry.as_deref().and_then(|e| e.modified)),
                     Column::Shown(ColumnKey::Created) => date(entry.as_deref().and_then(|e| e.created)),
                     Column::Shown(ColumnKey::Type) => model::type_name_for(&data, i),
+                    Column::Shown(ColumnKey::Packed) => model::packed_cell(&data, i, raw),
                     Column::Shown(key @ (ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment)) => {
                         model::known_meta_cell(&data, i, *key)
                     }
@@ -1291,7 +1338,7 @@ impl View {
         for entry in Rc::make_mut(&mut full).iter_mut() {
             changed |= edit(entry);
         }
-        let (shown, rows) = self.filtered(&dir, &full);
+        let (shown, rows) = self.filtered(&Listing::Files(dir, Rc::default()), &full);
         {
             let mut data = self.0.data.borrow_mut();
             (data.listing, data.full, data.rows, data.selection) = (shown, full, rows, selection);
@@ -1358,7 +1405,9 @@ impl View {
     pub fn folder_names(&self) -> Vec<String> {
         let data = self.0.data.borrow();
         match data.listing {
-            Listing::Files(..) => data.full.iter().filter(|e| e.is_dir).map(|e| e.name.clone()).collect(),
+            Listing::Files(..) | Listing::Vfs(..) => {
+                data.full.iter().filter(|e| e.is_dir).map(|e| e.name.clone()).collect()
+            }
             _ => Vec::new(),
         }
     }
@@ -1764,7 +1813,7 @@ impl View {
     /// The rule that matches the place shown, counting the listing in memory.
     fn pick_shown(&self) -> Option<usize> {
         let data = self.0.data.borrow();
-        let entries = matches!(data.listing, Listing::Files(..)).then(|| data.full.as_slice());
+        let entries = matches!(data.listing, Listing::Files(..) | Listing::Vfs(..)).then(|| data.full.as_slice());
         self.0.rules.borrow().pick(&self.0.place.borrow(), entries)
     }
 
@@ -1820,12 +1869,27 @@ impl View {
             }
             Listing::Drives(drives) => drives.iter().any(|d| d.path == path),
             Listing::Results(set) => set.rows_of(&[path.to_path_buf()]).into_iter().any(|i| set.is_dir(i)),
+            Listing::Vfs(..) => false,
         }
     }
 
     /// Whether `listing` (a folder read again) is what the view shows already: then showing it
     /// would only make every row anew, losing a press, a double-click or a drag under way.
     pub fn shows_same(&self, listing: &Listing) -> bool {
+        if let Listing::Vfs(dir, entries) = listing {
+            let data = self.0.data.borrow();
+            let options = self.0.options.get();
+            let Some(entries) = listing
+                .with_entries(entries.clone())
+                .without_hidden(options.show_hidden, options.show_system)
+                .entries()
+                .cloned()
+            else {
+                return false;
+            };
+            return data.listing.vfs().is_some_and(|shown| shown.at == dir.at && Arc::ptr_eq(&shown.vfs, &dir.vfs))
+                && same_entries(&data.full, &entries);
+        }
         let Listing::Files(dir, entries) = listing else { return false };
         let options = self.0.options.get();
         let read = Listing::Files(dir.clone(), entries.clone());
@@ -2186,7 +2250,7 @@ impl View {
                 // The selection by position: into the full list, then what the filter shows.
                 let in_full = carry(&selection, old_rows.as_deref(), full.len(), Some(&kept));
                 let full = Rc::new(kept.iter().map(|&i| full[i].clone()).collect::<Vec<Entry>>());
-                let (shown, rows) = self.filtered(&dir, &full);
+                let (shown, rows) = self.filtered(&Listing::Files(dir, Rc::default()), &full);
                 let selection = carry(&in_full, None, full.len(), rows.as_deref());
                 (shown, full, rows, selection)
             }
@@ -2211,11 +2275,11 @@ impl View {
         self.notify_listeners();
     }
 
-    /// What the filter lets through of `full`, the entries of `dir`, and where they are in it.
-    fn filtered(&self, dir: &Path, full: &Rc<Vec<Entry>>) -> (Listing, Option<Vec<usize>>) {
+    /// What the filter lets through of `full` (shown like `shape`), and where they are in it.
+    fn filtered(&self, shape: &Listing, full: &Rc<Vec<Entry>>) -> (Listing, Option<Vec<usize>>) {
         match self.0.filter.borrow().as_ref() {
-            Some(filter) => self.filter_files(dir, full, &filter.pattern, &filter.tags, &filter.fields),
-            None => (Listing::Files(dir.to_path_buf(), full.clone()), None),
+            Some(filter) => self.filter_files(shape, full, &filter.pattern, &filter.tags, &filter.fields),
+            None => (shape.with_entries(full.clone()), None),
         }
     }
 
@@ -2420,6 +2484,7 @@ impl View {
                 ColumnKey::Tags => window.get_col_tags(),
                 ColumnKey::Rating => window.get_col_rating(),
                 ColumnKey::Comment => window.get_col_comment(),
+                ColumnKey::Packed => window.get_col_packed(),
                 // Kept as dragged (`field_resized`).
                 ColumnKey::Field(_) => continue,
             };
@@ -2497,8 +2562,9 @@ impl View {
         // As `columns_shown`, without a copy.
         let rule = self.0.rule_columns.get();
         let columns = self.active_columns().borrow();
+        let vfs = self.shows_vfs();
         let width = |key: ColumnKey| {
-            if key == ColumnKey::Match && !matches {
+            if (key == ColumnKey::Match && !matches) || (key == ColumnKey::Packed && !vfs) {
                 return 0.0;
             }
             let shown = |c: &ColumnState| rule.map_or(c.visible, |set| set.has(c.key));
@@ -2514,6 +2580,7 @@ impl View {
         window.set_col_tags(tags);
         window.set_col_rating(rating);
         window.set_col_comment(comment);
+        window.set_col_packed(width(ColumnKey::Packed));
         drop(columns);
         // Rows read their meta while a meta column shows (spec 12 §6.1, §8.2); shown now, they ask.
         let shown = (tags > 0.0, rating > 0.0, comment > 0.0);
@@ -2594,16 +2661,17 @@ impl View {
     /// `listing` in the current sort order. A fresh folder load is already sorted by name
     /// (`by_name`), so the default order costs nothing.
     fn sorted(&self, listing: Listing, by_name: bool) -> Listing {
+        let in_order = by_name
+            && self.sort() == SortSpec::default()
+            && self.0.options.get().folders_first
+            && self.group_by() == GroupBy::None;
         match listing {
-            Listing::Files(dir, entries)
-                if !(by_name
-                    && self.sort() == SortSpec::default()
-                    && self.0.options.get().folders_first
-                    && self.group_by() == GroupBy::None) =>
-            {
+            Listing::Files(dir, entries) if !in_order => {
                 let sorted = self.sort_now(&dir, entries).0;
                 Listing::Files(dir, sorted)
             }
+            // An archive's index is in name order, folders not first: sorted always.
+            Listing::Vfs(dir, entries) => Listing::Vfs(dir, self.sort_now(Path::new(""), entries).0),
             other => other,
         }
     }
@@ -2676,12 +2744,13 @@ impl View {
         // The full list is sorted (no longer shared with the shown one, so not copied), then
         // filtered again. The drives are not sorted.
         let (listing, full, rows, selection) = match listing {
-            Listing::Files(dir, shown) => {
+            shown @ (Listing::Files(..) | Listing::Vfs(..)) => {
+                let shape = shown.with_entries(Rc::default());
                 drop(shown);
                 let full_len = full.len();
-                let (full, order) = self.sort_now(&dir, full);
+                let (full, order) = self.sort_now(&shape.folder().map(Path::to_path_buf).unwrap_or_default(), full);
                 let in_full = carry(&selection, old_rows.as_deref(), full_len, Some(&order));
-                let (shown, rows) = self.filtered(&dir, &full);
+                let (shown, rows) = self.filtered(&shape, &full);
                 let selection = carry(&in_full, None, full.len(), rows.as_deref());
                 (shown, full, rows, selection)
             }
@@ -2730,6 +2799,7 @@ impl View {
             let by = if dups.is_some() { GroupBy::Duplicates } else { self.group_by() };
             let in_order = match &data.listing {
                 Listing::Files(dir, _) => !dir.as_os_str().is_empty(),
+                Listing::Vfs(..) => true,
                 Listing::Drives(_) => false,
                 // Batches come unsorted: grouped once sorted this way (sapma 10).
                 Listing::Results(set) => set.sorted_by().is_some_and(|(_, _, group)| group == by),
@@ -3447,8 +3517,12 @@ mod tests {
         {
             let mut data = view.0.data.borrow_mut();
             // The filter shows the pictures, in the list's order.
-            let (listing, rows) =
-                listing::filtered_with(Path::new("/x"), &full, &Pattern::compile("*.png").unwrap(), None);
+            let (listing, rows) = listing::filtered_with(
+                &Listing::Files("/x".into(), Rc::default()),
+                &full,
+                &Pattern::compile("*.png").unwrap(),
+                None,
+            );
             (data.listing, data.rows, data.full) = (listing, rows, full);
             data.selection = Selection::from_indices(2, [1], Some(1));
         }
@@ -3465,6 +3539,69 @@ mod tests {
         // A folder's size is written only once known.
         view.0.data.borrow_mut().listing = files("/x", &["sub/"]);
         assert_eq!(exported(&view, &[Column::Shown(ColumnKey::Size)], true, false), [vec![String::new()]]);
+    }
+
+    /// A place in an archive whose files take half their size packed.
+    struct Fake(gezik_core::vfs::VfsRoot);
+
+    impl gezik_vfs::Vfs for Fake {
+        fn root(&self) -> &gezik_core::vfs::VfsRoot {
+            &self.0
+        }
+        fn list(&self, _: &str) -> Option<Vec<Entry>> {
+            None
+        }
+        fn is_file(&self, _: &str) -> bool {
+            false
+        }
+        fn is_dir(&self, _: &str) -> bool {
+            false
+        }
+        fn packed(&self, _: &str) -> Option<(Option<u64>, bool)> {
+            Some((Some(5), false))
+        }
+        fn stage(&self, _: &[String], _: &Path, _: &dyn gezik_vfs::Cx) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn staged(&self, path: &str) -> PathBuf {
+            Path::new("/tmp/stage").join(path)
+        }
+        fn unchanged(&self) -> bool {
+            true
+        }
+        fn len(&self) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn rows_inside_an_archive_have_no_path_but_an_address() {
+        use gezik_core::export::Column;
+        let view = View::new(crate::panes::next_id(), slint::Weak::default(), Media::idle(), Default::default(), None);
+        let at = VfsPath::archive("/w/a.zip".into()).join("docs");
+        let dir = Rc::new(VfsDir { at: at.clone(), vfs: Arc::new(Fake(at.root.clone())) });
+        let Listing::Files(_, full) = files("/x", &["sub/", "c.png", "d.txt"]) else { unreachable!() };
+        let listing = Listing::Vfs(dir, full.clone());
+        assert_eq!((listing.path_at(1), listing.folder()), (None, None), "nothing that wants a real file sees one");
+        assert_eq!(listing.item_at(1), Some((at.join("c.png"), false)));
+        let (pictures, rows) = listing::filtered_with(&listing, &full, &Pattern::compile("*.png").unwrap(), None);
+        assert!(matches!(pictures, Listing::Vfs(..)) && rows == Some(vec![1]), "a filter keeps the place");
+        {
+            let mut data = view.0.data.borrow_mut();
+            (data.listing, data.full) = (listing, full);
+            data.selection = Selection::from_indices(3, [1, 2], Some(1));
+        }
+        assert!(view.shows_vfs() && view.entry_path(1).is_none() && view.selected_paths().is_empty());
+        assert_eq!(view.selected_vfs_items(), [(at.join("c.png"), false), (at.join("d.txt"), false)]);
+        let rows = exported(&view, &[Column::Name, Column::Path, Column::Shown(ColumnKey::Packed)], true, true);
+        assert_eq!(rows[0], ["c.png".to_owned(), at.join("c.png").text(), "5".into()]);
+        view.0.data.borrow_mut().selection = Selection::from_indices(3, [1], Some(1));
+        match view.preview_target() {
+            crate::preview::Target::Entry { path, inside, .. } => {
+                assert_eq!((path, inside), (Path::new("/tmp/stage").join("docs/c.png"), Some(at.join("c.png"))));
+            }
+            _ => panic!("expected the picture"),
+        }
     }
 
     #[test]

@@ -42,6 +42,8 @@ impl Places {
             Location::Drives => return gezik_i18n::t("", gezik_core::nav::DRIVES_NAME).into_owned(),
             Location::Trash => return gezik_i18n::t("", gezik_core::nav::TRASH_NAME).into_owned(),
             Location::Search(spec) => return spec.title(),
+            // Inside an archive: the folder's name, the archive's at its top.
+            Location::Vfs(at) => return at.name(),
             Location::Flat(folder) => {
                 return gezik_i18n::t!("{} (all files)", self.title_for(&Location::Path(folder.clone())));
             }

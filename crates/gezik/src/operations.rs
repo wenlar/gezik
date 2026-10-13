@@ -15,6 +15,7 @@ use gezik_core::drag::Effect;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
+use gezik_core::vfs::VfsPath;
 use gezik_i18n::{t, tn, tx};
 use gezik_ops::{
     Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MaterializeTask, MoveTask,
@@ -171,6 +172,9 @@ pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
 
 /// The status bar when a job needs a folder and search results show (spec 4.6); shown with `t`.
 pub const NOT_HERE: &str = tx!("Not in search results: open a folder first");
+
+/// Cut, Move To… or a move drag inside an archive (spec 16: only copies come out of one in 16a).
+pub const ONLY_COPIED: &str = tx!("Items in an archive can only be copied out");
 
 /// Whether "Copy/Cut with folders" still owns the clipboard: the change number it got (`saved`)
 /// is the clipboard's now, or, where there are none (0), the clipboard holds its paths.
@@ -454,6 +458,8 @@ struct Inner {
     clip_sequence: Cell<u64>,
     /// The last "Copy/Cut with folders", while it may own the clipboard.
     with_folders: RefCell<Option<WithFolders>>,
+    /// Entries copied inside an archive, and the clipboard's change number then (spec 16 §4.6).
+    vfs_clip: RefCell<Option<(Vec<VfsPath>, u64)>>,
     /// Where state.toml is (none: nothing is saved).
     store: Option<ConfigStore>,
     /// The batch rename layer's last rules.
@@ -506,6 +512,7 @@ impl Operations {
             cut: RefCell::default(),
             clip_sequence: Cell::new(0),
             with_folders: RefCell::default(),
+            vfs_clip: RefCell::default(),
             store,
             batch_last: RefCell::new(batch_last),
         }));
@@ -933,13 +940,57 @@ impl Operations {
         if crate::panes::active_view().shows_drives() {
             return;
         }
+        if crate::panes::active_view().shows_vfs() {
+            return self.copy_inside(cut);
+        }
         // Pasted elsewhere, keypad / brings this selection back here.
         crate::panes::active_view().remember_selection();
         self.copy_paths(crate::panes::active_view().selected_paths(), cut);
     }
 
+    /// Ctrl+C inside an archive (spec 16 §4.6): Gezik keeps the entries (a paste into a folder
+    /// copies them out), the system's clipboard gets their addresses as text.
+    fn copy_inside(&self, cut: bool) {
+        let view = crate::panes::active_view();
+        if cut {
+            return view.note(t("", ONLY_COPIED).into_owned());
+        }
+        let items: Vec<VfsPath> = view.selected_vfs_items().into_iter().map(|(at, _)| at).collect();
+        if items.is_empty() {
+            return;
+        }
+        let text: Vec<String> = items.iter().map(VfsPath::text).collect();
+        if let Err(ClipboardError::Failed(why)) = clipboard::write_text(&text.join("\n")) {
+            return view.note(t!("Cannot use the clipboard: {}", why));
+        }
+        self.0.with_folders.borrow_mut().take();
+        self.0.clip.borrow_mut().take();
+        self.0.cut.borrow_mut().clear();
+        self.update_cut();
+        let count = items.len();
+        *self.0.vfs_clip.borrow_mut() = Some((items, clipboard::sequence()));
+        view.note(tn!("Copied {n} item" | "Copied {n} items", count));
+    }
+
+    /// The entries copied inside an archive, while the clipboard still holds them.
+    fn vfs_to_paste(&self) -> Option<Vec<VfsPath>> {
+        let saved = self.0.vfs_clip.borrow();
+        let (items, sequence) = saved.as_ref()?;
+        (*sequence == 0 || *sequence == clipboard::sequence()).then(|| items.clone())
+    }
+
+    /// Copies `items` (entries of one folder inside an archive) into folder `dir`, as one job
+    /// with one undo (spec 16 §4.6).
+    pub fn copy_out(&self, items: Vec<VfsPath>, dir: PathBuf) {
+        let (tasks, label) = gezik_vfs::tasks::copy_out(&items, dir);
+        if !tasks.is_empty() {
+            self.submit_chain(tasks, Some(label), None, After::Select);
+        }
+    }
+
     pub fn copy_paths(&self, paths: Vec<PathBuf>, cut: bool) {
         self.0.with_folders.borrow_mut().take();
+        self.0.vfs_clip.borrow_mut().take();
         let paths = self.without_roots(paths, &if cut { t!("Cannot cut a drive") } else { t!("Cannot copy a drive") });
         if paths.is_empty() {
             return;
@@ -998,13 +1049,17 @@ impl Operations {
     }
 
     pub fn can_paste(&self) -> bool {
-        self.clipboard().is_some()
+        self.clipboard().is_some() || self.vfs_to_paste().is_some()
     }
 
     /// Ctrl+V: into `into` (a folder's menu) or the folder shown. Cut items move; `force_move`
     /// moves copied ones too (macOS Cmd+Option+V).
     pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
         let Some(dir) = into.or_else(|| crate::panes::active_view().folder()) else { return self.not_here() };
+        // Entries copied inside an archive come out here.
+        if let Some(items) = self.vfs_to_paste() {
+            return self.copy_out(items, dir);
+        }
         // A copy with folders keeps them (spec 4.6).
         if let Some((items, cut)) = self.with_folders_to_paste() {
             let sources: Vec<PathBuf> = items.iter().map(|(path, _)| path.clone()).collect();

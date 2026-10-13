@@ -367,8 +367,13 @@ mod tests {
         view.sync_folder_fields(false);
         let terms = view.filter_terms();
         let full = view.0.data.borrow().full.clone();
-        let (listing, _) =
-            view.filter_files(Path::new("/x"), &full, &gezik_core::pattern::Pattern::default(), &[], &terms);
+        let (listing, _) = view.filter_files(
+            &Listing::Files("/x".into(), Rc::default()),
+            &full,
+            &gezik_core::pattern::Pattern::default(),
+            &[],
+            &terms,
+        );
         assert_eq!(listing.len(), 2, "not read yet: shown");
         assert!(view.0.data.borrow().folder_fields.as_ref().unwrap().faint.get());
         let id = view.0.field_runs.get();

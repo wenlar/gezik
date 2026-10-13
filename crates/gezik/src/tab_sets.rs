@@ -106,6 +106,8 @@ pub fn text_of(location: &Location, dirs: &KnownDirs) -> String {
         Location::Drives => "drives".to_owned(),
         Location::Trash => "trash".to_owned(),
         Location::Path(path) => dirs.collapse(path).trim().to_owned(),
+        // As the address bar writes it; opened, the path leads into the archive again.
+        Location::Vfs(at) => dirs.collapse(std::path::Path::new(&at.text())).trim().to_owned(),
         // A set keeps a place, not a search.
         Location::Search(_) | Location::Flat(_) => {
             location.folder().map_or_else(|| "drives".to_owned(), |path| dirs.collapse(path).trim().to_owned())
@@ -311,6 +313,17 @@ mod tests {
         assert_eq!(text_of(&Location::Trash, &dirs), "trash");
         assert_eq!(location_of(" Trash ", &dirs), Some(Location::Trash));
         assert_eq!(location_of("{home}/../x", &dirs), None);
+    }
+
+    #[test]
+    fn a_place_inside_an_archive_is_kept_as_its_address() {
+        let dirs = dirs();
+        let zip = home().join("İndirilenler").join("yedek.zip");
+        let at = gezik_core::vfs::VfsPath::archive(zip.clone()).join("docs/2024");
+        let text = text_of(&Location::Vfs(at), &dirs);
+        assert!(text.starts_with("{downloads}") && text.contains("yedek.zip"), "{text}");
+        // Opened, it is a path that leads into the archive (the load finds where it splits).
+        assert_eq!(location_of(&text, &dirs), Some(Location::Path(zip.join("docs").join("2024"))));
     }
 
     #[test]

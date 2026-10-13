@@ -291,9 +291,21 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         rating: rating.into(),
         rating_faint,
         comment: comment.into(),
+        packed: packed_cell(data, i, false).into(),
         tint,
         bold,
         fields: field_cells(data, i),
+    }
+}
+
+/// The Packed cell of a file inside an archive (spec 16 §5.2): what it takes packed, when the
+/// archive says; `raw` gives bytes (a CSV export).
+pub fn packed_cell(data: &ViewData, i: usize, raw: bool) -> String {
+    let (Some((at, false)), Some(dir)) = (data.listing.item_at(i), data.listing.vfs()) else { return String::new() };
+    match dir.vfs.packed(&at.inner) {
+        Some((Some(bytes), _)) if raw => bytes.to_string(),
+        Some((Some(bytes), _)) => format_size_in(bytes, data.options.size_format),
+        _ => String::new(),
     }
 }
 

@@ -42,7 +42,7 @@ fn place(location: &Location, home: &Path) -> Option<(PathBuf, String, String)> 
             };
             Some((folder, export::file_stem(&stem), title))
         }
-        Location::Drives | Location::Trash => None,
+        Location::Drives | Location::Trash | Location::Vfs(_) => None,
     }
 }
 

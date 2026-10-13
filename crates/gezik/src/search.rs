@@ -218,8 +218,14 @@ pub fn spec_of(location: &Location) -> Option<SearchSpec> {
     match location {
         Location::Search(spec) => Some((**spec).clone()),
         Location::Flat(folder) => Some(SearchSpec::flat_view(folder.clone())),
-        Location::Path(_) | Location::Drives | Location::Trash => None,
+        Location::Path(_) | Location::Drives | Location::Trash | Location::Vfs(_) => None,
     }
+}
+
+/// Where a search from inside an archive looks: the archive's folder (inside archives only
+/// the filter bar finds names, plan 16a deviation 1).
+fn archive_scope(location: &Location) -> Scope {
+    location.on_disk().and_then(Path::parent).map_or(Scope::AllDrives, |folder| Scope::Folder(folder.to_path_buf()))
 }
 
 /// The search bar's menus.
@@ -672,6 +678,7 @@ impl Searches {
             Location::Search(spec) => (**spec).clone(),
             Location::Path(folder) | Location::Flat(folder) => SearchSpec::new(Scope::Folder(folder.clone())),
             Location::Drives | Location::Trash => SearchSpec::new(Scope::AllDrives),
+            Location::Vfs(_) => SearchSpec::new(archive_scope(&location)),
         };
         self.show_bar(spec, location.folder().map(Path::to_path_buf));
         self.focus_later();
@@ -685,6 +692,7 @@ impl Searches {
             Location::Search(spec) => spec.scope.clone(),
             Location::Path(folder) | Location::Flat(folder) => Scope::Folder(folder.clone()),
             Location::Drives | Location::Trash => Scope::AllDrives,
+            Location::Vfs(_) => archive_scope(&location),
         };
         let spec = SearchSpec { pattern: text.to_owned(), ..SearchSpec::new(scope) };
         self.show_bar(spec, location.folder().map(Path::to_path_buf));
@@ -701,6 +709,7 @@ impl Searches {
             (_, Location::Search(spec)) => spec.scope.clone(),
             (_, Location::Path(folder) | Location::Flat(folder)) => Scope::Folder(folder),
             (_, Location::Drives | Location::Trash) => Scope::AllDrives,
+            (_, location @ Location::Vfs(_)) => archive_scope(&location),
         };
         let origin = scope.folder().map(Path::to_path_buf);
         self.show_bar(SearchSpec { duplicates: true, ..SearchSpec::new(scope) }, origin);

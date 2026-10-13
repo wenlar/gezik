@@ -9,6 +9,7 @@ use std::sync::Arc;
 use gezik_core::Entry;
 use gezik_core::kind::Kind;
 use gezik_core::pattern::{Pattern, matching_rows};
+use gezik_core::vfs::VfsPath;
 use gezik_platform::Drive;
 use gezik_search::results::ResultSet;
 
@@ -17,6 +18,14 @@ pub enum Listing {
     Drives(Vec<Drive>),
     /// A search's or the flat view's results (spec 3.7): no folder of its own.
     Results(Arc<ResultSet>),
+    /// A folder inside an archive (spec 16 §5): its rows have no path on disk.
+    Vfs(Rc<VfsDir>, Rc<Vec<Entry>>),
+}
+
+/// Where a `Listing::Vfs` is, and the open place it is read from (kept open while shown).
+pub struct VfsDir {
+    pub at: VfsPath,
+    pub vfs: Arc<dyn gezik_vfs::Vfs>,
 }
 
 impl Default for Listing {
@@ -28,7 +37,7 @@ impl Default for Listing {
 impl Listing {
     pub fn len(&self) -> usize {
         match self {
-            Listing::Files(_, entries) => entries.len(),
+            Listing::Files(_, entries) | Listing::Vfs(_, entries) => entries.len(),
             Listing::Drives(drives) => drives.len(),
             Listing::Results(set) => set.len(),
         }
@@ -38,7 +47,7 @@ impl Listing {
     /// its compact row, so loops over many rows use `name_at` and `is_dir`.
     pub fn entry(&self, index: usize) -> Option<Cow<'_, Entry>> {
         match self {
-            Listing::Files(_, entries) => entries.get(index).map(Cow::Borrowed),
+            Listing::Files(_, entries) | Listing::Vfs(_, entries) => entries.get(index).map(Cow::Borrowed),
             Listing::Results(set) => set.entry(index).map(Cow::Owned),
             Listing::Drives(_) => None,
         }
@@ -47,7 +56,7 @@ impl Listing {
     pub fn name_at(&self, index: usize) -> Option<&str> {
         match self {
             Listing::Drives(drives) => drives.get(index).map(|d| d.label.as_str()),
-            Listing::Files(_, entries) => entries.get(index).map(|e| e.name.as_str()),
+            Listing::Files(_, entries) | Listing::Vfs(_, entries) => entries.get(index).map(|e| e.name.as_str()),
             Listing::Results(set) => set.name(index),
         }
     }
@@ -107,12 +116,57 @@ impl Listing {
         (0..self.len()).find(|&i| self.shown_name_at(i).is_some_and(|n| crate::keys::starts_with_lowercase(n, typed)))
     }
 
-    /// Path of entry `index` and whether it is a folder (drives count as folders).
+    /// Path of entry `index` and whether it is a folder (drives count as folders). None inside
+    /// an archive: what does not know such places stays off there (spec 16 §4.7).
     pub fn path_at(&self, index: usize) -> Option<(PathBuf, bool)> {
         match self {
             Listing::Files(dir, entries) => entries.get(index).map(|e| (dir.join(&e.name), e.is_dir)),
             Listing::Drives(drives) => drives.get(index).map(|d| (d.path.clone(), true)),
             Listing::Results(set) => set.path_at(index).map(|path| (path, set.is_dir(index))),
+            Listing::Vfs(..) => None,
+        }
+    }
+
+    /// Entry `index` inside an archive, and whether it is a folder.
+    pub fn item_at(&self, index: usize) -> Option<(VfsPath, bool)> {
+        match self {
+            Listing::Vfs(dir, entries) => entries.get(index).map(|e| (dir.at.join(&e.name), e.is_dir)),
+            _ => None,
+        }
+    }
+
+    /// A folder's or a place in an archive's entries.
+    pub fn entries(&self) -> Option<&Rc<Vec<Entry>>> {
+        match self {
+            Listing::Files(_, entries) | Listing::Vfs(_, entries) => Some(entries),
+            _ => None,
+        }
+    }
+
+    /// Whether it is a folder's or an archive place's entries (not the empty listing): a filter
+    /// and a sort apply.
+    pub fn is_folder_like(&self) -> bool {
+        match self {
+            Listing::Files(dir, _) => !dir.as_os_str().is_empty(),
+            Listing::Vfs(..) => true,
+            _ => false,
+        }
+    }
+
+    /// The place inside an archive shown.
+    pub fn vfs(&self) -> Option<&Rc<VfsDir>> {
+        match self {
+            Listing::Vfs(dir, _) => Some(dir),
+            _ => None,
+        }
+    }
+
+    /// The same kind of listing (a folder, a place in an archive) with `entries`.
+    pub fn with_entries(&self, entries: Rc<Vec<Entry>>) -> Listing {
+        match self {
+            Listing::Vfs(dir, _) => Listing::Vfs(dir.clone(), entries),
+            Listing::Files(dir, _) => Listing::Files(dir.clone(), entries),
+            _ => Listing::Files(PathBuf::new(), entries),
         }
     }
 
@@ -127,7 +181,7 @@ impl Listing {
     pub fn is_dir(&self, index: usize) -> bool {
         match self {
             Listing::Drives(_) => true,
-            Listing::Files(_, entries) => entries.get(index).is_some_and(|e| e.is_dir),
+            Listing::Files(_, entries) | Listing::Vfs(_, entries) => entries.get(index).is_some_and(|e| e.is_dir),
             Listing::Results(set) => set.is_dir(index),
         }
     }
@@ -137,9 +191,11 @@ impl Listing {
     /// is left out. The results stay as they are: the scanner followed the rule.
     pub fn without_hidden(self, show_hidden: bool, show_system: bool) -> Listing {
         match self {
-            Listing::Files(dir, entries) if entries.iter().any(|e| !e.is_shown(show_hidden, show_system)) => {
+            Listing::Files(_, ref entries) | Listing::Vfs(_, ref entries)
+                if entries.iter().any(|e| !e.is_shown(show_hidden, show_system)) =>
+            {
                 let kept = entries.iter().filter(|e| e.is_shown(show_hidden, show_system)).cloned().collect();
-                Listing::Files(dir, Rc::new(kept))
+                self.with_entries(Rc::new(kept))
             }
             other => other,
         }
@@ -185,17 +241,18 @@ pub fn filtered_results(full: &Arc<ResultSet>, pattern: &Pattern) -> (Listing, O
     (Listing::Results(Arc::new(full.subset(&rows))), Some(rows))
 }
 
-/// The listing of `dir` showing what `pattern` lets through of `full`, and where each of its
-/// entries is in `full`: the same entries (no copy, `None`) for an empty pattern.
-/// `keep`: a test of its own each entry must pass too (`tag:` and property words).
+/// The listing like `shape` (a folder's, an archive's) showing what `pattern` lets through
+/// of `full`, and where each of its entries is in `full`: the same entries (no copy, `None`)
+/// for an empty pattern. `keep`: a test of its own each entry must pass too (`tag:` and
+/// property words).
 pub fn filtered_with(
-    dir: &Path,
+    shape: &Listing,
     full: &Rc<Vec<Entry>>,
     pattern: &Pattern,
     keep: Option<&dyn Fn(&Entry) -> bool>,
 ) -> (Listing, Option<Vec<usize>>) {
     if pattern.is_empty() && keep.is_none() {
-        return (Listing::Files(dir.to_path_buf(), full.clone()), None);
+        return (shape.with_entries(full.clone()), None);
     }
     let rows = match keep {
         Some(keep) => {
@@ -204,7 +261,7 @@ pub fn filtered_with(
         None => matching_rows(full, pattern),
     };
     let entries = rows.iter().map(|&i: &usize| full[i].clone()).collect();
-    (Listing::Files(dir.to_path_buf(), Rc::new(entries)), Some(rows))
+    (shape.with_entries(Rc::new(entries)), Some(rows))
 }
 
 /// Whether an entry of `entries` other than `except` is called `name` (ignoring case where
@@ -324,10 +381,11 @@ mod tests {
     #[test]
     fn a_filtered_listing_shares_the_entries_without_a_pattern() {
         let Listing::Files(_, full) = files("/x", &["a.jpg", "b.txt", "c.JPG"]) else { unreachable!() };
-        let (all, rows) = filtered_with(Path::new("/x"), &full, &Pattern::default(), None);
+        let x = Listing::Files("/x".into(), Rc::default());
+        let (all, rows) = filtered_with(&x, &full, &Pattern::default(), None);
         assert!(matches!(&all, Listing::Files(_, shown) if Rc::ptr_eq(shown, &full)), "no copy");
         assert_eq!(rows, None);
-        let (jpgs, rows) = filtered_with(Path::new("/x"), &full, &Pattern::compile("*.jpg").unwrap(), None);
+        let (jpgs, rows) = filtered_with(&x, &full, &Pattern::compile("*.jpg").unwrap(), None);
         assert_eq!(rows, Some(vec![0, 2]), "where they are in the full list");
         let names: Vec<&str> = (0..jpgs.len()).filter_map(|i| jpgs.name_at(i)).collect();
         assert_eq!(names, ["a.jpg", "c.JPG"]);

@@ -59,7 +59,7 @@ pub fn resolve(folder: &str, here: &Location, dirs: &KnownDirs) -> Result<Scope,
         HERE => Ok(match here {
             Location::Search(spec) => spec.scope.clone(),
             Location::Path(path) | Location::Flat(path) => Scope::Folder(path.clone()),
-            Location::Drives | Location::Trash => Scope::AllDrives,
+            Location::Drives | Location::Trash | Location::Vfs(_) => Scope::AllDrives,
         }),
         "drives" => Ok(Scope::AllDrives),
         text => {

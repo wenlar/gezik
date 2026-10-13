@@ -69,6 +69,7 @@ mod terminal;
 mod theme_bridge;
 mod translator;
 mod trash_view;
+mod vfs_mounts;
 mod view;
 mod view_options;
 mod watcher;
@@ -92,8 +93,11 @@ use start::StartPlan;
 slint::include_modules!();
 
 /// Opens entry `index` of the list (a double-click, or a click with single-click-open): an
-/// archive is extracted next to itself if `[archives] double-click` says so.
+/// archive is gone into or extracted next to itself if `[archives] double-click` says so.
 fn open_entry(nav: &navigation::Navigator, view: &view::View, index: usize) {
+    if let Some(item) = view.vfs_item(index) {
+        return nav.open_inside(vec![item]);
+    }
     if let Some((path, is_dir)) = view.entry_path(index) {
         open_path(nav, path, is_dir);
     }
@@ -108,6 +112,9 @@ fn open_path(nav: &navigation::Navigator, path: PathBuf, is_dir: bool) {
         && path.file_name().is_some_and(|n| gezik_core::batch::archive::looks_like_archive(&n.to_string_lossy()));
     if archive && archives::extracts_on_double_click() {
         archives::with_current(|archives| archives.extract_here(vec![path]));
+    } else if !is_dir && archives::browses(&path) {
+        nav.go(gezik_core::nav::Location::Vfs(gezik_core::vfs::VfsPath::archive(path)));
+        dual::stepped(nav.id());
     } else {
         nav.open_item(path, is_dir);
     }
@@ -363,6 +370,7 @@ fn perform(
         | Action::InstallTheme
         | Action::ExportSettings
         | Action::ImportSettings
+        | Action::BrowseArchive
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow
@@ -1411,6 +1419,8 @@ fn main() -> Result<(), slint::PlatformError> {
     drop(window);
     let ran = slint::run_event_loop_until_quit();
     resident::shutdown();
+    // What was taken out of archives for a preview or an app (spec 16 §4.5).
+    gezik_vfs::stage::remove_area();
     ran
 }
 
