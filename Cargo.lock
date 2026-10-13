@@ -1750,6 +1750,7 @@ dependencies = [
  "gezik-ops",
  "gezik-platform",
  "gezik-search",
+ "gezik-vfs",
  "i-slint-backend-winit",
  "i-slint-core",
  "image",
@@ -1873,6 +1874,18 @@ dependencies = [
  "gezik-platform",
  "icu_normalizer",
  "regex",
+]
+
+[[package]]
+name = "gezik-vfs"
+version = "0.1.0-rc.1"
+dependencies = [
+ "gezik-batch",
+ "gezik-core",
+ "gezik-i18n",
+ "gezik-ops",
+ "gezik-platform",
+ "zip",
 ]
 
 [[package]]
