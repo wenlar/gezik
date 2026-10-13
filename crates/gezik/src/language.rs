@@ -34,6 +34,9 @@ thread_local! {
 /// Makes the language `setting` names the one in use, if it or its file changed.
 pub fn apply(setting: &str, files: &ConfigFiles) {
     let code = lang::resolve(setting, system(), &available(files));
+    // Before the check below, which skips English at the start: Han characters in the language
+    // the reader expects (spec 15 §3.4), set before the first one is drawn.
+    i_slint_core::textlayout::sharedparley::set_text_locale(Some(&lang::text_locale(&code, system())));
     let file = file(&code, files).cloned();
     let same = SHOWN.with(|shown| {
         let shown = shown.borrow();
