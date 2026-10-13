@@ -49,7 +49,7 @@ first such language, else `zh-Hans`), and `ranged_builder` pushes it as
 `StyleProperty::Locale`. It is read while shaping, inside the text layout cache entry's
 tracker, so a change invalidates every cached shaping like a changed text would; no cache key
 changes. fontique (0.11) gives Simplified Chinese and no language one shared fallback slot,
-filled on the first query: the language has to be set before the first Han text is shaped.
+filled on the first query, and every query (Latin too) fills it: Gezik's `language::apply` sets that slot itself (`set_last_resort_fonts`).
 `fallback_families_for_tests` is a hook for `crates/gezik/tests/slint_cjk.rs`. When
 upgrading: if Slint passes a language itself, drop this part; otherwise copy the three pieces
 (the thread local and its two functions, the `push_default`, the `pub use` in
