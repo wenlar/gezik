@@ -51,9 +51,9 @@ impl Task for CloudPinTask {
 
     fn title(&self) -> String {
         if self.keep {
-            format!("Keeping {} on this device", what(&self.paths))
+            gezik_i18n::t!("Keeping {} on this device", what(&self.paths))
         } else {
-            format!("Freeing up the space of {}", what(&self.paths))
+            gezik_i18n::t!("Freeing up the space of {}", what(&self.paths))
         }
     }
 

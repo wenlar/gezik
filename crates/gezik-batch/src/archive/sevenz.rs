@@ -253,10 +253,12 @@ fn drain(r: &mut dyn Read, cx: &dyn ExtractCx) {
 pub(super) fn sz_error(e: SzError) -> io::Error {
     match e {
         SzError::Io(e, _) | SzError::FileOpen(e, _) => e,
-        SzError::PasswordRequired => io::Error::new(io::ErrorKind::PermissionDenied, "no password"),
-        SzError::MaybeBadPassword(_) => io::Error::new(io::ErrorKind::PermissionDenied, "wrong password"),
+        SzError::PasswordRequired => io::Error::new(io::ErrorKind::PermissionDenied, gezik_i18n::t!("no password")),
+        SzError::MaybeBadPassword(_) => {
+            io::Error::new(io::ErrorKind::PermissionDenied, gezik_i18n::t!("wrong password"))
+        }
         SzError::UnsupportedCompressionMethod(method) => {
-            io::Error::new(io::ErrorKind::Unsupported, format!("7-Zip needed ({method})"))
+            io::Error::new(io::ErrorKind::Unsupported, gezik_i18n::t!("7-Zip needed ({})", method))
         }
         e => io::Error::new(io::ErrorKind::InvalidData, e.to_string()),
     }

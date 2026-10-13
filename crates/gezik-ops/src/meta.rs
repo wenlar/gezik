@@ -78,13 +78,13 @@ impl MetaStore {
                 state.loads += 1;
             }
             let Some(file) = &self.file else {
-                let broken = Some("Gezik has no config folder to keep tags in".to_owned());
+                let broken = Some(gezik_i18n::t!("Gezik has no config folder to keep tags in").into_owned());
                 return Loaded { store: Store::default(), dirty: false, broken };
             };
             match std::fs::read(file) {
                 Ok(bytes) => match String::from_utf8(bytes) {
                     Ok(text) => Loaded { store: Store::parse(&text), dirty: false, broken: None },
-                    Err(_) => broken_store(file, "it is not UTF-8"),
+                    Err(_) => broken_store(file, &gezik_i18n::t!("it is not UTF-8")),
                 },
                 Err(err) if err.kind() == io::ErrorKind::NotFound => {
                     Loaded { store: Store::default(), dirty: false, broken: None }
@@ -103,7 +103,7 @@ impl MetaStore {
             return Ok(known.clone());
         }
         let root = gezik_platform::fs::drive_root(path)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no drive for this path"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, gezik_i18n::t!("no drive for this path")))?;
         #[allow(unused_mut)]
         let mut volume = own::volume(&root)?;
         #[cfg(test)]
@@ -191,7 +191,9 @@ impl MetaStore {
         // Removing the entry would bring the file's own tags back: those only go by writing it.
         if meta.is_empty() && volume.holds && !own::read(path)?.meta.is_empty() {
             return Err(why.unwrap_or_else(|| {
-                io::Error::other("Its tags are in the file itself; Gezik is set not to write into files")
+                io::Error::other(gezik_i18n::t!(
+                    "Its tags are in the file itself; Gezik is set not to write into files"
+                ))
             }));
         }
         let (size, mtime_ns) = facts(path)?;
@@ -204,7 +206,7 @@ impl MetaStore {
         let at = in_volume(path, root);
         let unknown = loaded.store.get(&volume.key, &at).map(|record| record.unknown.clone()).unwrap_or_default();
         let record = Record { path: at.into(), size, mtime_ns, file_id, meta: meta.clone(), unknown };
-        loaded.store.set(&volume.key, record).map_err(io::Error::other)?;
+        loaded.store.set(&volume.key, record).map_err(|e| io::Error::other(gezik_i18n::t("", e)))?;
         loaded.dirty = true;
         Ok(Where::Store(why.map(|err| gezik_platform::fs::describe(&err))))
     }
@@ -518,7 +520,9 @@ fn roots_by_key(found: impl IntoIterator<Item = (String, PathBuf)>) -> HashMap<S
 }
 
 fn broken_store(file: &Path, why: &str) -> Loaded {
-    let broken = Some(format!("Gezik's tag store {} cannot be read ({why}); it is left as it is", file.display()));
+    // TRANSLATORS: {0} is a file, {1} why it cannot be read
+    let broken =
+        Some(gezik_i18n::t!("Gezik's tag store {0} cannot be read ({1}); it is left as it is", file.display(), why));
     Loaded { store: Store::default(), dirty: false, broken }
 }
 

@@ -32,7 +32,7 @@ impl RarSource {
             Some(set) if matches!(set.kind, VolumeKind::RarPart { .. }) => {
                 let first = path.with_file_name(&set.first);
                 if !first.is_file() {
-                    let message = format!("the first part ({}) is missing", set.first);
+                    let message = gezik_i18n::t!("the first part ({}) is missing", set.first);
                     return Err(IoError::new(ErrorKind::NotFound, message));
                 }
                 first
@@ -68,11 +68,15 @@ impl RarSource {
     fn error(&self, e: &UnrarError) -> IoError {
         match e.code {
             Code::EOpen => self.missing_part(),
-            Code::MissingPassword | Code::BadPassword => IoError::new(ErrorKind::PermissionDenied, "wrong password"),
-            Code::BadData | Code::BadArchive | Code::UnknownFormat | Code::ERead => {
-                IoError::new(ErrorKind::InvalidData, format!("the archive is damaged: {e}"))
+            Code::MissingPassword | Code::BadPassword => {
+                IoError::new(ErrorKind::PermissionDenied, gezik_i18n::t!("wrong password"))
             }
-            Code::LargeDict => IoError::new(ErrorKind::Unsupported, "the archive needs a larger dictionary"),
+            Code::BadData | Code::BadArchive | Code::UnknownFormat | Code::ERead => {
+                IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("the archive is damaged: {}", e))
+            }
+            Code::LargeDict => {
+                IoError::new(ErrorKind::Unsupported, gezik_i18n::t!("the archive needs a larger dictionary"))
+            }
             _ => IoError::other(e.to_string()),
         }
     }
@@ -83,10 +87,13 @@ impl RarSource {
             Some(set) if matches!(set.kind, VolumeKind::RarPart { .. }) => (1..)
                 .map(|n| volume_name(&set.base, set.kind, n))
                 .find(|name| !self.first.with_file_name(name).is_file())
-                .map(|name| format!("a later part ({name}) is missing")),
+                .map(|name| gezik_i18n::t!("a later part ({}) is missing", name)),
             _ => None,
         };
-        IoError::new(ErrorKind::NotFound, message.unwrap_or_else(|| "a later part is missing".to_owned()))
+        IoError::new(
+            ErrorKind::NotFound,
+            message.unwrap_or_else(|| gezik_i18n::t!("a later part is missing").into_owned()),
+        )
     }
 
     /// One pass over the archive from entry `from` on (those before are skipped).
@@ -135,7 +142,8 @@ impl RarSource {
                 // UnRAR resolves a hard link's or a copy's source itself, from a name in the
                 // archive that can lead anywhere (outside the stage, too): never let it.
                 Some(_) if matches!(redirect, Redirect::HardLink | Redirect::FileCopy | Redirect::Unknown(_)) => {
-                    cx.entry_skipped(&name, &IoError::new(ErrorKind::Unsupported, "link or copy entry skipped"));
+                    let why = gezik_i18n::t!("link or copy entry skipped");
+                    cx.entry_skipped(&name, &IoError::new(ErrorKind::Unsupported, why));
                     header.skip()
                 }
                 // Symbolic links and junctions go through `Links` and its rules.

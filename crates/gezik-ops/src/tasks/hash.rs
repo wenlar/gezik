@@ -42,15 +42,15 @@ pub enum Verdict {
 }
 
 impl Verdict {
-    /// As `sha256sum -c` says it.
+    /// As `sha256sum -c` says it (written so in files; shown through `t("checksum", …)`).
     pub fn label(self) -> &'static str {
         match self {
             Verdict::Waiting => "",
-            Verdict::Ok => "OK",
-            Verdict::Failed => "FAILED",
-            Verdict::Missing => "MISSING",
-            Verdict::Unreadable => "UNREADABLE",
-            Verdict::OnlineOnly => "ONLINE ONLY",
+            Verdict::Ok => gezik_i18n::tx!("checksum" => "OK"),
+            Verdict::Failed => gezik_i18n::tx!("checksum" => "FAILED"),
+            Verdict::Missing => gezik_i18n::tx!("checksum" => "MISSING"),
+            Verdict::Unreadable => gezik_i18n::tx!("checksum" => "UNREADABLE"),
+            Verdict::OnlineOnly => gezik_i18n::tx!("checksum" => "ONLINE ONLY"),
         }
     }
 }
@@ -247,7 +247,7 @@ impl HashTask {
     fn plan_verify(&self, sink: &mut dyn ScanSink, file: &Path) {
         let read = std::fs::metadata(file).and_then(|meta| {
             if meta.len() > MAX_CHECKSUM_FILE {
-                Err(io::Error::new(io::ErrorKind::InvalidData, "The checksum file is too large"))
+                Err(io::Error::new(io::ErrorKind::InvalidData, gezik_i18n::t!("The checksum file is too large")))
             } else {
                 std::fs::read(file)
             }
@@ -268,7 +268,7 @@ impl HashTask {
             let Some(path) = checksum_file::resolve(base, &entry.path) else {
                 let mut row = HashRow::new(PathBuf::new(), entry.path, 0);
                 row.expected = Some((entry.algo, entry.hex));
-                row.state = RowState::Unreadable("Outside the folder".to_owned());
+                row.state = RowState::Unreadable(gezik_i18n::t!("Outside the folder").into_owned());
                 lock(&self.results).push(row);
                 continue;
             };
@@ -283,7 +283,7 @@ impl HashTask {
                     }
                     continue;
                 }
-                Ok(meta) if meta.is_dir() => RowState::Unreadable("It is a folder".to_owned()),
+                Ok(meta) if meta.is_dir() => RowState::Unreadable(gezik_i18n::t!("It is a folder").into_owned()),
                 Ok(_) => RowState::Unreadable(not_a_file().to_string()),
                 Err(err) if err.kind() == io::ErrorKind::NotFound => RowState::Missing,
                 Err(err) => RowState::Unreadable(err.to_string()),
@@ -300,11 +300,14 @@ impl HashTask {
             return yes;
         }
         let count = self.online.load(Ordering::Relaxed);
-        let files = if count == 1 { "1 file is".to_owned() } else { format!("{count} files are") };
         let question = Question::Confirm {
-            title: "Online-only files".to_owned(),
-            message: format!("{files} online-only. Download them to compute checksums?"),
-            buttons: vec!["Download".to_owned(), "Skip".to_owned()],
+            title: gezik_i18n::t!("Online-only files").into_owned(),
+            message: gezik_i18n::tn!(
+                "{n} file is online-only. Download them to compute checksums?"
+                    | "{n} files are online-only. Download them to compute checksums?",
+                count
+            ),
+            buttons: vec![gezik_i18n::t!("Download").into_owned(), gezik_i18n::t!("Skip").into_owned()],
         };
         let yes = cx.ask(question) == Answer::Button(0);
         lock(&self.results).download = Some(yes);
@@ -326,7 +329,7 @@ fn is_online(meta: &std::fs::Metadata) -> bool {
 }
 
 fn not_a_file() -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidInput, "Not a file (a device or a pipe)")
+    io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("Not a file (a device or a pipe)"))
 }
 
 /// Every file under `dir` (not links; hidden ones as `shown` says), folders read in name order.
@@ -368,9 +371,9 @@ impl Task for HashTask {
 
     fn title(&self) -> String {
         match &self.work {
-            HashWork::Items { roots, .. } => format!("Computing checksums of {}", super::what(roots)),
-            HashWork::Again => "Computing checksums".to_owned(),
-            HashWork::Verify { file } => format!("Verifying {}", super::name(file)),
+            HashWork::Items { roots, .. } => gezik_i18n::t!("Computing checksums of {}", super::what(roots)),
+            HashWork::Again => gezik_i18n::t!("Computing checksums").into_owned(),
+            HashWork::Verify { file } => gezik_i18n::t!("Verifying {}", super::name(file)),
         }
     }
 

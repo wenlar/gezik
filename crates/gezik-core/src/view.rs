@@ -308,15 +308,15 @@ impl ColumnKey {
 
     pub fn title(self) -> &'static str {
         match self {
-            ColumnKey::Modified => "Modified",
-            ColumnKey::Created => "Created",
-            ColumnKey::Type => "Type",
-            ColumnKey::Size => "Size",
-            ColumnKey::Folder => "Folder",
-            ColumnKey::Match => "Match",
-            ColumnKey::Tags => "Tags",
-            ColumnKey::Rating => "Rating",
-            ColumnKey::Comment => "Comment",
+            ColumnKey::Modified => gezik_i18n::tx!("Modified"),
+            ColumnKey::Created => gezik_i18n::tx!("Created"),
+            ColumnKey::Type => gezik_i18n::tx!("Type"),
+            ColumnKey::Size => gezik_i18n::tx!("Size"),
+            ColumnKey::Folder => gezik_i18n::tx!("Folder"),
+            ColumnKey::Match => gezik_i18n::tx!("Match"),
+            ColumnKey::Tags => gezik_i18n::tx!("Tags"),
+            ColumnKey::Rating => gezik_i18n::tx!("Rating"),
+            ColumnKey::Comment => gezik_i18n::tx!("Comment"),
             ColumnKey::Field(id) => id.def().label,
         }
     }

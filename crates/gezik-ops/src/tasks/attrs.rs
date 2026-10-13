@@ -18,7 +18,7 @@ use crate::walk::{Step, walk};
 
 /// What an item the system refused without administrator rights reports. The Info window
 /// looks for it; 9b7 offers to do those items as administrator.
-pub const NEEDS_ADMIN: &str = "Requires administrator";
+pub const NEEDS_ADMIN: &str = gezik_i18n::tx!("Requires administrator");
 
 /// An item found inside the folder of "Apply to enclosed items".
 const ENCLOSED: u8 = 1;
@@ -47,7 +47,8 @@ struct NeedsAdmin;
 
 impl fmt::Display for NeedsAdmin {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(NEEDS_ADMIN)
+        // shortcut: the Info window compares failures with NEEDS_ADMIN in the language in use.
+        f.write_str(&gezik_i18n::t("", NEEDS_ADMIN))
     }
 }
 
@@ -103,8 +104,8 @@ impl Task for SetAttributesTask {
 
     fn title(&self) -> String {
         match &self.enclosed {
-            Some((folder, ..)) => format!("Changing the items in {}", name(folder)),
-            None => format!("Changing {}", what(&self.paths())),
+            Some((folder, ..)) => gezik_i18n::t!("Changing the items in {}", name(folder)),
+            None => gezik_i18n::t!("Changing {}", what(&self.paths())),
         }
     }
 

@@ -62,9 +62,9 @@ impl Mode {
 
     pub fn label(self) -> &'static str {
         match self {
-            Mode::TwoWay => "Two-way",
-            Mode::LeftToRight => "Left to right",
-            Mode::Mirror => "Mirror",
+            Mode::TwoWay => gezik_i18n::tx!("Two-way"),
+            Mode::LeftToRight => gezik_i18n::tx!("Left to right"),
+            Mode::Mirror => gezik_i18n::tx!("Mirror"),
         }
     }
 
@@ -205,14 +205,14 @@ impl State {
 
     pub fn label(self) -> &'static str {
         match self {
-            State::LeftOnly => "Only left",
-            State::RightOnly => "Only right",
-            State::Equal => "Same",
-            State::LeftNewer => "Left newer",
-            State::RightNewer => "Right newer",
-            State::Differs => "Different",
-            State::Mismatch => "File and folder",
-            State::Unreadable => "Unreadable",
+            State::LeftOnly => gezik_i18n::tx!("Only left"),
+            State::RightOnly => gezik_i18n::tx!("Only right"),
+            State::Equal => gezik_i18n::tx!("Same"),
+            State::LeftNewer => gezik_i18n::tx!("Left newer"),
+            State::RightNewer => gezik_i18n::tx!("Right newer"),
+            State::Differs => gezik_i18n::tx!("Different"),
+            State::Mismatch => gezik_i18n::tx!("File and folder"),
+            State::Unreadable => gezik_i18n::tx!("Unreadable"),
         }
     }
 

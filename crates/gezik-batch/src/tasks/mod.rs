@@ -68,14 +68,14 @@ pub fn extract_chain(
     seven_zip: Option<PathBuf>,
 ) -> Vec<Box<dyn gezik_ops::Task>> {
     let title = match archives.as_slice() {
-        [one] => format!("Extracting {}", file_name(one)),
-        many => format!("Extracting {} archives", many.len()),
+        [one] => gezik_i18n::t!("Extracting {}", file_name(one)),
+        many => gezik_i18n::tn!("Extracting {n} archive" | "Extracting {n} archives", many.len()),
     };
     let mut tasks: Vec<Box<dyn gezik_ops::Task>> = Vec::new();
     for archive in archives {
         // Where the archive's staging folder is, once it is unpacked.
         let stage = Arc::new(Mutex::new(None));
-        let title = if tasks.is_empty() { title.clone() } else { format!("Extracting {}", file_name(&archive)) };
+        let title = if tasks.is_empty() { title.clone() } else { gezik_i18n::t!("Extracting {}", file_name(&archive)) };
         tasks.push(Box::new(ExtractTask::new(
             archive.clone(),
             to.dir().to_path_buf(),
@@ -91,8 +91,8 @@ pub fn extract_chain(
 /// What Undo says for extracting `archives`: "Extract a.zip", "Extract 3 archives".
 pub fn extract_label(archives: &[PathBuf]) -> String {
     match archives {
-        [one] => format!("Extract {}", file_name(one)),
-        many => format!("Extract {} archives", many.len()),
+        [one] => gezik_i18n::t!("Extract {}", file_name(one)),
+        many => gezik_i18n::tn!("Extract {n} archive" | "Extract {n} archives", many.len()),
     }
 }
 
@@ -102,7 +102,7 @@ pub struct SevenZipNeeded;
 
 impl fmt::Display for SevenZipNeeded {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "7-Zip needed to open this kind of archive")
+        f.write_str(&gezik_i18n::t!("7-Zip needed to open this kind of archive"))
     }
 }
 
@@ -136,7 +136,7 @@ fn file_name(path: &Path) -> String {
 fn what(paths: &[PathBuf]) -> String {
     match paths {
         [one] => file_name(one),
-        many => format!("{} items", many.len()),
+        many => gezik_i18n::tn!("{n} item" | "{n} items", many.len()),
     }
 }
 

@@ -102,12 +102,12 @@ fn volume_label(root: &str) -> Option<String> {
 #[cfg_attr(not(windows), allow(dead_code))]
 fn labeled(kind: &DriveKind, letter: char, volume_label: Option<&str>) -> String {
     let name = match volume_label.map(str::trim).filter(|l| !l.is_empty()) {
-        Some(label) => label,
+        Some(label) => label.into(),
         None => match kind {
-            DriveKind::Network => "Network",
-            DriveKind::Optical => "CD Drive",
-            DriveKind::Removable => "Removable Disk",
-            DriveKind::Fixed => "Local Disk",
+            DriveKind::Network => gezik_i18n::t!("Network"),
+            DriveKind::Optical => gezik_i18n::t!("CD Drive"),
+            DriveKind::Removable => gezik_i18n::t!("Removable Disk"),
+            DriveKind::Fixed => gezik_i18n::t!("Local Disk"),
         },
     };
     format!("{name} ({letter}:)")
@@ -147,7 +147,7 @@ pub fn drives() -> Vec<Drive> {
         .map(|path| {
             let removable = path.starts_with("/media") || path.starts_with("/run/media");
             let label = if path == std::path::Path::new("/") {
-                "File System".to_owned()
+                gezik_i18n::t!("File System").into_owned()
             } else {
                 path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
             };

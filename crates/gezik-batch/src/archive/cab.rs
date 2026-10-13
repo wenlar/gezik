@@ -107,7 +107,10 @@ impl ArchiveSource for CabSource {
             };
             // The crate finds a file by its name, so only the first of a name can be read.
             if !seen.insert(info.name.clone()) {
-                cx.entry_failed(&name, &IoError::new(ErrorKind::Unsupported, "a second file of this name; skipped"));
+                cx.entry_failed(
+                    &name,
+                    &IoError::new(ErrorKind::Unsupported, gezik_i18n::t!("a second file of this name; skipped")),
+                );
                 continue;
             }
             let result = match self.cabinet.read_file(&info.name) {

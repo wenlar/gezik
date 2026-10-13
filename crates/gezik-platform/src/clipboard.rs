@@ -22,7 +22,7 @@ pub enum ClipboardError {
 impl fmt::Display for ClipboardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ClipboardError::Unsupported => write!(f, "no system clipboard for files"),
+            ClipboardError::Unsupported => f.write_str(&gezik_i18n::t!("no system clipboard for files")),
             ClipboardError::Failed(why) => write!(f, "{why}"),
         }
     }
@@ -86,7 +86,10 @@ impl ClipboardImage {
             }
             #[cfg(target_os = "macos")]
             ClipboardImage::Tiff(bytes) => imp::tiff_to_png(bytes).ok_or_else(|| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, "The picture cannot be read: not a TIFF picture")
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    gezik_i18n::t!("The picture cannot be read: not a TIFF picture").into_owned(),
+                )
             }),
         }
     }
@@ -270,7 +273,7 @@ mod imp {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            Err(failed("another program is using the clipboard"))
+            Err(failed(gezik_i18n::t!("another program is using the clipboard")))
         }
     }
 

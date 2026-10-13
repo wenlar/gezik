@@ -39,10 +39,10 @@ pub fn app_name(app: &Path) -> String {
 
 pub fn open(paths: &[PathBuf], app: &Path, on_error: Box<dyn FnOnce(String) + Send>) -> Result<(), String> {
     autoreleasepool(|_| {
-        let app_url = url_of(app).ok_or("The app's path is not valid UTF-8")?;
+        let app_url = url_of(app).ok_or_else(|| gezik_i18n::t!("The app's path is not valid UTF-8"))?;
         let urls: Vec<Retained<NSURL>> = paths.iter().filter_map(|p| url_of(p)).collect();
         if urls.is_empty() {
-            return Err("No item can be opened".to_owned());
+            return Err(gezik_i18n::t!("No item can be opened").into_owned());
         }
         // The block may be called once, on any queue: the callback is taken out of a cell.
         let on_error = std::sync::Mutex::new(Some(on_error));

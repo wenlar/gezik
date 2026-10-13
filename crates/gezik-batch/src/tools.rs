@@ -137,7 +137,7 @@ pub struct Damaged;
 
 impl fmt::Display for Damaged {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "download damaged — try again")
+        f.write_str(&gezik_i18n::t!("download damaged — try again"))
     }
 }
 

@@ -61,16 +61,17 @@ pub(crate) fn description(answer: Option<&Answer>) -> DROPDESCRIPTION {
     let mut out = DROPDESCRIPTION { r#type: DROPIMAGE_INVALID, ..Default::default() };
     let Some(answer) = answer else { return out };
     let (kind, message) = match answer.effect {
-        Some(Effect::Move) => (DROPIMAGE_MOVE, "Move to %1"),
-        Some(Effect::Copy) => (DROPIMAGE_COPY, "Copy to %1"),
-        Some(Effect::Link) => (DROPIMAGE_LINK, "Create link in %1"),
-        None => (DROPIMAGE_NONE, ""),
+        // TRANSLATORS: on the drag image; Windows puts the folder's name for %1 (keep it).
+        Some(Effect::Move) => (DROPIMAGE_MOVE, gezik_i18n::t!("Move to %1")),
+        Some(Effect::Copy) => (DROPIMAGE_COPY, gezik_i18n::t!("Copy to %1")),
+        Some(Effect::Link) => (DROPIMAGE_LINK, gezik_i18n::t!("Create link in %1")),
+        None => (DROPIMAGE_NONE, "".into()),
     };
     out.r#type = kind;
     if answer.effect.is_some()
         && let Some(folder) = &answer.folder
     {
-        out.szMessage = wide(message);
+        out.szMessage = wide(&message);
         out.szInsert = wide(folder);
     }
     out

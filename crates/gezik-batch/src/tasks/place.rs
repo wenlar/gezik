@@ -27,7 +27,7 @@ pub(super) struct PlaceTask {
 
 impl PlaceTask {
     pub fn new(archive: PathBuf, to: ExtractTo, stage: Arc<Mutex<Option<PathBuf>>>) -> PlaceTask {
-        let title = format!("Extracting {}", file_name(&archive));
+        let title = gezik_i18n::t!("Extracting {}", file_name(&archive));
         PlaceTask { archive, to, kind: TaskKind::Extract, title, stage, moves: OnceLock::new() }
     }
 

@@ -42,13 +42,13 @@ pub fn regex_error(err: &regex::Error) -> String {
     match err {
         regex::Error::Syntax(text) => {
             if text.contains("Unicode") && text.contains("not found") {
-                return r"Unicode classes like \p{..} are not supported".to_owned();
+                return gezik_i18n::t!(r"Unicode classes like \p{..} are not supported").into_owned();
             }
             let why = text.lines().last().unwrap_or_default().trim().trim_start_matches("error: ");
-            format!("Not a regular expression: {why}")
+            gezik_i18n::t!("Not a regular expression: {}", why)
         }
-        regex::Error::CompiledTooBig(_) => "The regular expression is too large".to_owned(),
-        _ => "Not a regular expression".to_owned(),
+        regex::Error::CompiledTooBig(_) => gezik_i18n::t!("The regular expression is too large").into_owned(),
+        _ => gezik_i18n::t!("Not a regular expression").into_owned(),
     }
 }
 

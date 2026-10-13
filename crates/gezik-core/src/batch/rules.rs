@@ -128,26 +128,27 @@ impl Rule {
     /// One line for the rule list: `Replace "IMG_" → "Tatil "`.
     pub fn summary(&self) -> String {
         match self {
-            Rule::Replace(r) => {
-                let how = if r.regex { " (regex)" } else { "" };
-                format!("Replace \"{}\" → \"{}\"{how}", r.find, r.with)
-            }
+            Rule::Replace(r) if r.regex => gezik_i18n::t!("Replace \"{}\" → \"{}\" (regex)", r.find, r.with),
+            Rule::Replace(r) => gezik_i18n::t!("Replace \"{}\" → \"{}\"", r.find, r.with),
             Rule::Number(n) => {
                 let sample = format!("{:0width$}", n.start, width = usize::from(n.digits.clamp(1, 9)));
-                let at = match n.at {
-                    NumberAt::Start => "at start",
-                    NumberAt::End => "at end",
-                };
-                format!("Number {sample}, {at}")
+                match n.at {
+                    NumberAt::Start => gezik_i18n::t!("Number {}, at start", sample),
+                    NumberAt::End => gezik_i18n::t!("Number {}, at end", sample),
+                }
             }
-            Rule::Case(mode) => format!("Case: {}", mode.label()),
-            Rule::AddText { prefix, suffix } => format!("Add \"{prefix}\" … \"{suffix}\""),
-            Rule::Extension(ExtensionRule::Set(ext)) if ext.is_empty() => "Remove extension".to_owned(),
-            Rule::Extension(ExtensionRule::Set(ext)) => format!("Extension: .{ext}"),
-            Rule::Extension(ExtensionRule::Lower) => "Extension: lower case".to_owned(),
-            Rule::Extension(ExtensionRule::Upper) => "Extension: UPPER CASE".to_owned(),
-            Rule::Template(text) => format!("Name: {text}"),
-            Rule::Clean(_) => "Clean up spaces and separators".to_owned(),
+            // TRANSLATORS: {} is a case ("Title Case", "UPPER CASE").
+            Rule::Case(mode) => gezik_i18n::t!("Case: {}", gezik_i18n::t("case", mode.label())),
+            // TRANSLATORS: the text added before ({0}) and after ({1}) each name.
+            Rule::AddText { prefix, suffix } => gezik_i18n::t!("Add \"{0}\" … \"{1}\"", prefix, suffix),
+            Rule::Extension(ExtensionRule::Set(ext)) if ext.is_empty() => {
+                gezik_i18n::t!("Remove extension").into_owned()
+            }
+            Rule::Extension(ExtensionRule::Set(ext)) => gezik_i18n::t!("Extension: .{}", ext),
+            Rule::Extension(ExtensionRule::Lower) => gezik_i18n::t!("Extension: lower case").into_owned(),
+            Rule::Extension(ExtensionRule::Upper) => gezik_i18n::t!("Extension: UPPER CASE").into_owned(),
+            Rule::Template(text) => gezik_i18n::t!("Name: {}", text),
+            Rule::Clean(_) => gezik_i18n::t!("Clean up spaces and separators").into_owned(),
         }
     }
 }

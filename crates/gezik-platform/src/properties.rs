@@ -40,7 +40,7 @@ pub fn show_properties(window: &impl HasWindowHandle, paths: &[PathBuf]) -> Resu
         if SHObjectProperties(Some(hwnd), SHOP_FILEPATH, &name, PCWSTR::null()).as_bool() {
             Ok(())
         } else {
-            Err("Windows did not open its Properties window".to_owned())
+            Err(gezik_i18n::t!("Windows did not open its Properties window").into_owned())
         }
     }
 }

@@ -229,7 +229,7 @@ impl Shared {
                 if rules.skips(&item.name) {
                     self.skipped.fetch_add(1, Ordering::Relaxed);
                 } else if job.depth >= rules.max_depth {
-                    self.problem(path, "Too deep".to_owned());
+                    self.problem(path, gezik_i18n::t!("Too deep").into_owned());
                 } else if same_device(&rules.devices, item.device)
                     && !(cfg!(target_os = "macos") && walked_twice(&path))
                 {
@@ -276,7 +276,8 @@ pub fn run(walk: Walk, cancel: Arc<AtomicBool>, visit: Arc<dyn Visit>) -> WalkSt
                 let below = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| shared.work(&job))) {
                     Ok(below) => below,
                     Err(_) => {
-                        shared.problem(job.dir.clone(), "The search failed in this folder".to_owned());
+                        shared
+                            .problem(job.dir.clone(), gezik_i18n::t!("The search failed in this folder").into_owned());
                         Vec::new()
                     }
                 };
@@ -294,7 +295,7 @@ pub fn run(walk: Walk, cancel: Arc<AtomicBool>, visit: Arc<dyn Visit>) -> WalkSt
         if started == 0 {
             queue.done = true;
             let root = walk.roots.first().cloned().unwrap_or_default();
-            shared.problem(root, "Could not start the search".to_owned());
+            shared.problem(root, gezik_i18n::t!("Could not start the search").into_owned());
         }
         while !(queue.done || queue.pending.is_empty() && queue.busy == 0) && !shared.halted() {
             queue = shared.wake.wait_timeout(queue, WAKE).unwrap_or_else(std::sync::PoisonError::into_inner).0;

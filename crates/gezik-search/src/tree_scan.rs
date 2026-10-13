@@ -134,11 +134,11 @@ pub fn scan(root: &Path, rules: &Rules, stop: &AtomicBool, read: &AtomicUsize) -
         for (i, mut child) in (first..).zip(children) {
             if child.kind == Kind::Folder && depth + 1 >= crate::walk::MAX_DEPTH {
                 child.kind = Kind::Unread;
-                tree.problems.push((i, "Too deep".into()));
+                tree.problems.push((i, gezik_i18n::t!("Too deep").into()));
             } else if child.kind == Kind::Folder {
                 pending.push((i, dir.join(&*child.name), true, depth + 1));
             } else if child.kind == Kind::Unread {
-                tree.problems.push((i, "Online only".into()));
+                tree.problems.push((i, gezik_i18n::t!("Online only").into()));
             }
             tree.nodes.push(child);
         }

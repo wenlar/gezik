@@ -567,10 +567,11 @@ pub struct Crumb {
 
 /// The name of the list of drives (`Location::Drives`): Explorer's "This PC"; on macOS,
 /// Finder's "Computer" (Go ▸ Computer lists the volumes too).
-pub const DRIVES_NAME: &str = if cfg!(target_os = "macos") { "Computer" } else { "This PC" };
+pub const DRIVES_NAME: &str =
+    if cfg!(target_os = "macos") { gezik_i18n::tx!("Computer") } else { gezik_i18n::tx!("This PC") };
 
 /// The trash's name: Explorer's "Recycle Bin", Finder's and the freedesktop desktops' "Trash".
-pub const TRASH_NAME: &str = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+pub const TRASH_NAME: &str = if cfg!(windows) { gezik_i18n::tx!("Recycle Bin") } else { gezik_i18n::tx!("Trash") };
 
 /// A server alone (`\\nas`), on Windows: its shares are listed (spec 9 §7.4).
 fn server_root(path: &Path) -> bool {
@@ -596,8 +597,12 @@ pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
     // A search and the flat view: their folder's parts, then their own (spec 4.4, 5).
     let last = match location {
         Location::Search(spec) => Some(Crumb { label: spec.crumb(), location: location.clone() }),
-        Location::Flat(_) => Some(Crumb { label: "All files".to_owned(), location: location.clone() }),
-        Location::Trash => Some(Crumb { label: TRASH_NAME.to_owned(), location: location.clone() }),
+        Location::Flat(_) => {
+            Some(Crumb { label: gezik_i18n::t!("All files").into_owned(), location: location.clone() })
+        }
+        Location::Trash => {
+            Some(Crumb { label: gezik_i18n::t("", TRASH_NAME).into_owned(), location: location.clone() })
+        }
         Location::Path(_) | Location::Drives => None,
     };
     if let Some(last) = last {
@@ -605,7 +610,7 @@ pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
         out.push(last);
         return out;
     }
-    let mut out = vec![Crumb { label: DRIVES_NAME.to_owned(), location: Location::Drives }];
+    let mut out = vec![Crumb { label: gezik_i18n::t("", DRIVES_NAME).into_owned(), location: Location::Drives }];
     let Location::Path(path) = location else { return out };
     if server_root(path) {
         let label = path.to_string_lossy().trim_end_matches(['\\', '/']).to_owned();

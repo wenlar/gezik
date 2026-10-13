@@ -105,7 +105,7 @@ fn root(image: &IsoImage<MultiFileReader>) -> IoResult<(RootDir, bool)> {
         .or_else(|| roots.iter().find(|r| joliet(r.entry_type())))
         .copied()
         .or_else(|| image.root_dirs().try_best_choice())
-        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, "the image has no folders"))?;
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("the image has no folders")))?;
     Ok((chosen, joliet(chosen.entry_type())))
 }
 
@@ -212,5 +212,5 @@ impl Read for Chunks<'_> {
 
 /// hadris's errors as I/O errors.
 fn iso_error(e: impl std::fmt::Debug) -> IoError {
-    IoError::new(ErrorKind::InvalidData, format!("the image is damaged: {e:?}"))
+    IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("the image is damaged: {}", format!("{e:?}")))
 }

@@ -64,7 +64,7 @@ pub(crate) fn descriptor_entries(bytes: &[u8]) -> Vec<VirtualEntry> {
                 name: String::from_utf16_lossy(&units[..end.unwrap_or(units.len())]),
                 is_dir: flags & FD_ATTRIBUTES != 0 && attributes & DIRECTORY != 0,
                 size: (flags & FD_FILESIZE != 0).then_some(size),
-                failed: end.is_none().then(|| "The program gave a broken name".to_string()),
+                failed: end.is_none().then(|| gezik_i18n::t!("The program gave a broken name").into_owned()),
             })
         })
         .collect()
@@ -190,7 +190,10 @@ impl VirtualSource for Source {
     fn write(&self, index: usize, to: &Path, progress: &mut dyn FnMut(u64) -> bool) -> io::Result<u64> {
         let (lindex, entry) = self.entries.get(index).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
         if entry.is_dir || entry.failed.is_some() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "Not a file the program can give"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                gezik_i18n::t!("Not a file the program can give").into_owned(),
+            ));
         }
         self.wrote.store(true, Ordering::Relaxed);
         let data = from_table(&table()?, self.cookie)?;
@@ -250,7 +253,7 @@ unsafe fn write_medium(
             let size = declared.map_or(size, |most| size.min(usize::try_from(most).unwrap_or(usize::MAX)));
             let at = GlobalLock(memory);
             if at.is_null() {
-                return Err(io::Error::other("The program's data could not be read"));
+                return Err(io::Error::other(gezik_i18n::t!("The program's data could not be read").into_owned()));
             }
             let mut done = 0;
             let result = File::create_new(to).and_then(|mut file| {
@@ -268,7 +271,10 @@ unsafe fn write_medium(
             progress(size);
             Ok(size)
         } else {
-            Err(io::Error::new(io::ErrorKind::Unsupported, "The program offers this item in a form Gezik cannot read"))
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                gezik_i18n::t!("The program offers this item in a form Gezik cannot read").into_owned(),
+            ))
         }
     }
 }
@@ -286,8 +292,9 @@ unsafe fn copy_stream(stream: &IStream, to: &Path, progress: &mut dyn FnMut(u64)
             let mut read = 0u32;
             stream.Read(buffer.as_mut_ptr().cast(), CHUNK as u32, Some(&mut read)).ok().map_err(io_error)?;
             // A source claiming more than it was asked for is refused, not trusted.
-            let piece =
-                buffer.get(..read as usize).ok_or_else(|| io::Error::other("The program's stream is broken"))?;
+            let piece = buffer
+                .get(..read as usize)
+                .ok_or_else(|| io::Error::other(gezik_i18n::t!("The program's stream is broken").into_owned()))?;
             if piece.is_empty() {
                 return Ok(done);
             }

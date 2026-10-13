@@ -48,7 +48,7 @@ impl Task for TagsTask {
     }
 
     fn title(&self) -> String {
-        format!("Changing the tags of {}", what(&self.paths()))
+        gezik_i18n::t!("Changing the tags of {}", what(&self.paths()))
     }
 
     fn count(&self) -> usize {
@@ -71,7 +71,7 @@ impl Task for TagsTask {
         let (Some(path), Some((_, change))) = (&item.source, self.items.get(item.root)) else {
             return Ok(Outcome::Nothing);
         };
-        let store = cx.meta().ok_or_else(|| io::Error::other("No tag store"))?;
+        let store = cx.meta().ok_or_else(|| io::Error::other(gezik_i18n::t!("No tag store")))?;
         let before = store.read(path)?;
         let after = match change {
             Change::Edit(edits) => {
@@ -88,7 +88,7 @@ impl Task for TagsTask {
             return Ok(Outcome::Nothing);
         }
         if let Where::Store(Some(why)) = store.write(path, &after)? {
-            cx.note(path, &format!("Kept in Gezik's tag store: {why}"));
+            cx.note(path, &gezik_i18n::t!("Kept in Gezik's tag store: {}", why));
         }
         Ok(Outcome::MetaChanged { path: path.clone(), before, after })
     }

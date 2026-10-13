@@ -1,5 +1,6 @@
 //! The config folder on disk: layout, first-run files, reading and resolving.
 
+use gezik_i18n::{t, tn};
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -169,7 +170,7 @@ impl ConfigStore {
             let warnings = std::mem::take(&mut files.warnings);
             files = read_folder(&cache, None);
             files.warnings.splice(0..0, warnings);
-            files.warnings.push(Warning::new("sync", OFFLINE_NOTE));
+            files.warnings.push(Warning::new("sync", gezik_i18n::t("", OFFLINE_NOTE)));
             files.offline = true;
             // With the changes made since (kept for the folder): as this computer last showed it.
             if let Some(text) = self.settings.unsaved_text() {
@@ -179,7 +180,7 @@ impl ConfigStore {
         match read_text(&self.local.join(LOCAL_SETTINGS)) {
             Ok(text) => files.local_settings = Some(text),
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => files.warnings.push(Warning::new(LOCAL_SETTINGS, format!("cannot read: {err}"))),
+            Err(err) => files.warnings.push(Warning::new(LOCAL_SETTINGS, t!("cannot read: {}", err))),
         }
         files
     }
@@ -281,13 +282,13 @@ impl ConfigStore {
             Ok(text) => match parse_views(&text) {
                 Ok(folders) => (ViewMemory::from_folders(folders), None),
                 Err(err) => {
-                    (ViewMemory::default(), Some(Warning::new("views.toml", format!("{err}; folder views start over"))))
+                    (ViewMemory::default(), Some(Warning::new("views.toml", t!("{}; folder views start over", err))))
                 }
             },
             Err(err) if err.kind() == io::ErrorKind::NotFound => (ViewMemory::default(), None),
             Err(err) => (
                 ViewMemory::default(),
-                Some(Warning::new("views.toml", format!("cannot read: {err}; folder views start over"))),
+                Some(Warning::new("views.toml", t!("cannot read: {}; folder views start over", err))),
             ),
         }
     }
@@ -346,7 +347,7 @@ fn read_folder(dir: &Path, machines: Option<&[String]>) -> ConfigFiles {
     match read_text(&settings) {
         Ok(text) => files.settings = Some(text),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => files.warnings.push(Warning::new("settings.toml", format!("cannot read: {err}"))),
+        Err(err) => files.warnings.push(Warning::new("settings.toml", t!("cannot read: {}", err))),
     }
     let conflict_of = |name: &str| machines.and_then(|m| sync_folder::conflict_of(name, m));
     if let (Some(entries), Some(settings)) = (machines.and_then(|_| std::fs::read_dir(dir).ok()), &files.settings) {
@@ -385,7 +386,7 @@ fn read_folder(dir: &Path, machines: Option<&[String]>) -> ConfigFiles {
             Ok(text) => {
                 files.themes.insert(id, text);
             }
-            Err(err) => files.warnings.push(Warning::new(file, format!("cannot read: {err}"))),
+            Err(err) => files.warnings.push(Warning::new(file, t!("cannot read: {}", err))),
         }
     }
     note_conflicts(files)
@@ -408,13 +409,13 @@ fn read_languages(dir: &Path, warnings: &mut Vec<Warning>) -> Vec<(String, Arc<g
         };
         let file = format!("lang/{code}.po");
         if std::fs::metadata(&path).is_ok_and(|m| m.len() > gezik_i18n::po::MAX_BYTES as u64) {
-            warnings.push(Warning::new(file, "larger than 4 MB; not read"));
+            warnings.push(Warning::new(file, t!("larger than 4 MB; not read")));
             continue;
         }
         let text = match read_text(&path) {
             Ok(text) => text,
             Err(err) => {
-                warnings.push(Warning::new(file, format!("cannot read: {err}")));
+                warnings.push(Warning::new(file, t!("cannot read: {}", err)));
                 continue;
             }
         };
@@ -423,10 +424,12 @@ fn read_languages(dir: &Path, warnings: &mut Vec<Warning>) -> Vec<(String, Arc<g
             warnings.push(Warning { file: file.clone(), line: Some(issue.line), message: issue.message.clone() });
         }
         if let Some(more) = report.errors.len().checked_sub(LANGUAGE_WARNINGS).filter(|&n| n > 0) {
-            warnings.push(Warning::new(file.clone(), format!("{more} more problems")));
+            warnings.push(Warning::new(file.clone(), tn!("{n} more problem" | "{n} more problems", more)));
         }
         if report.missing > 0 {
-            warnings.push(Warning::new(file, format!("{} of {} texts missing", report.missing, report.total)));
+            // TRANSLATORS: {0} texts of {n} are missing.
+            let missing = tn!("{0} of {n} text missing" | "{0} of {n} texts missing", report.total, report.missing);
+            warnings.push(Warning::new(file, missing));
         }
         out.extend(layer.map(|layer| (code.to_owned(), Arc::new(layer))));
     }
@@ -437,11 +440,12 @@ fn read_languages(dir: &Path, warnings: &mut Vec<Warning>) -> Vec<(String, Arc<g
 fn note_conflicts(mut files: ConfigFiles) -> ConfigFiles {
     files.conflicts.sort();
     for name in &files.conflicts {
-        let of = if name.starts_with("themes/") { "a theme" } else { "settings.toml" };
-        files.warnings.push(Warning::new(
-            name.clone(),
-            format!("a conflicting copy of {of} — Review it in Settings > Sync and Backup"),
-        ));
+        let message = if name.starts_with("themes/") {
+            t!("a conflicting copy of a theme — Review it in Settings > Sync and Backup")
+        } else {
+            t!("a conflicting copy of {} — Review it in Settings > Sync and Backup", "settings.toml").into()
+        };
+        files.warnings.push(Warning::new(name.clone(), message));
     }
     files
 }
@@ -524,7 +528,7 @@ pub fn resolve(files: &ConfigFiles, system_dark: bool) -> Loaded {
         .chain(files.languages.iter().map(|(code, _)| code.as_str()))
         .collect();
     if !gezik_i18n::lang::known(&settings.language, &codes) {
-        let message = format!("language \"{}\": no such language, using the system's", settings.language);
+        let message = t!("language \"{}\": no such language, using the system's", settings.language);
         warnings.push(Warning::new("settings.toml", message));
     }
 
@@ -533,7 +537,7 @@ pub fn resolve(files: &ConfigFiles, system_dark: bool) -> Loaded {
         Ok(theme) => Some(theme),
         Err(ThemeError::Invalid) => None,
         Err(ThemeError::NotFound) => {
-            warnings.push(Warning::new("settings.toml", format!("theme \"{id}\" not found; using \"dark\"")));
+            warnings.push(Warning::new("settings.toml", t!("theme \"{}\" not found; using \"dark\"", id)));
             resolve_theme("dark", &files.themes, &mut warnings).ok()
         }
     };

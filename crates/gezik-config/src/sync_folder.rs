@@ -3,6 +3,7 @@
 //! services' conflicting copies and the key-by-key differences a Review shows. Pure but for
 //! the small reads and writes named so.
 
+use gezik_i18n::{t, tn, tx};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -22,7 +23,7 @@ pub const MACHINES: &str = "machines";
 
 /// The status bar's note when the sync folder cannot be read at start.
 pub const OFFLINE_NOTE: &str =
-    "Settings folder not available — using the last copy (changes are not saved until it is back)";
+    tx!("Settings folder not available — using the last copy (changes are not saved until it is back)");
 
 /// The folder `location.toml`'s text names (its `{token}` expanded), if it names one.
 pub fn parse_location(text: &str, known: &KnownDirs) -> Option<PathBuf> {
@@ -168,10 +169,10 @@ impl Difference {
 /// The keys `this` and `other` (two copies of a TOML file) differ in, in `this`'s order then the
 /// other's new keys. Tables are compared key by key; a list (`[[commands]]`) is one key.
 pub fn differences(this: &str, other: &str) -> Result<Vec<Difference>, String> {
-    let read = |text: &str, which: &str| text.parse::<Table>().map_err(|err| format!("{which} does not read: {err}"));
+    let read = |text: &str, which: &str| text.parse::<Table>().map_err(|err| t!("{0} does not read: {1}", which, err));
     let (mut a, mut b) = (Vec::new(), Vec::new());
-    leaves(&mut Vec::new(), &read(this, "This copy")?, &mut a);
-    leaves(&mut Vec::new(), &read(other, "The other copy")?, &mut b);
+    leaves(&mut Vec::new(), &read(this, &t!("This copy"))?, &mut a);
+    leaves(&mut Vec::new(), &read(other, &t!("The other copy"))?, &mut b);
     let mut out: Vec<Difference> = Vec::new();
     for (path, value) in &a {
         let theirs = b.iter().find(|(p, _)| p == path).map(|(_, v)| v);
@@ -201,7 +202,7 @@ fn leaves(prefix: &mut Vec<String>, table: &Table, out: &mut Vec<(Vec<String>, V
 fn shown(value: &Value) -> String {
     match value {
         Value::Array(items) if !items.is_empty() && items.iter().all(Value::is_table) => {
-            format!("{} entries", items.len())
+            tn!("{n} entry" | "{n} entries", items.len())
         }
         value => crate::bundle::short(&crate::bundle::shown(value)),
     }
@@ -243,7 +244,7 @@ fn set_item(text: &str, path: &[String], item: Option<toml_edit::Item>) -> Resul
             .entry(key)
             .or_insert_with(toml_edit::table)
             .as_table_like_mut()
-            .ok_or_else(|| format!("{key} is not a table"))?;
+            .ok_or_else(|| t!("{} is not a table", key))?;
     }
     match item {
         Some(item) => {
@@ -274,7 +275,7 @@ pub fn without(text: &str, name: &str) -> Result<String, String> {
 /// `text` with `local`'s keys put in, one by one (tables key by key, lists whole), its comments
 /// kept: settings.local.toml over settings.toml, as one file.
 pub fn with_layer(text: &str, local: &str) -> Result<String, String> {
-    let over = local.parse::<Table>().map_err(|err| format!("{LOCAL_SETTINGS} does not read: {err}"))?;
+    let over = local.parse::<Table>().map_err(|err| t!("{0} does not read: {1}", LOCAL_SETTINGS, err))?;
     let mut paths = Vec::new();
     leaves(&mut Vec::new(), &over, &mut paths);
     paths.into_iter().try_fold(text.to_owned(), |text, (path, _)| with_item_from(&text, local, &path))

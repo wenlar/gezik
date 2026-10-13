@@ -45,7 +45,10 @@ pub(super) fn download(
     let wide: Vec<u16> = url.encode_utf16().collect();
     let parts = Parts::crack(&wide)?;
     if !allow_http && !parts.secure {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "only https addresses are downloaded"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            gezik_i18n::t!("only https addresses are downloaded").into_owned(),
+        ));
     }
     if stop() {
         return Err(interrupted());
@@ -98,7 +101,7 @@ pub(super) fn download(
                 Ok(result) => return result,
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(io::Error::other("the download stopped unexpectedly"));
+                    return Err(io::Error::other(gezik_i18n::t!("the download stopped unexpectedly").into_owned()));
                 }
             }
             if stop() {
@@ -136,11 +139,13 @@ fn transfer(call: &Call<'_>, dest: &Path, max_bytes: u64, allow_http: bool, rece
     unsafe { WinHttpReceiveResponse(call.handle()?, std::ptr::null_mut()) }.map_err(failure)?;
     // Where the redirects led, checked once more.
     if !allow_http && !final_url(call)?.to_ascii_lowercase().starts_with("https://") {
-        return Err(io::Error::other("the download was redirected to an insecure address"));
+        return Err(io::Error::other(
+            gezik_i18n::t!("the download was redirected to an insecure address").into_owned(),
+        ));
     }
     let status = status(call.handle()?)?;
     if status != 200 {
-        return Err(io::Error::other(format!("the server answered {status}")));
+        return Err(io::Error::other(gezik_i18n::t!("the server answered {}", status)));
     }
     let mut file = std::fs::File::create(dest)?;
     let mut buf = vec![0u8; CHUNK];
@@ -202,7 +207,10 @@ impl Parts {
         object.pop();
         object.extend(piece(parts.lpszExtraInfo, parts.dwExtraInfoLength));
         if host.len() <= 1 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "the address has no server"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                gezik_i18n::t!("the address has no server").into_owned(),
+            ));
         }
         if object.len() <= 1 {
             object = vec![u16::from(b'/'), 0];
@@ -287,19 +295,19 @@ fn failure(err: windows::core::Error) -> io::Error {
 /// are put in words here.
 fn described(code: u32) -> io::Error {
     let text = match code {
-        12002 => "the server did not answer in time",
-        12005 | 12006 => "the address is not valid",
-        12007 => "the server's name could not be found",
-        12029 => "could not connect to the server",
-        12030 => "the connection to the server was lost",
-        12152 => "the server's answer was not understood",
-        12156 => "the server redirected the download to a place it may not go",
-        12037 => "the server's certificate has expired",
-        12038 => "the server's certificate is for another name",
-        12045 => "the server's certificate is not trusted",
-        12157 | 12175 => "a secure connection to the server could not be made",
-        12180 | 12166 | 12167 | 12178 => "the proxy settings could not be read",
-        _ => return io::Error::other(format!("the download failed (WinHTTP error {code})")),
+        12002 => gezik_i18n::tx!("the server did not answer in time"),
+        12005 | 12006 => gezik_i18n::tx!("the address is not valid"),
+        12007 => gezik_i18n::tx!("the server's name could not be found"),
+        12029 => gezik_i18n::tx!("could not connect to the server"),
+        12030 => gezik_i18n::tx!("the connection to the server was lost"),
+        12152 => gezik_i18n::tx!("the server's answer was not understood"),
+        12156 => gezik_i18n::tx!("the server redirected the download to a place it may not go"),
+        12037 => gezik_i18n::tx!("the server's certificate has expired"),
+        12038 => gezik_i18n::tx!("the server's certificate is for another name"),
+        12045 => gezik_i18n::tx!("the server's certificate is not trusted"),
+        12157 | 12175 => gezik_i18n::tx!("a secure connection to the server could not be made"),
+        12180 | 12166 | 12167 | 12178 => gezik_i18n::tx!("the proxy settings could not be read"),
+        _ => return io::Error::other(gezik_i18n::t!("the download failed (WinHTTP error {})", code)),
     };
-    io::Error::other(text)
+    io::Error::other(gezik_i18n::t("", text).into_owned())
 }

@@ -269,21 +269,22 @@ fn run(
     }
     let errors = child.stderr_text();
     if let Some(plain) = plain_failure(&errors) {
-        return Err(io::Error::other(plain));
+        return Err(io::Error::other(gezik_i18n::t("", plain).into_owned()));
     }
     let tail = stderr_tail(&errors);
     let code = status.code().map_or_else(|| status.to_string(), |code| format!("exit code {code}"));
     Err(io::Error::other(if tail.is_empty() {
-        format!("ffmpeg failed ({code})")
+        gezik_i18n::t!("ffmpeg failed ({})", code)
     } else {
-        format!("ffmpeg failed ({code}): {tail}")
+        // TRANSLATORS: {0} is how it ended ("exit code 1"), {1} ffmpeg's own last lines.
+        gezik_i18n::t!("ffmpeg failed ({0}): {1}", code, tail)
     }))
 }
 
 /// A failure ffmpeg's own words would not explain: an audio output from a video with no sound
 /// (a screen recording without a microphone) leaves the output with nothing in it.
 pub fn plain_failure(errors: &str) -> Option<&'static str> {
-    errors.contains("Output file does not contain any stream").then_some("it has no sound to keep")
+    errors.contains("Output file does not contain any stream").then_some(gezik_i18n::tx!("it has no sound to keep"))
 }
 
 /// The last lines of an error output, blank ones left out.

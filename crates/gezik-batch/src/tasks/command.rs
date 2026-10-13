@@ -47,11 +47,11 @@ impl CommandTask {
     /// always ends it.
     fn execute(&self, cwd: Option<&Path>, args: &[OsString], run: &RunCx<'_>, stop_on_pause: bool) -> io::Result<()> {
         let Some((program, rest)) = args.split_first() else {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "run has no program"));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("run has no program")));
         };
         let name = self.spec.run.first().map_or_else(String::new, |p| p.trim().to_owned());
         let program = find_program(program)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{name} not found")))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, gezik_i18n::t!("{} not found", name)))?;
         let dir = cwd.filter(|dir| !dir.as_os_str().is_empty());
         let mut child = ChildProcess::spawn(&program, rest, dir)?;
         // Its output is read (and dropped) so that it never waits on a full pipe.
@@ -67,11 +67,12 @@ impl CommandTask {
             return Ok(());
         }
         let tail = stderr_tail(&child.stderr_text());
-        let code = status.code().map_or_else(|| status.to_string(), |code| format!("exit code {code}"));
+        let code = status.code().map_or_else(|| status.to_string(), |code| gezik_i18n::t!("exit code {}", code));
+        // TRANSLATORS: {0} is a program, {1} how it ended ("exit code 2"), {2} what it wrote
         Err(io::Error::other(if tail.is_empty() {
-            format!("{name} failed ({code})")
+            gezik_i18n::t!("{0} failed ({1})", name, code)
         } else {
-            format!("{name} failed ({code}): {tail}")
+            gezik_i18n::t!("{0} failed ({1}): {2}", name, code, tail)
         }))
     }
 
@@ -91,7 +92,7 @@ impl CommandTask {
             .and_then(|args| self.execute(input.parent(), &args, run, true))
             .and_then(|()| {
                 if std::fs::symlink_metadata(&made).is_err() {
-                    return Err(io::Error::other(format!("the command made no {}", name.to_string_lossy())));
+                    return Err(io::Error::other(gezik_i18n::t!("the command made no {}", name.to_string_lossy())));
                 }
                 gezik_platform::fs::move_entry(&made, target)
             });
@@ -110,7 +111,8 @@ impl CommandTask {
     /// runs on it again.
     fn in_place(&self, input: &Path, is_dir: bool, size: u64, run: &RunCx<'_>) -> io::Result<Outcome> {
         if is_dir {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, "a command without an output runs only on files"));
+            let why = gezik_i18n::t!("a command without an output runs only on files");
+            return Err(io::Error::new(io::ErrorKind::Unsupported, why));
         }
         if !run.has_trash(input) {
             return Err(needs_trash());
@@ -262,7 +264,8 @@ impl Task for CommandTask {
 
     fn title(&self) -> String {
         let paths: Vec<PathBuf> = self.inputs.iter().map(|(path, _)| path.clone()).collect();
-        format!("Running {} on {}", self.spec.name, what(&paths))
+        // TRANSLATORS: {0} is a command's name, {1} a name or "3 items"
+        gezik_i18n::t!("Running {0} on {1}", self.spec.name, what(&paths))
     }
 
     fn count(&self) -> usize {
@@ -320,7 +323,8 @@ impl Task for CommandTask {
             };
             let key = path_key(&target);
             if same_path(&target, input) || inputs.contains(&key) || !outputs.insert(key) {
-                let message = format!("its output {} is a selected item or another one's output", file_name(&target));
+                let message =
+                    gezik_i18n::t!("its output {} is a selected item or another one's output", file_name(&target));
                 sink.failed(input, io::Error::new(io::ErrorKind::AlreadyExists, message));
                 continue;
             }
@@ -333,7 +337,7 @@ impl Task for CommandTask {
     fn run(&self, item: &PlanItem, run: &RunCx<'_>) -> io::Result<Outcome> {
         let Some(input) = &item.source else { return Ok(Outcome::Nothing) };
         if item.tag == LEFT_OUT {
-            let why = io::Error::new(io::ErrorKind::Unsupported, format!("not for {}", self.spec.name));
+            let why = io::Error::new(io::ErrorKind::Unsupported, gezik_i18n::t!("not for {}", self.spec.name));
             run.skip(input, &why);
             return Ok(Outcome::Nothing);
         }

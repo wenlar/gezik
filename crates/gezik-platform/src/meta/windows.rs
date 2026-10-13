@@ -77,7 +77,10 @@ pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
     let facts = base.metadata()?;
     let current = read_stream(path)?;
     if current.as_ref().is_some_and(|record| !record.writable) {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "A tag record Gezik does not know; left alone"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            gezik_i18n::t!("A tag record Gezik does not know; left alone").into_owned(),
+        ));
     }
     let unknown = current.map(|record| record.unknown).unwrap_or_default();
     let written = if meta.is_empty() && unknown.is_empty() {
@@ -90,7 +93,7 @@ pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
         if text.len() as u64 > MAX_STREAM {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "Too many tags and too long a comment for one file",
+                gezik_i18n::t!("Too many tags and too long a comment for one file").into_owned(),
             ));
         }
         write_stream(path, text.as_bytes())

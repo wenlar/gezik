@@ -592,7 +592,7 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
     if !super::can_trash_name(path) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "names ending in a dot or space cannot go to the Recycle Bin",
+            gezik_i18n::t!("names ending in a dot or space cannot go to the Recycle Bin").into_owned(),
         ));
     }
     unsafe {
@@ -627,7 +627,7 @@ pub fn trash(path: &Path) -> io::Result<Option<PathBuf>> {
         result.get().ok().map_err(io_error)?;
         let trashed = trashed.borrow_mut().take();
         if trashed.is_none() && std::fs::symlink_metadata(path).is_ok() {
-            return Err(io::Error::other("the Recycle Bin did not take the item"));
+            return Err(io::Error::other(gezik_i18n::t!("the Recycle Bin did not take the item").into_owned()));
         }
         Ok(trashed)
     }

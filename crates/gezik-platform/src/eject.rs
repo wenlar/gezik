@@ -6,9 +6,10 @@ use std::path::Path;
 use crate::process::Ran;
 use crate::{Drive, DriveKind};
 
-pub const IN_USE: &str = "The drive is in use. Close the files on it and try again.";
-pub const CANNOT: &str = "This drive cannot be ejected";
-pub const NEEDS_TOOLS: &str = "Ejecting needs gio or udisksctl";
+// Marked for translation: shown with `gezik_i18n::t`.
+pub const IN_USE: &str = gezik_i18n::tx!("The drive is in use. Close the files on it and try again.");
+pub const CANNOT: &str = gezik_i18n::tx!("This drive cannot be ejected");
+pub const NEEDS_TOOLS: &str = gezik_i18n::tx!("Ejecting needs gio or udisksctl");
 const MAX_MESSAGE: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,8 +21,8 @@ pub enum EjectWay {
 impl EjectWay {
     pub fn title(self) -> &'static str {
         match self {
-            EjectWay::Eject => "Eject",
-            EjectWay::Disconnect => "Disconnect",
+            EjectWay::Eject => gezik_i18n::tx!("Eject"),
+            EjectWay::Disconnect => gezik_i18n::tx!("Disconnect"),
         }
     }
 }
@@ -101,8 +102,8 @@ pub fn eject(drive: &Drive, owner: isize) -> Result<(), String> {
 pub fn windows_error_text(code: u32) -> String {
     match code {
         // ERROR_OPEN_FILES, ERROR_DEVICE_IN_USE
-        2401 | 2404 => IN_USE.to_owned(),
-        2250 => "This network drive is not connected".to_owned(),
+        2401 | 2404 => gezik_i18n::t("", IN_USE).into_owned(),
+        2250 => gezik_i18n::t!("This network drive is not connected").into_owned(),
         _ => std::io::Error::from_raw_os_error(code as i32).to_string(),
     }
 }
@@ -110,7 +111,7 @@ pub fn windows_error_text(code: u32) -> String {
 /// EBUSY (POSIX domain) or fBsyErr (Carbon): something has a file open there.
 pub fn mac_error_text(code: isize, description: &str) -> String {
     if code == 16 || code == -47 || description.to_lowercase().contains("in use") {
-        IN_USE.to_owned()
+        gezik_i18n::t("", IN_USE).into_owned()
     } else {
         description.chars().take(MAX_MESSAGE).collect()
     }
@@ -118,11 +119,11 @@ pub fn mac_error_text(code: isize, description: &str) -> String {
 
 pub fn linux_error_text(stderr: &str) -> String {
     if stderr.to_lowercase().contains("busy") {
-        return IN_USE.to_owned();
+        return gezik_i18n::t("", IN_USE).into_owned();
     }
     let line: String =
         stderr.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(MAX_MESSAGE).collect();
-    if line.is_empty() { "Could not eject the drive".to_owned() } else { line }
+    if line.is_empty() { gezik_i18n::t!("Could not eject the drive").into_owned() } else { line }
 }
 
 /// The block device mounted at `mount_point` (`/proc/self/mounts` text).
@@ -169,12 +170,14 @@ pub fn linux_eject(
         Err(err) => return Err(err.to_string()),
     }
     if network {
-        return Err(crate::network::NEEDS_GIO.to_owned());
+        return Err(gezik_i18n::t("", crate::network::NEEDS_GIO).into_owned());
     }
-    let device = device_of(mounts, &drive.path).ok_or_else(|| CANNOT.to_owned())?;
+    let device = device_of(mounts, &drive.path).ok_or_else(|| gezik_i18n::t("", CANNOT).into_owned())?;
     let unmount = match run(&["udisksctl", "unmount", "-b", device.as_str()], "") {
         Ok(ran) => ran,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Err(NEEDS_TOOLS.to_owned()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(gezik_i18n::t("", NEEDS_TOOLS).into_owned());
+        }
         Err(err) => return Err(err.to_string()),
     };
     if !unmount.ok {
@@ -253,7 +256,11 @@ mod win {
 
     pub fn eject(drive: &Drive, owner: isize) -> Result<(), String> {
         let text = drive.path.to_string_lossy();
-        let letter = text.chars().next().filter(char::is_ascii_alphabetic).ok_or_else(|| CANNOT.to_owned())?;
+        let letter = text
+            .chars()
+            .next()
+            .filter(char::is_ascii_alphabetic)
+            .ok_or_else(|| gezik_i18n::t("", CANNOT).into_owned())?;
         if drive.kind == DriveKind::Network {
             // The mapping goes from the profile too: it does not come back at sign-in.
             let name = HSTRING::from(format!("{letter}:"));
@@ -261,7 +268,8 @@ mod win {
             return if code == NO_ERROR { Ok(()) } else { Err(windows_error_text(code.0)) };
         }
         crate::init_thread();
-        crate::shell_menu::invoke_verb(HWND(owner as *mut _), &drive.path, c"eject").map_err(|_| CANNOT.to_owned())?;
+        crate::shell_menu::invoke_verb(HWND(owner as *mut _), &drive.path, c"eject")
+            .map_err(|_| gezik_i18n::t("", CANNOT).into_owned())?;
         if drive.kind == DriveKind::Optical {
             return Ok(());
         }
@@ -280,7 +288,7 @@ mod win {
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        Err(IN_USE.to_owned())
+        Err(gezik_i18n::t("", IN_USE).into_owned())
     }
 }
 

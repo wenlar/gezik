@@ -46,13 +46,13 @@ impl ConvertWhat {
     }
 
     /// Why a file it does not take is left out.
-    fn not_taken(&self, is_dir: bool) -> &'static str {
+    fn not_taken(&self, is_dir: bool) -> std::borrow::Cow<'static, str> {
         match self {
-            _ if is_dir => "a folder",
-            ConvertWhat::Image(_) => "not a picture",
-            ConvertWhat::RemoveLocation(_) => "not a picture Gezik can write",
-            ConvertWhat::Text(_) => "not a text file",
-            ConvertWhat::Media(_) => "not audio or video",
+            _ if is_dir => gezik_i18n::t!("a folder"),
+            ConvertWhat::Image(_) => gezik_i18n::t!("not a picture"),
+            ConvertWhat::RemoveLocation(_) => gezik_i18n::t!("not a picture Gezik can write"),
+            ConvertWhat::Text(_) => gezik_i18n::t!("not a text file"),
+            ConvertWhat::Media(_) => gezik_i18n::t!("not audio or video"),
         }
     }
 
@@ -128,7 +128,11 @@ fn ffmpeg_needed() -> io::Error {
 /// Replacing an original (or changing it in place) is undone from the trash: without one it
 /// is refused.
 pub(super) fn needs_trash() -> io::Error {
-    let what = if cfg!(windows) { "needs a recycle bin to undo" } else { "needs a trash to undo" };
+    let what = if cfg!(windows) {
+        gezik_i18n::t!("needs a recycle bin to undo")
+    } else {
+        gezik_i18n::t!("needs a trash to undo")
+    };
     io::Error::new(io::ErrorKind::Unsupported, what)
 }
 
@@ -175,11 +179,13 @@ pub(super) fn swap_in(
     if let Err(err) = move_in(new, target) {
         let _ = std::fs::remove_file(new);
         if let Err(back) = gezik_platform::fs::restore(&trashed, original) {
-            let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
-            return Err(io::Error::new(
-                err.kind(),
-                format!("{err}; the original is in the {bin} as {} ({back})", file_name(original)),
-            ));
+            // TRANSLATORS: {0} is why it failed, {1} a name, {2} why it could not be put back
+            let message = if cfg!(windows) {
+                gezik_i18n::t!("{0}; the original is in the Recycle Bin as {1} ({2})", err, file_name(original), back)
+            } else {
+                gezik_i18n::t!("{0}; the original is in the Trash as {1} ({2})", err, file_name(original), back)
+            };
+            return Err(io::Error::new(err.kind(), message));
         }
         return Err(err);
     }
@@ -219,8 +225,9 @@ impl ConvertTask {
                 convert_image(&job, &stop)
             }
             ConvertWhat::RemoveLocation(options) => {
-                let format = kept_format(&file_name(input))
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "not a picture Gezik can write"))?;
+                let format = kept_format(&file_name(input)).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Unsupported, gezik_i18n::t!("not a picture Gezik can write"))
+                })?;
                 let options = ImageOptions { format, ..*options };
                 let job =
                     ImageJob { input, output: temp, options: &options, ffmpeg: ffmpeg.map(|f| f.ffmpeg.as_path()) };
@@ -290,8 +297,12 @@ impl Task for ConvertTask {
     fn title(&self) -> String {
         let to = self.what.to();
         match &self.what {
-            ConvertWhat::RemoveLocation(_) => format!("Removing location data from {}", what(&self.inputs)),
-            _ => format!("Converting {} to {to}", what(&self.inputs)),
+            ConvertWhat::RemoveLocation(_) => gezik_i18n::t!("Removing location data from {}", what(&self.inputs)),
+            ConvertWhat::Text(options) if options.keeps_encoding() => {
+                gezik_i18n::t!("Converting {} to new line endings", what(&self.inputs))
+            }
+            // TRANSLATORS: {0} is a name or "3 items", {1} a format, "WebP"
+            _ => gezik_i18n::t!("Converting {0} to {1}", what(&self.inputs), to),
         }
     }
 
@@ -344,12 +355,12 @@ impl Task for ConvertTask {
             let key = path_key(&target);
             let in_place = same_path(&target, input);
             if !in_place && inputs.contains(&key) {
-                let message = format!("it would be converted to {}, which is also selected", file_name(&target));
+                let message = gezik_i18n::t!("it would be converted to {}, which is also selected", file_name(&target));
                 sink.failed(input, io::Error::new(io::ErrorKind::AlreadyExists, message));
                 continue;
             }
             if !outputs.insert(key) {
-                let message = format!("another selected file is also converted to {}", file_name(&target));
+                let message = gezik_i18n::t!("another selected file is also converted to {}", file_name(&target));
                 sink.failed(input, io::Error::new(io::ErrorKind::AlreadyExists, message));
                 continue;
             }
@@ -414,7 +425,7 @@ impl Task for ConvertTask {
                 return Ok(Outcome::Nothing);
             }
             NO_FOLDER => {
-                let why = io::Error::other("its output folder could not be made");
+                let why = io::Error::other(gezik_i18n::t!("its output folder could not be made"));
                 run.skip(item.path(), &why);
                 return Ok(Outcome::Nothing);
             }

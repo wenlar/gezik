@@ -176,14 +176,20 @@ mod imp {
             print.drain(..verbatim_prefix.len());
         }
         if print.get(1) != Some(&u16::from(b':')) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "A junction can only point to a local folder"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                gezik_i18n::t!("A junction can only point to a local folder").into_owned(),
+            ));
         }
         let substitute: Vec<u16> = r"\??\".encode_utf16().chain(print.iter().copied()).collect();
         let (substitute_bytes, print_bytes) = (substitute.len() * 2, print.len() * 2);
         // The four offsets and lengths, then both names with their NULs.
         let data_length = 8 + substitute_bytes + 2 + print_bytes + 2;
         if 8 + data_length > MAX_REPARSE {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "The folder's path is too long for a junction"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                gezik_i18n::t!("The folder's path is too long for a junction").into_owned(),
+            ));
         }
         let half = |n: usize| (n as u16).to_le_bytes();
         let mut out = Vec::with_capacity(8 + data_length);

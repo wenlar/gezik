@@ -3,6 +3,7 @@
 //! they only compare (a sync always goes through its summary question).
 
 use gezik_core::compare::{Mode, Options};
+use gezik_i18n::t;
 
 /// At most this many (menu ids 2260–2299 are kept for them, spec 11 §13.3).
 pub const SYNC_PROFILES_MAX: usize = 40;
@@ -24,16 +25,16 @@ pub struct SyncProfile {
 
 /// One `[[sync-profiles]]` entry; the error is why it is left out.
 pub fn parse(value: &toml::Value) -> Result<SyncProfile, String> {
-    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table, got {}", value))?;
     if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
-        return Err(format!("unknown key \"{key}\""));
+        return Err(t!("unknown key \"{}\"", key));
     }
     let text = |key: &str| table.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|t| !t.is_empty());
-    let name = text("name").ok_or("name is missing")?;
+    let name = text("name").ok_or_else(|| t!("{} is missing", "name"))?;
     let folder = |key: &str| -> Result<String, String> {
-        let path = text(key).ok_or_else(|| format!("{key} is missing"))?;
+        let path = text(key).ok_or_else(|| t!("{} is missing", key))?;
         if crate::paths::has_parent_segment(path) {
-            return Err(format!("{key}: \"{path}\" must not contain \"..\""));
+            return Err(t!("{0}: \"{1}\" must not contain \"..\"", key, path));
         }
         Ok(path.to_owned())
     };
@@ -43,7 +44,7 @@ pub fn parse(value: &toml::Value) -> Result<SyncProfile, String> {
         options.mode = value
             .as_str()
             .and_then(Mode::from_key)
-            .ok_or_else(|| format!("mode: expected two-way, left-to-right or mirror, got {value}"))?;
+            .ok_or_else(|| t!("{0}: expected two-way, left-to-right or mirror, got {1}", "mode", value))?;
     }
     for (key, flag) in [
         ("subfolders", &mut options.subfolders),
@@ -52,12 +53,12 @@ pub fn parse(value: &toml::Value) -> Result<SyncProfile, String> {
         ("ignore-hour", &mut options.ignore_hour),
     ] {
         if let Some(value) = table.get(key) {
-            *flag = value.as_bool().ok_or_else(|| format!("{key}: expected true or false, got {value}"))?;
+            *flag = value.as_bool().ok_or_else(|| t!("{0}: expected true or false, got {1}", key, value))?;
         }
     }
     let filter = match table.get("filter") {
         None => String::new(),
-        Some(value) => value.as_str().ok_or_else(|| format!("filter: expected text, got {value}"))?.to_owned(),
+        Some(value) => value.as_str().ok_or_else(|| t!("{0}: expected text, got {1}", "filter", value))?.to_owned(),
     };
     Ok(SyncProfile { name: name.to_owned(), left, right, options, filter })
 }

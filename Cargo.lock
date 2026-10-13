@@ -1760,6 +1760,7 @@ dependencies = [
  "fast_image_resize",
  "flate2",
  "gezik-core",
+ "gezik-i18n",
  "gezik-ops",
  "gezik-platform",
  "hadris-iso",
@@ -1811,6 +1812,7 @@ dependencies = [
  "crc32fast",
  "dirs",
  "gezik-core",
+ "gezik-i18n",
  "gezik-platform",
  "libc",
  "md-5",
@@ -1851,6 +1853,7 @@ version = "0.1.0"
 dependencies = [
  "gezik-batch",
  "gezik-core",
+ "gezik-i18n",
  "gezik-ops",
  "gezik-platform",
  "icu_normalizer",

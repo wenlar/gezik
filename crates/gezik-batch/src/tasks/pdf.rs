@@ -70,10 +70,11 @@ pub fn pdf_chain(work: PdfWork, inputs: Vec<PathBuf>, tools: PdfTools) -> Vec<Bo
 pub fn pdf_label(work: &PdfWork, inputs: &[PathBuf]) -> String {
     let what = pdfs(inputs);
     match work {
-        PdfWork::Merge => format!("Merge {} PDFs", inputs.len()),
-        PdfWork::Split(_) => format!("Split {what}"),
-        PdfWork::Extract(_) => format!("Extract pages from {what}"),
-        PdfWork::Render { .. } => format!("Save {what} as pictures"),
+        PdfWork::Merge => gezik_i18n::tn!("Merge {n} PDF" | "Merge {n} PDFs", inputs.len()),
+        // TRANSLATORS: {} is a name or "3 PDFs"
+        PdfWork::Split(_) => gezik_i18n::t!("Split {}", what),
+        PdfWork::Extract(_) => gezik_i18n::t!("Extract pages from {}", what),
+        PdfWork::Render { .. } => gezik_i18n::t!("Save {} as pictures", what),
     }
 }
 
@@ -81,7 +82,7 @@ pub fn pdf_label(work: &PdfWork, inputs: &[PathBuf]) -> String {
 fn pdfs(inputs: &[PathBuf]) -> String {
     match inputs {
         [one] => file_name(one),
-        many => format!("{} PDFs", many.len()),
+        many => gezik_i18n::tn!("{n} PDF" | "{n} PDFs", many.len()),
     }
 }
 
@@ -100,7 +101,9 @@ pub(super) struct PdfTask {
     spoiled: AtomicBool,
 }
 
-const SPOILED: &str = "an earlier PDF's outputs could not be cleared away; nothing from this job is placed";
+/// Shown with `t`.
+const SPOILED: &str =
+    gezik_i18n::tx!("an earlier PDF's outputs could not be cleared away; nothing from this job is placed");
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
@@ -241,11 +244,11 @@ impl Task for PdfTask {
     fn title(&self) -> String {
         let what = pdfs(&self.inputs);
         match &self.work {
-            PdfWork::Merge => format!("Merging {} PDFs", self.inputs.len()),
-            PdfWork::Split(_) => format!("Splitting {what}"),
-            PdfWork::Extract(_) => format!("Extracting pages from {what}"),
-            PdfWork::Render { image: PageImage::Png, .. } => format!("Saving {what} as PNG pictures"),
-            PdfWork::Render { image: PageImage::Jpeg, .. } => format!("Saving {what} as JPEG pictures"),
+            PdfWork::Merge => gezik_i18n::tn!("Merging {n} PDF" | "Merging {n} PDFs", self.inputs.len()),
+            PdfWork::Split(_) => gezik_i18n::t!("Splitting {}", what),
+            PdfWork::Extract(_) => gezik_i18n::t!("Extracting pages from {}", what),
+            PdfWork::Render { image: PageImage::Png, .. } => gezik_i18n::t!("Saving {} as PNG pictures", what),
+            PdfWork::Render { image: PageImage::Jpeg, .. } => gezik_i18n::t!("Saving {} as JPEG pictures", what),
         }
     }
 
@@ -319,8 +322,12 @@ impl Task for PdfTask {
                 Reply::Lowered { page, dpi } => {
                     let PdfWork::Render { dpi: asked, image } = &self.work else { return };
                     let name = page_image_name(&inputs[0], page.saturating_sub(1), *image);
-                    let why = io::Error::other(format!(
-                        "page {page} was made at {dpi} dpi: at {asked} dpi it would be too large"
+                    // TRANSLATORS: {0} is a page number, {1} and {2} resolutions
+                    let why = io::Error::other(gezik_i18n::t!(
+                        "page {0} was made at {1} dpi: at {2} dpi it would be too large",
+                        page,
+                        dpi,
+                        asked
                     ));
                     lowered.push((self.dir.join(name), why));
                 }
@@ -348,7 +355,8 @@ impl Task for PdfTask {
                         Err(GatherFailed { error, stuck: false }) => return Err(error),
                         Err(GatherFailed { error, stuck: true }) => {
                             self.spoil();
-                            return Err(io::Error::new(error.kind(), format!("{error}; {SPOILED}")));
+                            let spoiled = gezik_i18n::t("", SPOILED);
+                            return Err(io::Error::new(error.kind(), format!("{error}; {spoiled}")));
                         }
                     }
                     for (path, why) in &lowered {
@@ -390,8 +398,11 @@ impl Task for PdfTask {
                 }
                 _ if run.cancelled() => return Err(cancelled()),
                 _ => {
-                    let why =
-                        if self.merging() { "no password given; nothing was merged" } else { "no password given" };
+                    let why = if self.merging() {
+                        gezik_i18n::t!("no password given; nothing was merged")
+                    } else {
+                        gezik_i18n::t!("no password given")
+                    };
                     run.skip(path, &io::Error::other(why));
                     return Ok(Outcome::Nothing);
                 }

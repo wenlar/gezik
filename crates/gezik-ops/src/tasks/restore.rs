@@ -28,7 +28,7 @@ impl Task for RestoreTask {
 
     fn title(&self) -> String {
         let originals: Vec<PathBuf> = self.pairs.iter().map(|(_, original)| original.clone()).collect();
-        format!("Restoring {}", what(&originals))
+        gezik_i18n::t!("Restoring {}", what(&originals))
     }
 
     fn count(&self) -> usize {
@@ -67,7 +67,10 @@ impl Task for RestoreTask {
                         return;
                     }
                 }
-                Err(_) => sink.failed(original, io::Error::new(io::ErrorKind::NotFound, "no longer in the trash")),
+                Err(_) => sink.failed(
+                    original,
+                    io::Error::new(io::ErrorKind::NotFound, gezik_i18n::t!("no longer in the trash")),
+                ),
             }
         }
     }

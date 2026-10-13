@@ -39,8 +39,11 @@ impl ExtractTask {
 
     /// A choice between "go on" and "Cancel"; true to go on. A cancelled job is an error.
     fn confirm(&self, cx: &RunCx<'_>, title: &str, message: String, go: &str) -> io::Result<bool> {
-        let question =
-            Question::Confirm { title: title.to_owned(), message, buttons: vec![go.to_owned(), "Cancel".to_owned()] };
+        let question = Question::Confirm {
+            title: title.to_owned(),
+            message,
+            buttons: vec![go.to_owned(), gezik_i18n::t!("Cancel").into_owned()],
+        };
         match cx.ask(question) {
             Answer::Button(0) => Ok(true),
             _ if cx.stopped() => Err(cancelled()),
@@ -67,19 +70,23 @@ impl ExtractTask {
             && needed > free
         {
             let drive = gezik_platform::fs::drive_root(&self.dir).unwrap_or_else(|| self.dir.clone());
-            let message = format!("{} needed, {} free on {}", format_size(needed), format_size(free), drive.display());
-            if !self.confirm(run, "Not enough space", message, "Extract anyway")? {
+            // TRANSLATORS: {0} and {1} are sizes, {2} a drive
+            let message =
+                gezik_i18n::t!("{0} needed, {1} free on {2}", format_size(needed), format_size(free), drive.display());
+            if !self.confirm(run, &gezik_i18n::t!("Not enough space"), message, &gezik_i18n::t!("Extract anyway"))? {
                 return Ok(false);
             }
         }
         let packed = archive::packed_size(&self.archive);
         if bomb_suspect(total, packed) {
             let ratio = total / packed.max(1);
-            let message = format!(
-                "This archive says it unpacks to {} ({ratio}× its size). It may be made to fill the disk.",
-                format_size(total)
+            // TRANSLATORS: {0} is a size, {1} a number
+            let message = gezik_i18n::t!(
+                "This archive says it unpacks to {0} ({1}× its size). It may be made to fill the disk.",
+                format_size(total),
+                ratio
             );
-            if !self.confirm(run, "Very large archive", message, "Extract")? {
+            if !self.confirm(run, &gezik_i18n::t!("Very large archive"), message, &gezik_i18n::t!("Extract"))? {
                 return Ok(false);
             }
         }

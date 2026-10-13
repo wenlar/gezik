@@ -6,6 +6,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use super::convert::{image_inputs, needs_ffmpeg_to_read};
+use gezik_i18n::{t, tn, tx};
+
 use crate::ops::names::{NameError, NameRules, validate_name};
 
 /// The PDF group of the Convert layer.
@@ -37,11 +39,11 @@ impl PdfOp {
 
     pub fn label(self) -> &'static str {
         match self {
-            PdfOp::ImagesToPdf => "Images to PDF",
-            PdfOp::Merge => "Merge PDFs",
-            PdfOp::Split => "Split PDF",
-            PdfOp::ToImages => "PDF to images",
-            PdfOp::Extract => "Extract pages",
+            PdfOp::ImagesToPdf => tx!("Images to PDF"),
+            PdfOp::Merge => tx!("Merge PDFs"),
+            PdfOp::Split => tx!("Split PDF"),
+            PdfOp::ToImages => tx!("PDF to images"),
+            PdfOp::Extract => tx!("Extract pages"),
         }
     }
 
@@ -86,12 +88,12 @@ pub struct PageRange {
 }
 
 fn page_number(text: &str, part: &str) -> Result<u32, String> {
-    let not_a_page = || format!("\"{part}\" is not a page or a range");
+    let not_a_page = || t!("\"{}\" is not a page or a range", part);
     if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
         return Err(not_a_page());
     }
     match text.parse::<u32>() {
-        Ok(0) => Err("Pages start at 1".to_string()),
+        Ok(0) => Err(t!("Pages start at 1").into_owned()),
         Ok(n) => Ok(n),
         Err(_) => Err(not_a_page()),
     }
@@ -111,7 +113,7 @@ pub fn parse_ranges(text: &str) -> Result<Vec<PageRange>, String> {
                 let first = if a.is_empty() { 1 } else { page_number(a, part)? };
                 let last = if b.is_empty() { None } else { Some(page_number(b, part)?) };
                 if last.is_some_and(|last| last < first) {
-                    return Err(format!("{part} runs backwards"));
+                    return Err(t!("{} runs backwards", part));
                 }
                 PageRange { first, last }
             }
@@ -119,20 +121,22 @@ pub fn parse_ranges(text: &str) -> Result<Vec<PageRange>, String> {
         ranges.push(range);
     }
     if ranges.is_empty() {
-        return Err("Type the pages, e.g. 1-3, 5, 8-".to_string());
+        return Err(t!("Type the pages, e.g. 1-3, 5, 8-").into_owned());
     }
     Ok(ranges)
 }
 
 /// The 0-based pages of each range in a document of `pages` pages.
 pub fn resolve(ranges: &[PageRange], pages: u32) -> Result<Vec<Vec<u32>>, String> {
-    let past_the_end = |page: u32| format!("Page {page} is past the end ({pages} pages)");
+    // TRANSLATORS: {0} is a page number, {n} the pages the PDF has.
+    let past_the_end =
+        |page: u32| tn!("Page {0} is past the end ({n} page)" | "Page {0} is past the end ({n} pages)", pages, page);
     ranges
         .iter()
         .map(|range| {
             // `parse_ranges` never gives 0; a range made by hand might.
             if range.first == 0 {
-                return Err("Pages start at 1".to_string());
+                return Err(t!("Pages start at 1").into_owned());
             }
             if range.first > pages {
                 return Err(past_the_end(range.first));
@@ -156,10 +160,10 @@ pub enum Split {
 
 fn check_split(split: &Split, pages: u32) -> Result<(), String> {
     if *split == Split::Every(0) {
-        return Err("Every 0 pages: type 1 or more".to_string());
+        return Err(t!("Every 0 pages: type 1 or more").into_owned());
     }
     if pages == 0 {
-        return Err("This PDF has no pages".to_string());
+        return Err(t!("This PDF has no pages").into_owned());
     }
     Ok(())
 }

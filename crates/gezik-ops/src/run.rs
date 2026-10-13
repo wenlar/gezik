@@ -424,7 +424,8 @@ fn settle_aside(job: &Job, cx: &RunCx<'_>, aside: &Path, target: &Path, done: bo
             Ok(()) => job.outcome(Outcome::Deleted { path: target.to_path_buf() }),
             Err(err) => {
                 crate::tasks::restore_hidden(aside, target, true);
-                let message = format!("{}; the old one was kept next to it", fs::describe(&err));
+                // TRANSLATORS: {} is why it could not be deleted
+                let message = gezik_i18n::t!("{}; the old one was kept next to it", fs::describe(&err));
                 job.fail(target, &io::Error::new(err.kind(), message));
             }
         }
@@ -453,7 +454,7 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
     }
     if item.replace && onto_itself(&item) {
         // `apply` never asks for this; should anything else, the source is not touched.
-        let err = io::Error::new(io::ErrorKind::InvalidInput, "Cannot replace an item with itself");
+        let err = io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("Cannot replace an item with itself"));
         job.fail(failed_at(task, &item), &err);
         if item.counted {
             control.item_done();
@@ -471,7 +472,7 @@ pub(crate) fn execute(shared: &Shared, job: &Job, task: &dyn Task, item: PlanIte
         let gb = (max + 1) >> 30;
         let err = io::Error::new(
             io::ErrorKind::FileTooLarge,
-            format!("It is too big for this drive (files there can be at most {gb} GB)"),
+            gezik_i18n::t!("It is too big for this drive (files there can be at most {} GB)", gb),
         );
         job.fail(failed_at(task, &item), &err);
         if item.counted {

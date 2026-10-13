@@ -45,7 +45,9 @@ fn apply(steps: &mut impl Steps, had: Option<u32>, from: Attrs, to: Attrs) -> io
                 steps.chmod(mode)?;
                 if steps.mode()? != mode {
                     // chmod by someone outside the item's group drops setgid without an error.
-                    return Err(io::Error::other("The system turned setuid or setgid off"));
+                    return Err(io::Error::other(
+                        gezik_i18n::t!("The system turned setuid or setgid off").into_owned(),
+                    ));
                 }
             }
         }
@@ -145,11 +147,17 @@ mod unix {
     pub fn write(path: &Path, id: Identity, from: Attrs, to: Attrs) -> io::Result<()> {
         let meta = std::fs::symlink_metadata(path)?;
         if (Identity { dev: meta.dev(), ino: meta.ino() }) != id {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "Another file is there now"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                gezik_i18n::t!("Another file is there now").into_owned(),
+            ));
         }
         let is_link = meta.file_type().is_symlink();
         if is_link && from.mode & PERMS != to.mode & PERMS {
-            return Err(io::Error::new(io::ErrorKind::Unsupported, "A link's permissions cannot be changed"));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                gezik_i18n::t!("A link's permissions cannot be changed").into_owned(),
+            ));
         }
         let c = c_path(path)?;
         let mut steps = Sys { path, c: &c, flags_now: own_flags(&meta) };

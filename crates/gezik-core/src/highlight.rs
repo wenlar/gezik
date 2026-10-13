@@ -188,7 +188,7 @@ impl Highlights {
 /// `7d`, `2w`, `3m` (30 days), `1y` (365 days), `12h`.
 pub fn parse_age(text: &str) -> Result<Duration, String> {
     let text = text.trim();
-    let bad = || format!("expected an age like \"7d\" (h, d, w, m, y), got \"{text}\"");
+    let bad = || gezik_i18n::t!("expected an age like \"7d\" (h, d, w, m, y), got \"{}\"", text);
     let unit = text.chars().last().ok_or_else(bad)?;
     let hours: u64 = match unit {
         'h' => 1,

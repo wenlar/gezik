@@ -20,7 +20,7 @@ unsafe extern "C" {
 const ALL_ROLES: u32 = 0xFFFF_FFFF;
 
 fn url_of(path: &Path) -> Result<Retained<NSURL>, String> {
-    let text = path.to_str().ok_or("The path is not valid UTF-8")?;
+    let text = path.to_str().ok_or_else(|| gezik_i18n::t!("The path is not valid UTF-8"))?;
     Ok(NSURL::fileURLWithPath(&NSString::from_str(text)))
 }
 
@@ -52,8 +52,11 @@ pub fn set_for_file(app: &Path, file: &Path, on_error: Box<dyn FnOnce(String) + 
 pub fn set_for_type(app: &Path, uti: &str) -> Result<(), String> {
     autoreleasepool(|_| {
         let app_url = url_of(app)?;
-        let bundle = NSBundle::bundleWithURL(&app_url).ok_or("It is not an app")?;
-        let id = bundle.bundleIdentifier().filter(|id| !id.is_empty()).ok_or("The app has no bundle identifier")?;
+        let bundle = NSBundle::bundleWithURL(&app_url).ok_or_else(|| gezik_i18n::t!("It is not an app"))?;
+        let id = bundle
+            .bundleIdentifier()
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| gezik_i18n::t!("The app has no bundle identifier"))?;
         let kind = NSString::from_str(uti);
         // SAFETY: NSString is toll-free bridged to CFString; both live through the call.
         let status = unsafe {

@@ -9,11 +9,13 @@ use std::path::{Path, PathBuf};
 
 use gezik_core::elevated::{self, LaunchError, Op};
 
-pub const NEEDS_PKEXEC: &str = "Administrator operations need pkexec (polkit).";
+// Marked with `tx!`, translated where an error is made of them.
+pub const NEEDS_PKEXEC: &str = gezik_i18n::tx!("Administrator operations need pkexec (polkit).");
 pub const NO_AGENT: &str =
-    "No polkit authentication agent is running, so nothing can ask for the administrator password.";
-pub const ENDED: &str = "The administrator helper stopped early; some items may have been done. Check the folder.";
-pub const NOT_PLAIN_EXE: &str = "Gezik's own path has characters the prompt cannot carry";
+    gezik_i18n::tx!("No polkit authentication agent is running, so nothing can ask for the administrator password.");
+pub const ENDED: &str =
+    gezik_i18n::tx!("The administrator helper stopped early; some items may have been done. Check the folder.");
+pub const NOT_PLAIN_EXE: &str = gezik_i18n::tx!("Gezik's own path has characters the prompt cannot carry");
 /// A reply line is cut to this; more than `MAX_READ` bytes in all are not read.
 const MAX_LINE: usize = 4096;
 const MAX_READ: u64 = 16 * 1024 * 1024;
@@ -23,7 +25,7 @@ pub fn ready<'a>(exe: &'a Path, ops: &[Op]) -> Result<&'a str, LaunchError> {
     let text = exe
         .to_str()
         .filter(|text| exe.is_absolute() && !text.chars().any(char::is_control))
-        .ok_or_else(|| LaunchError::Failed(NOT_PLAIN_EXE.into()))?;
+        .ok_or_else(|| LaunchError::Failed(gezik_i18n::t("", NOT_PLAIN_EXE).into()))?;
     if !elevated::fits(text, ops, cfg!(windows)) {
         return Err(LaunchError::Failed(elevated::TOO_MANY.into()));
     }
@@ -72,7 +74,7 @@ pub fn mac_outcome(code: Option<i32>, stderr: &str) -> Result<(), LaunchError> {
     match code {
         Some(0) => Ok(()),
         _ if stderr.contains("(-128)") => Err(LaunchError::Cancelled),
-        None => Err(LaunchError::Failed(ENDED.into())),
+        None => Err(LaunchError::Failed(gezik_i18n::t("", ENDED).into())),
         Some(_) => Err(LaunchError::Failed(first_line(stderr))),
     }
 }
@@ -82,8 +84,10 @@ pub fn linux_outcome(code: Option<i32>, stderr: &str) -> Result<(), LaunchError>
     match code {
         Some(0) => Ok(()),
         Some(126) => Err(LaunchError::Cancelled),
-        Some(127) if stderr.contains("authentication agent") => Err(LaunchError::Failed(NO_AGENT.into())),
-        None => Err(LaunchError::Failed(ENDED.into())),
+        Some(127) if stderr.contains("authentication agent") => {
+            Err(LaunchError::Failed(gezik_i18n::t("", NO_AGENT).into()))
+        }
+        None => Err(LaunchError::Failed(gezik_i18n::t("", ENDED).into())),
         Some(_) => Err(LaunchError::Failed(first_line(stderr))),
     }
 }
@@ -116,7 +120,7 @@ pub fn protected() -> Vec<PathBuf> {
 }
 
 /// The confirm text's extra line when `others_can_change(exe)` (security review 1, 2).
-pub const EXPOSED: &str = "Gezik is in a folder other programs can change.";
+pub const EXPOSED: &str = gezik_i18n::tx!("Gezik is in a folder other programs can change.");
 
 /// Whether something other than an administrator could swap Gezik's exe, or put a DLL beside
 /// it, between the prompt and the helper's start: Windows, the exe or its folder lets a
@@ -177,7 +181,7 @@ mod imp {
         let mut command = {
             let _ = (text, prompt);
             let pkexec = super::pkexec_path(|p| p.exists())
-                .ok_or_else(|| LaunchError::Unavailable(super::NEEDS_PKEXEC.into()))?;
+                .ok_or_else(|| LaunchError::Unavailable(gezik_i18n::t("", super::NEEDS_PKEXEC).into()))?;
             let mut command = Command::new(pkexec);
             command.arg(exe).args(&args);
             command
@@ -339,7 +343,7 @@ mod imp {
         }
         match started {
             Ok(()) if !info.hProcess.is_invalid() => Ok(info.hProcess),
-            Ok(()) => Err(LaunchError::Failed(super::ENDED.into())),
+            Ok(()) => Err(LaunchError::Failed(gezik_i18n::t("", super::ENDED).into())),
             Err(err) => {
                 let err = crate::fs::io_error(err);
                 Err(super::windows_launch_error(err.raw_os_error(), crate::fs::describe(&err)))
@@ -426,7 +430,7 @@ mod imp {
                             let _ = CancelIoEx(h, Some(&overlapped));
                             let _ = GetOverlappedResult(h, &overlapped, &mut n, true);
                         }
-                        return Err(LaunchError::Failed(super::ENDED.into()));
+                        return Err(LaunchError::Failed(gezik_i18n::t("", super::ENDED).into()));
                     }
                 }
                 Err(err) => return Err(LaunchError::Failed(err.message())),
@@ -442,7 +446,7 @@ mod imp {
                 let _ = DisconnectNamedPipe(h);
             }
         }
-        Err(LaunchError::Failed(super::ENDED.into()))
+        Err(LaunchError::Failed(gezik_i18n::t("", super::ENDED).into()))
     }
 
     struct PipeReader<'a> {

@@ -119,7 +119,11 @@ pub struct Out {
 }
 
 fn check(status: OsStatus) -> io::Result<()> {
-    if status == 0 { Ok(()) } else { Err(io::Error::other(format!("No sound: the audio queue failed ({status})"))) }
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::other(gezik_i18n::t!("No sound: the audio queue failed ({})", status)))
+    }
 }
 
 impl Out {
@@ -169,7 +173,7 @@ impl Out {
                         .unwrap_or_else(PoisonError::into_inner);
                     buffers = next;
                     if waited.timed_out() && buffers.is_empty() {
-                        return Err(io::Error::other("No sound: the audio queue stopped"));
+                        return Err(io::Error::other(gezik_i18n::t!("No sound: the audio queue stopped").into_owned()));
                     }
                 }
             };

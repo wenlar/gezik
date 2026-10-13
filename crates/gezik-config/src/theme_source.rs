@@ -4,6 +4,7 @@
 //! A theme is data only (colors, sizes, a font's name): nothing in it is run or names a file.
 
 use crate::theme::parse_theme;
+use gezik_i18n::{t, tx};
 
 /// The most downloaded (a repository's zip).
 pub const MAX_DOWNLOAD: u64 = 5 << 20;
@@ -28,16 +29,17 @@ pub struct Fetch {
 
 /// The download for a pasted address: `github.com/o/r` (or `…/tree/<branch>[/<folder>]`) is the
 /// repository's zip, `…/blob/<branch>/<path>.toml` its raw file, any other `https://…/….toml` that
-/// file. Query and fragment are dropped. Anything else, plain http among it, is refused.
+/// file. Query and fragment are dropped. Anything else, plain http among it, is refused (why:
+/// marked with `tx!`, translated where shown).
 pub fn resolve(address: &str) -> Result<Fetch, &'static str> {
-    const WHAT: &str = "Paste a GitHub repository or an https address of a .toml file";
+    const WHAT: &str = tx!("Paste a GitHub repository or an https address of a .toml file");
     let address = address.trim();
     if address.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(WHAT);
     }
     let rest = match address.split_once("://") {
         Some((scheme, rest)) if scheme.eq_ignore_ascii_case("https") => rest,
-        Some(_) => return Err("Only https addresses are downloaded"),
+        Some(_) => return Err(tx!("Only https addresses are downloaded")),
         None => address,
     };
     let rest = rest.split(['?', '#']).next().unwrap_or_default();
@@ -124,11 +126,11 @@ pub fn candidate(entry: &str, bytes: Option<Vec<u8>>) -> Candidate {
         skipped: 0,
     };
     let Some(bytes) = bytes else {
-        found.problem = Some(format!("larger than {} KB", MAX_THEME >> 10));
+        found.problem = Some(t!("larger than {} KB", MAX_THEME >> 10));
         return found;
     };
     let Ok(text) = String::from_utf8(bytes) else {
-        found.problem = Some("not UTF-8 text".to_owned());
+        found.problem = Some(t!("not UTF-8 text").into_owned());
         return found;
     };
     found.text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned();
@@ -142,8 +144,10 @@ pub fn candidate(entry: &str, bytes: Option<Vec<u8>>) -> Candidate {
             }
             found.skipped = warnings.len();
         }
-        (Some(_), _) => found.problem = Some("not a theme: no [colors], [metrics] or base".to_owned()),
-        _ => found.problem = Some(warnings.first().map_or_else(|| "not valid TOML".to_owned(), |w| w.to_string())),
+        (Some(_), _) => found.problem = Some(t!("not a theme: no [colors], [metrics] or base").into_owned()),
+        _ => {
+            found.problem = Some(warnings.first().map_or_else(|| t!("not valid TOML").into_owned(), |w| w.to_string()))
+        }
     }
     found
 }

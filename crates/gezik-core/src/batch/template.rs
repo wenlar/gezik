@@ -1,6 +1,8 @@
 //! Name templates: text with fields in braces, `{name} {n:03}` or `{taken:%Y-%m-%d}`, and the
 //! metadata fields (spec 13 §9.2): `{artist|Unknown}`, `{track:02}`, `{duration}`.
 
+use gezik_i18n::t;
+
 use super::date::check_format;
 use crate::fields::{self, FieldSet, ValueKind};
 
@@ -49,14 +51,14 @@ pub fn parse(text: &str) -> Result<Vec<Piece>, String> {
                 chars.next();
                 literal.push('}');
             }
-            '}' => return Err("a } without its {".to_owned()),
+            '}' => return Err(t!("a {0} without its {1}", '}', '{')),
             '{' => {
                 let mut field = String::new();
                 loop {
                     match chars.next() {
                         Some('}') => break,
                         Some(c) => field.push(c),
-                        None => return Err(format!("{{{field} is not closed with }}")),
+                        None => return Err(t!("{{{} is not closed with }}", field)),
                     }
                 }
                 if !literal.is_empty() {
@@ -89,12 +91,12 @@ fn field_piece(field: &str) -> Result<Piece, String> {
         Ok(format)
     };
     let no_arg = |piece: Piece| match arg {
-        Some(_) => Err(format!("{{{key}}} takes no format")),
+        Some(_) => Err(t!("{{{}}} takes no format", key)),
         None => Ok(piece),
     };
     let builtin = matches!(key, "name" | "ext" | "parent" | "size" | "n" | "date" | "taken");
     if builtin && fallback.is_some() {
-        return Err(format!("{{{key}}} takes no | text"));
+        return Err(t!("{{{}}} takes no | text", key));
     }
     match key {
         "name" => no_arg(Piece::Name),
@@ -106,7 +108,7 @@ fn field_piece(field: &str) -> Result<Piece, String> {
                 None => 1,
                 Some(digits) => match digits.trim().parse::<u8>() {
                     Ok(width) if (1..=9).contains(&width) => width,
-                    _ => return Err(format!("{{n:{digits}}}: give 1 to 9 digits, like {{n:03}}")),
+                    _ => return Err(t!("{{n:{}}}: give 1 to 9 digits, like {{n:03}}", digits)),
                 },
             };
             Ok(Piece::Number { width })
@@ -114,7 +116,7 @@ fn field_piece(field: &str) -> Result<Piece, String> {
         "date" => Ok(Piece::Modified(date(arg)?)),
         "taken" => Ok(Piece::Taken(date(arg)?)),
         other => {
-            let id = fields::by_key(other).ok_or_else(|| format!("unknown field {{{other}}}"))?;
+            let id = fields::by_key(other).ok_or_else(|| t!("unknown field {{{}}}", other))?;
             let arg = arg.map(str::trim);
             let ok = match (id.def().kind, arg) {
                 (_, None) => true,
@@ -125,9 +127,10 @@ fn field_piece(field: &str) -> Result<Piece, String> {
             if !ok {
                 let arg = arg.unwrap_or_default();
                 return Err(match id.def().kind {
-                    ValueKind::Int => format!("{{{other}:{arg}}}: give 0 to 9 digits, like {{{other}:02}}"),
-                    ValueKind::Real => format!("{{{other}:{arg}}}: give 0 to 9 decimals, like {{{other}:1}}"),
-                    _ => format!("{{{other}}} takes no format"),
+                    // TRANSLATORS: {0} is a field's key in a name template ({artist}), {1} what was typed.
+                    ValueKind::Int => t!("{{{0}:{1}}}: give 0 to 9 digits, like {{{0}:02}}", other, arg),
+                    ValueKind::Real => t!("{{{0}:{1}}}: give 0 to 9 decimals, like {{{0}:1}}", other, arg),
+                    _ => t!("{{{}}} takes no format", other),
                 });
             }
             Ok(Piece::Field { id, arg: arg.map(str::to_owned), fallback })

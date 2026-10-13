@@ -2,6 +2,7 @@
 //! go into the files at all, and when tag dots show beside names.
 
 use gezik_core::meta::{Tag, TagColor, check_tag_name, same_name};
+use gezik_i18n::t;
 
 use crate::Warning;
 
@@ -66,16 +67,20 @@ pub fn parse(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> Ta
     let mut warn = |text: String| warnings.push(Warning::new(file, format!("tags.{text}")));
     if let Some(value) = table.get("list") {
         match value.as_array() {
-            None => warn(format!("list: expected a list of {{ name, color }}, got {value}")),
+            None => warn(t!("{0}: expected a list of {{ name, color }}, got {1}", "list", value)),
             Some(items) => {
                 tags.list.clear();
                 for (i, item) in items.iter().enumerate() {
                     match parse_tag(item) {
                         Ok(tag) if tags.list.iter().any(|t| same_name(&t.name, &tag.name)) => {
-                            warn(format!("list[{}]: \"{}\" is already in the list; left out", i + 1, tag.name));
+                            warn(t!(
+                                "{0}: \"{1}\" is already in the list; left out",
+                                format!("list[{}]", i + 1),
+                                tag.name
+                            ));
                         }
                         Ok(_) if tags.list.len() == TAGS_MAX => {
-                            warn(format!("list[{}]: at most {TAGS_MAX} tags; left out", i + 1));
+                            warn(t!("{0}: at most {1} tags; left out", format!("list[{}]", i + 1), TAGS_MAX));
                         }
                         Ok(tag) => tags.list.push(tag),
                         Err(err) => warn(format!("list[{}]: {err}", i + 1)),
@@ -87,7 +92,7 @@ pub fn parse(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> Ta
     if let Some(value) = table.get("write-to-files") {
         match value.as_bool() {
             Some(on) => tags.write_to_files = on,
-            None => warn(format!("write-to-files: expected true or false, got {value}")),
+            None => warn(t!("{0}: expected true or false, got {1}", "write-to-files", value)),
         }
     }
     if let Some(value) = table.get("dots") {
@@ -95,7 +100,7 @@ pub fn parse(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> Ta
             (Some(true), _) | (_, Some("on" | "true")) => tags.dots = Dots::On,
             (Some(false), _) | (_, Some("off" | "false")) => tags.dots = Dots::Off,
             (_, Some("auto")) => tags.dots = Dots::Auto,
-            _ => warn(format!("dots: expected \"auto\", true or false, got {value}")),
+            _ => warn(t!("{0}: expected \"auto\", true or false, got {1}", "dots", value)),
         }
     }
     tags
@@ -104,16 +109,16 @@ pub fn parse(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> Ta
 /// One `{ name = "Red", color = "red" }`; a bare `"Red"` has no colour.
 fn parse_tag(value: &toml::Value) -> Result<Tag, String> {
     if let Some(name) = value.as_str() {
-        check_tag_name(name).map_err(|err| format!("name: {err}"))?;
+        check_tag_name(name).map_err(|err| format!("name: {}", t("", err)))?;
         return Ok(Tag::new(name, TagColor::None));
     }
-    let table = value.as_table().ok_or_else(|| format!("expected {{ name, color }}, got {value}"))?;
+    let table = value.as_table().ok_or_else(|| t!("expected {{ name, color }}, got {}", value))?;
     if let Some(key) = table.keys().find(|key| !matches!(key.as_str(), "name" | "color")) {
-        return Err(format!("unknown key \"{key}\""));
+        return Err(t!("unknown key \"{}\"", key));
     }
-    let name = table.get("name").ok_or("name is missing")?;
-    let name = name.as_str().ok_or_else(|| format!("name: expected text, got {name}"))?;
-    check_tag_name(name).map_err(|err| format!("name: {err}"))?;
+    let name = table.get("name").ok_or_else(|| t!("{} is missing", "name"))?;
+    let name = name.as_str().ok_or_else(|| t!("{0}: expected text, got {1}", "name", name))?;
+    check_tag_name(name).map_err(|err| format!("name: {}", t("", err)))?;
     let color = match table.get("color") {
         None => TagColor::None,
         Some(value) => value
@@ -121,7 +126,7 @@ fn parse_tag(value: &toml::Value) -> Result<Tag, String> {
             .and_then(|text| COLORS.iter().find(|(n, _)| text.eq_ignore_ascii_case(n)))
             .map(|(_, color)| *color)
             .ok_or_else(|| {
-                format!("color: expected red, orange, yellow, green, blue, purple, gray or none, got {value}")
+                t!("{0}: expected red, orange, yellow, green, blue, purple, gray or none, got {1}", "color", value)
             })?,
     };
     Ok(Tag::new(name, color))

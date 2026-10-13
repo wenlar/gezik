@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 /// Desktop files bigger than this are not read (a real one is a few KB).
 pub const MAX_ENTRY_BYTES: u64 = 256 * 1024;
-pub const BAD_EXEC: &str = "The app's command line cannot be used";
+/// Marked with `tx!`, translated where shown.
+pub const BAD_EXEC: &str = gezik_i18n::tx!("The app's command line cannot be used");
 
 /// The keys of an application's `[Desktop Entry]` that Open With needs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -318,7 +319,7 @@ pub fn expand(entry: &DesktopEntry, desktop: &Path, files: &[PathBuf]) -> Result
 pub fn launch(desktop: &Path, files: &[PathBuf]) -> Result<(), String> {
     let entry = crate::linux::mime::read_entry(desktop)
         .filter(|e| !e.hidden && !e.terminal)
-        .ok_or_else(|| "The app's desktop file cannot be read".to_owned())?;
+        .ok_or_else(|| gezik_i18n::t!("The app's desktop file cannot be read").into_owned())?;
     let dir = files
         .first()
         .and_then(|f| f.parent())
@@ -326,12 +327,12 @@ pub fn launch(desktop: &Path, files: &[PathBuf]) -> Result<(), String> {
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("/"));
     let path_var = std::env::var("PATH").ok();
-    for argv in expand(&entry, desktop, files)? {
+    for argv in expand(&entry, desktop, files).map_err(|why| gezik_i18n::t("", why).into_owned())? {
         let Some((program, args)) = argv.split_first() else { continue };
         let program = program
             .to_str()
             .and_then(|p| program_path(p, path_var.as_deref(), &|p| p.is_file()))
-            .ok_or_else(|| "The app's program was not found".to_owned())?;
+            .ok_or_else(|| gezik_i18n::t!("The app's program was not found").into_owned())?;
         let launch = crate::terminal::Launch {
             program: program.into_os_string(),
             args: args.to_vec(),

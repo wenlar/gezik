@@ -17,17 +17,18 @@ pub fn parse_size(text: &str) -> Result<u64, String> {
         "b" => 1.0,
         "k" | "kb" => 1_000.0,
         "g" | "gb" => 1_000_000_000.0,
-        _ => return Err("Type a size like 100 MB, 4.7 GB or 500 KB".to_owned()),
+        _ => return Err(gezik_i18n::t!("Type a size like 100 MB, 4.7 GB or 500 KB").into_owned()),
     };
     // `4,095`: a thousands comma; `1,5`: a decimal one.
     let number = match number.split_once(',') {
         Some((_, after)) if after.len() == 3 && !after.contains(['.', ',']) => number.replace(',', ""),
         _ => number.replace(',', "."),
     };
-    let value: f64 = number.parse().map_err(|_| "Type a size like 100 MB, 4.7 GB or 500 KB".to_owned())?;
+    let value: f64 =
+        number.parse().map_err(|_| gezik_i18n::t!("Type a size like 100 MB, 4.7 GB or 500 KB").into_owned())?;
     let bytes = (value * unit).round();
     if !(1.0..=u64::MAX as f64).contains(&bytes) {
-        return Err("The parts need a size above 0".to_owned());
+        return Err(gezik_i18n::t!("The parts need a size above 0").into_owned());
     }
     Ok(bytes as u64)
 }

@@ -4,6 +4,7 @@
 use gezik_core::group::GroupBy;
 use gezik_core::view::{ColumnKey, GridSize, SortDir, SortKey, ViewMode};
 use gezik_core::view_rules::{Columns, Content, ContentClass, PlaceKind, RuleSpec, RuleView};
+use gezik_i18n::{t, tx};
 
 use crate::Warning;
 use crate::paths::TOKENS;
@@ -15,11 +16,11 @@ const KEYS: [&str; 9] = ["path", "kind", "content", "mode", "sort", "sort-dir", 
 
 pub(crate) fn parse_view_rules(value: &toml::Value, file: &str, warnings: &mut Vec<Warning>) -> Vec<RuleSpec> {
     let Some(items) = value.as_array() else {
-        warnings.push(Warning::new(file, format!("view-rules: expected [[view-rules]] tables, got {value}")));
+        warnings.push(Warning::new(file, t!("{0}: expected [[view-rules]] tables, got {1}", "view-rules", value)));
         return Vec::new();
     };
     if items.len() > MAX_RULES {
-        warnings.push(Warning::new(file, format!("view-rules: only the first {MAX_RULES} rules are used")));
+        warnings.push(Warning::new(file, t!("{0}: only the first {1} rules are used", "view-rules", MAX_RULES)));
     }
     let mut rules = Vec::new();
     for (i, item) in items.iter().enumerate().take(MAX_RULES) {
@@ -32,17 +33,19 @@ pub(crate) fn parse_view_rules(value: &toml::Value, file: &str, warnings: &mut V
 }
 
 fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
-    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table, got {}", value))?;
     if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
-        return Err(format!("unknown key \"{key}\" (known: {})", KEYS.join(", ")));
+        return Err(t!("unknown key \"{0}\" (known: {1})", key, KEYS.join(", ")));
     }
     let path = text(table, "path")?.map(path_text).transpose()?;
     let kind = text(table, "kind")?.map(kind_of).transpose()?;
     let content = text(table, "content")?.map(content_of).transpose()?;
     if path.is_none() && kind.is_none() && content.is_none() {
-        return Err("needs path, kind or content".to_owned());
+        return Err(t!("needs path, kind or content").into_owned());
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)";
+    let keys = tx!(
+        "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)"
+    );
     let set = RuleView {
         mode: text(table, "mode")?.map(mode_of).transpose()?,
         // `folder` is the search results' own sort, as in [view].
@@ -50,20 +53,20 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
             .map(|t| choice(t, "sort", keys, |t| SortKey::parse(t).filter(|k| *k != SortKey::Folder)))
             .transpose()?,
         sort_dir: text(table, "sort-dir")?
-            .map(|t| choice(t, "sort-dir", "\"asc\" or \"desc\"", SortDir::parse))
+            .map(|t| choice(t, "sort-dir", tx!("\"asc\" or \"desc\""), SortDir::parse))
             .transpose()?,
         group: text(table, "group")?
             .map(|t| {
-                choice(t, "group", "\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)", GroupBy::parse)
+                choice(t, "group", tx!("\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)"), GroupBy::parse)
             })
             .transpose()?,
         grid_size: text(table, "grid-size")?
-            .map(|t| choice(t, "grid-size", "\"small\", \"medium\" or \"large\"", GridSize::parse))
+            .map(|t| choice(t, "grid-size", tx!("\"small\", \"medium\" or \"large\""), GridSize::parse))
             .transpose()?,
         columns: table.get("columns").map(columns_of).transpose()?,
     };
     if set.is_empty() {
-        return Err("sets nothing (mode, sort, sort-dir, group, grid-size or columns)".to_owned());
+        return Err(t!("sets nothing (mode, sort, sort-dir, group, grid-size or columns)").into_owned());
     }
     Ok(RuleSpec { number, path, kind, content, set })
 }
@@ -71,12 +74,12 @@ fn parse_rule(value: &toml::Value, number: usize) -> Result<RuleSpec, String> {
 fn text<'a>(table: &'a toml::Table, key: &str) -> Result<Option<&'a str>, String> {
     match table.get(key) {
         None => Ok(None),
-        Some(value) => value.as_str().map(Some).ok_or_else(|| format!("{key}: expected text, got {value}")),
+        Some(value) => value.as_str().map(Some).ok_or_else(|| t!("{0}: expected text, got {1}", key, value)),
     }
 }
 
 fn choice<T>(text: &str, key: &str, options: &str, parse: impl Fn(&str) -> Option<T>) -> Result<T, String> {
-    parse(text).ok_or_else(|| format!("{key}: expected {options}, got \"{text}\""))
+    parse(text).ok_or_else(|| t!("{0}: expected {1}, got \"{2}\"", key, t("", options), text))
 }
 
 /// `~` is `{home}`; `\` is `/`; a `{token}` must be one `KnownDirs` knows.
@@ -99,33 +102,40 @@ fn path_text(text: &str) -> Result<String, String> {
     };
     // Only a leading token is a folder; later on it would be matched as a name.
     if let Some((token, _)) = rest.split_once('{').and_then(|(_, after)| after.split_once('}')) {
-        return Err(format!("path: {{{token}}} only works at the start"));
+        return Err(t!("{0}: {{{1}}} only works at the start", "path", token));
     }
     Ok(text)
 }
 
 fn kind_of(text: &str) -> Result<PlaceKind, String> {
     if text == "archive-root" {
-        return Err("kind: \"archive-root\" is not supported yet (Gezik does not open archives as folders)".to_owned());
+        return Err(t!(
+            "{0}: \"{1}\" is not supported yet (Gezik does not open archives as folders)",
+            "kind",
+            "archive-root"
+        ));
     }
-    choice(text, "kind", "drives, trash, search, flat, network, removable or cloud", PlaceKind::parse)
+    choice(text, "kind", tx!("drives, trash, search, flat, network, removable or cloud"), PlaceKind::parse)
 }
 
 fn content_of(text: &str) -> Result<Content, String> {
     let classes: Vec<&str> = ContentClass::ALL.iter().map(|c| c.as_str()).collect();
-    Content::parse(text)
-        .ok_or_else(|| format!("content: expected \"<kind> >= <n>%\" (kinds: {}), got \"{text}\"", classes.join(", ")))
+    Content::parse(text).ok_or_else(|| {
+        t!("{0}: expected \"<kind> >= <n>%\" (kinds: {1}), got \"{2}\"", "content", classes.join(", "), text)
+    })
 }
 
 fn mode_of(text: &str) -> Result<ViewMode, String> {
-    choice(text, "mode", "\"list\", \"grid\" or \"columns\"", ViewMode::parse)
+    choice(text, "mode", tx!("\"list\", \"grid\" or \"columns\""), ViewMode::parse)
 }
 
 /// `columns = ["modified", "size"]`: which columns show; `name` always does.
 fn columns_of(value: &toml::Value) -> Result<Columns, String> {
     let bad = || {
-        format!(
-            "columns: expected a list of modified, created, type, size, folder, match, tags, rating, comment or properties (artist, duration…), got {value}"
+        t!(
+            "{0}: expected a list of modified, created, type, size, folder, match, tags, rating, comment or properties (artist, duration…), got {1}",
+            "columns",
+            value
         )
     };
     let items = value.as_array().ok_or_else(bad)?;

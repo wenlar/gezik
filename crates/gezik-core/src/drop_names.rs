@@ -4,10 +4,10 @@
 
 use std::path::PathBuf;
 
-pub const EMPTY: &str = "The program gave the item no name";
-pub const CONTROL: &str = "The item's name holds control characters";
-pub const ABSOLUTE: &str = "The item's name is a full path";
-pub const PARTS: &str = "The item's name has an empty, \".\" or \"..\" part";
+pub const EMPTY: &str = gezik_i18n::tx!("The program gave the item no name");
+pub const CONTROL: &str = gezik_i18n::tx!("The item's name holds control characters");
+pub const ABSOLUTE: &str = gezik_i18n::tx!("The item's name is a full path");
+pub const PARTS: &str = gezik_i18n::tx!("The item's name has an empty, \".\" or \"..\" part");
 
 /// The longest part: 255 UTF-16 units on Windows, 255 bytes elsewhere.
 const MOST: usize = 255;

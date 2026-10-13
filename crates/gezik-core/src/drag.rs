@@ -408,14 +408,15 @@ pub enum Action {
 /// The text next to the dragged items; `folder` is the archive for `AddToArchive`.
 pub fn label(action: Action, folder: &Path) -> String {
     match action {
-        Action::Transfer(Effect::Move) => format!("Move to {}", folder_name(folder)),
-        Action::Transfer(Effect::Copy) => format!("Copy to {}", folder_name(folder)),
-        Action::Transfer(Effect::Link) => format!("Create link in {}", folder_name(folder)),
-        Action::Pin => "Pin to sidebar".to_owned(),
-        Action::AddToArchive => format!("Add to {}", folder_name(folder)),
-        Action::AddToStack => "Add to drop stack".to_owned(),
+        Action::Transfer(Effect::Move) => gezik_i18n::t!("Move to {}", folder_name(folder)),
+        Action::Transfer(Effect::Copy) => gezik_i18n::t!("Copy to {}", folder_name(folder)),
+        Action::Transfer(Effect::Link) => gezik_i18n::t!("Create link in {}", folder_name(folder)),
+        Action::Pin => gezik_i18n::t!("Pin to sidebar").into_owned(),
+        // TRANSLATORS: beside files dragged onto an archive; {} is the archive's name.
+        Action::AddToArchive => gezik_i18n::t!("Add to {}", folder_name(folder)),
+        Action::AddToStack => gezik_i18n::t!("Add to drop stack").into_owned(),
         // The app says which tag and how many (`folder` is no folder here).
-        Action::Tag => format!("Tag with {}", folder.display()),
+        Action::Tag => gezik_i18n::t!("Tag with {}", folder.display()),
     }
 }
 

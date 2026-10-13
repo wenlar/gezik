@@ -38,8 +38,8 @@ pub fn check_format(format: &str) -> Result<(), String> {
         }
         match chars.next() {
             Some(letter) if LETTERS.contains(letter) => {}
-            Some(letter) => return Err(format!("unknown date part %{letter}")),
-            None => return Err("a date format cannot end with %".to_owned()),
+            Some(letter) => return Err(gezik_i18n::t!("unknown date part %{}", letter)),
+            None => return Err(gezik_i18n::t!("a date format cannot end with %").into_owned()),
         }
     }
     Ok(())

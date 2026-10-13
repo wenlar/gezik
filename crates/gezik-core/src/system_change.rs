@@ -3,6 +3,7 @@
 //! what Gezik wrote. Pure: the journal file is gezik-config's `system_journal`; reading and
 //! writing the system is behind [`Access`].
 
+use gezik_i18n::{t, tn};
 use std::io;
 
 /// What a change touched.
@@ -242,37 +243,40 @@ fn shown(value: &Value) -> String {
         format!("\"{out}\"")
     };
     match value {
-        Value::Absent => "(none)".into(),
-        Value::Present => "(there)".into(),
+        Value::Absent => t!("(none)").into_owned(),
+        Value::Present => t!("(there)").into_owned(),
         Value::Reg { ty, data } => format!("{} {}", ty.name(), clip(data)),
-        Value::Text(text) => format!("a file of {} lines", text.lines().count()),
-        Value::Link(target) => format!("a link to {}", clip(target)),
-        Value::Other => "(something else)".into(),
+        Value::Text(text) => {
+            let lines = text.lines().count();
+            tn!("a file of {n} line" | "a file of {n} lines", lines)
+        }
+        Value::Link(target) => t!("a link to {}", clip(target)),
+        Value::Other => t!("(something else)").into_owned(),
     }
 }
 
 /// A journal line for Show (spec 3.2: key, value, before, after).
 pub fn describe(change: &Change) -> String {
-    let unfinished = if change.done { "" } else { " (not finished)" };
-    format!(
-        "{}: {}: before {}, after {}{unfinished}",
-        change.feature,
-        what(change),
-        shown(&change.before),
-        shown(&change.after)
-    )
+    let (feature, what, before, after) = (&change.feature, what(change), shown(&change.before), shown(&change.after));
+    if change.done {
+        // TRANSLATORS: {0} is a feature's id (path, default, login), {1} a place, {2} and {3} values.
+        t!("{0}: {1}: before {2}, after {3}", feature, what, before, after)
+    } else {
+        t!("{0}: {1}: before {2}, after {3} (not finished)", feature, what, before, after)
+    }
 }
 
 /// A line of `--unregister`'s report.
 pub fn report_line(change: &Change, outcome: &Outcome) -> String {
     let what = what(change);
     match outcome {
-        Outcome::Undone => format!("undone: {what}"),
-        Outcome::WasBefore => format!("already as it was: {what}"),
-        Outcome::EntryRemoved => format!("removed Gezik's entry; the rest changed since and was kept: {what}"),
-        Outcome::LeftAsIs => format!("left as is (changed by something else since): {what}"),
-        Outcome::NotEmpty => format!("left (not empty): {what}"),
-        Outcome::Failed(why) => format!("failed: {what}: {why}"),
+        Outcome::Undone => t!("undone: {}", what),
+        Outcome::WasBefore => t!("already as it was: {}", what),
+        Outcome::EntryRemoved => t!("removed Gezik's entry; the rest changed since and was kept: {}", what),
+        Outcome::LeftAsIs => t!("left as is (changed by something else since): {}", what),
+        Outcome::NotEmpty => t!("left (not empty): {}", what),
+        // TRANSLATORS: {0} is a place, {1} why it failed.
+        Outcome::Failed(why) => t!("failed: {0}: {1}", what, why),
     }
 }
 

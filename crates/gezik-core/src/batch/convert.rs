@@ -3,6 +3,7 @@
 //! arguments for ffmpeg and its progress lines, and the user commands' placeholders.
 //! The work itself is in `gezik-batch::convert`.
 
+use gezik_i18n::{t, tx};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
@@ -295,38 +296,38 @@ const fn image(format: ImageFormat, quality: u8, resize: Resize, strip_metadata:
 pub const PRESETS: &[Preset] = &[
     Preset {
         id: "resize-photos",
-        label: "Resize photos (JPEG 1920 px)",
+        label: tx!("Resize photos (JPEG 1920 px)"),
         kind: Kind::Image,
         what: image(ImageFormat::Jpeg, 85, Resize::Longest(1920), false),
     },
     Preset {
         id: "to-jpeg",
-        label: "Convert to JPEG",
+        label: tx!("Convert to JPEG"),
         kind: Kind::Image,
         what: image(ImageFormat::Jpeg, 85, Resize::None, false),
     },
     Preset {
         id: "to-png",
-        label: "Convert to PNG",
+        label: tx!("Convert to PNG"),
         kind: Kind::Image,
         what: image(ImageFormat::Png, 85, Resize::None, false),
     },
     Preset {
         id: "to-webp",
-        label: "Convert to WebP",
+        label: tx!("Convert to WebP"),
         kind: Kind::Image,
         what: image(ImageFormat::WebpLossless, 85, Resize::None, false),
     },
     Preset {
         id: "to-avif",
-        label: "Convert to AVIF",
+        label: tx!("Convert to AVIF"),
         kind: Kind::Image,
         // crf 30, what the library notes measured.
         what: image(ImageFormat::Avif, 60, Resize::None, false),
     },
     Preset {
         id: REMOVE_LOCATION,
-        label: "Remove location data",
+        label: tx!("Remove location data"),
         kind: Kind::Image,
         what: PresetWhat::Image(ImageOptions {
             format: ImageFormat::Jpeg,
@@ -340,34 +341,39 @@ pub const PRESETS: &[Preset] = &[
     },
     Preset {
         id: "to-utf8",
-        label: "Convert to UTF-8",
+        label: tx!("Convert to UTF-8"),
         kind: Kind::Text,
         what: PresetWhat::Text(TextPreset { to: Some("UTF-8"), eol: Eol::Keep }),
     },
     Preset {
         id: "eol-crlf",
-        label: "Windows line endings (CRLF)",
+        label: tx!("Windows line endings (CRLF)"),
         kind: Kind::Text,
         what: PresetWhat::Text(TextPreset { to: None, eol: Eol::Crlf }),
     },
     Preset {
         id: "eol-lf",
-        label: "Unix line endings (LF)",
+        label: tx!("Unix line endings (LF)"),
         kind: Kind::Text,
         what: PresetWhat::Text(TextPreset { to: None, eol: Eol::Lf }),
     },
     Preset { id: "mp4", label: "MP4 (H.264 + AAC)", kind: Kind::Media, what: PresetWhat::Media(MediaPreset::Mp4) },
     Preset {
         id: "smaller-video",
-        label: "Smaller video",
+        label: tx!("Smaller video"),
         kind: Kind::Media,
         what: PresetWhat::Media(MediaPreset::Smaller),
     },
     Preset { id: "mp3", label: "MP3", kind: Kind::Media, what: PresetWhat::Media(MediaPreset::Mp3) },
     Preset { id: "m4a", label: "M4A (AAC)", kind: Kind::Media, what: PresetWhat::Media(MediaPreset::M4a) },
     Preset { id: "wav", label: "WAV", kind: Kind::Media, what: PresetWhat::Media(MediaPreset::Wav) },
-    Preset { id: "remux-mp4", label: "Remux to MP4", kind: Kind::Media, what: PresetWhat::Media(MediaPreset::Remux) },
-    Preset { id: "gif", label: "GIF from video", kind: Kind::Media, what: PresetWhat::Media(MediaPreset::Gif) },
+    Preset {
+        id: "remux-mp4",
+        label: tx!("Remux to MP4"),
+        kind: Kind::Media,
+        what: PresetWhat::Media(MediaPreset::Remux),
+    },
+    Preset { id: "gif", label: tx!("GIF from video"), kind: Kind::Media, what: PresetWhat::Media(MediaPreset::Gif) },
 ];
 
 /// The built-in preset with this id.
@@ -635,6 +641,11 @@ const PLACEHOLDERS: [&str; 7] = ["in", "out", "dir", "name", "ext", "outdir", "f
 
 pub const FILES_ALONE: &str = "{files} can't be used with {in}, {name}, {ext}, {out} or output";
 
+/// [`FILES_ALONE`] in the language in use.
+fn files_alone() -> String {
+    t!("{files} can't be used with {in}, {name}, {ext}, {out} or output").into_owned()
+}
+
 /// Splits `text` into literal pieces and placeholders; `{{` and `}}` are literal braces.
 fn pieces(text: &str) -> Result<Vec<Result<String, &str>>, String> {
     pieces_of(text, &PLACEHOLDERS)
@@ -655,12 +666,13 @@ fn pieces_of<'t>(text: &'t str, known: &[&str]) -> Result<Vec<Result<String, &'t
             literal.push('}');
             rest = after;
         } else if tail.starts_with('}') {
-            return Err(format!("a }} without its {{ in \"{text}\""));
+            // TRANSLATORS: a setting's text is wrong; {} is that text.
+            return Err(t!("a }} without its {{ in \"{}\"", text));
         } else {
-            let Some(end) = tail.find('}') else { return Err(format!("a {{ is not closed in \"{text}\"")) };
+            let Some(end) = tail.find('}') else { return Err(t!("a {{ is not closed in \"{}\"", text)) };
             let field = &tail[1..end];
             if !known.contains(&field) {
-                return Err(format!("unknown placeholder {{{field}}}"));
+                return Err(t!("unknown placeholder {{{}}}", field));
             }
             if !literal.is_empty() {
                 out.push(Ok(std::mem::take(&mut literal)));
@@ -680,11 +692,11 @@ fn pieces_of<'t>(text: &'t str, known: &[&str]) -> Result<Vec<Result<String, &'t
 /// `{dir}` the only placeholder (`{{` and `}}` are braces).
 pub fn check_dir_command(run: &[String]) -> Result<(), String> {
     if run.first().is_none_or(|program| program.trim().is_empty()) {
-        return Err("the command has no program".to_owned());
+        return Err(t!("the command has no program").into_owned());
     }
     for arg in run {
         if let Some(field) = pieces(arg)?.into_iter().find_map(|piece| piece.err().filter(|field| *field != "dir")) {
-            return Err(format!("unknown placeholder {{{field}}}"));
+            return Err(t!("unknown placeholder {{{}}}", field));
         }
     }
     Ok(())
@@ -737,48 +749,50 @@ pub fn expand_dir_command(run: &[String], dir: &Path) -> Result<Vec<OsString>, S
 /// `output`, `output` a file name (no `/` or `\`, not `.` or `..`) with only `{name}` and
 /// `{ext}`, `parallel` 1-16.
 pub fn check_command(spec: &CommandSpec) -> Result<(), String> {
+    // TRANSLATORS: the texts about [[commands]] in settings.toml keep its keys (run, output,
+    // parallel) and placeholders ({files}, {in}, {name}, {ext}, {out}) as they are.
     if spec.run.first().is_none_or(|program| program.trim().is_empty()) {
-        return Err("run has no program".to_owned());
+        return Err(t!("run has no program").into_owned());
     }
     let files = uses_files(spec);
     if spec.run.first().is_some_and(|program| pieces(program).is_ok_and(|p| p.contains(&Err("files")))) {
-        return Err("{files} can't be the program".to_owned());
+        return Err(t!("{files} can't be the program").into_owned());
     }
     for arg in &spec.run {
         let pieces = pieces(arg)?;
         if pieces.contains(&Err("files")) && pieces.len() != 1 {
-            return Err("{files} must be an argument of its own".to_owned());
+            return Err(t!("{files} must be an argument of its own").into_owned());
         }
         for piece in &pieces {
             if files && matches!(piece, Err("in" | "name" | "ext" | "out")) {
-                return Err(FILES_ALONE.to_owned());
+                return Err(files_alone());
             }
             if *piece == Err("out") && spec.output.is_none() {
-                return Err("{out} needs an output".to_owned());
+                return Err(t!("{out} needs an output").into_owned());
             }
         }
     }
     if files && spec.output.is_some() {
-        return Err(FILES_ALONE.to_owned());
+        return Err(files_alone());
     }
     if let Some(output) = &spec.output {
         for piece in pieces(output)? {
             match piece {
                 Ok(text) if text.contains(['/', '\\']) => {
-                    return Err("output must be a file name, without / or \\".to_owned());
+                    return Err(t!("output must be a file name, without / or \\").into_owned());
                 }
                 Err(field) if field != "name" && field != "ext" => {
-                    return Err(format!("output can only use {{name}} and {{ext}}, not {{{field}}}"));
+                    return Err(t!("output can only use {name} and {ext}, not {{{}}}", field));
                 }
                 _ => {}
             }
         }
         if matches!(output.trim(), "" | "." | "..") {
-            return Err(format!("output \"{output}\" is not a file name"));
+            return Err(t!("output \"{}\" is not a file name", output));
         }
     }
     if !(1..=16).contains(&spec.parallel) {
-        return Err(format!("parallel must be 1-16, not {}", spec.parallel));
+        return Err(t!("parallel must be 1-16, not {}", spec.parallel));
     }
     Ok(())
 }
@@ -797,7 +811,7 @@ pub fn expand_command(
 ) -> Result<Vec<OsString>, String> {
     debug_assert!(input.is_absolute(), "{} is not absolute", input.display());
     if spec.run.is_empty() {
-        return Err("run has no program".to_owned());
+        return Err(t!("run has no program").into_owned());
     }
     let dir = input.parent().unwrap_or(Path::new(""));
     let outdir = out.and_then(Path::parent).unwrap_or(dir);
@@ -809,12 +823,12 @@ pub fn expand_command(
                 match piece {
                     Ok(text) => expanded.push(text),
                     Err("in") => expanded.push(input),
-                    Err("out") => expanded.push(out.ok_or("{out} needs an output")?),
+                    Err("out") => expanded.push(out.ok_or_else(|| t!("{out} needs an output").into_owned())?),
                     Err("dir") => expanded.push(dir),
                     Err("name") => expanded.push(name_of(input, is_dir)),
                     Err("ext") => expanded.push(ext_of(input, is_dir)),
                     Err("outdir") => expanded.push(outdir),
-                    Err("files") => return Err("{files} runs once on all the items".to_owned()),
+                    Err("files") => return Err(t!("{files} runs once on all the items").into_owned()),
                     Err(field) => unreachable!("pieces lets through only known placeholders, not {field}"),
                 }
             }
@@ -843,12 +857,12 @@ pub fn expand_output_name(template: &str, input: &Path, is_dir: bool) -> Result<
             Ok(text) => name.push(text),
             Err("name") => name.push(name_of(input, is_dir)),
             Err("ext") => name.push(ext_of(input, is_dir)),
-            Err(field) => return Err(format!("output can only use {{name}} and {{ext}}, not {{{field}}}")),
+            Err(field) => return Err(t!("output can only use {name} and {ext}, not {{{}}}", field)),
         }
     }
     let text = name.to_string_lossy();
     if matches!(text.trim(), "" | "." | "..") || text.contains(['/', '\\']) {
-        return Err(format!("output \"{text}\" is not a file name"));
+        return Err(t!("output \"{}\" is not a file name", text));
     }
     Ok(name)
 }
@@ -863,10 +877,10 @@ pub fn uses_files(spec: &CommandSpec) -> bool {
 /// `{outdir}` are `dir`.
 pub fn expand_files_command(spec: &CommandSpec, dir: &Path, files: &[PathBuf]) -> Result<Vec<OsString>, String> {
     if spec.run.is_empty() {
-        return Err("run has no program".to_owned());
+        return Err(t!("run has no program").into_owned());
     }
     if files.is_empty() {
-        return Err("no items to run on".to_owned());
+        return Err(t!("no items to run on").into_owned());
     }
     let mut out = Vec::with_capacity(spec.run.len() + files.len());
     for arg in &spec.run {
@@ -880,7 +894,7 @@ pub fn expand_files_command(spec: &CommandSpec, dir: &Path, files: &[PathBuf]) -
             match piece {
                 Ok(text) => expanded.push(text),
                 Err("dir" | "outdir") => expanded.push(dir),
-                Err(field) => return Err(format!("{{{field}}} can't be used with {{files}}")),
+                Err(field) => return Err(t!("{{{}}} can't be used with {files}", field)),
             }
         }
         out.push(expanded);
@@ -908,7 +922,7 @@ pub fn command_line_len(args: &[OsString], windows: bool) -> usize {
 
 /// The error of a `{files}` run whose items do not fit one command line (spec 7).
 pub fn too_many_text(name: &str) -> String {
-    format!("Too many items for one run of {name}")
+    t!("Too many items for one run of {}", name)
 }
 
 /// Whether `spec` runs on an item named `name`: folders when `folders`, files when `types`

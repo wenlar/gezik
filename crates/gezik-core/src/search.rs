@@ -172,7 +172,8 @@ impl DateRange {
     /// `today`, `7d`, `year`, `2026-01-01..2026-06-30`; `""` and `any`: any time.
     pub fn parse(text: &str) -> Result<DateRange, String> {
         let text = text.trim();
-        let bad = || format!("expected \"today\", \"7d\", \"year\" or \"2026-01-01..2026-06-30\", got \"{text}\"");
+        let bad =
+            || gezik_i18n::t!("expected \"today\", \"7d\", \"year\" or \"2026-01-01..2026-06-30\", got \"{}\"", text);
         match text {
             "" | "any" => return Ok(DateRange::Any),
             "today" => return Ok(DateRange::Today),
@@ -204,10 +205,10 @@ impl DateRange {
     /// Its line in the Filters menu.
     pub fn label(&self) -> String {
         match self {
-            DateRange::Any => "Any time".to_owned(),
-            DateRange::Today => "Today".to_owned(),
-            DateRange::LastDays(n) => format!("Last {n} days"),
-            DateRange::ThisYear => "This year".to_owned(),
+            DateRange::Any => gezik_i18n::t!("Any time").into_owned(),
+            DateRange::Today => gezik_i18n::t!("Today").into_owned(),
+            DateRange::LastDays(n) => gezik_i18n::tn!("Last {n} day" | "Last {n} days", *n),
+            DateRange::ThisYear => gezik_i18n::t!("This year").into_owned(),
             DateRange::Between(a, b) => format!("{} – {}", a.text(), b.text()),
         }
     }
@@ -447,13 +448,13 @@ impl SearchSpec {
             return self.crumb();
         }
         if !self.content.is_empty() {
-            format!("Search: \"{}\"", self.content)
+            gezik_i18n::t!("Search: \"{}\"", self.content)
         } else if self.pattern.trim().is_empty() && !self.tags.is_empty() {
-            format!("Tag: {}", self.tags.join(", "))
+            gezik_i18n::t!("Tag: {}", self.tags.join(", "))
         } else if self.pattern.trim().is_empty() {
-            "Search".to_owned()
+            gezik_i18n::t!("Search").into_owned()
         } else {
-            format!("Search: {}", self.pattern.trim())
+            gezik_i18n::t!("Search: {}", self.pattern.trim())
         }
     }
 
@@ -461,16 +462,16 @@ impl SearchSpec {
     pub fn crumb(&self) -> String {
         if self.duplicates {
             return match self.pattern.trim() {
-                "" => "Duplicates".to_owned(),
-                pattern => format!("Duplicates: {pattern}"),
+                "" => gezik_i18n::t!("Duplicates").into_owned(),
+                pattern => gezik_i18n::t!("Duplicates: {}", pattern),
             };
         }
         if !self.content.is_empty() {
-            format!("Search \"{}\"", self.content)
+            gezik_i18n::t!("Search \"{}\"", self.content)
         } else if self.pattern.trim().is_empty() {
-            "Search".to_owned()
+            gezik_i18n::t!("Search").into_owned()
         } else {
-            format!("Search \"{}\"", self.pattern.trim())
+            gezik_i18n::t!("Search \"{}\"", self.pattern.trim())
         }
     }
 }
@@ -478,7 +479,7 @@ impl SearchSpec {
 /// `500 MB`, `1.5 GB`, `10 kB`: B, KB, MB, GB, TB are steps of 1024 (any case), `kB` of 1000;
 /// no unit is bytes. Independent of `[view] size-format`.
 pub fn parse_size(text: &str) -> Result<u64, String> {
-    let bad = || format!("expected a size like \"500 MB\", got \"{}\"", text.trim());
+    let bad = || gezik_i18n::t!("expected a size like \"500 MB\", got \"{}\"", text.trim());
     let trimmed = text.trim();
     let split = trimmed.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(trimmed.len());
     let (number, unit) = (&trimmed[..split], trimmed[split..].trim());

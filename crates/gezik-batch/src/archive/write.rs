@@ -199,7 +199,7 @@ fn add(path: &Path, parent: &Path, skip_ours: bool, out: &mut Vec<Input>, failed
     }
     let name = name_in(path, parent);
     if name.is_empty() {
-        failed(path, io::Error::new(io::ErrorKind::InvalidInput, "Cannot compress a drive"));
+        failed(path, io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("Cannot compress a drive")));
         return;
     }
     let meta = match fs::symlink_metadata(path) {
@@ -332,7 +332,7 @@ fn stop() -> io::Error {
 }
 
 fn link_skipped() -> io::Error {
-    io::Error::new(io::ErrorKind::Unsupported, "symbolic link skipped")
+    io::Error::new(io::ErrorKind::Unsupported, gezik_i18n::t!("symbolic link skipped"))
 }
 
 /// Reads a file for an archive, telling `on_read` each piece's size; stops when it says false.
@@ -373,7 +373,8 @@ impl<R: Read> Read for Exact<R> {
         let max = buf.len().min(usize::try_from(self.left).unwrap_or(usize::MAX));
         let n = self.inner.read(&mut buf[..max])?;
         if n == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the file got shorter while it was read"));
+            let why = gezik_i18n::t!("the file got shorter while it was read");
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, why));
         }
         self.left -= n as u64;
         Ok(n)
@@ -893,7 +894,7 @@ fn compressed(
                 xz.finish()?.flush()
             }
         }
-        Codec::Zst => Err(io::Error::new(io::ErrorKind::Unsupported, "Gezik cannot write .zst")),
+        Codec::Zst => Err(io::Error::new(io::ErrorKind::Unsupported, gezik_i18n::t!("Gezik cannot write .zst"))),
     }
 }
 
@@ -961,7 +962,7 @@ fn unix_secs(time: Option<SystemTime>) -> u64 {
 
 /// One file as a `.gz` or `.xz`.
 fn write_single(inputs: &[Input], out: &Path, codec: Codec, level: Level, cx: &dyn WriteCx) -> io::Result<()> {
-    let one_file = || io::Error::new(io::ErrorKind::InvalidInput, "A .gz or .xz file holds one file");
+    let one_file = || io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("A .gz or .xz file holds one file"));
     let [input] = inputs else { return Err(one_file()) };
     let InputKind::File { size } = input.kind else { return Err(one_file()) };
     let mut file = File::open(&input.path)?;

@@ -5,6 +5,7 @@ use gezik_core::file_filter::FileFilter;
 use gezik_core::highlight::{Highlights, Hue, MAX_RULES, Rule, Style, parse_age};
 use gezik_core::meta_filter::TagTerm;
 use gezik_core::search::{KindFilter, parse_size};
+use gezik_i18n::t;
 
 use crate::Warning;
 
@@ -26,11 +27,14 @@ const KEYS: [&str; 13] = [
 
 pub(crate) fn parse_highlight_rules(value: &toml::Value, file: &str, warnings: &mut Vec<Warning>) -> Highlights {
     let Some(items) = value.as_array() else {
-        warnings.push(Warning::new(file, format!("highlight-rules: expected [[highlight-rules]] tables, got {value}")));
+        warnings.push(Warning::new(
+            file,
+            t!("{0}: expected [[highlight-rules]] tables, got {1}", "highlight-rules", value),
+        ));
         return Highlights::default();
     };
     if items.len() > MAX_RULES {
-        warnings.push(Warning::new(file, format!("highlight-rules: only the first {MAX_RULES} rules are used")));
+        warnings.push(Warning::new(file, t!("{0}: only the first {1} rules are used", "highlight-rules", MAX_RULES)));
     }
     let mut rules = Vec::new();
     for (i, item) in items.iter().enumerate().take(MAX_RULES) {
@@ -43,19 +47,19 @@ pub(crate) fn parse_highlight_rules(value: &toml::Value, file: &str, warnings: &
 }
 
 fn parse_rule(value: &toml::Value) -> Result<Rule, String> {
-    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table, got {}", value))?;
     if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
-        return Err(format!("unknown key \"{key}\" (known: {})", KEYS.join(", ")));
+        return Err(t!("unknown key \"{0}\" (known: {1})", key, KEYS.join(", ")));
     }
     let text = |key: &str| -> Result<Option<&str>, String> {
-        table.get(key).map(|v| v.as_str().ok_or_else(|| format!("{key}: expected text, got {v}"))).transpose()
+        table.get(key).map(|v| v.as_str().ok_or_else(|| t!("{0}: expected text, got {1}", key, v))).transpose()
     };
     let field = |key: &str, e: String| format!("{key}: {e}");
     let hue = |key: &str| {
         text(key)?
             .map(|t| {
                 Hue::parse(t).ok_or_else(|| {
-                    format!("{key}: expected red, orange, yellow, green, blue, purple, gray or #rrggbb, got \"{t}\"")
+                    t!("{0}: expected red, orange, yellow, green, blue, purple, gray or #rrggbb, got \"{1}\"", key, t)
                 })
             })
             .transpose()
@@ -69,14 +73,14 @@ fn parse_rule(value: &toml::Value) -> Result<Rule, String> {
         max_size: text("max-size")?.map(|t| parse_size(t).map_err(|e| field("max-size", e))).transpose()?,
         hidden: table
             .get("hidden")
-            .map(|v| v.as_bool().ok_or_else(|| format!("hidden: expected true or false, got {v}")))
+            .map(|v| v.as_bool().ok_or_else(|| t!("{0}: expected true or false, got {1}", "hidden", v)))
             .transpose()?,
         style: Style {
             color: hue("color")?,
             dark: hue("dark-color")?,
             bold: table
                 .get("bold")
-                .map(|v| v.as_bool().ok_or_else(|| format!("bold: expected true or false, got {v}")))
+                .map(|v| v.as_bool().ok_or_else(|| t!("{0}: expected true or false, got {1}", "bold", v)))
                 .transpose()?
                 .unwrap_or(false),
         },
@@ -84,7 +88,7 @@ fn parse_rule(value: &toml::Value) -> Result<Rule, String> {
     };
     if let Some(tag) = text("tag")? {
         rule.terms.push(match tag.trim() {
-            "" => return Err("tag: empty (a tag's name, \"any\" or \"none\")".to_owned()),
+            "" => return Err(t!("{}: empty (a tag's name, \"any\" or \"none\")", "tag")),
             t if t.eq_ignore_ascii_case("any") => TagTerm::Any,
             t if t.eq_ignore_ascii_case("none") => TagTerm::None,
             t => TagTerm::Named(t.into()),
@@ -94,17 +98,17 @@ fn parse_rule(value: &toml::Value) -> Result<Rule, String> {
         rule.terms.push(match v.as_integer() {
             Some(0) => TagTerm::Unrated,
             Some(n @ 1..=5) => TagTerm::MinRating(n as u8),
-            _ => return Err(format!("rating: expected 0 (not rated) to 5 (at least that many stars), got {v}")),
+            _ => return Err(t!("{0}: expected 0 (not rated) to 5 (at least that many stars), got {1}", "rating", v)),
         });
     }
     match text("comment")?.map(str::trim) {
         None => {}
-        Some("") => return Err("comment: empty (\"any\" or a text it holds)".to_owned()),
+        Some("") => return Err(t!("{}: empty (\"any\" or a text it holds)", "comment")),
         Some(t) if t.eq_ignore_ascii_case("any") => rule.commented = true,
         Some(t) => rule.terms.push(TagTerm::Comment(t.into())),
     }
     if rule.style.color.is_none() && rule.style.dark.is_none() && !rule.style.bold {
-        return Err("sets nothing (color, dark-color or bold = true)".to_owned());
+        return Err(t!("sets nothing (color, dark-color or bold = true)").into_owned());
     }
     Ok(rule)
 }
@@ -118,7 +122,11 @@ fn kind_of(text: &str) -> Result<KindFilter, String> {
         t => t,
     };
     KindFilter::parse(plural).filter(|k| *k != KindFilter::Any).ok_or_else(|| {
-        format!("kind: expected folder, file, pictures, videos, audio, documents, archives or code, got \"{text}\"")
+        t!(
+            "{0}: expected folder, file, pictures, videos, audio, documents, archives or code, got \"{1}\"",
+            "kind",
+            text
+        )
     })
 }
 

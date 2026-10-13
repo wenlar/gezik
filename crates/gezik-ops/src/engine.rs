@@ -719,8 +719,10 @@ impl Engine {
         let label = label.unwrap_or_else(|| first.kind().label(first.count()));
         let title = match origin {
             Origin::New => first.title(),
-            Origin::Undo(_) => format!("Undoing {label}"),
-            Origin::Redo(_) => format!("Redoing {label}"),
+            // TRANSLATORS: {} is what is undone, "Copy 3 items"
+            Origin::Undo(_) => gezik_i18n::t!("Undoing {}", label),
+            // TRANSLATORS: {} is what is redone, "Copy 3 items"
+            Origin::Redo(_) => gezik_i18n::t!("Redoing {}", label),
         };
         let kind = first.kind();
         let background = tasks.iter().all(|task| task.kind() == TaskKind::Delete);

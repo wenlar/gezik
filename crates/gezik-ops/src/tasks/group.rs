@@ -13,7 +13,7 @@ use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, Ta
 use crate::walk::facts_of;
 
 /// The new folder's name; a taken one becomes "New folder (2)".
-const FOLDER_NAME: &str = "New folder";
+const FOLDER_NAME: &str = gezik_i18n::tx!("New folder");
 const MAKE: u8 = 0;
 const MOVE: u8 = 1;
 
@@ -37,7 +37,7 @@ impl Task for GroupTask {
     }
 
     fn title(&self) -> String {
-        format!("Moving {} into a new folder", what(&self.items))
+        gezik_i18n::t!("Moving {} into a new folder", what(&self.items))
     }
 
     fn count(&self) -> usize {
@@ -49,7 +49,7 @@ impl Task for GroupTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
-        let folder = self.dir.join(FOLDER_NAME);
+        let folder = self.dir.join(&*gezik_i18n::t("", FOLDER_NAME));
         // Made as it is planned (a Before item), before anything goes in. A taken name gets a
         // number, and the items' targets follow it (the engine's renames). Only the folder is
         // a result: it is selected and renamed afterwards.
@@ -68,7 +68,7 @@ impl Task for GroupTask {
             return;
         }
         for item in &self.items {
-            if super::refuse_root(sink, item, "move") {
+            if super::refuse_root(sink, item, || gezik_i18n::t!("Cannot move a drive")) {
                 continue;
             }
             let meta = match std::fs::symlink_metadata(item) {

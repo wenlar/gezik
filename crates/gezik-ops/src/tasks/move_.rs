@@ -151,12 +151,13 @@ impl Task for MoveTask {
     fn title(&self) -> String {
         let sources = self.sources();
         match self.pairs.first() {
-            _ if self.back => format!("Moving {} back", what(&sources)),
+            _ if self.back => gezik_i18n::t!("Moving {} back", what(&sources)),
             Some((_, to)) => {
                 let dir = to.parent().map(|p| p.display().to_string()).unwrap_or_default();
-                format!("Moving {} to {dir}", what(&sources))
+                // TRANSLATORS: {0} is a name or "3 items", {1} a folder
+                gezik_i18n::t!("Moving {0} to {1}", what(&sources), dir)
             }
-            None => "Moving".to_owned(),
+            None => gezik_i18n::t!("Moving").into_owned(),
         }
     }
 
@@ -177,7 +178,7 @@ impl Task for MoveTask {
         }
         let mut picker = self.pick.as_ref().map(Picker::new);
         for (root, (source, target)) in self.pairs.iter().enumerate() {
-            if super::refuse_root(sink, source, "move") {
+            if super::refuse_root(sink, source, || gezik_i18n::t!("Cannot move a drive")) {
                 continue;
             }
             if source == target {
@@ -194,7 +195,8 @@ impl Task for MoveTask {
             let planned = if same_path(source, target) {
                 sink.item(PlanItem::new(Stage::Parallel, facts).source(source).target(target).top(root).tag(CASE))
             } else if facts.is_dir && is_within(target, source) {
-                sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, "Cannot move a folder into itself"));
+                let why = gezik_i18n::t!("Cannot move a folder into itself");
+                sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, why));
                 true
             } else if let Some(picker) = &mut picker {
                 let same = !self.cross && same_drive(source, target.parent().unwrap_or(target));
@@ -276,8 +278,9 @@ impl Task for MoveTask {
                     if let Err(restore) = fs::move_entry(&temp, source) {
                         return Err(io::Error::new(
                             err.kind(),
-                            format!(
-                                "{}; could not restore the name, it is at {}: {}",
+                            // TRANSLATORS: {0} and {2} are why it failed, {1} where the item is
+                            gezik_i18n::t!(
+                                "{0}; could not restore the name, it is at {1}: {2}",
                                 fs::describe(&err),
                                 temp.display(),
                                 fs::describe(&restore)
@@ -300,7 +303,7 @@ impl Task for MoveTask {
                 if let Err(err) = fs::delete(source) {
                     return Err(io::Error::new(
                         err.kind(),
-                        format!("Copied, but could not remove the original: {}", fs::describe(&err)),
+                        gezik_i18n::t!("Copied, but could not remove the original: {}", fs::describe(&err)),
                     ));
                 }
                 Ok(self.made(source, target, facts))
