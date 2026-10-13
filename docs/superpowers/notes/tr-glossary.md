@@ -117,7 +117,7 @@ Referans: Windows 11 Türkçe arayüzü (Microsoft Language Portal / Microsoft t
 | Relative / Short / ISO / System (date formats) | Göreli / Kısa / ISO / Sistem | "2 saat önce", "dün". |
 | Encoding / Line endings / Byte order mark (BOM) | Kodlama / Satır sonları / Bayt sırası işareti (BOM) | Microsoft terimleri. |
 | Hex / Octal / Text | Onaltılık / Sekizlik / Metin | "Show as Hex" → "Onaltılık göster". |
-| Wrap lines | Satırları kaydır | Not Defteri "Sözcük kaydırma"; burada satır. |
+| Wrap lines / Wrap (düğme) | Satırları kaydır / Satır kaydır | Not Defteri "Sözcük kaydırma"; burada satır. Tek başına "Kaydır" kaydırma (scroll) gibi okunur. |
 | Metadata | Meta veri | Microsoft yazımı ayrı: "meta veri". |
 | Permissions / Sharing & Permissions | İzinler / Paylaşım ve İzinler | mac aynı. |
 | Read / Write / Execute | Okuma / Yazma / Çalıştırma | İzin adları. |
@@ -149,7 +149,7 @@ Referans: Windows 11 Türkçe arayüzü (Microsoft Language Portal / Microsoft t
 | Sidebar | Kenar çubuğu | mac "Kenar Çubuğu"; Win "Gezinti bölmesi". Notlarda "kenar çubuğu". |
 | Pin to sidebar / Unpin from sidebar / Pinned | Kenar çubuğuna sabitle / Kenar çubuğundan kaldır / Sabitlenenler | Win "Hızlı erişime sabitle", "Sabitlemeyi kaldır". |
 | Places / Locations | Yerler / Konumlar | mac kenar çubuğu başlığı "Konumlar". |
-| Tree / Show in sidebar tree / Tree follow | Ağaç / Kenar çubuğu ağacında göster / Ağaç izlesin | |
+| Tree / Show in sidebar tree / Tree follow | Ağaç / Kenar çubuğu ağacında göster / Ağacı açık klasöre genişlet | |
 | Expand / Collapse (All Groups) | Genişlet / Daralt (tüm grupları) | Win: "Tüm grupları genişlet/daralt". |
 | Tab / Tabs | Sekme / Sekmeler | |
 | New tab / Close tab / Close other tabs | Yeni sekme / Sekmeyi kapat / Diğer sekmeleri kapat | |
@@ -292,7 +292,7 @@ Referans: Windows 11 Türkçe arayüzü (Microsoft Language Portal / Microsoft t
 |---|---|---|
 | Settings / Settings… | Ayarlar / Ayarlar… | Win ve mac (Ventura'dan beri) "Ayarlar". |
 | General / Appearance / Advanced | Genel / Görünüm / Gelişmiş | Appearance Win "Görünüm", mac "Görünüm". View ile aynı sözcük; bağlam ayırır. |
-| Theme / Themes / Get theme… | Tema / Temalar / Tema edin… | |
+| Theme / Themes / Get theme… | Tema / Temalar / Tema al… | |
 | Light / Dark / Auto | Açık / Koyu / Otomatik | Win "Açık/Koyu". |
 | Language / System language | Dil / Sistem dili | |
 | Machine translated / Not reviewed / {} % reviewed | Makine çevirisi / Gözden geçirilmedi / %{} gözden geçirildi | |

@@ -49,9 +49,9 @@ const ICON_TRASH: i32 = 7;
 const ICON_CLOUD: i32 = 8;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
-/// and names "Home" (when it exists; maybe translated).
+/// and names "Home" (when it exists; translated only when shown).
 fn known_icon(index: usize, name: &str) -> i32 {
-    if index == 0 && (name == "Home" || name == t!("Home")) { ICON_HOME } else { ICON_FOLDER }
+    if index == 0 && name == "Home" { ICON_HOME } else { ICON_FOLDER }
 }
 
 /// The drives' section title: Finder calls it "Locations".
@@ -1261,7 +1261,7 @@ impl Sidebar {
                     .known
                     .iter()
                     .enumerate()
-                    .map(|(i, f)| item(&f.name, SECTION_FOLDERS, i, &f.path, known_icon(i, &f.name))),
+                    .map(|(i, f)| item(&f.label(), SECTION_FOLDERS, i, &f.path, known_icon(i, &f.name))),
             );
             let visible = &inner.pins.visible;
             let lines = pin_lines(visible);

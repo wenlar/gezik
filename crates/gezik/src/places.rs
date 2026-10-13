@@ -47,7 +47,7 @@ impl Places {
             }
         };
         if let Some(folder) = self.known.iter().find(|f| f.path == *path) {
-            return folder.name.clone();
+            return folder.label().into_owned();
         }
         if let Some(drive) = self.drives.iter().find(|d| d.path == *path) {
             return drive.label.clone();
