@@ -232,7 +232,8 @@ component SettingLine inherits Rectangle {
                 wrap: word-wrap;
             }
             Rectangle {
-                width: 240px;
+                // Wider when a translated button (Set Key…, System Integration…) needs it.
+                width: max(240px, root.item.kind != 1 && button.visible ? button.min-width : 0px);
                 height: Theme.row-height + 4px;
                 // On/off: a box of its own, filled when on (Check has two `if`s and a check mark).
                 Rectangle {
@@ -270,6 +271,7 @@ component SettingLine inherits Rectangle {
                 // A list's count, a shortcut's keys.
                 Text {
                     visible: root.item.kind >= 3;
+                    x: 0;
                     width: parent.width - (button.visible ? button.width + Theme.spacing : 0px);
                     height: parent.height;
                     text: root.capturing ? @tr("Press keys…") : root.value;

@@ -50,7 +50,8 @@ component Labeled inherits HorizontalLayout {
     spacing: Theme.spacing;
     Text {
         text: root.label;
-        width: 72px;
+        // At least 72px (the column), wider for a longer translation.
+        width: max(72px, self.preferred-width);
         vertical-alignment: center;
         color: Theme.foreground-muted;
     }

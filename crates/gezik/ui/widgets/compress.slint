@@ -8,7 +8,8 @@ component Labeled inherits HorizontalLayout {
     spacing: Theme.spacing;
     Text {
         text: root.label;
-        width: 88px;
+        // At least 88px (the column), wider for a longer translation.
+        width: max(88px, self.preferred-width);
         vertical-alignment: center;
         color: Theme.foreground-muted;
     }
@@ -133,7 +134,8 @@ export component CompressLayer inherits Rectangle {
                     spacing: Theme.spacing;
                     for label[i] in [@tr("Store"), @tr("Fast"), @tr("Normal"), @tr("Best")]: TextButton {
                         text: label;
-                        min-width: 64px;
+                        // 64 px for the English four, wider for a longer translation.
+                        min-width: max(64px, self.content-width + Theme.spacing * 2);
                         checked: i == root.level;
                         clicked => { root.set-level(i); }
                     }
