@@ -698,8 +698,13 @@ mod tests {
     }
 
     /// Moves `path` (the test's own) to the real trash: its entry there and the bin's record.
+    /// Renamed first after its test folder (test and process): tests share the bin, and two
+    /// `x.txt` trashed at once could take each other's entry and record.
     fn trashed(path: &Path) -> (PathBuf, Option<PathBuf>) {
-        let entry = fs::trash(path).unwrap().expect("the temp folder has a trash");
+        let folder = path.parent().unwrap().file_name().unwrap().to_str().unwrap();
+        let unique = path.with_file_name(format!("{folder}-{}", path.file_name().unwrap().to_str().unwrap()));
+        std::fs::rename(path, &unique).unwrap();
+        let entry = fs::trash(&unique).unwrap().expect("the temp folder has a trash");
         let name = entry.file_name().unwrap().to_str().unwrap().to_owned();
         let record = if cfg!(windows) {
             Some(entry.with_file_name(format!("$I{}", &name[2..])))
