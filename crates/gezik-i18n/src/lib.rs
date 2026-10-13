@@ -157,9 +157,9 @@ mod tests {
         assert_eq!(tn!("{n} file" | "{n} files", 1), "1 file");
         assert_eq!(tn!("{n} file in {}" | "{n} files in {}", 2, "Docs"), "2 files in Docs");
         set(Some(Arc::new(Catalog::pseudo())));
-        assert_eq!(t!("Settings"), "⟦Ŝéţţıñĝš ···⟧");
-        assert_eq!(t!("menu" => "Open {}", "x"), "⟦Öpéñ x ··⟧");
-        assert_eq!(tn!("{n} file" | "{n} files", 2usize), "⟦2 fıléš ··⟧");
+        assert_eq!(t!("Settings"), "«Ŝéţţıñĝš ···»");
+        assert_eq!(t!("menu" => "Open {}", "x"), "«Öpéñ x ··»");
+        assert_eq!(tn!("{n} file" | "{n} files", 2usize), "«2 fıléš ··»");
         set(None);
         assert_eq!(t!("Settings"), "Settings");
         assert!(keys().is_sorted());

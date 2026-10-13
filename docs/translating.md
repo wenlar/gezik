@@ -47,7 +47,7 @@ as long as the English.
 ## The pseudo language
 
 `language = "pseudo"` shows every text that goes through the translations framed, accented
-and about 40 % longer: `⟦Ŝéţţıñĝš ···⟧`. A text without the frame is not translatable yet (tell
+and about 40 % longer: `«Ŝéţţıñĝš ···»`. A text without the frame is not translatable yet (tell
 us); a frame cut off on the right is clipped; two frames in one sentence mean the sentence is
 put together from pieces.
 
