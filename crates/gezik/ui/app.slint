@@ -43,6 +43,7 @@ export component AppWindow inherits Window {
     // Set from Rust: "<location> — Gezik".
     in-out property <string> title-text: "Gezik";
     title: root.title-text;
+    icon: @image-url("../icons/gezik-64.png");
     preferred-width: 900px;
     preferred-height: 600px;
     background: Theme.chrome;
@@ -1888,6 +1889,7 @@ export component QuickLookWindow inherits Window {
     in property <PreviewInfo> info;
     in property <string> mono-font;
     title: root.info.title == "" ? "Gezik" : @tr("{} — Gezik", root.info.title);
+    icon: @image-url("../icons/gezik-64.png");
     background: Theme.background;
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;

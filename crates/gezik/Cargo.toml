@@ -46,6 +46,7 @@ rar = ["gezik-batch/rar"]
 
 [build-dependencies]
 slint-build = "1.18"
+embed-resource = "3"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

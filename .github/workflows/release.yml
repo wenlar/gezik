@@ -152,8 +152,8 @@ jobs:
         run: |
           ln -s "$GITHUB_WORKSPACE" /src
           SHA="$VERSION" OUT="$GITHUB_WORKSPACE/dist" bash scripts/linux/package.sh
-      # No AppImage yet: the repo has no app icon (appimagetool requires one) and appimagetool
-      # would also need a pinned type2 runtime; see docs/releasing.md.
+      # No AppImage yet: appimagetool would need a pinned type2 runtime; see docs/releasing.md.
+      # The icon it requires is crates/gezik/icons/gezik.png.
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: linux

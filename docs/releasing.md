@@ -38,8 +38,8 @@ artifacts (Actions ▸ the run ▸ Artifacts).
 (`cargo build --release -p gezik && scripts/macos/make-app.sh`). Portable mode on macOS: put a
 `gezik-portable` file next to `Gezik.app` (not inside it).
 
-There is no AppImage yet: `appimagetool` needs an app icon, and the repo has none. When an icon
-exists, the Linux job can add one with a pinned `appimagetool` and type2 runtime (Gezik already
+There is no AppImage yet. The icon `appimagetool` needs is `crates/gezik/icons/gezik.png`; the
+Linux job can add one with a pinned `appimagetool` and type2 runtime (Gezik already
 looks for `gezik-portable` next to the `.AppImage`).
 
 ## What users see without signing

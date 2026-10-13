@@ -4,7 +4,7 @@
 # Defaults: target/release/gezik, the workspace version in Cargo.toml, target/release.
 # The Info.plist is crates/gezik/macos/Info.plist (the one build.rs embeds in the binary) plus
 # the version and, as spec 15 §10.2 asks, the languages AppKit's own menu items may use.
-# There is no app icon in the repo yet, so the bundle has none (Finder shows the generic one).
+# The icon is made from crates/gezik/icons/gezik.png (1024 px) with sips and iconutil.
 set -eu
 cd "$(dirname "$0")/../.."
 BIN=${1:-target/release/gezik}
@@ -19,7 +19,7 @@ PB=/usr/libexec/PlistBuddy
 BUNDLE_VERSION=${VERSION%%[-+]*}
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 install -m 0755 "$BIN" "$APP/Contents/MacOS/gezik"
 PLIST=$APP/Contents/Info.plist
 cp crates/gezik/macos/Info.plist "$PLIST"
@@ -37,10 +37,20 @@ $PB -c "Add :CFBundleShortVersionString string $BUNDLE_VERSION" \
     "$PLIST"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+ICONSET=$(mktemp -d)/gezik.iconset
+mkdir "$ICONSET"
+for s in 16 32 128 256 512; do
+    sips -z $s $s crates/gezik/icons/gezik.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s * 2)) $((s * 2)) crates/gezik/icons/gezik.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+done
+iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/gezik.icns"
+$PB -c "Add :CFBundleIconFile string gezik" "$PLIST"
+
 codesign --force --sign - "$APP"
 
 # Self-check: a valid plist with the version, a signature that verifies.
 plutil -lint "$PLIST" >/dev/null
+[ -s "$APP/Contents/Resources/gezik.icns" ]
 [ "$($PB -c 'Print :CFBundleShortVersionString' "$PLIST")" = "$BUNDLE_VERSION" ]
 codesign --verify --strict "$APP"
 echo "$APP ($VERSION, $(lipo -archs "$APP/Contents/MacOS/gezik"))"
