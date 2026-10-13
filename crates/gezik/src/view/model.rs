@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use gezik_core::fields::{FieldId, FieldSet, Fields};
 use gezik_core::group::GroupKey;
-use gezik_core::kind::{IconLookup, fallback_type_name, icon_lookup, own_type_name};
+use gezik_core::kind::{IconLookup, Kind, fallback_type_name, icon_lookup, own_type_name};
 use gezik_core::layout::{Line, Lines, Span};
 use gezik_core::selection::{PendingPress, Selection};
 use gezik_core::view::{IconMode, SizeFormat, ViewMode};
@@ -497,11 +497,18 @@ pub fn type_name_for(data: &ViewData, i: usize) -> String {
         return gezik_i18n::t!("Drive").into_owned();
     }
     match data.listing.entry(i) {
+        // An archive inside an archive is Gezik's to open: its own name for it, not the system's.
+        Some(e) if inside_archive(data, i, &e) => fallback_type_name(&e.name, e.is_dir),
         Some(e) => own_type_name(&e.name, e.is_dir)
             .or_else(|| data.media.type_name(&e.extension().to_lowercase(), e.is_dir, Some(i)))
             .unwrap_or_else(|| fallback_type_name(&e.name, e.is_dir)),
         None => String::new(),
     }
+}
+
+/// Whether row `i` (`e`) is an archive inside an archive: it shows Gezik's archive icon and type.
+fn inside_archive(data: &ViewData, i: usize, e: &Entry) -> bool {
+    !e.is_dir && data.listing.item_at(i).is_some() && Kind::of(&e.name, false) == Kind::Archive
 }
 
 /// In the grid with thumbnails on, a file's thumbnail once loaded (its icon until then): the
@@ -525,7 +532,7 @@ fn picture_for(data: &ViewData, i: usize) -> Option<slint::Image> {
 /// The system icon of entry `i`, if loaded (it is requested otherwise). `None` with Gezik's
 /// own icons.
 fn icon_for(data: &ViewData, i: usize) -> Option<slint::Image> {
-    if data.icons == IconMode::Gezik {
+    if data.icons == IconMode::Gezik || data.listing.entry(i).is_some_and(|e| inside_archive(data, i, &e)) {
         return None;
     }
     let px = data.icon_px;

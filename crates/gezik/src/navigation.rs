@@ -1403,7 +1403,12 @@ impl Navigator {
                 let mode = redirected(mode, &location, &target);
                 return self.load(target, mode, note);
             }
-            LoadResult::Declined => return self.show_failed(&mode, &location, String::new()),
+            LoadResult::Declined => {
+                self.show_failed(&mode, &location, String::new());
+                // Nothing changed: the status bar says what it said before ("Loading…" goes).
+                let view = self.0.borrow().view.clone();
+                return view.update_status();
+            }
             LoadResult::SevenZipNeeded(ending) => {
                 let (id, again_at) = (self.id(), location.clone());
                 let again: Rc<dyn Fn()> =

@@ -3610,6 +3610,17 @@ mod tests {
     }
 
     #[test]
+    fn an_archive_inside_an_archive_shows_as_an_archive() {
+        let view = View::new(crate::panes::next_id(), slint::Weak::default(), Media::idle(), Default::default(), None);
+        let at = VfsPath::archive("/w/a.zip".into());
+        let dir = Rc::new(VfsDir { at: at.clone(), vfs: Arc::new(Fake(at.root.clone())) });
+        let Listing::Files(_, full) = files("/x", &["n.tar.gz"]) else { unreachable!() };
+        view.0.data.borrow_mut().listing = Listing::Vfs(dir, full);
+        let data = view.0.data.borrow();
+        assert_eq!(model::type_name_for(&data, 0), gezik_core::kind::fallback_type_name("n.tar.gz", false));
+    }
+
+    #[test]
     fn an_export_of_results_has_their_folders_and_paths() {
         use gezik_core::export::Column;
         let view = View::new(crate::panes::next_id(), slint::Weak::default(), Media::idle(), Default::default(), None);

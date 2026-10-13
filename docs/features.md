@@ -119,7 +119,8 @@ rules on the left and a live preview on the right:
 - **Copy** (Ctrl+C) and paste into a folder, **Copy To…**, or dragging onto a folder in Gezik
   copies entries out, as one job with conflict questions and one Ctrl+Z. Dragging to another
   program takes the selection out first (up to 256 MB; use Copy To… for more). Copy Path
-  gives the address inside the archive.
+  gives the address inside the archive. Copy puts only the addresses on the system clipboard:
+  pasting into Explorer or Finder gives nothing (drag, or Copy To…, instead).
 - An encrypted archive asks for its password once (header-encrypted 7z and rar when it is
   opened, others when a file is first read); it is kept only while a tab shows the archive.
 - An archive inside an archive opens the same way (up to 8 deep). tar.gz and solid 7z are read

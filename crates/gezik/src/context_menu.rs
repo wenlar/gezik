@@ -1546,8 +1546,10 @@ impl Menus {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint(&trash_row_items(), Anchor::point(x, y));
         }
-        if let Some((_, is_dir)) = crate::panes::active_view().vfs_item(i) {
+        if let Some((at, is_dir)) = crate::panes::active_view().vfs_item(i) {
             let one = crate::panes::active_view().selection_count() <= 1;
+            // An archive in it opens as a folder too.
+            let is_dir = is_dir || crate::archives::browses(std::path::Path::new(&at.name()));
             *self.subject.borrow_mut() = Some(Subject::Inside);
             return self.open_slint(&inside_row_items(one && is_dir), Anchor::point(x, y));
         }
@@ -2541,8 +2543,7 @@ impl Menus {
             (OPEN, Subject::Inside) => crate::panes::active_nav().open_selected(),
             (INSIDE_NEW_TAB, Subject::Inside) => {
                 let view = crate::panes::active_view();
-                if let Some((at, true)) = view.single_selected().or_else(|| view.focus()).and_then(|i| view.vfs_item(i))
-                {
+                if let Some((at, _)) = view.single_selected().or_else(|| view.focus()).and_then(|i| view.vfs_item(i)) {
                     crate::panes::active_nav().open_tab(Location::Vfs(at), false);
                 }
             }
