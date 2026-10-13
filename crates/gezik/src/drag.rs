@@ -736,10 +736,13 @@ impl Drags {
                         // By path: a listing replaced before the timer fires must not open
                         // another entry under the same index.
                         let clicked = crate::panes::active_view().entry_path(index);
+                        let inside = crate::panes::active_view().vfs_item(index);
                         Timer::single_shot(
                             Duration::ZERO,
                             crate::windows::bind(move || {
-                                if let Some((path, is_dir)) = clicked {
+                                if let Some(item) = inside {
+                                    nav.open_inside(vec![item]);
+                                } else if let Some((path, is_dir)) = clicked {
                                     crate::open_path(&nav, path, is_dir);
                                 }
                             }),

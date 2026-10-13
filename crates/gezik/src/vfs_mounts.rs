@@ -63,15 +63,15 @@ pub fn sweep() {
 pub fn open_file(at: VfsPath) {
     let Some(vfs) = gezik_vfs::mounted(&at.root) else { return };
     let window = crate::windows::current();
-    crate::panes::active_nav().status(t!("Extracting {}…", at.name()));
+    crate::panes::active_view().note(t!("Extracting {}…", at.name()));
     std::thread::spawn(move || {
         let cx = UiCx::new(&at, Box::new(|| false));
         let result = gezik_vfs::stage_here(vfs.as_ref(), &at.inner, &cx);
         crate::windows::post(window, move || {
-            let nav = crate::panes::active_nav();
+            let view = crate::panes::active_view();
             match result.and_then(|path| open::that_detached(&path).map(|()| path)) {
-                Ok(_) => nav.status(String::new()),
-                Err(err) => nav.status(t!("Cannot open {}: {}", at.name(), gezik_platform::fs::describe(&err))),
+                Ok(_) => view.clear_note(),
+                Err(err) => view.note(t!("Cannot open {}: {}", at.name(), gezik_platform::fs::describe(&err))),
             }
         });
     });

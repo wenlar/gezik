@@ -1463,6 +1463,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         {
             p.nav.open_tab(gezik_core::nav::Location::Path(path), false);
         }
+        // A folder inside an archive.
+        if let Some((at, true)) = usize::try_from(i).ok().and_then(|i| p.view.vfs_item(i)) {
+            p.nav.open_tab(gezik_core::nav::Location::Vfs(at), false);
+        }
     });
 
     window.on_rename_accepted({
