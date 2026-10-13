@@ -19,7 +19,7 @@ use gezik_config::shortcuts::Platform;
 use gezik_config::store::{ConfigFiles, ConfigStore};
 use gezik_config::theme::{BUILTIN_THEMES, ResolvedTheme};
 use gezik_core::nav::Location;
-use gezik_i18n::{t, tx};
+use gezik_i18n::{t, tn, tx};
 use slint::winit_030::{EventResult, WinitWindowAccessor, winit};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
@@ -141,12 +141,13 @@ impl Shown {
         self.rows.len() + self.key_rows.len()
     }
 
-    /// Why settings.toml cannot be changed now: it does not read, or the sync folder is away.
+    /// Why settings.toml cannot be changed now: it does not read, or the sync folder is away
+    /// (marked with `tx!`, translated where shown).
     fn locked(&self) -> Option<&'static str> {
         if self.broken.is_some() {
-            Some("Fix settings.toml first")
+            Some(tx!("Fix settings.toml first"))
         } else if self.backup.offline {
-            Some("The settings folder is not available: read-only until it is back")
+            Some(tx!("The settings folder is not available: read-only until it is back"))
         } else {
             None
         }
@@ -169,13 +170,13 @@ impl Shown {
             return Ok(SettingsChange::Local { table, key, value: None });
         }
         if matches!(field.kind, Kind::List | Kind::Integration) {
-            return Err("Change it in settings.local.toml");
+            return Err(tx!("Change it in settings.local.toml"));
         }
         let value = match &self.values[i] {
             Some(shown) => schema::literal(field.kind, shown),
             None => self.described[i].literal.clone(),
         };
-        Ok(SettingsChange::Local { table, key, value: Some(value.ok_or("Change it in settings.local.toml")?) })
+        Ok(SettingsChange::Local { table, key, value: Some(value.ok_or(tx!("Change it in settings.local.toml"))?) })
     }
 
     /// The window row of backup row `row`, if shown.
@@ -243,19 +244,22 @@ impl Shown {
     /// that finds nothing, the unknown keys on the Advanced page.
     fn status(&self) -> (String, bool) {
         if let Some(broken) = &self.broken {
-            return (format!("{broken} — fix it in settings.toml; until then these are read-only"), true);
+            return (t!("{} — fix it in settings.toml; until then these are read-only", broken), true);
         }
         if self.backup.offline {
-            return (gezik_config::sync_folder::OFFLINE_NOTE.to_owned(), true);
+            return (t("", gezik_config::sync_folder::OFFLINE_NOTE).into_owned(), true);
         }
         if self.locked_rows() + self.theme_rows.len() + self.backup_rows.len() == 0 {
-            return ("No setting matches".to_owned(), false);
+            return (t!("No setting matches").into_owned(), false);
         }
         let advanced = Page::ALL[self.page.min(Page::ALL.len() - 1)] == Page::Advanced && self.query.trim().is_empty();
         let text = match self.unknown {
-            n if !advanced || n == 0 => "Type in the box above to search every page".to_owned(),
-            1 => "1 key Gezik does not know is in settings.toml (it stays there; see the notice)".to_owned(),
-            n => format!("{n} keys Gezik does not know are in settings.toml (they stay there; see the notice)"),
+            n if !advanced || n == 0 => t!("Type in the box above to search every page").into_owned(),
+            n => tn!(
+                "{n} key Gezik does not know is in settings.toml (it stays there; see the notice)"
+                    | "{n} keys Gezik does not know are in settings.toml (they stay there; see the notice)",
+                n
+            ),
         };
         (text, false)
     }
@@ -264,7 +268,7 @@ impl Shown {
     fn change(&self, row: usize, input: &str) -> Result<Option<SettingsChange>, String> {
         let i = *self.rows.get(row).ok_or_else(String::new)?;
         if let Some(why) = self.locked() {
-            return Err(why.to_owned());
+            return Err(t("", why).into_owned());
         }
         let field = &FIELDS[i];
         // A language's choice says its name after the code; another choice is shown translated.
@@ -280,8 +284,8 @@ impl Shown {
             return Ok(None);
         }
         let literal = schema::literal(field.kind, input).ok_or_else(|| match field.kind {
-            Kind::Int => "Type a whole number".to_owned(),
-            _ => "Not one of the choices".to_owned(),
+            Kind::Int => t!("Type a whole number").into_owned(),
+            _ => t!("Not one of the choices").into_owned(),
         })?;
         schema::check(field, &literal)?;
         Ok(Some(value_change(field, Some(literal))))
@@ -340,7 +344,7 @@ pub fn open() {
     }
     let window = match SettingsWindow::new() {
         Ok(window) => window,
-        Err(err) => return note(format!("Cannot open Settings: {err}")),
+        Err(err) => return note(t!("Cannot open Settings: {}", err)),
     };
     if let Some(theme) = crate::theme_bridge::current() {
         crate::theme_bridge::apply_global(&window.global::<Theme>(), &theme);
@@ -380,7 +384,7 @@ pub fn open() {
     OPEN.with(|o| *o.borrow_mut() = Some(open.clone()));
     if let Err(err) = open.window.show() {
         close();
-        note(format!("Cannot open Settings: {err}"));
+        note(t!("Cannot open Settings: {}", err));
     }
 }
 
@@ -392,7 +396,7 @@ pub fn open_shortcuts() {
 /// Opens the window at its Appearance page, where Get Theme is (`install-theme`).
 pub fn open_themes() {
     if let Some(open) = open_at(Page::Appearance) {
-        say(&open, "Paste the address in Get Theme and press Enter");
+        say(&open, &t!("Paste the address in Get Theme and press Enter"));
         let get = open.shown.borrow().theme_rows.iter().position(|r| *r == themes::Row::Get);
         let before = open.shown.borrow().locked_rows();
         if let Some(get) = get {
@@ -404,8 +408,12 @@ pub fn open_themes() {
 /// Opens the window at its Sync and Backup page (`export-settings`, `import-settings`).
 pub fn open_backup(import: bool) {
     if let Some(open) = open_at(Page::SyncAndBackup) {
-        let row = if import { "Import Settings" } else { "Export Settings" };
-        say(&open, &format!("Type the zip's path in {row} and press Enter"));
+        let said = if import {
+            t!("Type the zip's path in Import Settings and press Enter")
+        } else {
+            t!("Type the zip's path in Export Settings and press Enter")
+        };
+        say(&open, &said);
         let wanted = if import { backup::Row::Import } else { backup::Row::Export };
         let at = open.shown.borrow().backup_index(wanted);
         if let Some(at) = at {
@@ -591,7 +599,8 @@ fn bind(open: &Rc<Open>) {
                 Err(why) => {
                     let field = open.shown.borrow().rows.get(row).map(|&i| &FIELDS[i]);
                     let title = field.map(|f| t(&f.context(), &f.title()).into_owned()).unwrap_or_default();
-                    say_bad(&open, &format!("{title}: {why} — not written"));
+                    // TRANSLATORS: {0} is a setting's title, {1} why its value is refused.
+                    say_bad(&open, &t!("{0}: {1} — not written", title, why));
                 }
             }
         }
@@ -604,7 +613,7 @@ fn bind(open: &Rc<Open>) {
             let Some(key) = key else { return 1 };
             let locked = open.shown.borrow().locked();
             if let Some(why) = locked {
-                say_bad(&open, why);
+                say_bad(&open, &t("", why));
                 return 1;
             }
             // As the main windows read a key (windows.rs `on_key_event`).
@@ -686,7 +695,7 @@ fn bind(open: &Rc<Open>) {
                 let key = key.unwrap_or_default();
                 match id {
                     COPY_KEY if gezik_platform::clipboard::write_text(&key).is_err() => {
-                        say(&open, "Cannot use the clipboard");
+                        say(&open, &t!("Cannot use the clipboard"));
                     }
                     EDIT_FILE => edit_file(),
                     _ => {}
@@ -698,7 +707,7 @@ fn bind(open: &Rc<Open>) {
                 let shown = open.shown.borrow();
                 let key = &shown.keys[index];
                 match id {
-                    RESET if shown.locked().is_some() => say(&open, shown.locked().unwrap_or_default()),
+                    RESET if shown.locked().is_some() => say(&open, &t("", shown.locked().unwrap_or_default())),
                     RESET => {
                         let reset = with_settings(|s| shortcuts::reset(key, s, &shown.text, Platform::current()));
                         drop(shown);
@@ -710,11 +719,11 @@ fn bind(open: &Rc<Open>) {
                             }
                             Ok(Pressed::Write(changes)) => changes.into_iter().for_each(write),
                             Ok(Pressed::Wait(why) | Pressed::Done(why)) => say(&open, &why),
-                            Err(why) => say(&open, why),
+                            Err(why) => say(&open, &t("", why)),
                         }
                     }
                     COPY_KEY if gezik_platform::clipboard::write_text(&key.path).is_err() => {
-                        say(&open, "Cannot use the clipboard");
+                        say(&open, &t!("Cannot use the clipboard"));
                     }
                     EDIT_FILE => edit_file(),
                     _ => {}
@@ -725,10 +734,10 @@ fn bind(open: &Rc<Open>) {
             let field = &FIELDS[i];
             match id {
                 RESET if matches!(field.kind, Kind::List | Kind::Integration) => {
-                    say(&open, "Change it in settings.toml or System Integration");
+                    say(&open, &t!("Change it in settings.toml or System Integration"));
                 }
                 RESET if open.shown.borrow().locked().is_some() => {
-                    say(&open, open.shown.borrow().locked().unwrap_or_default());
+                    say(&open, &t("", open.shown.borrow().locked().unwrap_or_default()));
                 }
                 RESET => write(value_change(field, open.shown.borrow().described[i].literal.clone())),
                 THIS_COMPUTER => {
@@ -736,15 +745,18 @@ fn bind(open: &Rc<Open>) {
                     match change {
                         Ok(change) => {
                             let back = matches!(&change, SettingsChange::Local { value: None, .. });
-                            say(&open, if back { "The shared value again" } else { "Only on this computer now" });
+                            say(
+                                &open,
+                                &if back { t!("The shared value again") } else { t!("Only on this computer now") },
+                            );
                             write(change);
                         }
-                        Err(why) => say_bad(&open, why),
+                        Err(why) => say_bad(&open, &t("", why)),
                     }
                 }
                 COPY_KEY => {
                     if gezik_platform::clipboard::write_text(&field.path()).is_err() {
-                        say(&open, "Cannot use the clipboard");
+                        say(&open, &t!("Cannot use the clipboard"));
                     }
                 }
                 EDIT_FILE => edit_file(),
@@ -807,7 +819,7 @@ fn note(text: String) {
 fn edit_file() {
     let Some(path) = crate::windows::config().map(|store| store.shared_dir().join("settings.toml")) else { return };
     if let Err(err) = open::that_detached(&path) {
-        let text = format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err));
+        let text = t!("Cannot open {0}: {1}", path.display(), gezik_platform::fs::describe(&err));
         match current() {
             Some(open) => say_bad(&open, &text),
             None => note(text),
@@ -863,7 +875,7 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
             let name = shown.got.found[i].name.clone();
             drop(shown);
             let Some(dir) = crate::windows::config().map(|store| store.shared_dir().join("themes")) else { return };
-            say(open, &format!("Installing {name}…"));
+            say(open, &t!("Installing {}…", name));
             // Off the UI thread; the config watcher's reload then shows it installed.
             std::thread::spawn(move || {
                 let written = std::fs::create_dir_all(&dir)
@@ -877,11 +889,18 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                             open.shown.borrow_mut().got.read(&themes);
                             open.shown.borrow_mut().pick_rows();
                             show_rows(&open, false);
-                            say(&open, &format!("Installed {name} as themes/{id}.toml: Use Now is in its row"));
+                            say(
+                                &open,
+                                &t!("Installed {0} as {1}: Use Now is in its row", name, format!("themes/{id}.toml")),
+                            );
                         }
                         Err(err) => say_bad(
                             &open,
-                            &format!("Cannot write themes/{id}.toml: {}", gezik_platform::fs::describe(&err)),
+                            &t!(
+                                "Cannot write {0}: {1}",
+                                format!("themes/{id}.toml"),
+                                gezik_platform::fs::describe(&err)
+                            ),
                         ),
                     }
                 });
@@ -901,7 +920,7 @@ fn theme_chosen(open: &Open, row: themes::Row, text: &str) {
                 themes::CHECK => fetch(open, &address),
                 themes::SOURCE_PAGE => match themes::source_page(&address) {
                     Some(url) if open::that_detached(&url).is_ok() => {}
-                    _ => say_bad(open, &format!("Cannot open {address}")),
+                    _ => say_bad(open, &t!("Cannot open {}", address)),
                 },
                 themes::DELETE => {
                     let Some(dir) = crate::windows::config().map(|s| s.shared_dir().join("themes")) else { return };
@@ -930,7 +949,7 @@ fn fetch(open: &Open, address: &str) {
         "" => None,
         address => match gezik_config::theme_source::resolve(address) {
             Ok(fetch) => Some(fetch),
-            Err(why) => return say_bad(open, why),
+            Err(why) => return say_bad(open, &t("", why)),
         },
     };
     themes::stop();
@@ -942,12 +961,12 @@ fn fetch(open: &Open, address: &str) {
     }
     show_rows(open, false);
     let Some(fetch) = fetch else { return };
-    say(open, &format!("Downloading {}…", fetch.url));
+    say(open, &t!("Downloading {}…", fetch.url));
     themes::start(
         fetch,
         |bytes| {
             if let Some(open) = current() {
-                say(&open, &format!("Downloading… {} KB", bytes >> 10));
+                say(&open, &t!("Downloading… {} KB", bytes >> 10));
             }
         },
         |result| {
@@ -958,7 +977,14 @@ fn fetch(open: &Open, address: &str) {
                     open.shown.borrow_mut().got.found = found;
                     open.shown.borrow_mut().pick_rows();
                     show_rows(&open, false);
-                    say(&open, &format!("{count} found: point at a choice in a row to preview the theme"));
+                    say(
+                        &open,
+                        &tn!(
+                            "{n} found: point at a choice in a row to preview the theme"
+                                | "{n} found: point at a choice in a row to preview the theme",
+                            count
+                        ),
+                    );
                 }
                 Err(why) => say_bad(&open, &why),
             }
@@ -1006,7 +1032,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             if groups.contains(&Group::Views) {
                 flush_views();
             }
-            let saying = format!("Exporting to {}…", out.display());
+            let saying = t!("Exporting to {}…", out.display());
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 store.flush_views();
@@ -1014,7 +1040,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             };
             return work(open, &saying, job, |open, result| match (open, result) {
                 (Some(open), Ok((n, out))) => {
-                    say(open, &format!("Exported {n} {} to {}", if n == 1 { "file" } else { "files" }, out.display()))
+                    say(open, &tn!("Exported {n} file to {}" | "Exported {n} files to {}", n, out.display()))
                 }
                 (Some(open), Err(why)) => say_bad(open, &why),
                 (None, _) => {}
@@ -1037,7 +1063,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
             if text.trim().is_empty() {
                 return;
             }
-            let saying = format!("Reading {}…", from.display());
+            let saying = t!("Reading {}…", from.display());
             // Gezik's own backups are not checked: a broken settings.toml comes back as it was.
             let check = row == Row::Import;
             let job = move |store: &ConfigStore| crate::settings_backup::preview(&Folders::of(store), &from, check);
@@ -1059,11 +1085,14 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                     focus_row(open, confirm);
                 }
                 match programs {
-                    0 => say(open, "Untick what not to import, then choose Import in the last of these rows"),
-                    1 => say_bad(open, "1 setting in it runs programs (the red row): import only files you trust"),
+                    0 => say(open, &t!("Untick what not to import, then choose Import in the last of these rows")),
                     n => say_bad(
                         open,
-                        &format!("{n} settings in it run programs (the red row): import only files you trust"),
+                        &tn!(
+                            "{n} setting in it runs programs (the red row): import only files you trust"
+                                | "{n} settings in it run programs (the red row): import only files you trust",
+                            n
+                        ),
                     ),
                 }
             });
@@ -1074,11 +1103,11 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 shown.pick_rows();
                 drop(shown);
                 show_rows(open, false);
-                return say(open, "Nothing imported");
+                return say(open, &t!("Nothing imported"));
             }
             if state.busy {
                 drop(shown);
-                return say(open, BUSY);
+                return say(open, &t("", BUSY));
             }
             let chosen = state.chosen();
             shown.pick_rows();
@@ -1093,8 +1122,8 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 store.flush_views();
                 crate::settings_backup::import(&Folders::of(store), chosen, &crate::settings_backup::stamp(), &discard)
             };
-            return work(open, "Backing up, then importing…", job, |open, result| {
-                imported(open, result, "Imported: Undo Import puts the files back");
+            return work(open, &t!("Backing up, then importing…"), job, |open, result| {
+                imported(open, result, &t!("Imported: Undo Import puts the files back"));
             });
         }
         Row::Undo => {
@@ -1109,8 +1138,8 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
                 store.flush_views();
                 crate::settings_backup::undo(&Folders::of(store), &last, &crate::settings_backup::stamp(), &discard)
             };
-            return work(open, "Undoing the import…", job, |open, result| {
-                imported(open, result, "Undone: the files are as they were before the import");
+            return work(open, &t!("Undoing the import…"), job, |open, result| {
+                imported(open, result, &t!("Undone: the files are as they were before the import"));
             });
         }
     }
@@ -1118,7 +1147,7 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
     show_rows(open, false);
 }
 
-const BUSY: &str = "Wait: Gezik is still reading or writing a zip";
+const BUSY: &str = tx!("Wait: Gezik is still reading or writing a zip");
 
 /// A sync folder row's choice (spec 14 §8): a folder to keep the settings in (Enter), Use or
 /// Replace, Open Settings Folder, Check Again, Stop, a conflicting copy's Review, a key's copy,
@@ -1138,7 +1167,7 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
             let folder = gezik_config::paths::KnownDirs::system().expand(typed);
             drop(shown);
             let cloud = crate::cloud::root_of(&folder).is_some();
-            let saying = format!("Looking at {}…", folder.display());
+            let saying = t!("Looking at {}…", folder.display());
             let job = move |store: &ConfigStore| -> Result<Option<std::path::PathBuf>, String> {
                 store.flush_settings();
                 let folders = Folders::of(store);
@@ -1157,10 +1186,10 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
                     if let Some(at) = at {
                         focus_row(open, at);
                     }
-                    say(open, "That folder has Gezik settings already: choose below whose to keep");
+                    say(open, &t!("That folder has Gezik settings already: choose below whose to keep"));
                 }
                 Ok(None) => {
-                    moved(open, "Settings are kept in the folder now; this computer's were backed up to backups/")
+                    moved(open, &t!("Settings are kept in the folder now; this computer's were backed up to backups/"))
                 }
                 Err(why) => {
                     if let Some(open) = open {
@@ -1177,15 +1206,15 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
             let start = match text {
                 backup::USE => Start::Use,
                 backup::REPLACE => Start::Replace,
-                _ => return say(open, "Nothing changed"),
+                _ => return say(open, &t!("Nothing changed")),
             };
             let cloud = crate::cloud::root_of(&folder).is_some();
             let job = move |store: &ConfigStore| {
                 store.flush_settings();
                 take_up(store, &Folders::of(store), &folder, start, cloud)
             };
-            work(open, "Backing up, then setting up the folder…", job, |open, result| match result {
-                Ok(()) => moved(open, "Settings are kept in the folder now; a backup is in backups/"),
+            work(open, &t!("Backing up, then setting up the folder…"), job, |open, result| match result {
+                Ok(()) => moved(open, &t!("Settings are kept in the folder now; a backup is in backups/")),
                 Err(why) => {
                     if let Some(open) = open {
                         say_bad(open, &why);
@@ -1198,7 +1227,7 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
             match text {
                 backup::OPEN_SYNC => open_folder_of(ConfigStore::shared_dir),
                 backup::CHECK_AGAIN => {
-                    say(open, "Looking for the folder…");
+                    say(open, &t!("Looking for the folder…"));
                     std::thread::spawn(|| {
                         let _ = crate::watcher::follow();
                         crate::watcher::reload();
@@ -1215,10 +1244,12 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
                     };
                     work(
                         open,
-                        "Backing up, then copying the settings back…",
+                        &t!("Backing up, then copying the settings back…"),
                         job,
                         |open, result: Result<(), String>| match result {
-                            Ok(()) => moved(open, "Settings are kept on this computer again; the folder is as it was"),
+                            Ok(()) => {
+                                moved(open, &t!("Settings are kept on this computer again; the folder is as it was"))
+                            }
                             Err(why) => {
                                 if let Some(open) = open {
                                     say_bad(open, &why);
@@ -1237,7 +1268,7 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
                 return;
             }
             let job = move |store: &ConfigStore| review(store, copy);
-            work(open, "Reading the two copies…", job, |open, result| {
+            work(open, &t!("Reading the two copies…"), job, |open, result| {
                 let Some(open) = open else { return };
                 match result {
                     Ok(review) => {
@@ -1250,9 +1281,12 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
                             focus_row(open, at);
                         }
                         if same {
-                            say(open, "The copies are the same: Merge only moves the conflicting copy to the trash");
+                            say(
+                                open,
+                                &t!("The copies are the same: Merge only moves the conflicting copy to the trash"),
+                            );
                         } else {
-                            say(open, "Choose This copy or Other copy for each key, then Merge");
+                            say(open, &t!("Choose This copy or Other copy for each key, then Merge"));
                         }
                     }
                     Err(why) => say_bad(open, &why),
@@ -1273,10 +1307,10 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
             drop(shown);
             show_rows(open, false);
             if text != backup::MERGE {
-                return say(open, "Nothing merged: both copies are as they were");
+                return say(open, &t!("Nothing merged: both copies are as they were"));
             }
             let job = move |store: &ConfigStore| merge(store, &review);
-            work(open, "Merging…", job, |open, result| {
+            work(open, &t!("Merging…"), job, |open, result| {
                 let Some(open) = open else { return };
                 match result {
                     Ok(said) => say(open, &said),
@@ -1330,12 +1364,12 @@ fn review(store: &ConfigStore, copy: String) -> Result<backup::Review, String> {
         None => (dir.clone(), copy.clone()),
     };
     let machines = gezik_config::sync_folder::machines(&dir);
-    let found = gezik_config::sync_folder::conflict_of(&name, &machines).ok_or("Not a conflicting copy")?;
+    let found = gezik_config::sync_folder::conflict_of(&name, &machines).ok_or_else(|| t!("Not a conflicting copy"))?;
     let (original, numbered) = (found.original, found.numbered);
     let read = |name: &str| {
         std::fs::read_to_string(folder.join(name))
             .map(|text| text.trim_start_matches('\u{feff}').to_owned())
-            .map_err(|err| format!("Cannot read {name}: {}", gezik_platform::fs::describe(&err)))
+            .map_err(|err| t!("Cannot read {0}: {1}", name, gezik_platform::fs::describe(&err)))
     };
     let (this, other) = (read(&original)?, read(&name)?);
     let differences = gezik_config::sync_folder::differences(&this, &other)?;
@@ -1355,7 +1389,7 @@ fn merge(store: &ConfigStore, review: &backup::Review) -> Result<String, String>
         for difference in &taken {
             let change = SettingsChange::FromCopy { path: difference.path.clone(), other: review.other.clone() };
             match store.save_settings(&change) {
-                Err(w) if !gezik_config::settings_writer::kept(&w) => return Err(format!("Not merged: {w}")),
+                Err(w) if !gezik_config::settings_writer::kept(&w) => return Err(t!("Not merged: {}", w)),
                 _ => {}
             }
         }
@@ -1365,24 +1399,32 @@ fn merge(store: &ConfigStore, review: &backup::Review) -> Result<String, String>
                 gezik_config::sync_folder::with_item_from(&text, &review.other, &d.path)
             })
         };
-        gezik_config::settings_writer::rewrite(&path_of(&review.original), "", &edit, &|| {})
-            .map_err(|failed| format!("Not merged: {} could not be written ({failed:?})", review.original))?;
+        gezik_config::settings_writer::rewrite(&path_of(&review.original), "", &edit, &|| {}).map_err(|failed| {
+            t!("Not merged: {0} could not be written ({1})", review.original, format!("{failed:?}"))
+        })?;
     }
-    let keys = match taken.len() {
-        1 => "1 key".to_owned(),
-        n => format!("{n} keys"),
-    };
+    let n = taken.len();
     // A copy named only by a number (`settings (1).toml`) may be a file of the user's: it stays.
     if review.numbered {
-        return Ok(format!(
-            "Merged {keys} into {}; {} stays where it is (it may be a file of yours): move it away to stop the note",
-            review.original, review.copy
+        return Ok(tn!(
+            "Merged {n} key into {0}; {1} stays where it is (it may be a file of yours): move it away to stop the note"
+                | "Merged {n} keys into {0}; {1} stays where it is (it may be a file of yours): move it away to stop the note",
+            n,
+            review.original,
+            review.copy
         ));
     }
     match gezik_platform::fs::trash(&path_of(&review.copy)) {
-        Ok(_) => Ok(format!("Merged {keys} into {}; the conflicting copy is in the trash", review.original)),
-        Err(err) => Ok(format!(
-            "Merged {keys} into {}, but the conflicting copy could not go to the trash ({}): delete it yourself",
+        Ok(_) => Ok(tn!(
+            "Merged {n} key into {}; the conflicting copy is in the trash"
+                | "Merged {n} keys into {}; the conflicting copy is in the trash",
+            n,
+            review.original
+        )),
+        Err(err) => Ok(tn!(
+            "Merged {n} key into {0}, but the conflicting copy could not go to the trash ({1}): delete it yourself"
+                | "Merged {n} keys into {0}, but the conflicting copy could not go to the trash ({1}): delete it yourself",
+            n,
             review.original,
             gezik_platform::fs::describe(&err)
         )),
@@ -1438,7 +1480,7 @@ fn work<R: Send + 'static>(
 ) {
     let Some(store) = crate::windows::config() else { return };
     if std::mem::replace(&mut open.shown.borrow_mut().backup.busy, true) {
-        return say(open, BUSY);
+        return say(open, &t("", BUSY));
     }
     say(open, saying);
     let spawned = std::thread::Builder::new().name("settings backup".into()).spawn(move || {
@@ -1453,7 +1495,7 @@ fn work<R: Send + 'static>(
     });
     if spawned.is_err() {
         open.shown.borrow_mut().backup.busy = false;
-        say_bad(open, "Cannot start a thread");
+        say_bad(open, &t!("Cannot start a thread"));
     }
 }
 

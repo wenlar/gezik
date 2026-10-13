@@ -38,9 +38,10 @@ pub fn rows(fields: &Fields) -> Vec<PropRow> {
         }
         let Some(value) = fields.text(id) else { continue };
         let group = if id == f::TITLE { title_group } else { id.def().group };
-        let heading = if shown == Some(group) { "" } else { group.label() };
+        let heading = if shown == Some(group) { Default::default() } else { gezik_i18n::t("", group.label()) };
         shown = Some(group);
-        rows.push(PropRow { group: heading.into(), label: id.def().label.into(), value: value.into() });
+        let label = gezik_i18n::t("", id.def().label);
+        rows.push(PropRow { group: heading.as_ref().into(), label: label.as_ref().into(), value: value.into() });
     }
     rows
 }

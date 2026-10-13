@@ -14,6 +14,7 @@ use gezik_core::ops::paths::same_path;
 use gezik_core::refresh::{QUIET, RefreshPace};
 use gezik_core::view_rules::Place;
 use gezik_core::{Entry, list_dir};
+use gezik_i18n::{t, tn, tx};
 use gezik_platform::Drive;
 use gezik_platform::finder::AliasTarget;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
@@ -28,11 +29,11 @@ use crate::{AppWindow, CrumbItem, TabItem};
 const MAX_CRUMBS: usize = 4;
 
 /// The status line when a locked tab is asked to close.
-pub const LOCKED_TAB: &str = "This tab is locked";
+pub const LOCKED_TAB: &str = tx!("This tab is locked");
 
 /// The status line when "close other tabs" left `n` locked tabs open.
 pub fn locked_kept_text(n: usize) -> String {
-    if n == 1 { "1 locked tab stays open".to_owned() } else { format!("{n} locked tabs stay open") }
+    tn!("{n} locked tab stays open" | "{n} locked tabs stay open", n)
 }
 
 /// How long letting go of a drive about to be removed may take before Windows tries it.
@@ -634,7 +635,7 @@ impl Navigator {
     /// any close request).
     pub fn close_tab(&self, index: usize) {
         if self.0.borrow().tabs.is_locked(index) {
-            return self.status(LOCKED_TAB.to_owned());
+            return self.status(t("", LOCKED_TAB).into_owned());
         }
         if index != self.0.borrow().tabs.active_index() {
             self.keep_active_tab(|tabs| tabs.close(index));
@@ -1041,7 +1042,7 @@ impl Navigator {
 
     fn launch(&self, path: &Path) {
         if let Err(err) = open::that_detached(path) {
-            self.status(format!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
+            self.status(t!("Cannot open {}: {}", path.display(), gezik_platform::fs::describe(&err)));
         }
     }
 
@@ -1175,7 +1176,7 @@ impl Navigator {
             && crate::panes::is_active(id)
             && let Some(w) = window.upgrade()
         {
-            w.set_status("Loading…".into());
+            w.set_status(t!("Loading…").as_ref().into());
         }
         std::thread::spawn(move || {
             let result = list(&location, &mode);
@@ -1207,8 +1208,8 @@ impl Navigator {
         };
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
-            Location::Drives => gezik_core::nav::DRIVES_NAME.to_owned(),
-            Location::Trash => gezik_core::nav::TRASH_NAME.to_owned(),
+            Location::Drives => t("", gezik_core::nav::DRIVES_NAME).into_owned(),
+            Location::Trash => t("", gezik_core::nav::TRASH_NAME).into_owned(),
             Location::Search(spec) => spec.title(),
             Location::Flat(folder) => folder.display().to_string(),
         };
@@ -1234,7 +1235,7 @@ impl Navigator {
                 // The active tab's folder is gone: go to the nearest folder that still exists.
                 self.show_failed(&mode, &location, String::new());
                 let step = Step::Navigate(fallback.clone());
-                self.load(fallback, Mode::Move(vec![step]), Some(format!("{shown} no longer exists")));
+                self.load(fallback, Mode::Move(vec![step]), Some(t!("{} no longer exists", shown)));
                 let mut inner = self.0.borrow_mut();
                 inner.fallback = inner.pending.as_ref().map(|(ticket, _)| *ticket);
                 return;
@@ -1249,7 +1250,7 @@ impl Navigator {
             }
             LoadResult::Failed(err) => {
                 let why = gezik_platform::fs::describe(&err);
-                return self.show_failed(&mode, &location, format!("Cannot open {shown}: {why}"));
+                return self.show_failed(&mode, &location, t!("Cannot open {}: {}", shown, why));
             }
         };
         let (view, state, place, quiet) = {
@@ -1451,7 +1452,7 @@ impl Navigator {
             });
             let active = crate::panes::is_active(inner.id);
             if active {
-                window.set_title_text(format!("{} — Gezik", inner.places.title_for(&location)).into());
+                window.set_title_text(t!("{} — Gezik", inner.places.title_for(&location)).into());
                 crate::windows::titles_changed();
             }
             let active_tab = inner.tabs.active_index();

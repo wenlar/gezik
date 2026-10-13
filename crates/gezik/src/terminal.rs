@@ -8,8 +8,9 @@ use gezik_platform::terminal::TerminalError;
 
 use crate::view::View;
 
-pub const ONLY_ON_WINDOWS: &str = "Only on Windows";
-pub const NOT_FOUND: &str = "No terminal found. Set [terminal] command in settings.toml.";
+// Shown with `t`.
+pub const ONLY_ON_WINDOWS: &str = gezik_i18n::tx!("Only on Windows");
+pub const NOT_FOUND: &str = gezik_i18n::tx!("No terminal found. Set [terminal] command in settings.toml.");
 
 thread_local! {
     /// `[terminal] command` of the settings in effect.
@@ -35,11 +36,11 @@ pub fn folder_for(focused: Option<(PathBuf, bool)>, shown: Option<PathBuf>) -> O
 /// What the status bar says when the terminal did not open; nothing for a No to UAC.
 pub fn error_text(err: &TerminalError) -> Option<String> {
     match err {
-        TerminalError::NotFound => Some(NOT_FOUND.to_owned()),
-        TerminalError::OnlyOnWindows => Some(ONLY_ON_WINDOWS.to_owned()),
+        TerminalError::NotFound => Some(gezik_i18n::t("", NOT_FOUND).into_owned()),
+        TerminalError::OnlyOnWindows => Some(gezik_i18n::t("", ONLY_ON_WINDOWS).into_owned()),
         TerminalError::Cancelled => None,
         TerminalError::UnsafeFolder(_) => Some(err.to_string()),
-        TerminalError::Failed(why) => Some(format!("Cannot open the terminal: {why}")),
+        TerminalError::Failed(why) => Some(gezik_i18n::t!("Cannot open the terminal: {}", why)),
     }
 }
 
@@ -50,7 +51,7 @@ fn note(text: String) {
 /// Opens a terminal in `dir` (`admin`: as administrator, Windows only), on a thread.
 pub fn open_in(dir: PathBuf, admin: bool) {
     if admin && !cfg!(windows) {
-        return note(ONLY_ON_WINDOWS.to_owned());
+        return note(gezik_i18n::t("", ONLY_ON_WINDOWS).into_owned());
     }
     let command = COMMAND.with(|c| c.borrow().clone());
     let window_id = crate::windows::current();
@@ -61,7 +62,7 @@ pub fn open_in(dir: PathBuf, admin: bool) {
         }
     });
     if let Err(err) = started {
-        note(format!("Cannot open the terminal: {err}"));
+        note(gezik_i18n::t!("Cannot open the terminal: {}", err));
     }
 }
 

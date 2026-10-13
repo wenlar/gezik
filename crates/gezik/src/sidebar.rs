@@ -49,9 +49,9 @@ const ICON_TRASH: i32 = 7;
 const ICON_CLOUD: i32 = 8;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
-/// and names "Home" (when it exists).
+/// and names "Home" (when it exists; maybe translated).
 fn known_icon(index: usize, name: &str) -> i32 {
-    if index == 0 && name == "Home" { ICON_HOME } else { ICON_FOLDER }
+    if index == 0 && (name == "Home" || name == t!("Home")) { ICON_HOME } else { ICON_FOLDER }
 }
 
 /// The drives' section title: Finder calls it "Locations".
@@ -248,7 +248,7 @@ fn place_path(places: &Places, pins: &[Pin], section: i32, index: i32) -> Option
 /// "path not found" would say the folder above it is).
 fn read_error(err: &std::io::Error) -> String {
     if err.kind() == std::io::ErrorKind::NotFound {
-        return "It no longer exists".to_owned();
+        return t!("It no longer exists").into_owned();
     }
     gezik_platform::fs::describe(err)
 }
@@ -672,8 +672,8 @@ impl Sidebar {
         };
         let Some((entry, initial, folder)) = found else { return };
         let (this, dialogs) = (self.clone(), self.0.borrow().dialogs.clone());
-        let message = "Name in the sidebar (empty: the folder's own):";
-        dialogs.ask_text("Rename", message, initial, &["Rename", "Cancel"], move |answer| {
+        let message = t!("Name in the sidebar (empty: the folder's own):");
+        dialogs.ask_text(t!("Rename"), message, initial, &[&t!("Rename"), &t!("Cancel")], move |answer| {
             let Some(answer) = answer else { return };
             let name = alias_for(&answer, &folder);
             this.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_name(list, i, name.as_deref())));
@@ -684,10 +684,16 @@ impl Sidebar {
     pub fn ask_new_group(&self, path: &Path) {
         let Some(entry) = self.entry_of(path) else { return };
         let (this, dialogs) = (self.clone(), self.0.borrow().dialogs.clone());
-        dialogs.ask_text("New group", "Name for the group:", "", &["Create", "Cancel"], move |answer| {
-            let Some(name) = answer.filter(|name| !name.trim().is_empty()) else { return };
-            this.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_group(list, i, Some(&name))));
-        });
+        dialogs.ask_text(
+            t!("New group"),
+            t!("Name for the group:"),
+            "",
+            &[&t!("Create"), &t!("Cancel")],
+            move |answer| {
+                let Some(name) = answer.filter(|name| !name.trim().is_empty()) else { return };
+                this.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_group(list, i, Some(&name))));
+            },
+        );
     }
 
     /// Move to group ▸ a group, or No group (`None`).
@@ -705,7 +711,8 @@ impl Sidebar {
     /// Rename group…: asks for the new name; a name another group has joins the two.
     pub fn ask_group_name(&self, group: &str) {
         let (this, dialogs, old) = (self.clone(), self.0.borrow().dialogs.clone(), group.to_owned());
-        dialogs.ask_text("Rename group", "Name for the group:", group, &["Rename", "Cancel"], move |answer| {
+        let (title, message) = (t!("Rename group"), t!("Name for the group:"));
+        dialogs.ask_text(title, message, group, &[&t!("Rename"), &t!("Cancel")], move |answer| {
             if let Some(name) = answer {
                 this.edit(|list| pins::rename_group(list, &old, &name));
             }
@@ -752,7 +759,7 @@ impl Sidebar {
     /// file has.
     fn save(&self, pinned: Vec<PinEntry>) {
         let Some(store) = self.0.borrow().store.clone() else {
-            return self.say(&Warning::new("settings.toml", "no config folder; pins are not saved"));
+            return self.say(&Warning::new("settings.toml", t!("no config folder; pins are not saved")));
         };
         self.0.borrow_mut().pins_on_their_way += 1;
         self.show_pinned(pinned.clone());
@@ -903,7 +910,7 @@ impl Sidebar {
             // A failed read ends an opening on its way (no loop opening the same folder again).
             self.0.borrow_mut().pending = None;
             if changed {
-                self.say_text(format!("Cannot open {}: {why}", read.path.display()));
+                self.say_text(t!("Cannot open {}: {}", read.path.display(), why));
             }
         }
         self.continue_reveal();
@@ -1035,8 +1042,9 @@ impl Sidebar {
                 }
             }
             Some(row) => self.scroll_to_row(row),
-            None if asked => self
-                .say_text(format!("{} is not in the sidebar tree (hidden, or under no place there)", target.display())),
+            None if asked => {
+                self.say_text(t!("{} is not in the sidebar tree (hidden, or under no place there)", target.display()))
+            }
             None => {}
         }
     }
@@ -1049,11 +1057,11 @@ impl Sidebar {
         };
         let Some(window) = window else { return };
         if window.get_sidebar_position() == 2 {
-            return self.say_text("The sidebar is hidden (settings.toml [layout] sidebar)".to_owned());
+            return self.say_text(t!("The sidebar is hidden (settings.toml [layout] sidebar)").into_owned());
         }
         match location {
             Location::Path(path) => self.reveal(path, true),
-            _ => self.say_text("Only a folder can be shown in the sidebar tree".to_owned()),
+            _ => self.say_text(t!("Only a folder can be shown in the sidebar tree").into_owned()),
         }
     }
 
@@ -1318,7 +1326,7 @@ impl Sidebar {
             );
             rows.push(SidebarRow {
                 header: false,
-                label: gezik_core::nav::TRASH_NAME.into(),
+                label: gezik_i18n::t("", gezik_core::nav::TRASH_NAME).as_ref().into(),
                 section: SECTION_TRASH,
                 index: 0,
                 active: current == Location::Trash,

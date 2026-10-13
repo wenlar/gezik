@@ -13,6 +13,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use gezik_core::batch::pdf_view::{Command, Reply, fits, read_hello, read_reply};
+use gezik_i18n::tx;
 use gezik_platform::ChildProcess;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -311,13 +312,13 @@ impl PdfView {
     /// The bar's note and link for its state.
     pub fn note(&self) -> (&'static str, &'static str) {
         match &self.state {
-            State::Finding | State::Opening => ("Opening…", ""),
-            State::Password { wrong: false } => ("Password protected", "Enter Password…"),
-            State::Password { wrong: true } => ("Wrong password", "Enter Password…"),
-            State::NoPdfium(_) => ("More pages need pdfium", "Download"),
-            State::BrokenPdfium => ("pdfium could not be loaded", "Download"),
-            State::Failed => ("This PDF could not be shown", ""),
-            State::Ready if self.page_failed => ("This page could not be shown", ""),
+            State::Finding | State::Opening => (tx!("Opening…"), ""),
+            State::Password { wrong: false } => (tx!("Password protected"), tx!("Enter Password…")),
+            State::Password { wrong: true } => (tx!("Wrong password"), tx!("Enter Password…")),
+            State::NoPdfium(_) => (tx!("More pages need pdfium"), tx!("Download")),
+            State::BrokenPdfium => (tx!("pdfium could not be loaded"), tx!("Download")),
+            State::Failed => (tx!("This PDF could not be shown"), ""),
+            State::Ready if self.page_failed => (tx!("This page could not be shown"), ""),
             State::Ready => ("", ""),
         }
     }

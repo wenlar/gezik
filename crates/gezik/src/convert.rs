@@ -33,6 +33,7 @@ use gezik_core::batch::pdf::{
     PageImage, PdfOp, RENDER_DPIS, Split, is_pdf, is_pdf_picture, ops_for, pictures_pdf_name,
 };
 use gezik_core::batch::tools::Tool;
+use gezik_i18n::{t, tn, tx};
 use gezik_ops::{JobId, Report};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -132,7 +133,7 @@ const FORMATS: [(ImageFormat, &str); 6] = [
     (ImageFormat::Jpeg, "JPEG"),
     (ImageFormat::Png, "PNG"),
     (ImageFormat::WebpLossless, "WebP"),
-    (ImageFormat::WebpLossy, "WebP (lossy) ¹"),
+    (ImageFormat::WebpLossy, tx!("WebP (lossy) ¹")),
     (ImageFormat::Avif, "AVIF ¹"),
     (ImageFormat::Bmp, "BMP"),
 ];
@@ -219,9 +220,10 @@ fn program_of(spec: &CommandSpec) -> String {
 pub fn not_found_tip(program: &str, windows: bool) -> String {
     let bare = Path::new(program).extension().is_none() && !program.contains(['/', '\\']);
     if windows && bare {
-        format!("{program} not found (use the full name, e.g. {program}.cmd)")
+        // TRANSLATORS: {0} is a program's name as typed in settings.toml ("convert").
+        t!("{0} not found (use the full name, e.g. {0}.cmd)", program)
     } else {
-        format!("{program} not found")
+        t!("{} not found", program)
     }
 }
 
@@ -241,7 +243,7 @@ pub fn command_state(
     }
     // A `{files}` command does not change the folders in place: it takes them as they are.
     if spec.output.is_none() && !uses_files(spec) && taken.iter().any(|(_, is_dir)| *is_dir) {
-        return CommandState::Off("changes items in place: not for folders".to_owned());
+        return CommandState::Off(t!("changes items in place: not for folders").into_owned());
     }
     if found == Some(false) {
         return CommandState::Off(not_found_tip(&program_of(spec), windows));
@@ -266,7 +268,8 @@ pub fn shown_name(name: &str) -> String {
 fn command_title(spec: &CommandSpec, state: &CommandState) -> (String, bool) {
     let name = shown_name(&spec.name);
     match state {
-        CommandState::Off(tip) => (format!("{name} — {tip}"), false),
+        // TRANSLATORS: {0} is a command's name, {1} why it cannot run ("magick not found").
+        CommandState::Off(tip) => (t!("{0} — {1}", name, tip), false),
         _ => (name, true),
     }
 }
@@ -303,21 +306,23 @@ fn grouped<'a>(commands: &'a [CommandSpec], shown: &[usize]) -> Vec<Line<'a>> {
 pub fn not_for_text(spec: &CommandSpec) -> String {
     let endings: Vec<String> = spec.types.iter().map(|t| format!(".{}", t.to_lowercase())).collect();
     let list = match endings.as_slice() {
-        [] => return format!("{} does not run on folders", spec.name),
+        [] => return t!("{} does not run on folders", spec.name),
         [only] => only.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        // TRANSLATORS: the last two of a list of endings (".jpg, .png and .gif").
+        [rest @ .., last] => t!("{0} and {1}", rest.join(", "), last),
     };
-    let what = if spec.folders { "files and folders" } else { "files" };
-    format!("{} runs on {list} {what} only", spec.name)
+    // TRANSLATORS: {0} is a command's name, {1} a list of endings (".jpg and .png").
+    if spec.folders {
+        t!("{0} runs on {1} files and folders only", spec.name, list)
+    } else {
+        t!("{0} runs on {1} files only", spec.name, list)
+    }
 }
 
 /// The question of a command with `ask = true`.
 pub fn ask_text(name: &str, count: usize) -> String {
-    if count == 1 {
-        format!("Run {name} on 1 item?")
-    } else {
-        format!("Run {name} on {} items?", crate::preview::with_commas(count))
-    }
+    // TRANSLATORS: {0} is a command's name (from settings.toml).
+    tn!("Run {0} on {1} item?" | "Run {0} on {1} items?", count, name, crate::preview::with_commas(count))
 }
 
 /// The macOS menu bar's Commands menu: the commands with a key (spec 8.3), grouped as in
@@ -404,11 +409,11 @@ impl Choice {
 
 fn group_title(kind: Kind) -> &'static str {
     match kind {
-        Kind::Image => "Image",
-        Kind::Text => "Text",
-        Kind::Media => "Audio/Video",
-        Kind::Command => "Commands",
-        Kind::Pdf => "PDF",
+        Kind::Image => tx!("Image"),
+        Kind::Text => tx!("Text"),
+        Kind::Media => tx!("Audio/Video"),
+        Kind::Command => tx!("Commands"),
+        Kind::Pdf => tx!("PDF"),
     }
 }
 
@@ -439,14 +444,14 @@ pub fn preset_list(
             }
             for op in pdf_ops {
                 choices.push(Choice::Pdf(*op));
-                rows.push(Row::Choice(op.label().to_owned(), true));
+                rows.push(Row::Choice(t("", op.label()).into_owned(), true));
             }
             continue;
         }
         rows.push(Row::Heading(group_title(*kind)));
         for preset in PRESETS.iter().filter(|p| p.kind == *kind) {
             choices.push(Choice::Preset(preset));
-            rows.push(Row::Choice(preset.label.to_owned(), true));
+            rows.push(Row::Choice(t("", preset.label).into_owned(), true));
         }
     }
     // The commands that fit after the other choices: each choice has its menu id.
@@ -471,7 +476,7 @@ pub fn preset_menu(rows: &[Row], current: usize) -> Vec<(u32, String, bool)> {
     let mut out = Vec::new();
     for row in rows {
         match row {
-            Row::Heading(title) => out.push((HEADING, (*title).to_owned(), false)),
+            Row::Heading(title) => out.push((HEADING, t("", title).into_owned(), false)),
             Row::Choice(title, enabled) => {
                 if index < CONVERT_PRESET_MAX as usize {
                     let mark = if index == current { "• " } else { "    " };
@@ -586,17 +591,22 @@ pub fn split_inputs(items: &[(PathBuf, bool)], what: &ConvertWhat) -> (Vec<PathB
 
 /// The footer's "3 items skipped: not images" (`what`: none for a command); empty for none.
 pub fn skipped_text(count: usize, what: Option<&ConvertWhat>) -> String {
-    let (many, one) = match what {
-        Some(ConvertWhat::Image(_)) => ("not images", "not an image"),
-        Some(ConvertWhat::RemoveLocation(_)) => ("not pictures Gezik can write", "not a picture Gezik can write"),
-        Some(ConvertWhat::Text(_)) => ("not text files", "not a text file"),
-        Some(ConvertWhat::Media(_)) => ("not audio or video", "not audio or video"),
-        None => ("not for this command", "not for this command"),
-    };
-    match count {
-        0 => String::new(),
-        1 => format!("1 item skipped: {one}"),
-        n => format!("{n} items skipped: {many}"),
+    if count == 0 {
+        return String::new();
+    }
+    match what {
+        Some(ConvertWhat::Image(_)) => tn!("{n} item skipped: not an image" | "{n} items skipped: not images", count),
+        Some(ConvertWhat::RemoveLocation(_)) => tn!(
+            "{n} item skipped: not a picture Gezik can write" | "{n} items skipped: not pictures Gezik can write",
+            count
+        ),
+        Some(ConvertWhat::Text(_)) => {
+            tn!("{n} item skipped: not a text file" | "{n} items skipped: not text files", count)
+        }
+        Some(ConvertWhat::Media(_)) => {
+            tn!("{n} item skipped: not audio or video" | "{n} items skipped: not audio or video", count)
+        }
+        None => tn!("{n} item skipped: not for this command" | "{n} items skipped: not for this command", count),
     }
 }
 
@@ -617,8 +627,8 @@ pub fn ffmpeg_note(kind: Kind, keeps_format: bool, found: Found) -> &'static str
         return "";
     }
     match kind {
-        Kind::Image if !keeps_format => "¹ needs ffmpeg",
-        Kind::Media if found == Found::Missing => "Needs ffmpeg",
+        Kind::Image if !keeps_format => tx!("¹ needs ffmpeg"),
+        Kind::Media if found == Found::Missing => tx!("Needs ffmpeg"),
         _ => "",
     }
 }
@@ -700,9 +710,11 @@ pub fn detected_text(counts: &[(&str, usize)]) -> String {
     counts.sort_by_key(|a| std::cmp::Reverse(a.1));
     let parts: Vec<String> = counts
         .iter()
-        .map(|(name, n)| if *n == 1 { format!("{name} (1 file)") } else { format!("{name} ({n} files)") })
+        // TRANSLATORS: {0} is an encoding's name (UTF-8).
+        .map(|(name, n)| tn!("{0} ({n} file)" | "{0} ({n} files)", *n, name))
         .collect();
-    format!("Detected: {}", parts.join(", "))
+    // TRANSLATORS: {} is a list of encodings with their counts ("UTF-8 (3 files), Windows-1254 (1 file)").
+    t!("Detected: {}", parts.join(", "))
 }
 
 /// Where outputs go, as the layer offers it.
@@ -884,7 +896,7 @@ pub fn resize_from(mode: usize, value: &str) -> Result<Resize, String> {
     }
     let n = value.trim().parse::<u32>().ok().filter(|n| *n > 0 && *n <= gezik_core::batch::convert::MAX_SIDE);
     let Some(n) = n else {
-        return Err(if mode == 4 { "Type the size in percent" } else { "Type the size in pixels" }.to_owned());
+        return Err(if mode == 4 { t!("Type the size in percent") } else { t!("Type the size in pixels") }.into_owned());
     };
     Ok(match mode {
         1 => Resize::Longest(n),
@@ -901,7 +913,7 @@ pub fn quality_from(value: &str) -> Result<u8, String> {
         .parse::<u8>()
         .ok()
         .filter(|q| (1..=100).contains(q))
-        .ok_or_else(|| "Type a quality from 1 to 100".to_owned())
+        .ok_or_else(|| t!("Type a quality from 1 to 100").into_owned())
 }
 
 /// The background colour typed (`#rrggbb`).
@@ -909,7 +921,7 @@ pub fn background_from(value: &str) -> Result<[u8; 3], String> {
     let value = value.trim();
     match Color::parse(value) {
         Some(c) if value.len() == 7 => Ok([c.r, c.g, c.b]),
-        _ => Err("Type the background as #rrggbb".to_owned()),
+        _ => Err(t!("Type the background as #rrggbb").into_owned()),
     }
 }
 
@@ -979,7 +991,7 @@ pub fn every_from(value: &str) -> Result<u32, String> {
         .parse::<u32>()
         .ok()
         .filter(|n| (1..=MAX_EVERY).contains(n))
-        .ok_or_else(|| "Type how many pages go in each file".to_owned())
+        .ok_or_else(|| t!("Type how many pages go in each file").into_owned())
 }
 
 /// The split the buttons and the typed texts say.
@@ -1111,8 +1123,8 @@ impl Layer {
         let wants_ranges = op == PdfOp::Extract || self.pdf.split == SplitChoice::Ranges;
         let blank = wants_ranges && ranges.trim().is_empty();
         match result {
-            Ok(note) if note.is_empty() && self.counting() => ("Counting pages…".to_owned(), String::new()),
-            Ok(note) if note.is_empty() => (with_unread(unknown_note(&counts), self.unread()), String::new()),
+            Ok(note) if note.is_empty() && self.counting() => (t!("Counting pages…").into_owned(), String::new()),
+            Ok(note) if note.is_empty() => (with_unread(&t("", unknown_note(&counts)), self.unread()), String::new()),
             Ok(note) => (with_unread(&note, self.unread()), String::new()),
             Err(_) if blank => (String::new(), String::new()),
             Err(err) => (String::new(), err),
@@ -1635,12 +1647,12 @@ impl Convert {
         let layer = self.0.layer.borrow();
         let Some(layer) = layer.as_ref() else { return Vec::new() };
         let (first, current, label) = if from {
-            (ENCODING_FROM_FIRST, layer.text.from.clone().unwrap_or_default(), "Detect")
+            (ENCODING_FROM_FIRST, layer.text.from.clone().unwrap_or_default(), t!("Detect"))
         } else {
-            (ENCODING_TO_FIRST, layer.text.to.clone(), "Keep each file's")
+            (ENCODING_TO_FIRST, layer.text.to.clone(), t!("Keep each file's"))
         };
         let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
-        let mut out = vec![(first, mark(current.is_empty(), label), true)];
+        let mut out = vec![(first, mark(current.is_empty(), &label), true)];
         for (i, (code, shown)) in encodings().into_iter().enumerate().take(ENCODING_MAX as usize - 1) {
             out.push((first + 1 + i as u32, mark(code == current, shown), true));
         }
@@ -1700,13 +1712,19 @@ impl Convert {
         let initial =
             shown.or_else(|| self.0.state.borrow().last_folder.clone()).unwrap_or_else(|| base.display().to_string());
         let this = self.clone();
-        self.0.dialogs.ask_text("Convert to", "Folder:", initial, &["Choose", "Cancel"], move |text| {
-            let Some(dir) = text.and_then(|text| resolve_folder(&text, &base)) else { return };
-            this.edit(|layer| {
-                layer.output = OutputChoice::Folder;
-                layer.chosen = Some(dir);
-            });
-        });
+        self.0.dialogs.ask_text(
+            t!("Convert to"),
+            t!("Folder:"),
+            initial,
+            &[&t!("Choose"), &t!("Cancel")],
+            move |text| {
+                let Some(dir) = text.and_then(|text| resolve_folder(&text, &base)) else { return };
+                this.edit(|layer| {
+                    layer.output = OutputChoice::Folder;
+                    layer.chosen = Some(dir);
+                });
+            },
+        );
     }
 
     /// Shows the layer's choices.
@@ -1726,7 +1744,7 @@ impl Convert {
                     _ => 3,
                 };
                 let note = if keeps_format {
-                    "Each picture keeps its format; a JPEG is not re-encoded.".to_owned()
+                    t!("Each picture keeps its format; a JPEG is not re-encoded.").into_owned()
                 } else {
                     String::new()
                 };
@@ -1741,21 +1759,24 @@ impl Convert {
                 if let Ok(background) = background_from(&window.get_cv_background()) {
                     image.background = background;
                 }
+                let label = t("", preset.label);
                 let title = if options_changed(preset, &image, &layer.text) {
-                    format!("{} (changed)", preset.label)
+                    // TRANSLATORS: {} is a preset ("Convert to JPEG") whose options were changed.
+                    t!("{} (changed)", label)
                 } else {
-                    preset.label.to_owned()
+                    label.into_owned()
                 };
                 (title, kind, note)
             }
             Choice::Command(i) => {
                 let spec = &layer.commands[i];
-                (spec.name.clone(), 0, format!("Runs {}", spec.run.join(" ")))
+                // TRANSLATORS: {} is the command line a command runs.
+                (spec.name.clone(), 0, t!("Runs {}", spec.run.join(" ")))
             }
             Choice::Pdf(op) if op.needs_pdfium() && !layer.pdfium_found() => {
-                (format!("{} ¹", op.label()), 5, String::new())
+                (format!("{} ¹", t("", op.label())), 5, String::new())
             }
-            Choice::Pdf(op) => (op.label().to_owned(), 5, String::new()),
+            Choice::Pdf(op) => (t("", op.label()).into_owned(), 5, String::new()),
         };
         let what = layer.what();
         let skipped = match (&what, choice) {
@@ -1773,10 +1794,11 @@ impl Convert {
             None => skipped_text(skipped, what.as_ref()),
         };
         let tool_note = match pdf_op {
-            Some(op) if op.needs_pdfium() && !layer.pdfium_found() => "¹ needs pdfium",
+            Some(op) if op.needs_pdfium() && !layer.pdfium_found() => tx!("¹ needs pdfium"),
             Some(_) => "",
             None => ffmpeg_note(choice.kind(), keeps_format, layer.found),
         };
+        let tool_note = t("", tool_note);
         let (pdf_note, pdf_error) = pdf_op.map_or_else(Default::default, |op| {
             layer.pdf_note(op, &window.get_cv_pdf_every(), &window.get_cv_pdf_ranges())
         });
@@ -1789,19 +1811,20 @@ impl Convert {
         crate::batch_rename::update_rows(&self.0.pdf_order, order);
         let format = layer.image.format;
         let replace_note = match layer.can_replace {
-            Some(true) if cfg!(windows) => "Originals go to the Recycle Bin",
-            Some(true) => "Originals go to the trash",
-            Some(false) if cfg!(windows) => "This drive has no Recycle Bin",
-            Some(false) => "This drive has no trash",
-            None => "",
+            Some(true) if cfg!(windows) => t!("Originals go to the Recycle Bin"),
+            Some(true) => t!("Originals go to the trash"),
+            Some(false) if cfg!(windows) => t!("This drive has no Recycle Bin"),
+            Some(false) => t!("This drive has no trash"),
+            None => "".into(),
         };
-        let formats: Vec<SharedString> = FORMATS.iter().map(|(_, label)| (*label).into()).collect();
-        let from = layer.text.from.as_deref().map_or_else(|| "Detect".to_owned(), encoding_shown);
-        let to = if layer.text.to.is_empty() { "Keep each file's".to_owned() } else { encoding_shown(&layer.text.to) };
+        let formats: Vec<SharedString> = FORMATS.iter().map(|(_, label)| t("", label).as_ref().into()).collect();
+        let from = layer.text.from.as_deref().map_or_else(|| t!("Detect").into_owned(), encoding_shown);
+        let to =
+            if layer.text.to.is_empty() { t!("Keep each file's").into_owned() } else { encoding_shown(&layer.text.to) };
         let view = ConvertView {
             title: match layer.items.as_slice() {
-                [(one, _)] => format!("Convert {}", name_of(one)),
-                many => format!("Convert {} items", many.len()),
+                [(one, _)] => t!("Convert {}", name_of(one)),
+                many => tn!("Convert {n} item" | "Convert {n} items", many.len()),
             }
             .into(),
             preset: title.into(),
@@ -1826,9 +1849,9 @@ impl Convert {
             output: layer.output.index(),
             folder: layer.chosen.as_ref().map(|p| p.display().to_string()).unwrap_or_default().into(),
             can_replace: layer.can_replace != Some(false),
-            replace_note: replace_note.into(),
+            replace_note: replace_note.as_ref().into(),
             skipped: skipped.into(),
-            ffmpeg_note: tool_note.into(),
+            ffmpeg_note: tool_note.as_ref().into(),
             error: error.into(),
             pdf_op: pdf_op.and_then(|op| PdfOp::ALL.iter().position(|o| *o == op)).map_or(-1, |i| i as i32),
             pdf_order: ModelRc::from(self.0.pdf_order.clone()),
@@ -1838,7 +1861,9 @@ impl Convert {
             pdf_dpi: RENDER_DPIS.iter().position(|d| *d == layer.pdf.dpi).unwrap_or(0) as i32,
             pdf_image: PAGE_IMAGES.iter().position(|i| *i == layer.pdf.image).unwrap_or(0) as i32,
             pdf_note: pdf_note.into(),
-            pdf_losses: if pdf_op.is_some_and(PdfOp::loses_extras) { crate::pdf::LOSSES } else { "" }.into(),
+            pdf_losses: if pdf_op.is_some_and(PdfOp::loses_extras) { t("", crate::pdf::LOSSES) } else { "".into() }
+                .as_ref()
+                .into(),
         };
         window.set_cv_view(view);
     }
@@ -1944,13 +1969,13 @@ impl Convert {
         if op == PdfOp::ImagesToPdf {
             let pictures = layer.pictures.clone();
             let Some(output) = pictures_pdf_name(&pictures) else {
-                return Err("No pictures here that Gezik reads itself".to_owned());
+                return Err(t!("No pictures here that Gezik reads itself").into_owned());
             };
             return Ok(Ready::Pdf(PdfJob::Pictures { pictures, output, page: choices.page }, choices));
         }
         let inputs = layer.pdfs.clone();
         if inputs.is_empty() {
-            return Err("No PDFs here".to_owned());
+            return Err(t!("No PDFs here").into_owned());
         }
         let work = match op {
             PdfOp::Split => {
@@ -2014,8 +2039,8 @@ impl Convert {
         let worker = match worker {
             Ok(worker) => worker,
             Err(err) => {
-                let message = format!("Gezik could not start its PDF engine: {err}");
-                self.0.dialogs.ask("PDF tools", message, &["OK"], |_| {});
+                let message = t!("Gezik could not start its PDF engine: {}", err);
+                self.0.dialogs.ask(t!("PDF tools"), message, &[&t!("OK")], |_| {});
                 return;
             }
         };
@@ -2044,7 +2069,7 @@ impl Convert {
         let Some(failed) = report.failures.iter().find(|f| says_pdfium_failed(&f.message)) else { return };
         let resubmitted = matches!(job, PdfJob::Pdfs { resubmitted: true, .. });
         if after_pdfium_failed(resubmitted) == PdfiumFailed::Explain {
-            self.0.dialogs.ask("pdfium failed to load", pdfium_explained(&failed.message), &["OK"], |_| {});
+            self.0.dialogs.ask(t!("pdfium failed to load"), pdfium_explained(&failed.message), &[&t!("OK")], |_| {});
             return;
         }
         let job = match job {
@@ -2071,16 +2096,17 @@ impl Convert {
         if let Choice::Command(i) = choice {
             let spec = layer.commands[i].clone();
             if let Some(CommandState::Off(tip)) = layer.states.get(i) {
-                return Err(format!("{}: {tip}", spec.name));
+                // TRANSLATORS: {0} is a command's name, {1} why it cannot run.
+                return Err(t!("{0}: {1}", spec.name, tip));
             }
             let items: Vec<(PathBuf, bool)> =
                 layer.items.iter().filter(|(p, d)| command_applies(&spec, &name_of(p), *d)).cloned().collect();
             if items.is_empty() {
-                return Err(format!("Nothing here for {}", spec.name));
+                return Err(t!("Nothing here for {}", spec.name));
             }
             return Ok(Ready::Command(spec, items));
         }
-        let Some(preset) = layer.preset() else { return Err("Choose a preset".to_owned()) };
+        let Some(preset) = layer.preset() else { return Err(t!("Choose a preset").into_owned()) };
         let mut image = layer.image;
         if preset.kind == Kind::Image && !preset.keeps_format() {
             if matches!(image.format, ImageFormat::Jpeg | ImageFormat::WebpLossy | ImageFormat::Avif) {
@@ -2097,15 +2123,15 @@ impl Convert {
             OutputChoice::Subfolder => Output::Subfolder,
             OutputChoice::Folder => match &layer.chosen {
                 Some(dir) => Output::Folder(dir.clone()),
-                None => return Err("Choose the folder".to_owned()),
+                None => return Err(t!("Choose the folder").into_owned()),
             },
             // Not known yet: the job refuses to replace without a trash.
             OutputChoice::Replace if layer.can_replace != Some(false) => Output::ReplaceOriginal,
-            OutputChoice::Replace => return Err("This drive has no trash to put the originals in".to_owned()),
+            OutputChoice::Replace => return Err(t!("This drive has no trash to put the originals in").into_owned()),
         };
         let (inputs, _) = split_inputs(&layer.items, &what);
         if inputs.is_empty() {
-            return Err("Nothing here to convert with this preset".to_owned());
+            return Err(t!("Nothing here to convert with this preset").into_owned());
         }
         Ok(Ready::Convert(Job { inputs, preset, what, output, resubmitted: false }))
     }
@@ -2208,11 +2234,11 @@ impl Convert {
     /// run, the status bar says why (spec 7).
     fn run_checked(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
         if items.is_empty() {
-            return self.note(format!("Select the items to run {} on", spec.name));
+            return self.note(t!("Select the items to run {} on", spec.name));
         }
         match command_state(&spec, &items, found_program(&program_of(&spec)), cfg!(windows)) {
             CommandState::Hidden => self.note(not_for_text(&spec)),
-            CommandState::Off(tip) => self.note(format!("{} — {tip}", spec.name)),
+            CommandState::Off(tip) => self.note(t!("{0} — {1}", spec.name, tip)),
             CommandState::Ready => self.run_asked(spec, items),
         }
     }
@@ -2233,7 +2259,7 @@ impl Convert {
         }
         let this = self.clone();
         let message = ask_text(&spec.name, taken.len());
-        self.0.dialogs.ask(spec.name.clone(), message, &["Run", "Cancel"], move |answer| {
+        self.0.dialogs.ask(spec.name.clone(), message, &[&t!("Run"), &t!("Cancel")], move |answer| {
             if answer == Some(0) {
                 this.run_command(spec, taken);
             }
@@ -2249,7 +2275,9 @@ impl Convert {
             return;
         }
         let paths: Vec<PathBuf> = items.iter().map(|(p, _)| p.clone()).collect();
-        let label = format!("{} on {}", spec.name, items_text(&paths));
+        // TRANSLATORS: an undo label; {0} is a command's name, {1} a file name or "3 items".
+        let label = t!("{0} on {1}", spec.name, items_text(&paths));
+
         let again: Rc<dyn Fn()> = {
             let (spec, items) = (spec.clone(), items.clone());
             Rc::new(move || {

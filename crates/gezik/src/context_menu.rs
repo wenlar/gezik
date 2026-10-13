@@ -302,14 +302,14 @@ pub fn template_field_menu() -> Vec<Submenu> {
     groups
         .into_iter()
         .map(|group| Submenu {
-            title: group.label().to_owned(),
+            title: t("", group.label()).into_owned(),
             at: 0,
             items: gezik_core::fields::all()
                 .filter(|id| id.def().group == group)
                 .map(|id| {
                     (
                         TEMPLATE_FIELD_FIRST + id.number() as u32,
-                        format!("{}  {{{}}}", id.def().label, id.def().key),
+                        format!("{}  {{{}}}", t("", id.def().label), id.def().key),
                         true,
                     )
                 })
@@ -338,7 +338,9 @@ fn field_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
         .iter()
         .filter(|c| c.visible)
         .filter_map(|c| match c.key {
-            ColumnKey::Field(id) => Some((FIELD_COLUMN_FIRST + id.number() as u32, t!("Hide {}", id.def().label))),
+            ColumnKey::Field(id) => {
+                Some((FIELD_COLUMN_FIRST + id.number() as u32, t!("Hide {}", t("", id.def().label))))
+            }
             _ => None,
         })
         .collect();
@@ -355,11 +357,13 @@ pub fn preview_items(
     (surface, link): (i32, &str),
 ) -> Vec<(u32, String, bool)> {
     let mut items = Vec::new();
+    // The bar's link may be shown translated.
+    let download = link == "Download" || link == t!("Download");
     match link {
         "" => {}
-        "Download" if surface == 6 => items.push((PREVIEW_LINK, t!("Download ffmpeg…").into_owned(), true)),
-        "Download" => items.push((PREVIEW_LINK, t!("Download pdfium…").into_owned(), true)),
-        link => items.push((PREVIEW_LINK, link.to_owned(), true)),
+        _ if download && surface == 6 => items.push((PREVIEW_LINK, t!("Download ffmpeg…").into_owned(), true)),
+        _ if download => items.push((PREVIEW_LINK, t!("Download pdfium…").into_owned(), true)),
+        link => items.push((PREVIEW_LINK, t("", link).into_owned(), true)),
     }
     if surface == 4 {
         items.push((PREVIEW_PREVIOUS_PAGE, t!("Previous Page").into_owned(), true));
@@ -397,7 +401,8 @@ pub fn result_header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
         .map(|(i, key)| {
             let shown = columns.iter().any(|c| c.key == *key && c.visible);
             let id = meta_column_id(*key).unwrap_or(RESULT_COLUMN_FIRST + i as u32);
-            (id, if shown { t!("Hide {}", key.title()) } else { t!("Show {}", key.title()) })
+            let title = t("", key.title());
+            (id, if shown { t!("Hide {}", title) } else { t!("Show {}", title) })
         })
         .collect();
     out.extend(field_header_items(columns));
@@ -1143,8 +1148,12 @@ pub fn view_items(
         out.push((id, mark(view.sort.key == key, &t("", title))));
     }
     let by_field = match view.sort.key {
-        // shortcut: the field label is English until 15c translates it, so lowercasing it is safe.
-        SortKey::Field(id) => t!("Sort by {}…", id.def().label.to_lowercase()),
+        // English lower-cases the label mid-sentence; a translation is shown as written (no
+        // case change applied to translated text: Turkish i/İ).
+        SortKey::Field(id) => match gezik_i18n::current() {
+            None => t!("Sort by {}…", id.def().label.to_lowercase()),
+            Some(_) => t!("Sort by {}…", t("", id.def().label)),
+        },
         _ => t!("Sort by property…").into_owned(),
     };
     out.push((SORT_BY_MORE, mark(matches!(view.sort.key, SortKey::Field(_)), &by_field)));
@@ -1214,7 +1223,7 @@ pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
         .chain(
             groupable_fields()
                 .zip(GROUP_BY_FIELD_FIRST..)
-                .map(|(field, id)| (id, mark(current == GroupBy::Field(field), field.def().label), true)),
+                .map(|(field, id)| (id, mark(current == GroupBy::Field(field), &t("", field.def().label)), true)),
         )
         .collect();
     Submenu { title: t!("Group by").into_owned(), at, items }
@@ -2061,7 +2070,7 @@ impl Menus {
                     }
                     Ok(gezik_platform::MenuOutcome::Verb(verb)) => menus.run_verb(verb, subject),
                     Ok(gezik_platform::MenuOutcome::Dismissed) => {}
-                    Err(err) => window.set_status(format!("Cannot show the menu: {err}").into()),
+                    Err(err) => window.set_status(t!("Cannot show the menu: {}", err).into()),
                 }
             }),
         );
@@ -2155,7 +2164,8 @@ impl Menus {
 
     /// Right-click on a property row of the preview (13d): Copy Value; Show Column (13e).
     pub fn preview_value_menu(&self, label: &str, value: String, at: Anchor) {
-        let field = gezik_core::fields::all().find(|id| id.def().label == label);
+        // The row shows the label translated (English: as written).
+        let field = gezik_core::fields::all().find(|id| t("", id.def().label) == label);
         *self.subject.borrow_mut() = Some(Subject::PreviewValue(value, field));
         let mut items = vec![(PREVIEW_COPY, t!("Copy Value").into_owned(), true)];
         if field.is_some() {
@@ -2406,12 +2416,12 @@ impl Menus {
             (PREVIEW_WRAP, Subject::Preview) => self.preview.toggle_wrap(),
             (PREVIEW_COPY, Subject::PreviewValue(value, _)) => {
                 crate::panes::active_view().note(match gezik_platform::clipboard::write_text(&value) {
-                    Ok(()) => "Copied the value".to_owned(),
+                    Ok(()) => t!("Copied the value").into_owned(),
                     Err(gezik_platform::clipboard::ClipboardError::Unsupported) => {
-                        "No system clipboard here".to_owned()
+                        t!("No system clipboard here").into_owned()
                     }
                     Err(gezik_platform::clipboard::ClipboardError::Failed(why)) => {
-                        format!("Cannot use the clipboard: {why}")
+                        t!("Cannot use the clipboard: {}", why)
                     }
                 })
             }
@@ -2538,7 +2548,7 @@ impl Menus {
                     && let Some(window) = self.window.upgrade()
                 {
                     let why = gezik_platform::fs::describe(&err);
-                    window.set_status(format!("Cannot open {}: {why}", path.display()).into());
+                    window.set_status(t!("Cannot open {}: {}", path.display(), why).into());
                 }
             }
             (OPEN, Subject::Rows(paths)) => {
@@ -2556,7 +2566,7 @@ impl Menus {
                         && let Some(window) = self.window.upgrade()
                     {
                         let why = gezik_platform::fs::describe(&err);
-                        window.set_status(format!("Cannot open {}: {why}", path.display()).into());
+                        window.set_status(t!("Cannot open {}: {}", path.display(), why).into());
                     }
                 }
             }
@@ -2575,7 +2585,7 @@ impl Menus {
             (VIEW_COLUMNS, Subject::View) => {
                 let nav = crate::panes::active_nav();
                 if !crate::panes::active_view().show_columns(&nav.active_location()) {
-                    nav.note(crate::view::LIST_ONLY.to_owned());
+                    nav.note(t("", crate::view::LIST_ONLY).into_owned());
                 }
             }
             (GRID_SMALL, Subject::View) => crate::panes::active_view().set_grid_size(GridSize::Small),
@@ -2685,7 +2695,7 @@ impl Menus {
                 if let Err(why) = gezik_platform::services::perform(&title, &paths)
                     && let Some(window) = self.window.upgrade()
                 {
-                    window.set_status(format!("Cannot run {title}: {why}").into());
+                    window.set_status(t!("Cannot run {}: {}", title, why).into());
                 }
             }
             (REFRESH, Subject::Background(_)) => crate::panes::active_nav().reload(),
@@ -2756,7 +2766,7 @@ impl Menus {
             ShellVerb::Eject => match paths.first() {
                 // Only a drive's own menu: a row elsewhere never ejects the drive it is on.
                 Some(root) if crate::eject::way_at(root).is_some() => crate::eject::eject_path(root),
-                _ => crate::panes::active_nav().status(gezik_platform::eject::CANNOT.to_owned()),
+                _ => crate::panes::active_nav().status(t("", gezik_platform::eject::CANNOT).into_owned()),
             },
         }
     }

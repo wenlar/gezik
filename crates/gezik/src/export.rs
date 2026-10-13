@@ -11,6 +11,7 @@ use gezik_core::export::{self, Column, Format, Sheet};
 use gezik_core::nav::Location;
 use gezik_core::ops::names::{NameRules, validate_name};
 use gezik_core::view::ColumnKey;
+use gezik_i18n::{t, tn, tx};
 use gezik_platform::clipboard::{self, ClipboardError};
 
 use crate::navigation::Navigator;
@@ -19,10 +20,10 @@ use crate::preview::with_commas;
 use crate::view::View;
 
 /// What This PC says (the trash never gets here: `trash_view::allowed`).
-const NOT_HERE: &str = "Export List works on a folder or search results";
+const NOT_HERE: &str = tx!("Export List works on a folder or search results");
 
 /// The format a name without a known extension is told to end with.
-const BAD_EXTENSION: &str = "End the name with .txt, .csv or .html";
+const BAD_EXTENSION: &str = tx!("End the name with .txt, .csv or .html");
 
 /// Where an export goes by default and what heads it: the folder, the file's stem and the
 /// title (spec 11 §11.1, plan deviation 13). `None` where there is no list of files.
@@ -60,13 +61,13 @@ fn typed_target(base: &Path, typed: &str) -> Option<PathBuf> {
 /// folder on the way) this system cannot have (`|` on Windows, `CON`, a trailing dot…), or no
 /// known extension.
 fn checked_target(base: &Path, typed: &str, rules: NameRules) -> Result<(PathBuf, Format), String> {
-    let target = typed_target(base, typed).ok_or("Type a file name")?;
+    let target = typed_target(base, typed).ok_or_else(|| t!("Type a file name").into_owned())?;
     for part in target.components() {
         if let std::path::Component::Normal(part) = part {
             validate_name(&part.to_string_lossy(), rules).map_err(|err| err.to_string())?;
         }
     }
-    let format = Format::from_path(&target).ok_or(BAD_EXTENSION)?;
+    let format = Format::from_path(&target).ok_or_else(|| t("", BAD_EXTENSION).into_owned())?;
     Ok((target, format))
 }
 
@@ -77,7 +78,8 @@ fn field_note(base: &Path, typed: &str) -> (String, bool) {
         Err(problem) => (problem, true),
         Ok((target, format)) => {
             let folder = target.parent().map(|p| p.display().to_string()).unwrap_or_default();
-            (format!("{} into {folder}", format.title()), false)
+            // TRANSLATORS: {0} is a format (Text, CSV, HTML), {1} a folder.
+            (t!("{0} into {1}", t("", format.title()), folder), false)
         }
     }
 }
@@ -105,12 +107,16 @@ fn sheet(format: Format, columns: &[Column], title: String, count: usize, file: 
 fn form_checks(selected: usize, full_paths: bool) -> Vec<(String, bool)> {
     let mut checks = Vec::new();
     if selected > 0 {
-        checks.push((format!("Only the {} selected", items_text(selected)), true));
+        checks.push((
+            tn!("Only the {} item selected" | "Only the {} items selected", selected, with_commas(selected)),
+            true,
+        ));
     }
-    checks.push(("Full paths in text".to_owned(), full_paths));
+    checks.push((t!("Full paths in text").into_owned(), full_paths));
     checks
 }
 
+/// The exported file's own note (its contents stay English, as the column titles).
 fn items_text(count: usize) -> String {
     if count == 1 { "1 item".to_owned() } else { format!("{} items", with_commas(count)) }
 }
@@ -135,28 +141,30 @@ fn write_list(
 /// `export-list`: asks where to and how, then saves or copies.
 pub fn ask(nav: &Navigator, view: &View) {
     if view.shows_drives() || view.shows_trash() {
-        return view.note(NOT_HERE.to_owned());
+        return view.note(t("", NOT_HERE).into_owned());
     }
     let Some((folder, stem, title)) = place(&nav.active_location(), &crate::path_box::home()) else {
-        return view.note(NOT_HERE.to_owned());
+        return view.note(t("", NOT_HERE).into_owned());
     };
     crate::operations::with_current(|ops| {
         let last = ops.store().map(|store| store.load_state().export).unwrap_or_default();
         let format = last.format.as_deref().and_then(Format::parse).unwrap_or(Format::Csv);
         let (shown, selected) = (view.len(), view.selection_count());
         let checks = form_checks(selected, last.full_paths);
-        let message = format!(
-            "The {} shown, as sorted and filtered. The name's extension sets the format: .txt (one name or path per line), .csv or .html.",
-            items_text(shown)
+        let message = tn!(
+            "The {} item shown, as sorted and filtered. The name's extension sets the format: .txt (one name or path per line), .csv or .html."
+                | "The {} items shown, as sorted and filtered. The name's extension sets the format: .txt (one name or path per line), .csv or .html.",
+            shown,
+            with_commas(shown)
         );
         let field = folder.join(format!("{stem}.{}", format.extension())).display().to_string();
         let base = folder.clone();
         let (ops2, view) = (ops.clone(), view.clone());
         ops.dialogs().ask_form(
-            "Export List",
+            t!("Export List"),
             message,
             (field, checks),
-            &["Save", "Copy", "Cancel"],
+            &[&t!("Save"), &t!("Copy"), &t!("Cancel")],
             move |typed| field_note(&folder, typed),
             move |answer| {
                 let Some((button, typed, marks)) = answer else { return };
@@ -199,7 +207,7 @@ fn save(ops: &Operations, view: &View, sheet: &Sheet, columns: &[Column], only_s
     });
     let temp = match written {
         Ok(temp) => temp,
-        Err(err) => return view.note(format!("Cannot export the list: {}", gezik_platform::fs::describe(&err))),
+        Err(err) => return view.note(t!("Cannot export the list: {}", gezik_platform::fs::describe(&err))),
     };
     let task = gezik_ops::NewTask::written(dir, &name.to_string_lossy(), move |out| {
         io::copy(&mut std::fs::File::open(&temp.0)?, out).map(|_| ())
@@ -212,9 +220,15 @@ fn copy(view: &View, sheet: &Sheet, columns: &[Column], only_selected: bool) {
     let mut out = Vec::new();
     let Ok(count) = write_list(view, sheet, columns, only_selected, &mut out) else { return };
     view.note(match clipboard::write_text(&String::from_utf8_lossy(&out)) {
-        Ok(()) => format!("Copied {} as {}", items_text(count), sheet.format.title()),
-        Err(ClipboardError::Unsupported) => "No system clipboard here".to_owned(),
-        Err(ClipboardError::Failed(why)) => format!("Cannot use the clipboard: {why}"),
+        // TRANSLATORS: {1} is a format (Text, CSV, HTML).
+        Ok(()) => tn!(
+            "Copied {0} item as {1}" | "Copied {0} items as {1}",
+            count,
+            with_commas(count),
+            t("", sheet.format.title())
+        ),
+        Err(ClipboardError::Unsupported) => t!("No system clipboard here").into_owned(),
+        Err(ClipboardError::Failed(why)) => t!("Cannot use the clipboard: {}", why),
     });
 }
 

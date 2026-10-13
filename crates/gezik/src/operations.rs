@@ -15,6 +15,7 @@ use gezik_core::drag::Effect;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
+use gezik_i18n::{t, tn, tx};
 use gezik_ops::{
     Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MaterializeTask, MoveTask,
     NewTask, PauseReason, Pick, Progress, Question, Report, RestoreTask, Settings, Task, TaskKind, TrashTask,
@@ -65,33 +66,32 @@ pub fn describe(
 ) -> (RowState, String, f32) {
     if let Some(report) = report {
         return match report.failures.len() {
-            _ if report.cancelled => (RowState::Done, "Cancelled".to_owned(), 1.0),
+            _ if report.cancelled => (RowState::Done, t!("Cancelled").into_owned(), 1.0),
             // Left out on purpose (no password given, a link): a note, not a failure.
             0 => match report.skipped.len() {
-                0 => (RowState::Done, "Done".to_owned(), 1.0),
-                1 => (RowState::Done, "Done · 1 item skipped".to_owned(), 1.0),
-                n => (RowState::Done, format!("Done · {n} items skipped"), 1.0),
+                0 => (RowState::Done, t!("Done").into_owned(), 1.0),
+                n => (RowState::Done, tn!("Done · {n} item skipped" | "Done · {n} items skipped", n), 1.0),
             },
-            1 => (RowState::Failed, "1 item failed".to_owned(), 1.0),
-            n => (RowState::Failed, format!("{n} items failed"), 1.0),
+            n => (RowState::Failed, tn!("{n} item failed" | "{n} items failed", n), 1.0),
         };
     }
-    let Some(progress) = progress else { return (RowState::Waiting, "Starting".to_owned(), -1.0) };
+    let Some(progress) = progress else { return (RowState::Waiting, t!("Starting").into_owned(), -1.0) };
     let done = fraction(progress);
     match progress.state {
-        JobState::Waiting => (RowState::Waiting, "Waiting for the drive".to_owned(), -1.0),
+        JobState::Waiting => (RowState::Waiting, t!("Waiting for the drive").into_owned(), -1.0),
         JobState::Scanning => {
             let size = crate::view_options::size_text(progress.bytes_total);
-            (RowState::Running, format!("Scanning… {} items · {size}", progress.items_total), -1.0)
+            let n = progress.items_total;
+            (RowState::Running, tn!("Scanning… {n} item · {}" | "Scanning… {n} items · {}", n, size), -1.0)
         }
-        JobState::Deciding => (RowState::Deciding, "Waiting for your decisions".to_owned(), done),
-        JobState::Paused(PauseReason::User) => (RowState::Paused, "Paused".to_owned(), done),
-        JobState::Paused(PauseReason::DiskFull) => (RowState::Paused, "The disk is full".to_owned(), done),
-        JobState::Paused(PauseReason::ManyFailures) => (RowState::Paused, "Paused after errors".to_owned(), done),
+        JobState::Deciding => (RowState::Deciding, t!("Waiting for your decisions").into_owned(), done),
+        JobState::Paused(PauseReason::User) => (RowState::Paused, t!("Paused").into_owned(), done),
+        JobState::Paused(PauseReason::DiskFull) => (RowState::Paused, t!("The disk is full").into_owned(), done),
+        JobState::Paused(PauseReason::ManyFailures) => (RowState::Paused, t!("Paused after errors").into_owned(), done),
         JobState::Running => {
-            let mut text = format!("{}%", (done * 100.0).floor() as u32);
+            let mut text = t!("{}%", (done * 100.0).floor() as u32);
             if progress.verifying {
-                text.push_str(" · Verifying…");
+                text.push_str(&t!(" · Verifying…"));
             }
             if let Some(speed) = speed.filter(|s| *s > 0.0 && progress.bytes_total > 0) {
                 text.push_str(&format!(" · {}", format_rate(speed, crate::view_options::current().size_format)));
@@ -112,15 +112,16 @@ pub fn summary_text(running: usize, done: Option<f32>, failed_items: usize, rows
     }
     if running == 0 {
         return match failed_items {
-            0 => "Operations done".to_owned(),
-            1 => "1 item failed".to_owned(),
-            n => format!("{n} items failed"),
+            0 => t!("Operations done").into_owned(),
+            n => tn!("{n} item failed" | "{n} items failed", n),
         };
     }
-    let what = if running == 1 { "1 operation".to_owned() } else { format!("{running} operations") };
     match done {
-        Some(done) => format!("{what} · {}%", (done * 100.0).floor() as u32),
-        None => what,
+        Some(done) => {
+            let percent = (done * 100.0).floor() as u32;
+            tn!("{n} operation · {}%" | "{n} operations · {}%", running, percent)
+        }
+        None => tn!("{n} operation" | "{n} operations", running),
     }
 }
 
@@ -154,7 +155,7 @@ pub fn rename_check(typed: &str, old: &str, taken: impl Fn(&str) -> bool) -> Res
     gezik_core::ops::names::validate_name(name, gezik_core::ops::names::NameRules::current())
         .map_err(|err| err.to_string())?;
     if taken(name) {
-        return Err("A file with this name already exists".to_owned());
+        return Err(t!("A file with this name already exists").into_owned());
     }
     Ok(Some(name.to_owned()))
 }
@@ -168,8 +169,8 @@ pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The status bar when a job needs a folder and search results show (spec 4.6).
-pub const NOT_HERE: &str = "Not in search results: open a folder first";
+/// The status bar when a job needs a folder and search results show (spec 4.6); shown with `t`.
+pub const NOT_HERE: &str = tx!("Not in search results: open a folder first");
 
 /// Whether "Copy/Cut with folders" still owns the clipboard: the change number it got (`saved`)
 /// is the clipboard's now, or, where there are none (0), the clipboard holds its paths.
@@ -209,9 +210,11 @@ pub fn relevant_moves(moved: &[(PathBuf, PathBuf)], paths: &[PathBuf]) -> Vec<(P
     moved.iter().filter(|(_, to)| paths.contains(to)).cloned().collect()
 }
 
-/// A job that works on files and folders: in search results, these only.
+/// A job that works on files and folders: in search results, these only. `what`: an action
+/// title marked with `tx!`.
 pub fn only_in_results(what: &str) -> String {
-    format!("{what} works in search results")
+    // TRANSLATORS: {} is a command's name, "Copy with folders"
+    t!("{} works in search results", gezik_i18n::t("", what))
 }
 
 /// A drive or volume root (`C:`, `/`): it has no parent or no name.
@@ -229,7 +232,7 @@ fn has_notes(report: &Report) -> bool {
 pub fn items_text(paths: &[PathBuf]) -> String {
     match paths {
         [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| one.display().to_string()),
-        many => format!("{} items", many.len()),
+        many => tn!("{n} item" | "{n} items", many.len()),
     }
 }
 
@@ -335,13 +338,13 @@ struct JobView {
     deleting: Vec<PathBuf>,
 }
 
-/// The note of a `{files}` run in the panel (spec 7).
-pub const CANT_UNDO: &str = "can't be undone";
+/// The note of a `{files}` run in the panel (spec 7); shown with `t`.
+pub const CANT_UNDO: &str = tx!("can't be undone");
 
 /// A row's detail with the job's note after it: "Done · can't be undone".
 pub fn with_note(detail: String, note: Option<&str>) -> String {
     match note {
-        Some(note) => format!("{detail} · {note}"),
+        Some(note) => format!("{detail} · {}", gezik_i18n::t("", note)),
         None => detail,
     }
 }
@@ -760,7 +763,7 @@ impl Operations {
 
     /// Asks for a text over the window; `f` gets it when Save is chosen.
     pub fn ask_text(&self, title: &str, message: &str, f: impl FnOnce(String) + 'static) {
-        self.dialogs().ask_text(title, message, "", &["Save", "Cancel"], move |text| {
+        self.dialogs().ask_text(title, message, "", &[&t!("Save"), &t!("Cancel")], move |text| {
             if let Some(text) = text {
                 f(text);
             }
@@ -937,14 +940,14 @@ impl Operations {
 
     pub fn copy_paths(&self, paths: Vec<PathBuf>, cut: bool) {
         self.0.with_folders.borrow_mut().take();
-        let paths = self.without_roots(paths, if cut { "cut" } else { "copy" });
+        let paths = self.without_roots(paths, &if cut { t!("Cannot cut a drive") } else { t!("Cannot copy a drive") });
         if paths.is_empty() {
             return;
         }
         match clipboard::write_files(&paths, cut) {
             Ok(()) | Err(ClipboardError::Unsupported) => {}
             Err(ClipboardError::Failed(why)) => {
-                return crate::panes::active_view().note(format!("Cannot use the clipboard: {why}"));
+                return crate::panes::active_view().note(t!("Cannot use the clipboard: {}", why));
             }
         }
         *self.0.cut.borrow_mut() = if cut { paths.clone() } else { Vec::new() };
@@ -961,7 +964,7 @@ impl Operations {
             return;
         }
         if !crate::panes::active_view().shows_results() {
-            return crate::panes::active_view().note(only_in_results("Copy with folders"));
+            return crate::panes::active_view().note(only_in_results(tx!("Copy with folders")));
         }
         let items = crate::panes::active_view().selected_relative();
         if items.is_empty() {
@@ -1041,7 +1044,7 @@ impl Operations {
     /// Says why a job that needs a folder does nothing while search results show.
     fn not_here(&self) {
         if crate::panes::active_view().shows_results() {
-            crate::panes::active_view().note(NOT_HERE.to_owned());
+            crate::panes::active_view().note(gezik_i18n::t("", NOT_HERE).into_owned());
         }
     }
 
@@ -1171,23 +1174,26 @@ impl Operations {
     /// Every delete comes here (Delete, Shift+Delete, the row menus, Explorer's verb): rows of a
     /// duplicates search go only to the trash (spec 11 §9.3).
     fn trash_with(&self, paths: Vec<PathBuf>, permanent: bool, always_ask: bool) {
-        let paths = self.without_roots(paths, if permanent { "delete" } else { "trash" });
+        let refused = if permanent { t!("Cannot delete a drive") } else { t!("Cannot trash a drive") };
+        let paths = self.without_roots(paths, &refused);
         if paths.is_empty() {
             return;
         }
         let what = items_text(&paths);
-        let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
+        let to_bin = || {
+            // TRANSLATORS: {} is a name or "3 items"
+            if cfg!(windows) { t!("Move {} to the Recycle Bin?", what) } else { t!("Move {} to the Trash?", what) }
+        };
         let dups = crate::panes::active_view().duplicate_groups_all_in(&paths, &self.busy_duplicates());
         let ops = self.clone();
         match delete_route(dups, permanent, always_ask || self.0.files.get().confirm_trash) {
             DeleteRoute::DuplicatesAsk(whole) => {
                 let title = match whole {
-                    0 => format!("Move {what} to the {bin}?"),
-                    1 => "This deletes every copy of 1 file".to_owned(),
-                    n => format!("This deletes every copy of {n} files"),
+                    0 => to_bin(),
+                    n => tn!("This deletes every copy of {n} file" | "This deletes every copy of {n} files", n),
                 };
-                let detail = if whole > 0 { format!("Move {what} to the {bin}?") } else { String::new() };
-                self.dialogs().ask(title, detail, &["Trash", "Cancel"], move |choice| {
+                let detail = if whole > 0 { to_bin() } else { String::new() };
+                self.dialogs().ask(title, detail, &[&t!("button" => "Trash"), &t!("Cancel")], move |choice| {
                     if choice == Some(0) {
                         ops.trash_duplicates_now(paths);
                     }
@@ -1195,9 +1201,9 @@ impl Operations {
             }
             DeleteRoute::Duplicates => self.trash_duplicates_now(paths),
             DeleteRoute::Permanent => self.dialogs().ask(
-                format!("Delete {what} permanently?"),
-                "This cannot be undone.",
-                &["Delete", "Cancel"],
+                t!("Delete {} permanently?", what),
+                t!("This cannot be undone."),
+                &[&t!("Delete"), &t!("Cancel")],
                 move |choice| {
                     if choice == Some(0) {
                         ops.delete_now(paths);
@@ -1205,7 +1211,7 @@ impl Operations {
                 },
             ),
             DeleteRoute::AskTrash => {
-                self.dialogs().ask(format!("Move {what} to the {bin}?"), "", &["Trash", "Cancel"], move |choice| {
+                self.dialogs().ask(to_bin(), "", &[&t!("button" => "Trash"), &t!("Cancel")], move |choice| {
                     if choice == Some(0) {
                         ops.trash_now(paths);
                     }
@@ -1237,13 +1243,13 @@ impl Operations {
         Some(folder)
     }
 
-    /// `paths` without drive roots (no copying, moving or deleting those); says so when that
-    /// leaves nothing.
-    fn without_roots(&self, paths: Vec<PathBuf>, what: &str) -> Vec<PathBuf> {
+    /// `paths` without drive roots (no copying, moving or deleting those); says `refused` when
+    /// that leaves nothing.
+    fn without_roots(&self, paths: Vec<PathBuf>, refused: &str) -> Vec<PathBuf> {
         let asked = paths.len();
         let kept: Vec<PathBuf> = paths.into_iter().filter(|path| !is_root(path)).collect();
         if kept.is_empty() && asked > 0 {
-            crate::panes::active_view().note(format!("Cannot {what} a drive"));
+            crate::panes::active_view().note(refused.to_owned());
         }
         kept
     }
@@ -1317,7 +1323,7 @@ impl Operations {
         if crate::panes::active_view().shows_drives() {
             return;
         }
-        let paths = self.without_roots(crate::panes::active_view().selected_paths(), "duplicate");
+        let paths = self.without_roots(crate::panes::active_view().selected_paths(), &t!("Cannot duplicate a drive"));
         if paths.is_empty() {
             return;
         }
@@ -1356,12 +1362,12 @@ impl Operations {
     pub fn new_folder_with(&self, paths: Vec<PathBuf>) {
         let Some(dir) = crate::panes::active_view().folder() else { return self.not_here() };
         let paths: Vec<PathBuf> = self
-            .without_roots(paths, "move")
+            .without_roots(paths, &t!("Cannot move a drive"))
             .into_iter()
             .filter(|path| path.parent().is_some_and(|parent| same_path(parent, &dir)))
             .collect();
         if paths.is_empty() {
-            return crate::panes::active_view().note("Select the items to put in a new folder".to_owned());
+            return crate::panes::active_view().note(t!("Select the items to put in a new folder").into_owned());
         }
         self.remember_for(&paths);
         let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(GroupTask::new(paths.clone(), &dir)) });
@@ -1380,7 +1386,7 @@ impl Operations {
     pub fn paste_as_file(&self, dir: PathBuf) {
         let Some(at) = gezik_platform::local_date_parts(std::time::SystemTime::now()) else { return };
         let failed = |err: ClipboardError| match err {
-            ClipboardError::Failed(why) => Some(format!("Cannot use the clipboard: {why}")),
+            ClipboardError::Failed(why) => Some(t!("Cannot use the clipboard: {}", why)),
             ClipboardError::Unsupported => None,
         };
         // A picture that cannot be read does not end it: the text may still be there. What went
@@ -1412,7 +1418,7 @@ impl Operations {
             Ok(_) => {}
             Err(err) => problem = failed(err).or(problem),
         }
-        crate::panes::active_view().note(problem.unwrap_or_else(|| "Nothing to paste".to_owned()));
+        crate::panes::active_view().note(problem.unwrap_or_else(|| t!("Nothing to paste").into_owned()));
     }
 
     /// An alias whose original is gone (spec 9 §4.2): Finder's question; Delete Alias moves it
@@ -1421,9 +1427,9 @@ impl Operations {
         let name = alias.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let ops = self.clone();
         self.dialogs().ask(
-            "The original item can't be found",
-            format!("The alias \"{name}\" can't be opened."),
-            &["Delete Alias", "OK"],
+            t!("The original item can't be found"),
+            t!("The alias \"{}\" can't be opened.", name),
+            &[&t!("Delete Alias"), &t!("OK")],
             move |chosen| {
                 if chosen == Some(0) {
                     ops.trash_now(vec![alias]);
@@ -1448,7 +1454,7 @@ impl Operations {
 
     /// A link of `kind` next to each of `paths` ("Create link ▸", Explorer's "Create shortcut").
     pub fn create_links(&self, paths: Vec<PathBuf>, kind: LinkKind) {
-        let paths = self.without_roots(paths, "link to");
+        let paths = self.without_roots(paths, &t!("Cannot link to a drive"));
         if paths.is_empty() {
             return;
         }
@@ -1467,13 +1473,13 @@ impl Operations {
 
     pub fn undo(&self) {
         if !self.ask_admin(false) && self.0.engine.undo().is_none() {
-            crate::panes::active_view().note("Nothing to undo".to_owned());
+            crate::panes::active_view().note(t!("Nothing to undo").into_owned());
         }
     }
 
     pub fn redo(&self) {
         if !self.ask_admin(true) && self.0.engine.redo().is_none() {
-            crate::panes::active_view().note("Nothing to redo".to_owned());
+            crate::panes::active_view().note(t!("Nothing to redo").into_owned());
         }
     }
 
@@ -1484,12 +1490,13 @@ impl Operations {
         if agreed.is_empty() {
             return false;
         }
-        let (title, button) = if redo { ("Redo as administrator", "Redo") } else { ("Undo as administrator", "Undo") };
+        let (title, button) =
+            if redo { (t!("Redo as administrator"), t!("Redo")) } else { (t!("Undo as administrator"), t!("Undo")) };
         let text = crate::admin::undo_text(redo, &agreed, crate::admin::exposed());
         let (engine, view) = (self.0.engine.clone(), crate::panes::active_view().clone());
-        self.dialogs().ask(title, text, &[button, "Cancel"], move |choice| {
+        self.dialogs().ask(title, text, &[&button, &t!("Cancel")], move |choice| {
             if choice == Some(0) && engine.undo_agreed(redo, &agreed).is_none() {
-                view.note("Not done: something else was done meanwhile".to_owned());
+                view.note(t!("Not done: something else was done meanwhile").into_owned());
             }
         });
         true
@@ -1587,7 +1594,7 @@ impl Operations {
         match question {
             Question::Password { archive, retry } => {
                 let (title, message) = crate::archives::password_text(&archive, retry);
-                self.dialogs().ask_password(job, title, message, &["OK", "Skip"], move |text| {
+                self.dialogs().ask_password(job, title, message, &[&t!("OK"), &t!("Skip")], move |text| {
                     engine.answer(job, id, text.map_or(Answer::Cancel, Answer::Text));
                 });
             }
@@ -1606,15 +1613,15 @@ impl Operations {
         let (title, message) = match reason {
             PauseReason::User => return,
             PauseReason::DiskFull => (
-                "The disk is full".to_owned(),
-                format!(
-                    "Free some space{}, then resume.",
-                    path.as_deref().map(|p| format!(" for {}", p.display())).unwrap_or_default()
-                ),
+                t!("The disk is full").into_owned(),
+                match path {
+                    Some(p) => t!("Free some space for {}, then resume.", p.display()),
+                    None => t!("Free some space, then resume.").into_owned(),
+                },
             ),
             PauseReason::ManyFailures => (
-                "Many items failed in a row".to_owned(),
-                "The drive may have been disconnected. Resume to go on, or cancel.".to_owned(),
+                t!("Many items failed in a row").into_owned(),
+                t!("The drive may have been disconnected. Resume to go on, or cancel.").into_owned(),
             ),
         };
         if !self.0.asked.borrow_mut().insert(job) {
@@ -1623,7 +1630,7 @@ impl Operations {
         // Waiting for the user: the panel opens by itself.
         self.0.collapsed.set(false);
         let ops = self.clone();
-        self.dialogs().ask_escape(title, message, &["Resume", "Cancel"], 0, move |choice| {
+        self.dialogs().ask_escape(title, message, &[&t!("Resume"), &t!("Cancel")], 0, move |choice| {
             ops.0.asked.borrow_mut().remove(&job);
             match choice {
                 Some(0) => ops.0.engine.resume(job),
@@ -1706,8 +1713,9 @@ impl Operations {
         touched.extend(report.moved.iter().map(|(from, _)| from.clone()));
         let mut dirs = report.changed_dirs.clone();
         dirs.extend(hidden_in);
-        let skipped = (report.skipped_changed > 0)
-            .then(|| format!("{} changed since; skipped", crate::stack::count_text(report.skipped_changed)));
+        let skipped = (report.skipped_changed > 0).then(|| {
+            tn!("{n} item changed since; skipped" | "{n} items changed since; skipped", report.skipped_changed)
+        });
         // New items here the filter hides (a paste, a drop, an extract): the filter stays, the
         // status bar says so. A new folder's rename closes the filter instead.
         let hidden = match &pane {
@@ -1772,7 +1780,7 @@ impl Operations {
     /// back to the results.
     pub fn show_in_folder(&self, new_tab: bool) {
         if !crate::panes::active_view().shows_results() {
-            return crate::panes::active_view().note(only_in_results("Show in folder"));
+            return crate::panes::active_view().note(only_in_results(tx!("Show in folder")));
         }
         if let Some((path, _)) =
             crate::panes::active_view().focus().and_then(|i| crate::panes::active_view().entry_path(i))
@@ -1795,17 +1803,26 @@ impl Operations {
     /// Items the trash cannot take (no trash on their drive, or a name it cannot take): delete
     /// them for good?
     fn ask_delete_for_good(&self, paths: Vec<PathBuf>) {
-        let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
-        let title = if paths.len() == 1 {
-            format!("{} cannot go to the {bin}", paths[0].file_name().map(|n| n.to_string_lossy()).unwrap_or_default())
-        } else {
-            format!("{} items cannot go to the {bin}", paths.len())
+        let title = match paths.as_slice() {
+            [one] => {
+                let name = one.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+                if cfg!(windows) {
+                    t!("{} cannot go to the Recycle Bin", name)
+                } else {
+                    t!("{} cannot go to the trash", name)
+                }
+            }
+            many if cfg!(windows) => {
+                tn!("{n} item cannot go to the Recycle Bin" | "{n} items cannot go to the Recycle Bin", many.len())
+            }
+            many => tn!("{n} item cannot go to the trash" | "{n} items cannot go to the trash", many.len()),
         };
         let ops = self.clone();
         self.dialogs().ask(
             title,
-            format!("{} Delete permanently? This cannot be undone.", no_trash_reason(&paths, bin)),
-            &["Delete", "Cancel"],
+            // TRANSLATORS: {} is why the trash cannot take them, a whole sentence
+            t!("{} Delete permanently? This cannot be undone.", no_trash_reason(&paths)),
+            &[&t!("Delete"), &t!("Cancel")],
             move |choice| {
                 if choice == Some(0) {
                     let pending = ops.0.engine.pending_deletes();
@@ -2000,7 +2017,7 @@ impl Operations {
     pub fn history_details(&self, id: i32) {
         let record = u64::try_from(id).ok().and_then(|id| self.0.history.borrow().get(id).cloned());
         if let Some(record) = record {
-            self.dialogs().ask(record.title, record.details.unwrap_or_default(), &["Close"], |_| {});
+            self.dialogs().ask(record.title, record.details.unwrap_or_default(), &[&t!("Close")], |_| {});
         }
     }
 
@@ -2024,13 +2041,15 @@ impl Operations {
         let ops = self.clone();
         let buttons = crate::admin::detail_buttons(!admin.is_empty(), can_retry);
         let chosen = buttons.clone();
-        self.dialogs().ask(title, message, &buttons, move |choice| match choice.and_then(|i| chosen.get(i)).copied() {
+        let shown: Vec<_> = buttons.iter().map(|b| gezik_i18n::t("", b)).collect();
+        let shown: Vec<&str> = shown.iter().map(AsRef::as_ref).collect();
+        self.dialogs().ask(title, message, &shown, move |choice| match choice.and_then(|i| chosen.get(i)).copied() {
             Some(crate::admin::RETRY_AS_ADMIN) => {
                 // The row goes once the new job is there (it stays if the user cancels).
                 let row = ops.clone();
                 crate::admin::start(&ops, admin, move |_| row.remove(id));
             }
-            Some("Retry") => ops.retry(i32::try_from(id).unwrap_or(0)),
+            Some(crate::admin::RETRY) => ops.retry(i32::try_from(id).unwrap_or(0)),
             _ => {}
         });
     }
@@ -2042,16 +2061,12 @@ impl Operations {
             return false;
         }
         let running = self.0.jobs.borrow().iter().filter(|j| j.report.is_none() && !j.background).count().max(1);
-        let title = if running == 1 {
-            "1 operation is running".to_owned()
-        } else {
-            format!("{running} operations are running")
-        };
+        let title = tn!("{n} operation is running" | "{n} operations are running", running);
         let engine = self.0.engine.clone();
         self.dialogs().ask_escape(
             title,
-            "Quitting cancels them. What is already copied or moved stays.",
-            &["Keep open", "Cancel them and quit"],
+            t!("Quitting cancels them. What is already copied or moved stays."),
+            &[&t!("Keep open"), &t!("Cancel them and quit")],
             0,
             move |choice| {
                 if choice == Some(1) {
@@ -2092,30 +2107,55 @@ fn delete_route(dups: Option<usize>, permanent: bool, ask: bool) -> DeleteRoute 
 /// What is said of `paths` the trash could not take: nothing for a job that may delete them
 /// for good instead (it asks), why they stay for one that goes only to the trash (duplicates).
 fn trash_only_note(trash_only: bool, paths: &[PathBuf]) -> Option<String> {
-    let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
     trash_only.then(|| {
-        let what =
-            if paths.len() == 1 { "1 duplicate was".to_owned() } else { format!("{} duplicates were", paths.len()) };
-        format!("{what} not deleted: {} Duplicates only go to the {bin}.", no_trash_reason(paths, bin))
+        let (n, reason) = (paths.len(), no_trash_reason(paths));
+        // TRANSLATORS: {} is why the trash cannot take them, a whole sentence
+        if cfg!(windows) {
+            tn!(
+                "{n} duplicate was not deleted: {} Duplicates only go to the Recycle Bin."
+                    | "{n} duplicates were not deleted: {} Duplicates only go to the Recycle Bin.",
+                n,
+                reason
+            )
+        } else {
+            tn!(
+                "{n} duplicate was not deleted: {} Duplicates only go to the trash."
+                    | "{n} duplicates were not deleted: {} Duplicates only go to the trash.",
+                n,
+                reason
+            )
+        }
     })
 }
 
-/// Why `paths` cannot go to the trash (`bin`): their drive has none, the bin would delete them
-/// for good (Windows: set to, or too big for it), or (Windows) their names end in a dot or a space.
-fn no_trash_reason(paths: &[PathBuf], bin: &str) -> String {
+/// Why `paths` cannot go to the trash: their drive has none, the bin would delete them for good
+/// (Windows: set to, or too big for it), or (Windows) their names end in a dot or a space.
+fn no_trash_reason(paths: &[PathBuf]) -> String {
     let named = paths.iter().filter(|path| !gezik_platform::fs::can_trash_name(path)).count();
     let has_bin = |path: &PathBuf| {
         path.symlink_metadata().is_ok() && gezik_platform::fs::drive_facts(path).is_ok_and(|facts| facts.trash)
     };
-    if named == 0 && paths.iter().any(has_bin) {
-        format!("The {bin} would delete them for good: it is set to, or they are too big for it.")
+    let windows = cfg!(windows);
+    let text = if named == 0 && paths.iter().any(has_bin) {
+        if windows {
+            t!("The Recycle Bin would delete them for good: it is set to, or they are too big for it.")
+        } else {
+            t!("The trash would delete them for good: it is set to, or they are too big for it.")
+        }
     } else if named == 0 {
-        format!("This drive has no {bin}.")
+        if windows { t!("This drive has no Recycle Bin.") } else { t!("This drive has no trash.") }
     } else if named == paths.len() {
-        format!("The {bin} cannot take names that end in a dot or a space.")
+        if windows {
+            t!("The Recycle Bin cannot take names that end in a dot or a space.")
+        } else {
+            t!("The trash cannot take names that end in a dot or a space.")
+        }
+    } else if windows {
+        t!("Some are on a drive without a Recycle Bin, some have names that end in a dot or a space.")
     } else {
-        format!("Some are on a drive without a {bin}, some have names that end in a dot or a space.")
-    }
+        t!("Some are on a drive without a trash, some have names that end in a dot or a space.")
+    };
+    text.into_owned()
 }
 
 /// A History record as a panel row: the Current tab's row, marked as History (a time, no bar,
@@ -2177,19 +2217,19 @@ mod tests {
 
     #[test]
     fn no_trash_reasons() {
-        let bin = "Recycle Bin";
-        assert_eq!(no_trash_reason(&[PathBuf::from("/usb/a.txt")], bin), "This drive has no Recycle Bin.");
+        let bin = if cfg!(windows) { "Recycle Bin" } else { "trash" };
+        assert_eq!(no_trash_reason(&[PathBuf::from("/usb/a.txt")]), format!("This drive has no {bin}."));
         if cfg!(windows) {
             let dotted = PathBuf::from(r"C:\x.");
             assert_eq!(
-                no_trash_reason(std::slice::from_ref(&dotted), bin),
+                no_trash_reason(std::slice::from_ref(&dotted)),
                 "The Recycle Bin cannot take names that end in a dot or a space."
             );
-            assert!(no_trash_reason(&[dotted, PathBuf::from(r"E:\a")], bin).starts_with("Some are"));
+            assert!(no_trash_reason(&[dotted, PathBuf::from(r"E:\a")]).starts_with("Some are"));
             // On a drive with a bin, the bin refused it.
             let file = std::env::temp_dir().join(format!("gezik-no-trash-reason-{}", std::process::id()));
             std::fs::write(&file, "x").unwrap();
-            let reason = no_trash_reason(std::slice::from_ref(&file), bin);
+            let reason = no_trash_reason(std::slice::from_ref(&file));
             let _ = std::fs::remove_file(&file);
             assert!(reason.starts_with("The Recycle Bin would delete them for good"), "{reason}");
         }

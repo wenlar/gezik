@@ -161,7 +161,14 @@ fn node_row(id: NodeId, node: &tree::Node, current: Option<&Path>) -> SidebarRow
 fn more_row(id: NodeId, node: &tree::Node) -> SidebarRow {
     SidebarRow {
         header: false,
-        label: format!("… {} more (open the folder)", crate::preview::with_commas(node.more)).into(),
+        // TRANSLATORS: the last line of a long folder list in the sidebar tree; {} is how many folders it leaves out.
+        label: gezik_i18n::tn!(
+            "… {} more (open the folder)" | "… {} more (open the folder)",
+            node.more,
+            crate::preview::with_commas(node.more)
+        )
+        .into(),
+
         section: SECTION_TREE_MORE,
         index: index_of(id),
         active: false,

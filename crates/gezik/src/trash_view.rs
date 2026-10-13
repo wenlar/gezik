@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use gezik_config::shortcuts::Action;
 use gezik_core::Entry;
+use gezik_i18n::{t, tn, tx};
 use gezik_platform::trash::TrashItem;
 use gezik_search::results::{Batch, ResultSet, TrashLabel};
 
@@ -16,7 +17,7 @@ use crate::folder_watch::FolderWatch;
 use crate::view::View;
 
 /// The status bar's word when macOS keeps the home Trash from Gezik.
-const DENIED: &str = "Gezik needs Full Disk Access to show the Trash";
+const DENIED: &str = tx!("Gezik needs Full Disk Access to show the Trash");
 
 /// What a load of the trash gives the UI thread.
 #[derive(Debug)]
@@ -122,7 +123,7 @@ pub fn shown(bins: &[PathBuf], denied: bool) -> Option<String> {
     if ASKED.with(first_denial) {
         ask_for_full_disk_access();
     }
-    Some(DENIED.to_owned())
+    Some(gezik_i18n::t("", DENIED).into_owned())
 }
 
 /// The trash is no longer shown: the watches go.
@@ -167,9 +168,9 @@ pub fn changed() {
 fn ask_for_full_disk_access() {
     crate::operations::with_current(|ops| {
         ops.dialogs().ask(
-            format!("{DENIED}."),
-            "Allow it in System Settings ▸ Privacy & Security ▸ Full Disk Access, then open the Trash again.",
-            &["Open Privacy Settings", "Not Now"],
+            t!("Gezik needs Full Disk Access to show the Trash."),
+            t!("Allow it in System Settings ▸ Privacy & Security ▸ Full Disk Access, then open the Trash again."),
+            &[&t!("Open Privacy Settings"), &t!("Not Now")],
             |choice| {
                 if choice == Some(0) {
                     // To be checked on a Mac (spec 7.1).
@@ -184,7 +185,7 @@ fn ask_for_full_disk_access() {
 
 /// What an action that is not the trash's own says there.
 pub fn not_here() -> String {
-    format!("Not available in the {}", gezik_core::nav::TRASH_NAME)
+    if cfg!(windows) { t!("Not available in the Recycle Bin") } else { t!("Not available in the Trash") }.into_owned()
 }
 
 /// Whether `action` may run while the trash is shown: what only looks, moves around, undoes or
@@ -369,7 +370,12 @@ pub fn instead(action: Action, view: &View) -> bool {
 
 /// Opening an entry in the trash: it is not where it was, so it is put back first.
 pub fn open_note() -> String {
-    format!("Put it back to open it: nothing in the {} is opened", gezik_core::nav::TRASH_NAME)
+    if cfg!(windows) {
+        t!("Put it back to open it: nothing in the Recycle Bin is opened")
+    } else {
+        t!("Put it back to open it: nothing in the Trash is opened")
+    }
+    .into_owned()
 }
 
 /// Entries in the bins without a known place, with the names they had.
@@ -408,7 +414,9 @@ pub fn into_folder(folder: &Path, unknown: Unknown) -> Vec<(PathBuf, PathBuf)> {
 /// is asked (never a made-up place). A name taken there goes to the conflict list.
 pub fn put_back(view: &View) {
     if !view.shows_trash() {
-        return view.note(format!("Put Back works in the {}", gezik_core::nav::TRASH_NAME));
+        let note =
+            if cfg!(windows) { t!("Put Back works in the Recycle Bin") } else { t!("Put Back works in the Trash") };
+        return view.note(note.into_owned());
     }
     let (known, unknown) = put_back_plan(view.selected_trash());
     crate::operations::with_current(|ops| {
@@ -418,31 +426,29 @@ pub fn put_back(view: &View) {
         if unknown.is_empty() {
             return;
         }
-        let (what, them) = if unknown.len() == 1 {
-            (format!("\"{}\"", unknown[0].1), "it")
-        } else {
-            (format!("{} items", group_digits(unknown.len())), "them")
+        let message = match unknown.as_slice() {
+            [(_, name)] => t!("Where \"{}\" came from is not known. Put it into this folder:", name),
+            many => tn!(
+                "Where {} item came from is not known. Put it into this folder:"
+                    | "Where {} items came from is not known. Put them into this folder:",
+                many.len(),
+                group_digits(many.len())
+            ),
         };
         let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
             .map(|h| PathBuf::from(h).display().to_string())
             .unwrap_or_default();
-        ops.dialogs().ask_text(
-            "Put Back",
-            format!("Where {what} came from is not known. Put {them} into this folder:"),
-            home,
-            &["Put Back", "Cancel"],
-            move |typed| {
-                let Some(typed) = typed else { return };
-                let folder = PathBuf::from(typed.trim());
-                // shortcut: one stat on the UI thread for a typed folder (a dead network path
-                // blocks); check it off the thread if that bites.
-                if !folder.is_absolute() || !folder.is_dir() {
-                    crate::panes::with_active(|p| p.view.note(format!("{} is not a folder", folder.display())));
-                    return;
-                }
-                crate::operations::with_current(|ops| ops.restore_from_trash(into_folder(&folder, unknown)));
-            },
-        );
+        ops.dialogs().ask_text(t!("Put Back"), message, home, &[&t!("Put Back"), &t!("Cancel")], move |typed| {
+            let Some(typed) = typed else { return };
+            let folder = PathBuf::from(typed.trim());
+            // shortcut: one stat on the UI thread for a typed folder (a dead network path
+            // blocks); check it off the thread if that bites.
+            if !folder.is_absolute() || !folder.is_dir() {
+                crate::panes::with_active(|p| p.view.note(t!("{} is not a folder", folder.display())));
+                return;
+            }
+            crate::operations::with_current(|ops| ops.restore_from_trash(into_folder(&folder, unknown)));
+        });
     });
 }
 
@@ -452,21 +458,20 @@ pub fn delete_selection(view: &View) {
     if rows.is_empty() {
         return;
     }
-    let what =
-        if rows.len() == 1 { format!("\"{}\"", rows[0].1.name) } else { format!("{} items", group_digits(rows.len())) };
+    let title = match rows.as_slice() {
+        [(_, label)] => t!("Delete \"{}\" permanently?", label.name),
+        many => {
+            tn!("Delete {} item permanently?" | "Delete {} items permanently?", many.len(), group_digits(many.len()))
+        }
+    };
     let items: Vec<(PathBuf, Option<PathBuf>)> =
         rows.into_iter().map(|(trashed, label)| (trashed, label.info)).collect();
     crate::operations::with_current(|ops| {
-        ops.dialogs().ask(
-            format!("Delete {what} permanently?"),
-            "This cannot be undone.",
-            &["Delete", "Cancel"],
-            |choice| {
-                if choice == Some(0) {
-                    crate::operations::with_current(|ops| ops.delete_from_trash(items));
-                }
-            },
-        );
+        ops.dialogs().ask(title, t!("This cannot be undone."), &[&t!("Delete"), &t!("Cancel")], |choice| {
+            if choice == Some(0) {
+                crate::operations::with_current(|ops| ops.delete_from_trash(items));
+            }
+        });
     });
 }
 
@@ -481,14 +486,14 @@ pub fn empty() {
 }
 
 fn confirm_empty(items: Vec<TrashItem>) {
-    let bin = gezik_core::nav::TRASH_NAME;
     // What a delete is still working on under a hidden name is not the user's (as in the list).
     let items: Vec<TrashItem> = items
         .into_iter()
         .filter(|i| !i.trashed.file_name().and_then(|n| n.to_str()).is_some_and(gezik_ops::pending::is_internal_name))
         .collect();
     if items.is_empty() {
-        crate::panes::with_active(|p| p.view.note(format!("The {bin} is empty")));
+        let note = if cfg!(windows) { t!("The Recycle Bin is empty") } else { t!("The Trash is empty") };
+        crate::panes::with_active(|p| p.view.note(note.into_owned()));
         return;
     }
     // Sizes are known on Windows, and elsewhere when no folder is in it (decision 5).
@@ -496,7 +501,8 @@ fn confirm_empty(items: Vec<TrashItem>) {
     let question = empty_question(items.len(), size);
     let items: Vec<(PathBuf, Option<PathBuf>)> = items.into_iter().map(|i| (i.trashed, i.info)).collect();
     crate::operations::with_current(|ops| {
-        ops.dialogs().ask(format!("Empty the {bin}?"), question, &["Empty", "Cancel"], |choice| {
+        let title = if cfg!(windows) { t!("Empty the Recycle Bin?") } else { t!("Empty the Trash?") };
+        ops.dialogs().ask(title, question, &[&t!("Empty"), &t!("Cancel")], |choice| {
             if choice == Some(0) {
                 crate::operations::with_current(|ops| ops.delete_from_trash(items));
             }
@@ -506,9 +512,22 @@ fn confirm_empty(items: Vec<TrashItem>) {
 
 /// `Permanently delete 1,234 items (3.2 GB)? This cannot be undone.`
 pub fn empty_question(count: usize, size: Option<u64>) -> String {
-    let items = if count == 1 { "1 item".to_owned() } else { format!("{} items", group_digits(count)) };
-    let size = size.map(|s| format!(" ({})", crate::view_options::size_text(s))).unwrap_or_default();
-    format!("Permanently delete {items}{size}? This cannot be undone.")
+    let shown = group_digits(count);
+    match size {
+        Some(size) => tn!(
+            "Permanently delete {0} item ({1})? This cannot be undone."
+                | "Permanently delete {0} items ({1})? This cannot be undone.",
+            count,
+            shown,
+            crate::view_options::size_text(size)
+        ),
+        None => tn!(
+            "Permanently delete {} item? This cannot be undone."
+                | "Permanently delete {} items? This cannot be undone.",
+            count,
+            shown
+        ),
+    }
 }
 
 /// `1234` → `1,234`.

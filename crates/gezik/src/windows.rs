@@ -613,7 +613,7 @@ pub fn open_for(opens: Vec<crate::cli::Open>, missing: Vec<std::path::PathBuf>, 
 pub(crate) fn say_missing(nav: &navigation::Navigator, missing: &[std::path::PathBuf]) {
     if !missing.is_empty() {
         let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
-        nav.note(format!("{}: not found", names.join(", ")));
+        nav.note(gezik_i18n::t!("{}: not found", names.join(", ")));
     }
 }
 

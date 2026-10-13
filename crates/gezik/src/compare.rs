@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime};
 use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_core::compare::{self, Dir, Kind, NO_TIME, Node, Options, Row, SHOW, State, Tree};
 use gezik_core::file_filter::FileFilter;
+use gezik_i18n::{t, tn, tx};
 use gezik_search::tree_scan::{self, Rules, Scan};
 use slint::{ComponentHandle, Model, ModelNotify, ModelRc, ModelTracker, SharedString, VecModel};
 
@@ -25,18 +26,19 @@ use crate::{AppWindow, ToolRow, ToolToggle};
 /// Linux tells `Docs` from `docs`; Windows and macOS do not (spec 11 §7.3).
 const CASE_SENSITIVE: bool = cfg!(target_os = "linux");
 /// The boxes after the six show buttons.
-const BOXES: [&str; 4] = ["Subfolders", "Content", "Ignore dates", "Ignore 1 h"];
+const BOXES: [&str; 4] = [tx!("Subfolders"), tx!("Content"), tx!("Ignore dates"), tx!("Ignore 1 h")];
+/// Matched by their English text; shown translated.
 const BUTTONS: [&str; 10] = [
-    "Compare Again",
-    "Swap",
-    "Mode",
-    "Direction",
-    "Synchronize…",
-    "Save Profile…",
-    "Show Left",
-    "Show Right",
-    "Hide",
-    "Close",
+    tx!("Compare Again"),
+    tx!("Swap"),
+    tx!("Mode"),
+    tx!("Direction"),
+    tx!("Synchronize…"),
+    tx!("Save Profile…"),
+    tx!("Show Left"),
+    tx!("Show Right"),
+    tx!("Hide"),
+    tx!("Close"),
 ];
 /// How often the reading threads say how far they are.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
@@ -95,7 +97,7 @@ fn touches(dirs: &[PathBuf], roots: &(PathBuf, PathBuf)) -> bool {
     dirs.iter().any(|dir| is_within(dir, &roots.0) || is_within(dir, &roots.1))
 }
 
-const NESTED: &str = "Cannot synchronize a folder with itself or with a folder inside it";
+const NESTED: &str = tx!("Cannot synchronize a folder with itself or with a folder inside it");
 
 /// Whether one folder is the other or inside it (a sync would copy into what it reads).
 fn nested(a: &Path, b: &Path) -> bool {
@@ -123,10 +125,11 @@ pub fn open_profile(name: &str) {
     let dirs = gezik_config::paths::KnownDirs::system();
     let folder = |text: &str| dirs.expand_checked(text).filter(|p| p.is_absolute());
     let (Some(left), Some(right)) = (folder(&p.left), folder(&p.right)) else {
-        return view.note(format!("Sync profile \"{name}\" has a folder that is not on this computer"));
+        return view.note(t!("Sync profile \"{}\" has a folder that is not on this computer", name));
     };
     if nested(&left, &right) {
-        return view.note(format!("Sync profile \"{name}\": {NESTED}"));
+        // TRANSLATORS: {0} is the profile's name, {1} why it cannot be opened (a sentence).
+        return view.note(t!("Sync profile \"{0}\": {1}", name, gezik_i18n::t("", NESTED)));
     }
     let shown = crate::windows::config().map(|c| c.load_state().compare.show).unwrap_or(Options::default().show);
     open_with(left, right, String::new(), Options { show: shown, ..p.options }, (p.filter, Some(p.name)));
@@ -143,7 +146,7 @@ fn open_with(
     let Some(window) = crate::windows::with_window(crate::windows::current(), |w| w.as_weak()) else { return };
     let Some(window_ref) = window.upgrade() else { return };
     if window_ref.get_tool_open() && CURRENT.with(Slot::current).is_none_or(|l| l.0.hidden.get()) {
-        return crate::panes::active_view().note("Close the open tool first".to_owned());
+        return crate::panes::active_view().note(t!("Close the open tool first").into_owned());
     }
     if let Some(old) = CURRENT.with(Slot::current) {
         old.0.stop.borrow().store(true, Ordering::Relaxed);
@@ -161,11 +164,11 @@ fn open_with(
 pub fn select_differences() {
     let view = crate::panes::active_view();
     let (Some(left), Some(right)) = (crate::panes::at(0), crate::panes::at(1)) else {
-        return view.note("Select Differences needs two panes (F3)".to_owned());
+        return view.note(t!("Select Differences needs two panes (F3)").into_owned());
     };
     let folder = |v: &crate::view::View| v.folder().is_some() && !v.shows_results() && !v.shows_trash();
     if !folder(&left.view) || !folder(&right.view) {
-        return view.note("Select Differences compares the folders the two panes show".to_owned());
+        return view.note(t!("Select Differences compares the folders the two panes show").into_owned());
     }
     let items = |v: &crate::view::View| -> Vec<compare::Item> {
         v.shown_entries()
@@ -176,7 +179,7 @@ pub fn select_differences() {
     let (l, r) = compare::differences(&items(&left.view), &items(&right.view));
     left.view.select_only(&l);
     right.view.select_only(&r);
-    view.note(format!("Selected {} on the left, {} on the right", group(l.len()), group(r.len())));
+    view.note(t!("Selected {} on the left, {} on the right", group(l.len()), group(r.len())));
 }
 
 /// What a finished compare found.
@@ -293,18 +296,19 @@ fn tool_row(done: &Done, at: u32, open: bool, selected: bool, sync: Mark) -> Too
                 .or_else(|| row.left.and_then(|i| done.left.problem(i)))
                 .or_else(|| row.right.and_then(|i| done.right.problem(i)));
             match why {
-                Some(why) => format!("Unreadable: {why}"),
-                None => "Unreadable".to_owned(),
+                Some(why) => t!("Unreadable: {}", why),
+                None => t!("Unreadable").into_owned(),
             }
         }
-        State::Equal if row.dates_differ => "Same content".to_owned(),
-        state if row.check => format!("{} (content not read)", state.label()),
-        state => state.label().to_owned(),
+        State::Equal if row.dates_differ => t!("Same content").into_owned(),
+        // TRANSLATORS: {} is a compare row's state ("Left newer").
+        state if row.check => t!("{} (content not read)", gezik_i18n::t("", state.label())),
+        state => gezik_i18n::t("", state.label()).into_owned(),
     };
     let failed = matches!(sync.after, Some(Some(_)));
     let status = match (sync.after, sync.user) {
-        (Some(None), _) => "Synchronized".to_owned(),
-        (Some(Some(why)), _) => format!("Not done: {why}"),
+        (Some(None), _) => t!("Synchronized").into_owned(),
+        (Some(Some(why)), _) => t!("Not done: {}", why),
         // Short: the status column is narrow.
         (None, true) => format!("{status} *"),
         (None, false) => status,
@@ -396,14 +400,20 @@ impl FolderCompare {
         let Some(window) = self.0.window.upgrade() else { return };
         self.0.hidden.set(false);
         let (left, right) = self.0.paths.borrow().clone();
-        window.set_tool_title(format!("Compare  {}  ⇄  {}", left.display(), right.display()).into());
-        window.set_tool_field_label("Filter".into());
+        window.set_tool_title(t!("Compare  {}  ⇄  {}", left.display(), right.display()).into());
+        window.set_tool_field_label(t!("Filter").as_ref().into());
         window.set_tool_field_text(self.0.filter_text.borrow().as_str().into());
         window.set_tool_field_focused(false);
         self.show_buttons();
         window.set_tool_columns(
-            format!("{:>SIZE_WIDTH$}  {:<DATE_WIDTH$}  ⇄  {:>SIZE_WIDTH$}  Modified", "Size", "Modified", "Size")
-                .into(),
+            format!(
+                "{:>SIZE_WIDTH$}  {:<DATE_WIDTH$}  ⇄  {:>SIZE_WIDTH$}  {}",
+                t!("column" => "Size"),
+                t!("column" => "Modified"),
+                t!("column" => "Size"),
+                t!("column" => "Modified")
+            )
+            .into(),
         );
         window.set_tool_rows(ModelRc::from(self.0.rows.clone()));
         window.set_tool_chip(SharedString::new());
@@ -418,7 +428,14 @@ impl FolderCompare {
         let mode = self.0.options.get().mode;
         let labels: Vec<SharedString> = BUTTONS
             .iter()
-            .map(|b| if *b == "Mode" { format!("Mode: {}", mode.label()).into() } else { SharedString::from(*b) })
+            .map(|b| {
+                if *b == "Mode" {
+                    // TRANSLATORS: {} is the sync mode (Two-way, Left to right, Mirror).
+                    t!("Mode: {}", gezik_i18n::t("", mode.label())).into()
+                } else {
+                    SharedString::from(&*gezik_i18n::t("", b))
+                }
+            })
             .collect();
         // Changed in place: Mode is clicked from inside this strip, and a new model would destroy
         // the button whose click is still running (the window then aborted on the next Close).
@@ -448,7 +465,7 @@ impl FolderCompare {
             })
             .collect();
         for (label, checked) in BOXES.iter().zip([o.subfolders, o.content, o.ignore_dates, o.ignore_hour]) {
-            toggles.push(ToolToggle { label: (*label).into(), checked });
+            toggles.push(ToolToggle { label: gezik_i18n::t("", label).as_ref().into(), checked });
         }
         // Changed in place: a new model would rebuild the boxes and drop the keyboard's one.
         let current = window.get_tool_toggles();
@@ -470,7 +487,8 @@ impl FolderCompare {
         let Some(window) = self.0.window.upgrade() else { return };
         let (text, tone) = self.summary();
         let told = self.0.told.borrow();
-        let text = if told.is_empty() { text } else { format!("{told}. {text}") };
+        // TRANSLATORS: {0} is what was said first (the compare program was not found), {1} the summary.
+        let text = if told.is_empty() { text } else { t!("{0}. {1}", told, text) };
         window.set_tool_summary(text.into());
         window.set_tool_summary_tone(tone);
     }
@@ -485,29 +503,36 @@ impl FolderCompare {
         }
         let Some(done) = self.0.done.borrow().clone() else { return (self.0.progress.borrow().clone(), 0) };
         let n = compare::counts(&done.rows);
-        let mut parts = vec![format!("{} compared", items_text(n[4] + n[5]))];
+        let compared = n[4] + n[5];
+        let mut parts = vec![tn!("{} item compared" | "{} items compared", compared, group(compared))];
         for (i, what) in [(0, "→"), (3, "←"), (2, "≠")] {
             if n[i] > 0 {
                 parts.push(format!("{} {what}", group(n[i])));
             }
         }
         if n[4] > 0 {
-            parts.push(format!("{} on one side only", group(n[4])));
+            parts.push(tn!("{} on one side only" | "{} on one side only", n[4], group(n[4])));
         }
         if done.links > 0 {
-            parts.push(format!("{} left out (links)", group(done.links)));
+            parts.push(tn!("{} left out (links)" | "{} left out (links)", done.links, group(done.links)));
         }
         if done.online > 0 {
-            parts.push(format!("{} online only, not read", group(done.online)));
+            parts.push(tn!("{} online only, not read" | "{} online only, not read", done.online, group(done.online)));
         }
         let unread = done.rows.iter().filter(|r| r.check).count();
         if unread > 0 {
-            parts.push(format!("content of {} not read", items_text(unread)));
+            parts.push(tn!("content of {} item not read" | "content of {} items not read", unread, group(unread)));
         }
         let to_do = self.acted_rows();
         if to_do > 0 {
             let keys = if cfg!(target_os = "macos") { "⌘↩" } else { "Ctrl+Enter" };
-            parts.push(format!("{} to synchronize ({keys})", items_text(to_do)));
+            // TRANSLATORS: {1} is the shortcut that starts the sync.
+            parts.push(tn!(
+                "{0} item to synchronize ({1})" | "{0} items to synchronize ({1})",
+                to_do,
+                group(to_do),
+                keys
+            ));
         }
         let note = self.0.note.borrow().clone();
         if !note.is_empty() {
@@ -515,13 +540,13 @@ impl FolderCompare {
         }
         let selected = self.0.rows.selected.borrow().len();
         if selected > 0 {
-            parts.push(format!("Selected {}", group(selected)));
+            parts.push(tn!("Selected {}" | "Selected {}", selected, group(selected)));
         }
         if typed != *self.0.scanned_filter.borrow() {
-            parts.push("Compare Again (F5) applies the filter".to_owned());
+            parts.push(t!("Compare Again (F5) applies the filter").into_owned());
         }
         if self.0.stale.get() {
-            parts.push("Files may have changed: Compare Again (F5)".to_owned());
+            parts.push(t!("Files may have changed: Compare Again (F5)").into_owned());
         }
         (parts.join(" · "), 0)
     }
@@ -530,7 +555,7 @@ impl FolderCompare {
     fn syncing(&self) -> bool {
         let busy = self.0.syncing.borrow().is_some();
         if busy {
-            self.say("Wait until the sync is done");
+            self.say(&t!("Wait until the sync is done"));
         }
         busy
     }
@@ -554,7 +579,7 @@ impl FolderCompare {
         self.0.generation.set(generation);
         self.0.running.set(true);
         *self.0.scanned_filter.borrow_mut() = self.0.filter_text.borrow().clone();
-        *self.0.progress.borrow_mut() = "Reading…".to_owned();
+        *self.0.progress.borrow_mut() = t!("Reading…").into_owned();
         self.0.stale.set(false);
         self.0.note.borrow_mut().clear();
         let (left, right) = self.0.paths.borrow().clone();
@@ -575,7 +600,7 @@ impl FolderCompare {
         });
         if let Err(err) = spawned {
             self.0.running.set(false);
-            *self.0.progress.borrow_mut() = format!("Cannot compare: {err}");
+            *self.0.progress.borrow_mut() = t!("Cannot compare: {}", err);
         }
         self.show_summary();
     }
@@ -725,7 +750,7 @@ impl FolderCompare {
     /// it selected (a side lacking it: the nearest folder it has), and the layer hides.
     fn show_in_pane(&self, right_side: bool) {
         let Some(at) = self.cursor_row().or_else(|| self.0.rows.selected.borrow().first().copied()) else {
-            return self.say("Select a row first");
+            return self.say(&t!("Select a row first"));
         };
         let target = self.path(at, right_side);
         let (dir, names) = match target {
@@ -759,10 +784,11 @@ impl FolderCompare {
             let n = compare::counts(&d.rows);
             n[0] + n[2] + n[3]
         });
+        // TRANSLATORS: the status bar's chip of a hidden compare; {0} is the left folder's name.
         let text = match (self.0.running.get(), differs) {
-            (true, _) => format!("Compare: {name} (…)"),
-            (false, Some(n)) => format!("Compare: {name} ({} ≠)", group(n)),
-            (false, None) => format!("Compare: {name}"),
+            (true, _) => t!("Compare: {} (…)", name),
+            (false, Some(n)) => t!("Compare: {0} ({1} ≠)", name, group(n)),
+            (false, None) => t!("Compare: {}", name),
         };
         window.set_tool_chip(text.into());
     }
@@ -787,7 +813,7 @@ impl FolderCompare {
             return;
         }
         if window.get_tool_open() {
-            return crate::panes::active_view().note("Close the open tool first".to_owned());
+            return crate::panes::active_view().note(t!("Close the open tool first").into_owned());
         }
         self.show();
         self.refilter();
@@ -886,7 +912,7 @@ impl FolderCompare {
         }
         match (self.path(at, false), self.path(at, true)) {
             (Some(l), Some(r)) if l.is_file() && r.is_file() => crate::diff::with_current(|d| d.open(l, r)),
-            _ => self.say("Enter compares two files: this one is not on both sides"),
+            _ => self.say(&t!("Enter compares two files: this one is not on both sides")),
         }
     }
 
@@ -900,15 +926,12 @@ impl FolderCompare {
             .map(|p| p.display().to_string())
             .collect();
         if paths.is_empty() {
-            return self.say("Nothing to copy");
+            return self.say(&t!("Nothing to copy"));
         }
         let text = paths.join(if cfg!(windows) { "\r\n" } else { "\n" });
         match gezik_platform::clipboard::write_text(&text) {
-            Ok(()) => self.say(&format!(
-                "Copied {}",
-                if paths.len() == 1 { "1 path".to_owned() } else { format!("{} paths", group(paths.len())) }
-            )),
-            Err(_) => self.say("Cannot use the clipboard"),
+            Ok(()) => self.say(&tn!("Copied {} path" | "Copied {} paths", paths.len(), group(paths.len()))),
+            Err(_) => self.say(&t!("Cannot use the clipboard")),
         }
     }
 
@@ -943,7 +966,7 @@ impl FolderCompare {
         let had = !self.0.rows.user.borrow().is_empty();
         self.0.rows.user.borrow_mut().clear();
         if had {
-            *self.0.note.borrow_mut() = "Your direction choices were reset".to_owned();
+            *self.0.note.borrow_mut() = t!("Your direction choices were reset").into_owned();
         }
     }
 
@@ -980,7 +1003,7 @@ impl FolderCompare {
             self.targets().into_iter().flat_map(|at| compare::units_under(&done.rows, at as usize)).collect();
         let after = self.0.rows.after.borrow().clone();
         let units: Vec<u32> = units.into_iter().filter(|at| !after.contains_key(at)).collect();
-        let Some(&first) = units.first() else { return self.say("This row takes no direction") };
+        let Some(&first) = units.first() else { return self.say(&t!("This row takes no direction")) };
         let mode = self.0.options.get().mode;
         {
             let mut dirs = self.0.rows.dirs.borrow_mut();
@@ -1010,20 +1033,20 @@ impl FolderCompare {
     /// Synchronize… (Ctrl+Enter): the summary question, then one job.
     fn synchronize(&self) {
         if self.0.running.get() {
-            return self.say("Wait until the compare is done");
+            return self.say(&t!("Wait until the compare is done"));
         }
         if self.0.syncing.borrow().is_some() {
-            return self.say("A sync from this compare is running");
+            return self.say(&t!("A sync from this compare is running"));
         }
-        let Some(done) = self.0.done.borrow().clone() else { return self.say("Nothing to synchronize") };
+        let Some(done) = self.0.done.borrow().clone() else { return self.say(&t!("Nothing to synchronize")) };
         let roots = self.0.rows.roots.borrow().clone();
         if nested(&roots.0, &roots.1) {
-            return self.say(NESTED);
+            return self.say(&gezik_i18n::t("", NESTED));
         }
         let dirs = self.0.rows.dirs.borrow().clone();
         let planned = crate::sync::plan(&done.left, &done.right, &done.rows, &dirs, (&roots.0, &roots.1), done.whole);
         if planned.steps.is_empty() {
-            return self.say("Nothing to synchronize");
+            return self.say(&t!("Nothing to synchronize"));
         }
         let bins = done.bins;
         let all = crate::sync::summary(&planned);
@@ -1034,20 +1057,36 @@ impl FolderCompare {
             ..Default::default()
         };
         let mut lines = crate::sync::lines(&strict, [&roots.0, &roots.1], bins, &refused);
-        if planned.unread > 0 {
-            lines.push(format!("{} that could not be read left out", folders_text(planned.unread)));
-        }
-        if planned.listed_only > 0 {
-            lines.push(format!(
-                "{} to move to {} go file by file: the compare did not see all of {} (a filter, or hidden items)",
-                folders_text(planned.listed_only),
-                crate::sync::bin_name(),
-                if planned.listed_only == 1 { "it" } else { "them" }
+        let unread = planned.unread;
+        if unread > 0 {
+            lines.push(tn!(
+                "{} folder that could not be read left out" | "{} folders that could not be read left out",
+                unread,
+                group(unread)
             ));
+        }
+        let listed = planned.listed_only;
+        if listed > 0 {
+            lines.push(if cfg!(windows) {
+                tn!(
+                    "{} folder to move to the Recycle Bin goes file by file: the compare did not see all of it (a filter, or hidden items)"
+                        | "{} folders to move to the Recycle Bin go file by file: the compare did not see all of them (a filter, or hidden items)",
+                    listed,
+                    group(listed)
+                )
+            } else {
+                tn!(
+                    "{} folder to move to the Trash goes file by file: the compare did not see all of it (a filter, or hidden items)"
+                        | "{} folders to move to the Trash go file by file: the compare did not see all of them (a filter, or hidden items)",
+                    listed,
+                    group(listed)
+                )
+            });
         }
         let ask_anyway = [0, 1].map(|i| refused.replacing[i] > 0);
         if strict.files == [0, 0] && strict.trashed == [0, 0] && ask_anyway == [false; 2] {
-            return self.say(&format!("Nothing to synchronize: {}", lines.join(" · ")));
+            // TRANSLATORS: {} is the list of what a sync leaves out, joined with " · ".
+            return self.say(&t!("Nothing to synchronize: {}", lines.join(" · ")));
         }
         // A side whose other side is empty would lose everything (an unplugged disk, a wrong
         // folder): said, and only with its box ticked.
@@ -1062,38 +1101,42 @@ impl FolderCompare {
             let mut verify = false;
             crate::operations::with_current(|ops| verify = ops.verify_default());
             boxes.push((0, 2));
-            checks.push(("Verify copies".to_owned(), verify));
+            checks.push((t!("Verify copies").into_owned(), verify));
         }
         for i in [1, 0] {
             if ask_anyway[i] {
                 boxes.push((i, 0));
-                checks.push((format!("Replace them anyway on {}", roots_of[i].display()), false));
+                checks.push((t!("Replace them anyway on {}", roots_of[i].display()), false));
             }
             if emptied[i] {
-                lines.push(format!(
-                    "{} is empty: everything synchronized on {} goes to {}",
-                    roots_of[1 - i].display(),
-                    roots_of[i].display(),
-                    crate::sync::bin_name()
-                ));
+                let (empty, side) = (roots_of[1 - i].display(), roots_of[i].display());
+                lines.push(if cfg!(windows) {
+                    t!("{0} is empty: everything synchronized on {1} goes to the Recycle Bin", empty, side)
+                } else {
+                    t!("{0} is empty: everything synchronized on {1} goes to the Trash", empty, side)
+                });
                 boxes.push((i, 1));
-                checks.push((
-                    format!("Yes, move everything on {} to {}", roots_of[i].display(), crate::sync::bin_name()),
-                    false,
-                ));
+                let check = if cfg!(windows) {
+                    t!("Yes, move everything on {} to the Recycle Bin", side)
+                } else {
+                    t!("Yes, move everything on {} to the Trash", side)
+                };
+                checks.push((check, false));
             }
         }
-        let message = format!("Synchronize {} and {}\n\n{}", roots.0.display(), roots.1.display(), lines.join("\n"));
+        // TRANSLATORS: {0} and {1} are the two folders, {2} the lines saying what will be done.
+        let message = t!("Synchronize {0} and {1}\n\n{2}", roots.0.display(), roots.1.display(), lines.join("\n"));
         let mut dialogs = None;
         crate::operations::with_current(|ops| dialogs = Some(ops.dialogs()));
         let Some(dialogs) = dialogs else { return };
         let this = self.clone();
-        dialogs.ask_checks("Synchronize", message, checks, &["Synchronize", "Cancel"], move |answer| {
+        let buttons = [t!("Synchronize"), t!("Cancel")];
+        dialogs.ask_checks(t!("Synchronize"), message, checks, &[&buttons[0], &buttons[1]], move |answer| {
             let Some((0, marks)) = answer else { return };
             let ticked =
                 |side: usize, what: u8| boxes.iter().zip(marks.iter()).any(|(b, on)| *b == (side, what) && *on);
             if (0..2).any(|i| emptied[i] && !ticked(i, 1)) {
-                return this.say("Not synchronized: the box for the empty folder was not ticked");
+                return this.say(&t!("Not synchronized: the box for the empty folder was not ticked"));
             }
             this.run_sync(planned, bins, [ticked(0, 0), ticked(1, 0)], ticked(0, 2), done);
         });
@@ -1110,11 +1153,11 @@ impl FolderCompare {
     ) {
         // Read again or closed meanwhile: these steps belong to another result.
         if !self.0.done.borrow().as_ref().is_some_and(|d| Rc::ptr_eq(d, &from)) || self.0.running.get() {
-            return self.say("The compare changed; Synchronize again");
+            return self.say(&t!("The compare changed; Synchronize again"));
         }
         let planned = crate::sync::keep_safe(planned, bins, anyway);
         if planned.steps.is_empty() {
-            return self.say("Nothing to synchronize");
+            return self.say(&t!("Nothing to synchronize"));
         }
         let (left, right) = self.0.rows.roots.borrow().clone();
         let task = gezik_ops::SyncTask::new(left.clone(), right, planned.steps.clone(), anyway);
@@ -1126,7 +1169,7 @@ impl FolderCompare {
         });
         let Some(id) = id else { return };
         *self.0.syncing.borrow_mut() = Some((id, planned, from));
-        *self.0.note.borrow_mut() = "Synchronizing…".to_owned();
+        *self.0.note.borrow_mut() = t!("Synchronizing…").into_owned();
         self.show_summary();
     }
 
@@ -1153,8 +1196,14 @@ impl FolderCompare {
         }
         self.0.rows.after.borrow_mut().extend(outcomes);
         *self.0.note.borrow_mut() = match failed {
-            0 => format!("Synchronized {}", items_text(synced)),
-            n => format!("Synchronized {} · {} not done (see their rows)", items_text(synced), group(n)),
+            0 => tn!("Synchronized {} item" | "Synchronized {} items", synced, group(synced)),
+            n => tn!(
+                "Synchronized {} item · {} not done (see their rows)"
+                    | "Synchronized {} items · {} not done (see their rows)",
+                synced,
+                group(synced),
+                group(n)
+            ),
         };
         if self.0.hidden.get() {
             self.show_chip();
@@ -1175,32 +1224,35 @@ impl FolderCompare {
             left.file_name().map_or_else(|| left.display().to_string(), |n| n.to_string_lossy().into_owned())
         });
         let this = self.clone();
-        let note =
-            |text: &str| if text.trim().is_empty() { ("Type a name".to_owned(), true) } else { (String::new(), false) };
-        let message = "A name for the two folders, the mode, the options and the filter. The palette opens it as \
-                       \"Sync: <name>\", where it only compares.";
+        let note = |text: &str| {
+            if text.trim().is_empty() { (t!("Type a name").into_owned(), true) } else { (String::new(), false) }
+        };
+        let message = t!("A name for the two folders, the mode, the options and the filter. The palette opens it as \
+                       \"Sync: <name>\", where it only compares.");
         let more = dialogs.clone();
-        dialogs.ask_text_choice("Save Profile", message, name, &["Save", "Delete", "Cancel"], note, move |answer| {
+        let buttons = [t!("Save"), t!("Delete"), t!("Cancel")];
+        let buttons = [&*buttons[0], &*buttons[1], &*buttons[2]];
+        dialogs.ask_text_choice(t!("Save Profile"), message, name, &buttons, note, move |answer| {
             let Some((button, name)) = answer else { return };
             let name = name.trim().to_owned();
             if name.is_empty() {
-                return this.say("A profile needs a name");
+                return this.say(&t!("A profile needs a name"));
             }
             let list = crate::sync::profiles();
             let same = |p: &gezik_config::sync_profiles::SyncProfile| p.name.to_lowercase() == name.to_lowercase();
             if button == 1 {
                 if !list.iter().any(same) {
-                    return this.say(&format!("No sync profile is called \"{name}\""));
+                    return this.say(&t!("No sync profile is called \"{}\"", name));
                 }
                 let list = list.into_iter().filter(|p| !same(p)).collect();
                 crate::sync::write_profiles(list);
-                return this.say(&format!("Deleted the sync profile \"{name}\""));
+                return this.say(&t!("Deleted the sync profile \"{}\"", name));
             }
             let opened = this.0.profile.borrow().as_ref().is_some_and(|p| p.to_lowercase() == name.to_lowercase());
             if list.iter().any(same) && !opened {
                 let again = this.clone();
-                let asked = format!("A sync profile called \"{name}\" exists. Replace it?");
-                return more.ask("Save Profile", asked, &["Replace", "Cancel"], move |choice| {
+                let asked = t!("A sync profile called \"{}\" exists. Replace it?", name);
+                return more.ask(t!("Save Profile"), asked, &[&t!("Replace"), &t!("Cancel")], move |choice| {
                     if choice == Some(0) {
                         again.write_profile(name);
                     }
@@ -1214,7 +1266,7 @@ impl FolderCompare {
         let dirs = gezik_config::paths::KnownDirs::system();
         let (left, right) = self.0.paths.borrow().clone();
         if nested(&left, &right) {
-            return self.say(NESTED);
+            return self.say(&gezik_i18n::t("", NESTED));
         }
         let profile = gezik_config::sync_profiles::SyncProfile {
             name: name.clone(),
@@ -1224,11 +1276,11 @@ impl FolderCompare {
             filter: self.0.filter_text.borrow().clone(),
         };
         let Some(list) = crate::sync::with_profile(crate::sync::profiles(), profile) else {
-            return self.say("At most 40 sync profiles: delete one first");
+            return self.say(&t!("At most 40 sync profiles: delete one first"));
         };
         crate::sync::write_profiles(list);
         *self.0.profile.borrow_mut() = Some(name.clone());
-        self.say(&format!("Saved the sync profile \"{name}\""));
+        self.say(&t!("Saved the sync profile \"{}\"", name));
     }
 
     /// The layer's keys: Esc stops a running read, else closes; the row keys, → / ← open and
@@ -1296,14 +1348,6 @@ fn group(n: usize) -> String {
     crate::preview::with_commas(n)
 }
 
-fn folders_text(n: usize) -> String {
-    if n == 1 { "1 folder".to_owned() } else { format!("{} folders", group(n)) }
-}
-
-fn items_text(n: usize) -> String {
-    if n == 1 { "1 item".to_owned() } else { format!("{} items", group(n)) }
-}
-
 /// What the reading thread is given.
 struct Job {
     left: PathBuf,
@@ -1350,7 +1394,8 @@ fn run(job: &Job, say: &mut dyn FnMut(String)) -> Result<Done, String> {
             std::thread::sleep(Duration::from_millis(50));
             if last.elapsed() >= PROGRESS_EVERY {
                 last = Instant::now();
-                say(format!("Reading… {} folders", group(read.load(Ordering::Relaxed))));
+                let n = read.load(Ordering::Relaxed);
+                say(tn!("Reading… {} folder" | "Reading… {} folders", n, group(n)));
             }
         }
         // A panic aborts the process (panic=abort): a join has nothing else to give.
@@ -1376,18 +1421,18 @@ fn run(job: &Job, say: &mut dyn FnMut(String)) -> Result<Done, String> {
 /// A side's scan as an error to say, if it is one.
 fn scanned(root: &Path, scan: &Scan) -> Result<(), String> {
     if scan.stopped {
-        return Err("Stopped. Compare Again (F5) reads both folders again".to_owned());
+        return Err(t!("Stopped. Compare Again (F5) reads both folders again").into_owned());
     }
     if scan.too_many {
-        return Err(format!(
+        return Err(t!(
             "More than {} items in {}; narrow the filter or compare subfolders",
             group(tree_scan::MAX_ITEMS),
             root.display()
         ));
     }
     if scan.tree.nodes.first().is_some_and(|n| n.kind == Kind::Unread) {
-        let why = scan.tree.problem(0).unwrap_or("it cannot be read");
-        return Err(format!("Cannot read {}: {why}", root.display()));
+        let why = scan.tree.problem(0).map_or_else(|| t!("it cannot be read"), Into::into);
+        return Err(t!("Cannot read {}: {}", root.display(), why));
     }
     Ok(())
 }
@@ -1420,7 +1465,7 @@ fn read_contents(
             done += n;
             if last.elapsed() >= PROGRESS_EVERY {
                 last = Instant::now();
-                say(format!("Comparing content… {} of {total_text}", crate::view_options::size_text(done)));
+                say(t!("Comparing content… {} of {}", crate::view_options::size_text(done), total_text));
             }
             !job.stop.load(Ordering::Relaxed)
         };

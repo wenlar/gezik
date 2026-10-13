@@ -9,14 +9,17 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 
 use gezik_core::attrs::{HIDDEN, LOCKED};
 use gezik_core::elevated::{self, LaunchError, Op, System};
+use gezik_i18n::{t, tn, tx};
 use gezik_ops::{ElevatedTask, Elevator, JobId};
 
 use crate::operations::{After, Operations};
 
-pub const RETRY_AS_ADMIN: &str = "Retry as administrator";
-pub const UNDO_ADMIN: &str = "Undoing this needs administrator rights.";
-pub const REDO_ADMIN: &str = "Redoing this needs administrator rights.";
-const EXACTLY: &str = "Gezik asks the system for administrator rights to do exactly this:";
+// Shown with `t`.
+pub const RETRY_AS_ADMIN: &str = tx!("Retry as administrator");
+pub const RETRY: &str = tx!("Retry");
+pub const UNDO_ADMIN: &str = tx!("Undoing this needs administrator rights.");
+pub const REDO_ADMIN: &str = tx!("Redoing this needs administrator rights.");
+const EXACTLY: &str = tx!("Gezik asks the system for administrator rights to do exactly this:");
 
 /// The window the Windows prompt belongs to: the most recently focused one (deviation 13).
 static OWNER: AtomicIsize = AtomicIsize::new(0);
@@ -45,16 +48,16 @@ impl Elevator for SystemElevator {
     }
 }
 
-/// The Problems window's buttons: the administrator first when the job offers it.
+/// The Problems window's buttons (shown with `t`): the administrator first when the job offers it.
 pub fn detail_buttons(admin: bool, retry: bool) -> Vec<&'static str> {
     let mut buttons = Vec::new();
     if admin {
         buttons.push(RETRY_AS_ADMIN);
     }
     if retry {
-        buttons.push("Retry");
+        buttons.push(RETRY);
     }
-    buttons.push("Close");
+    buttons.push(tx!("Close"));
     buttons
 }
 
@@ -92,36 +95,41 @@ pub fn skipping(ops: Vec<Op>, exists: &dyn Fn(&Path) -> bool) -> Vec<Op> {
     ops.into_iter().filter(|op| !op.target().is_some_and(exists)).collect()
 }
 
-/// The conflict question's buttons: Enter (the first) never replaces.
-pub const TAKEN_BUTTONS: &[&str] = &["Cancel", "Replace", "Skip them"];
+/// The conflict question's buttons (shown with `t`): Enter (the first) never replaces.
+pub const TAKEN_BUTTONS: &[&str] = &[tx!("Cancel"), tx!("Replace"), tx!("Skip them")];
 
-/// The confirmation's buttons and which one goes ahead: with a delete or a replace in the list,
-/// Cancel comes first, so Enter does nothing destructive.
+/// `buttons` (marked with `tx!`) in the language in use.
+fn shown_buttons(buttons: &[&str]) -> Vec<String> {
+    buttons.iter().map(|b| gezik_i18n::t("", b).into_owned()).collect()
+}
+
+/// The confirmation's buttons (shown with `t`) and which one goes ahead: with a delete or a
+/// replace in the list, Cancel comes first, so Enter does nothing destructive.
 pub fn confirm_buttons(ops: &[Op]) -> (&'static [&'static str], usize) {
     let replaces = ops.iter().any(|op| matches!(op, Op::Copy { replace: true, .. } | Op::Move { replace: true, .. }));
     let deletes = ops.iter().any(|op| matches!(op, Op::Delete(_)));
     match (deletes, replaces) {
-        (true, _) => (&["Cancel", "Delete"], 1),
-        (false, true) => (&["Cancel", "Continue"], 1),
-        _ => (&["Continue", "Cancel"], 0),
+        (true, _) => (&[tx!("Cancel"), tx!("Delete")], 1),
+        (false, true) => (&[tx!("Cancel"), tx!("Continue")], 1),
+        _ => (&[tx!("Continue"), tx!("Cancel")], 0),
     }
-}
-
-fn items(n: usize) -> String {
-    if n == 1 { "1 item".to_owned() } else { format!("{n} items") }
 }
 
 pub fn taken_text(n: usize) -> String {
-    if n == 1 {
-        "1 item is already where it goes. Replace it as administrator?".to_owned()
-    } else {
-        format!("{n} items are already where they go. Replace them as administrator?")
-    }
+    tn!(
+        "{n} item is already where it goes. Replace it as administrator?"
+            | "{n} items are already where they go. Replace them as administrator?",
+        n
+    )
 }
 
 /// Spec §10.2's confirmation of a permanent delete.
 pub fn delete_text(n: usize) -> String {
-    format!("This will delete {} permanently as administrator. It cannot be undone.", items(n))
+    tn!(
+        "This will delete {n} item permanently as administrator. It cannot be undone."
+            | "This will delete {n} items permanently as administrator. It cannot be undone.",
+        n
+    )
 }
 
 /// `text` with what could hide or reorder what is shown (control, bidi and invisible format
@@ -151,37 +159,43 @@ fn shown(path: &Path) -> String {
 }
 
 pub fn refusal_text(op: &Op, why: &str) -> String {
-    format!("Not done as administrator: {} ({why})", shown(op.path()))
+    // TRANSLATORS: {0} is a path, {1} why it was refused
+    t!("Not done as administrator: {0} ({1})", shown(op.path()), gezik_i18n::t("", why))
 }
 
 /// One operation in words, with every value the helper gets.
 pub fn op_text(op: &Op) -> String {
     match op {
-        Op::Copy { from, to, replace } => {
-            let how = if *replace { ", replacing files there" } else { "" };
-            format!("Copy {} to {}{how}", shown(from), shown(to))
-        }
-        Op::Move { from, to, replace } => {
-            let how = if *replace { ", replacing a file there" } else { "" };
-            format!("Move {} to {}{how}", shown(from), shown(to))
-        }
-        Op::Delete(path) => format!("Delete {} permanently", shown(path)),
-        Op::Rename { path, name } => format!("Rename {} to \"{}\"", shown(path), escaped(name)),
-        Op::Mkdir(path) => format!("Make the folder {}", shown(path)),
-        Op::Rmdir(path) => format!("Remove the empty folder {}", shown(path)),
-        Op::Chmod { path, mode } => format!("Set the permissions of {} to {mode:03o}", shown(path)),
+        Op::Copy { from, to, replace: true } => t!("Copy {} to {}, replacing files there", shown(from), shown(to)),
+        Op::Copy { from, to, .. } => t!("Copy {} to {}", shown(from), shown(to)),
+        Op::Move { from, to, replace: true } => t!("Move {} to {}, replacing a file there", shown(from), shown(to)),
+        Op::Move { from, to, .. } => t!("Move {} to {}", shown(from), shown(to)),
+        Op::Delete(path) => t!("Delete {} permanently", shown(path)),
+        Op::Rename { path, name } => t!("Rename {} to \"{}\"", shown(path), escaped(name)),
+        Op::Mkdir(path) => t!("Make the folder {}", shown(path)),
+        Op::Rmdir(path) => t!("Remove the empty folder {}", shown(path)),
+        Op::Chmod { path, mode } => t!("Set the permissions of {} to {}", shown(path), format!("{mode:03o}")),
         Op::Chown { path, uid, gid } => {
-            format!("Set the owner of {} to user {uid} and group {gid}", shown(path))
+            // TRANSLATORS: {1} and {2} are numbers (a user id and a group id)
+            t!("Set the owner of {0} to user {1} and group {2}", shown(path), uid, gid)
         }
         Op::Chflags { path, set, clear } => {
-            let flag = |bit: u32, name: &str| {
-                [(set, "on"), (clear, "off")]
-                    .into_iter()
-                    .find(|(bits, _)| *bits & bit != 0)
-                    .map(|(_, s)| format!("{name} {s}"))
+            let flag = |bit: u32, on: &str, off: &str| {
+                if set & bit != 0 {
+                    Some(on.to_owned())
+                } else if clear & bit != 0 {
+                    Some(off.to_owned())
+                } else {
+                    None
+                }
             };
-            let what: Vec<String> = [flag(HIDDEN, "Hidden"), flag(LOCKED, "Locked")].into_iter().flatten().collect();
-            format!("Change the flags of {}: {}", shown(path), what.join(", "))
+            let what: Vec<String> =
+                [flag(HIDDEN, &t!("Hidden on"), &t!("Hidden off")), flag(LOCKED, &t!("Locked on"), &t!("Locked off"))]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+            // TRANSLATORS: {1} is a list such as "Hidden on, Locked off"
+            t!("Change the flags of {0}: {1}", shown(path), what.join(", "))
         }
     }
 }
@@ -191,7 +205,7 @@ fn list_text(ops: &[Op], exposed: bool) -> String {
     let mut lines: Vec<String> = ops.iter().map(op_text).collect();
     if exposed {
         lines.push(String::new());
-        lines.push(gezik_platform::elevate::EXPOSED.to_owned());
+        lines.push(gezik_i18n::t("", gezik_platform::elevate::EXPOSED).into_owned());
     }
     lines.join("\n")
 }
@@ -199,13 +213,14 @@ fn list_text(ops: &[Op], exposed: bool) -> String {
 /// What the user says yes to before the system's prompt: exactly the list that is sent.
 pub fn confirm_text(ops: &[Op], exposed: bool) -> String {
     let deletes = ops.iter().filter(|op| matches!(op, Op::Delete(_))).count();
-    let lead = if deletes > 0 { format!("{}\n\n{EXACTLY}", delete_text(deletes)) } else { EXACTLY.to_owned() };
+    let exactly = gezik_i18n::t("", EXACTLY);
+    let lead = if deletes > 0 { format!("{}\n\n{exactly}", delete_text(deletes)) } else { exactly.into_owned() };
     format!("{lead}\n{}", list_text(ops, exposed))
 }
 
 /// Ctrl+Z / Ctrl+Y's question (`redo`: Ctrl+Y) with the list it sends.
 pub fn undo_text(redo: bool, ops: &[Op], exposed: bool) -> String {
-    format!("{}\n\n{}", if redo { REDO_ADMIN } else { UNDO_ADMIN }, list_text(ops, exposed))
+    format!("{}\n\n{}", gezik_i18n::t("", if redo { REDO_ADMIN } else { UNDO_ADMIN }), list_text(ops, exposed))
 }
 
 /// Done items Gezik could not look at (`Report::unchecked`), for the Problems window.
@@ -214,7 +229,7 @@ pub fn unchecked_text(paths: &[PathBuf]) -> Option<String> {
         return None;
     }
     let lines: Vec<String> = paths.iter().map(|path| shown(path)).collect();
-    Some(format!("{}:\n{}", gezik_ops::UNCHECKED, lines.join("\n")))
+    Some(format!("{}:\n{}", gezik_i18n::t("", gezik_ops::UNCHECKED), lines.join("\n")))
 }
 
 /// Whether something other than an administrator could swap Gezik's exe before the helper runs.
@@ -239,7 +254,10 @@ pub fn start(ops: &Operations, wanted: Vec<Op>, started: impl FnOnce(JobId) + 's
         return confirm(ops, wanted, started);
     }
     let again = ops.clone();
-    ops.dialogs().ask_escape(RETRY_AS_ADMIN, taken_text(count), TAKEN_BUTTONS, 0, move |choice| match choice {
+    let buttons = shown_buttons(TAKEN_BUTTONS);
+    let buttons: Vec<&str> = buttons.iter().map(String::as_str).collect();
+    let title = gezik_i18n::t("", RETRY_AS_ADMIN);
+    ops.dialogs().ask_escape(title, taken_text(count), &buttons, 0, move |choice| match choice {
         Some(1) => confirm(&again, replacing(wanted, &exists), started),
         Some(2) => confirm(&again, skipping(wanted, &exists), started),
         _ => {}
@@ -259,13 +277,15 @@ fn confirm(ops: &Operations, wanted: Vec<Op>, started: Started) {
     }
     let exe = gezik_platform::system::exe().ok().and_then(|exe| exe.to_str().map(str::to_owned)).unwrap_or_default();
     if !elevated::fits(&exe, &wanted, cfg!(windows)) {
-        return ops.status(elevated::TOO_MANY.to_owned());
+        return ops.status(gezik_i18n::t("", elevated::TOO_MANY).into_owned());
     }
     let (buttons, yes) = confirm_buttons(&wanted);
     let cancel = 1 - yes;
     let again = ops.clone();
     let text = confirm_text(&wanted, exposed());
-    ops.dialogs().ask_escape(elevated::label(&wanted), text, buttons, cancel, move |choice| {
+    let buttons = shown_buttons(buttons);
+    let buttons: Vec<&str> = buttons.iter().map(String::as_str).collect();
+    ops.dialogs().ask_escape(elevated::label(&wanted), text, &buttons, cancel, move |choice| {
         if choice == Some(yes) {
             submit(&again, wanted, started);
         }

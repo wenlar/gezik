@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_core::checksum_file::{self, Algo};
 use gezik_core::export;
+use gezik_i18n::{t, tn, tx};
 use gezik_ops::{HashResults, HashRow, HashTask, JobId, NewTask, Report, RowState, SharedResults, Task, Verdict};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
@@ -65,7 +66,11 @@ pub fn install(window: &AppWindow) {
 
 /// The buttons under the table; the last closes.
 fn buttons(verify: bool) -> &'static [&'static str] {
-    if verify { &["Copy", "Export CSV…", "Close"] } else { &["Copy", "Save…", "Export CSV…", "Close"] }
+    if verify {
+        &[tx!("Copy"), tx!("Export CSV…"), tx!("Close")]
+    } else {
+        &[tx!("Copy"), tx!("Save…"), tx!("Export CSV…"), tx!("Close")]
+    }
 }
 
 /// Where a row's size ends in its fixed-width text: the sizes line up right.
@@ -74,14 +79,14 @@ const SIZE_WIDTH: usize = 10;
 /// `checksums`: the selection (or the focused item) of `view`.
 pub fn open_for_view(view: &crate::view::View) {
     if view.shows_drives() {
-        return view.note("Checksums work on files and folders".to_owned());
+        return view.note(t!("Checksums work on files and folders").into_owned());
     }
     let mut items = view.selected_items();
     if items.is_empty() {
         items.extend(view.focus().and_then(|i| view.entry_path(i)));
     }
     if items.is_empty() {
-        return view.note("Select files or folders for their checksums".to_owned());
+        return view.note(t!("Select files or folders for their checksums").into_owned());
     }
     open(items.into_iter().map(|(path, _)| path).collect());
 }
@@ -91,7 +96,7 @@ pub fn verify_for_view(view: &crate::view::View) {
     let item = view.single_selected().or_else(|| view.focus()).and_then(|i| view.entry_path(i));
     match item {
         Some((path, false)) if is_checksum_file(&path) => verify(path),
-        _ => view.note("Select a checksum file (.sha256, .md5, .sfv, SHA256SUMS…)".to_owned()),
+        _ => view.note(t!("Select a checksum file (.sha256, .md5, .sfv, SHA256SUMS…)").into_owned()),
     }
 }
 
@@ -129,7 +134,8 @@ pub fn open(paths: Vec<PathBuf>) {
     if let Some((algo, _)) = &expected {
         algos[algo.index()] = true;
     }
-    let title = format!("Checksums of {}", crate::operations::items_text(&paths));
+    // TRANSLATORS: {} is a file name or a count of items ("3 items").
+    let title = t!("Checksums of {}", crate::operations::items_text(&paths));
     let save_name = match paths.as_slice() {
         [one] => one.file_name().map(|n| n.to_string_lossy().into_owned()),
         _ => base.file_name().map(|n| n.to_string_lossy().into_owned()),
@@ -151,7 +157,7 @@ pub fn verify(file: PathBuf) {
     }
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let base = file.parent().map(Path::to_path_buf).unwrap_or_default();
-    let Some(layer) = Checksums::new(format!("Verify {name}"), true, base, name, [false; 5], None) else { return };
+    let Some(layer) = Checksums::new(t!("Verify {}", name), true, base, name, [false; 5], None) else { return };
     layer.submit(Box::new(HashTask::verify(file, layer.results.clone())));
 }
 
@@ -263,13 +269,14 @@ impl Checksums {
         });
         CURRENT.with(|s| s.set(crate::windows::current(), layer.clone()));
         window_ref.set_tool_title(title.into());
-        window_ref.set_tool_field_label(if verify { "" } else { "Expected" }.into());
+        window_ref.set_tool_field_label(if verify { SharedString::new() } else { t!("Expected").as_ref().into() });
         window_ref.set_tool_field_text(expected.map(|(_, hex)| hex).unwrap_or_default().into());
         window_ref.set_tool_field_focused(false);
         window_ref.set_tool_scroll(0.0);
         window_ref.set_tool_cursor(-1);
         window_ref.set_tool_rows(ModelRc::from(layer.model.clone()));
-        let labels: Vec<SharedString> = buttons(verify).iter().map(|b| SharedString::from(*b)).collect();
+        let labels: Vec<SharedString> =
+            buttons(verify).iter().map(|b| SharedString::from(&*gezik_i18n::t("", b))).collect();
         window_ref.set_tool_buttons(ModelRc::new(VecModel::from(labels)));
         layer.show_columns();
         layer.show_summary();
@@ -297,15 +304,15 @@ impl Checksums {
     /// The column titles and the boxes (verify: the filter).
     fn show_columns(&self) {
         let Some(window) = self.window.upgrade() else { return };
-        let mut title = vec![format!("{:>SIZE_WIDTH$}", "Size")];
+        let mut title = vec![format!("{:>SIZE_WIDTH$}", t!("column" => "Size"))];
         if self.verify {
-            title.push("Checksum".to_owned());
+            title.push(t!("Checksum").into_owned());
         } else {
             title.extend(self.columns().iter().map(|a| format!("{:<1$}", a.name(), a.hex_len())));
         }
         window.set_tool_columns(title.join("  ").trim_end().into());
         let toggles: Vec<ToolToggle> = if self.verify {
-            vec![ToolToggle { label: "Failed and missing only".into(), checked: self.only_failed.get() }]
+            vec![ToolToggle { label: t!("Failed and missing only").as_ref().into(), checked: self.only_failed.get() }]
         } else {
             let on = self.algos.get();
             Algo::ALL.iter().map(|a| ToolToggle { label: a.name().into(), checked: on[a.index()] }).collect()
@@ -344,7 +351,7 @@ impl Checksums {
         let (values, status, tone) = if self.verify {
             let verdict = row.verdict();
             let value = row.expected.as_ref().and_then(|(algo, _)| row.digest(*algo)).unwrap_or_default();
-            (value.to_owned(), verdict.label().to_owned(), tone(verdict))
+            (value.to_owned(), gezik_i18n::t("checksum", verdict.label()).into_owned(), tone(verdict))
         } else {
             let expected = self.expected.borrow();
             let mut compared = None;
@@ -359,12 +366,12 @@ impl Checksums {
                 }
             }
             let (status, tone) = match (&row.state, compared) {
-                (RowState::Unreadable(why), _) => (format!("Unreadable: {why}"), 2),
-                (RowState::OnlineOnly, _) => ("Online only".to_owned(), 0),
-                (RowState::Missing, _) => ("Missing".to_owned(), 2),
-                (RowState::Waiting, _) => ("Waiting".to_owned(), 0),
-                (RowState::Done, Some(true)) => ("Matches".to_owned(), 1),
-                (RowState::Done, Some(false)) => ("No match".to_owned(), 2),
+                (RowState::Unreadable(why), _) => (t!("Unreadable: {}", why), 2),
+                (RowState::OnlineOnly, _) => (t!("Online only").into_owned(), 0),
+                (RowState::Missing, _) => (t!("Missing").into_owned(), 2),
+                (RowState::Waiting, _) => (t!("Waiting").into_owned(), 0),
+                (RowState::Done, Some(true)) => (t!("Matches").into_owned(), 1),
+                (RowState::Done, Some(false)) => (t!("No match").into_owned(), 2),
                 (RowState::Done, None) => (String::new(), 0),
             };
             (values.join("  ").trim_end().to_owned(), status, tone)
@@ -459,24 +466,34 @@ impl Checksums {
     fn compute_summary(&self, results: &HashResults) -> (String, i32) {
         let rows = &results.rows;
         let done = rows.iter().filter(|r| r.state != RowState::Waiting).count();
-        let files = if rows.len() == 1 { "1 file".to_owned() } else { format!("{} files", group(rows.len())) };
         let bytes: u64 = rows.iter().map(|r| r.size).sum();
         let running = self.job.get().is_some();
         let expected = self.expected.borrow();
         let typed = window_expected(&self.window);
         match &*expected {
-            _ if running => (format!("Reading… {} of {files}", group(done)), 0),
-            None if !typed.trim().is_empty() => ("Not a checksum: 8, 32, 40, 64 or 128 hex digits".to_owned(), 2),
-            None => (format!("{files} · {}", crate::view_options::size_text(bytes)), 0),
-            Some((algo, _)) if !self.algos.get()[algo.index()] => (format!("Check {} to compare", algo.name()), 0),
+            _ if running => {
+                let (count, total) = (group(done), group(rows.len()));
+                (tn!("Reading… {} of {} file" | "Reading… {} of {} files", rows.len(), count, total), 0)
+            }
+            None if !typed.trim().is_empty() => (t!("Not a checksum: 8, 32, 40, 64 or 128 hex digits").into_owned(), 2),
+            None => {
+                let size = crate::view_options::size_text(bytes);
+                (tn!("{} file · {}" | "{} files · {}", rows.len(), group(rows.len()), size), 0)
+            }
+            // TRANSLATORS: {} is an algorithm's name (SHA-256), a box to tick.
+            Some((algo, _)) if !self.algos.get()[algo.index()] => (t!("Check {} to compare", algo.name()), 0),
             Some((algo, hex)) => {
                 let matches: Vec<&HashRow> = rows.iter().filter(|r| r.digest(*algo) == Some(hex.as_str())).collect();
                 match (rows.len(), matches.as_slice()) {
-                    (1, [_]) => (format!("Matches the expected {}", algo.name()), 1),
-                    (1, _) => (format!("Does not match the expected {}", algo.name()), 2),
-                    (_, []) => (format!("No file matches the expected {}", algo.name()), 2),
-                    (_, [one]) => (format!("{} matches the expected {}", one.name, algo.name()), 1),
-                    (_, many) => (format!("{} files match the expected {}", many.len(), algo.name()), 1),
+                    (1, [_]) => (t!("Matches the expected {}", algo.name()), 1),
+                    (1, _) => (t!("Does not match the expected {}", algo.name()), 2),
+                    (_, []) => (t!("No file matches the expected {}", algo.name()), 2),
+                    // TRANSLATORS: {0} is a file name, {1} an algorithm's name (SHA-256).
+                    (_, [one]) => (t!("{0} matches the expected {1}", one.name, algo.name()), 1),
+                    (_, many) => {
+                        let n = many.len();
+                        (tn!("{n} file matches the expected {}" | "{n} files match the expected {}", n, algo.name()), 1)
+                    }
                 }
             }
         }
@@ -484,28 +501,30 @@ impl Checksums {
 
     fn verify_summary(&self, results: &HashResults) -> (String, i32) {
         if let Some(error) = &results.error {
-            return (format!("Cannot read the checksum file: {error}"), 2);
+            return (t!("Cannot read the checksum file: {}", error), 2);
         }
         let count = |v: Verdict| results.rows.iter().filter(|r| r.verdict() == v).count();
-        let mut parts = vec![format!("{} OK", group(count(Verdict::Ok)))];
+        let ok = count(Verdict::Ok);
+        let mut parts = vec![tn!("{} OK" | "{} OK", ok, group(ok))];
         let failed = count(Verdict::Failed);
         let missing = count(Verdict::Missing);
         let unreadable = count(Verdict::Unreadable);
         let online = count(Verdict::OnlineOnly);
-        for (n, what) in [(failed, "failed"), (missing, "missing"), (unreadable, "unreadable"), (online, "online only")]
-        {
-            if n > 0 {
-                parts.push(format!("{} {what}", group(n)));
-            }
-        }
-        match results.bad_lines {
-            0 => {}
-            1 => parts.push("1 line could not be read".to_owned()),
-            n => parts.push(format!("{} lines could not be read", group(n))),
+        let counts = [
+            (failed, tn!("{} failed" | "{} failed", failed, group(failed))),
+            (missing, tn!("{} missing" | "{} missing", missing, group(missing))),
+            (unreadable, tn!("{} unreadable" | "{} unreadable", unreadable, group(unreadable))),
+            (online, tn!("{} online only" | "{} online only", online, group(online))),
+        ];
+        parts.extend(counts.into_iter().filter(|(n, _)| *n > 0).map(|(_, text)| text));
+        let bad_lines = results.bad_lines;
+        if bad_lines > 0 {
+            parts.push(tn!("{} line could not be read" | "{} lines could not be read", bad_lines, group(bad_lines)));
         }
         let text = parts.join(" · ");
         if self.job.get().is_some() {
-            return (format!("Verifying… {text}"), 0);
+            // TRANSLATORS: {} is a list of counts ("3 OK · 1 failed").
+            return (t!("Verifying… {}", text), 0);
         }
         let bad = failed + missing + unreadable > 0 || results.bad_lines > 0;
         let good = !results.rows.is_empty();
@@ -644,11 +663,14 @@ impl Checksums {
             copy_text(&rows, &self.ticked())
         };
         if text.is_empty() {
-            return self.say("Nothing to copy yet");
+            return self.say(&t!("Nothing to copy yet"));
         }
         match gezik_platform::clipboard::write_text(&text) {
-            Ok(()) => self.say(&format!("Copied {}", lines_text(text.trim_end().lines().count()))),
-            Err(_) => self.say("Cannot use the clipboard"),
+            Ok(()) => {
+                let n = text.trim_end().lines().count();
+                self.say(&tn!("Copied {} line" | "Copied {} lines", n, group(n)));
+            }
+            Err(_) => self.say(&t!("Cannot use the clipboard")),
         }
     }
 
@@ -661,10 +683,11 @@ impl Checksums {
         let rows: Vec<HashRow> =
             self.chosen().into_iter().filter(|r| algos.iter().all(|a| r.digest(*a).is_some())).collect();
         if algos.is_empty() || rows.is_empty() {
-            return self.say("No checksums to save yet");
+            return self.say(&t!("No checksums to save yet"));
         }
         let files: Vec<String> = algos.iter().map(|a| format!("{}.{}", self.save_name, a.extension())).collect();
-        let message = format!("Writes {} in {}", files.join(", "), self.base.display());
+        // TRANSLATORS: {0} is a list of file names, {1} a folder.
+        let message = t!("Writes {0} in {1}", files.join(", "), self.base.display());
         let texts: Vec<(String, Vec<u8>)> = algos
             .iter()
             .map(|algo| {
@@ -677,7 +700,7 @@ impl Checksums {
                 (format!(".{}", algo.extension()), text.into_bytes())
             })
             .collect();
-        self.ask_and_write("Save Checksums", message, self.save_name.clone(), texts);
+        self.ask_and_write(&t!("Save Checksums"), message, self.save_name.clone(), texts);
     }
 
     /// Asks for a name (`initial` to start), then writes each of `files` (an ending after the
@@ -688,7 +711,7 @@ impl Checksums {
         let label = title.to_owned();
         crate::operations::with_current(|ops| {
             let ops2 = ops.clone();
-            ops.dialogs().ask_text(title, message, initial, &["Save", "Cancel"], move |name| {
+            ops.dialogs().ask_text(title, message, initial, &[&t!("Save"), &t!("Cancel")], move |name| {
                 let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
                 let mut tasks: Vec<Box<dyn Task>> = Vec::new();
                 for (ending, bytes) in files {
@@ -709,7 +732,7 @@ impl Checksums {
     fn export(&self) {
         let rows = self.chosen();
         if rows.is_empty() {
-            return self.say("Nothing to export yet");
+            return self.say(&t!("Nothing to export yet"));
         }
         // Verify: each row's own algorithm, value and result; else the ticked columns.
         let algos = self.ticked();
@@ -750,9 +773,9 @@ impl Checksums {
         }
         let _ = export::end(&mut bytes, &sheet);
         let what = if self.verify { "results" } else { "checksums" };
-        let message = format!("Writes the list in {}", self.base.display());
+        let message = t!("Writes the list in {}", self.base.display());
         let initial = format!("{} {what}.csv", self.save_name);
-        self.ask_and_write("Export CSV", message, initial, vec![(String::new(), bytes)]);
+        self.ask_and_write(&t!("Export CSV"), message, initial, vec![(String::new(), bytes)]);
     }
 
     /// Esc closes; Ctrl+C / Ctrl+A (⌘ on macOS) copy and select and the arrow, page and Home/End
@@ -813,10 +836,6 @@ fn window_expected(window: &slint::Weak<AppWindow>) -> String {
 /// `1,234`.
 fn group(n: usize) -> String {
     crate::preview::with_commas(n)
-}
-
-fn lines_text(n: usize) -> String {
-    if n == 1 { "1 line".to_owned() } else { format!("{} lines", group(n)) }
 }
 
 /// What Copy puts on the clipboard for `rows` (only the values they have).

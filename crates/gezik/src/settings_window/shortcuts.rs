@@ -9,7 +9,7 @@ use gezik_config::shortcuts::{
     Action, Chord, Key, KeyOwner, MENU_BAR_KEYS, Platform, chord_text, parse_chord, refused,
 };
 
-use gezik_i18n::t;
+use gezik_i18n::{t, tn, tx};
 
 use crate::SettingItem;
 use crate::keys::chord_label;
@@ -160,7 +160,7 @@ pub(super) fn pressed(
         return Pressed::Wait(if modifier {
             String::new()
         } else {
-            "Gezik's shortcuts cannot use that key".to_owned()
+            t!("Gezik's shortcuts cannot use that key").into_owned()
         });
     };
     let alone = !(chord.ctrl || chord.alt || chord.shift || chord.meta);
@@ -174,7 +174,8 @@ pub(super) fn pressed(
         return Pressed::Wait(why);
     }
     if row.keys == [chord] {
-        return Pressed::Done(format!("{} is already {}'s key", chord_label(&chord, platform), row.title));
+        // TRANSLATORS: {0} is a shortcut, {1} an action's title.
+        return Pressed::Done(t!("{0} is already {1}'s key", chord_label(&chord, platform), row.title));
     }
     claim(to, &[chord], settings, text, platform, change(&row.owner, &[chord], platform))
 }
@@ -221,13 +222,16 @@ fn claim(
         return Pressed::Write(changes);
     }
     let keys: Vec<String> = chords.iter().map(|c| chord_label(c, platform)).collect();
-    let used = if keys.len() == 1 { "is" } else { "are" };
-    let question = format!("{} {used} used by {} — Replace?", keys.join(", "), owners.join(" and "));
+    // TRANSLATORS: what joins the actions that lose a key: "Copy and Paste".
+    let owners = owners.join(&t!("list" => " and "));
+    // TRANSLATORS: {0} is one shortcut or several (comma-separated), {1} the actions that have them.
+    let question =
+        tn!("{0} is used by {1} — Replace?" | "{0} are used by {1} — Replace?", keys.len(), keys.join(", "), owners);
     Pressed::Ask(question, changes)
 }
 
 /// What Reset to Default does for `row` (another's default key is asked about, as Set Key
-/// does), or why it does nothing.
+/// does), or why it does nothing (marked with `tx!`, translated where shown).
 pub(super) fn reset(
     row: &KeyRow,
     settings: &Settings,
@@ -235,8 +239,8 @@ pub(super) fn reset(
     platform: Platform,
 ) -> Result<Pressed, &'static str> {
     match &row.owner {
-        Owner::Fixed => Err("macOS keeps this key"),
-        _ if row.is_default => Err("It has its default key"),
+        Owner::Fixed => Err(tx!("macOS keeps this key")),
+        _ if row.is_default => Err(tx!("It has its default key")),
         Owner::Action(action) => {
             let defaults: Vec<Chord> =
                 action.default_texts(platform).iter().filter_map(|t| parse_chord(t, platform).ok().flatten()).collect();

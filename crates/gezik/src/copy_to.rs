@@ -12,6 +12,7 @@ use gezik_core::file_filter::FileFilter;
 use gezik_core::ops::names::{mask_error, split_mask};
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::split::{MAX_PARTS, parse_size, part_count};
+use gezik_i18n::{t, tn, tx};
 use gezik_ops::Pick;
 
 use crate::operations::{After, with_current};
@@ -22,8 +23,9 @@ thread_local! {
     static LAST_FILTER: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
-const FILTER: &str = "Filter…";
-const DONT_ASK: &str = "Don't Ask Again";
+// Buttons, shown with `t`.
+const FILTER: &str = tx!("Filter…");
+const DONT_ASK: &str = tx!("Don't Ask Again");
 
 /// What the question asks about.
 #[derive(Clone)]
@@ -78,18 +80,20 @@ fn resolve<'t>(base: &Path, typed: &'t str, is_dir: impl Fn(&Path) -> bool) -> O
 /// The line under the field: where the items go, and under which names; an error for no
 /// folder or a mask that makes unusable names.
 fn note_for(base: &Path, typed: &str, names: &[String], is_dir: impl Fn(&Path) -> bool) -> (String, bool) {
-    let Some((to, mask)) = resolve(base, typed, is_dir) else { return ("Type a folder".to_owned(), true) };
+    let Some((to, mask)) = resolve(base, typed, is_dir) else { return (t!("Type a folder").into_owned(), true) };
     if let Some(mask) = mask {
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
         if let Some(err) = mask_error(mask, &names) {
             return (err, true);
         }
     }
-    let into = (!same_path(&to, base)).then(|| format!("Into {}", to.display()));
+    let into = !same_path(&to, base);
     let line = match (into, mask) {
-        (Some(into), Some(mask)) => format!("{into}, names as {mask}"),
-        (None, Some(mask)) => format!("Names as {mask}"),
-        (into, None) => into.unwrap_or_default(),
+        // TRANSLATORS: {0} is a folder, {1} a name mask such as "*.bak"
+        (true, Some(mask)) => t!("Into {0}, names as {1}", to.display(), mask),
+        (false, Some(mask)) => t!("Names as {}", mask),
+        (true, None) => t!("Into {}", to.display()),
+        (false, None) => String::new(),
     };
     (line, false)
 }
@@ -119,20 +123,23 @@ pub(crate) fn verify_default() -> bool {
 /// with what was typed (the question stays, red).
 pub(crate) fn ask(ask: Ask, go: impl FnOnce(PathBuf, Pick, Option<bool>) + 'static) {
     let again = ask.clone();
+    // `dual::question_title` takes the English verb.
     let verb = if ask.moving { "Move" } else { "Copy" };
-    let mut buttons = vec![verb];
+    let mut buttons = vec![if ask.moving { tx!("Move") } else { tx!("Copy") }];
     buttons.extend(ask.filter.then_some(FILTER));
     buttons.extend(ask.dont_ask.map(|_| DONT_ASK));
-    buttons.push("Cancel");
+    buttons.push(tx!("Cancel"));
     let chosen: Vec<&'static str> = buttons.clone();
-    let message = "Into this folder (a relative path is under it, a missing folder is made; end it with a mask \
-                   like *.bak to rename):";
+    let shown: Vec<String> = buttons.iter().map(|b| gezik_i18n::t("", b).into_owned()).collect();
+    let buttons: Vec<&str> = shown.iter().map(String::as_str).collect();
+    let message = t!("Into this folder (a relative path is under it, a missing folder is made; end it with a mask \
+         like *.bak to rename):");
     let (base, noted) = (ask.base.clone(), ask.base);
     let (moving, dont_ask) = (ask.moving, ask.dont_ask);
     let names = Rc::new(item_names(&ask.items));
     let checked = names.clone();
     let items = ask.items;
-    let checks: Vec<(String, bool)> = ask.verify.map(|on| ("Verify copies".to_owned(), on)).into_iter().collect();
+    let checks: Vec<(String, bool)> = ask.verify.map(|on| (t!("Verify copies").into_owned(), on)).into_iter().collect();
     with_current(|ops| {
         let dialogs = ops.dialogs();
         // Holds the dialogs while the question is open: the line's closure goes when it closes.
@@ -182,16 +189,16 @@ fn ask_filter(
     verify: Option<bool>,
     go: impl FnOnce(PathBuf, Pick, Option<bool>) + 'static,
 ) {
-    let verb = if moving { "Move" } else { "Copy" };
+    let (title, verb) = if moving { (t!("Move only…"), t!("Move")) } else { (t!("Copy only…"), t!("Copy")) };
     let message = if moving {
-        "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder:"
+        t!("Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder:")
     } else {
-        "Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder, \
-         *.jpg>*.cr2 takes each .jpg's .cr2 along:"
+        t!("Only these files: patterns split by spaces, what follows | is left out, a name ending in \\ is a folder, \
+            *.jpg>*.cr2 takes each .jpg's .cr2 along:")
     };
     let note = move |typed: &str| filter_note(typed, moving);
     with_current(|ops| {
-        ops.dialogs().ask_text_noted(format!("{verb} only…"), message, typed, &[verb, "Cancel"], note, move |text| {
+        ops.dialogs().ask_text_noted(title, message, typed, &[&verb, &t!("Cancel")], note, move |text| {
             let Some(text) = text else { return };
             match FileFilter::parse(&text, !moving) {
                 Ok(filter) => {
@@ -227,7 +234,7 @@ pub fn copy_to_paths(paths: Vec<PathBuf>, moving: bool) {
     let question = Ask { moving, base, field, dont_ask: None, filter: true, verify, items: paths.clone() };
     ask(question, move |to, pick, verify| {
         if moving && nothing_to_move(&paths, &to) {
-            return panes::active_view().note("Nothing to move: same folder".to_owned());
+            return panes::active_view().note(t!("Nothing to move: same folder").into_owned());
         }
         // shortcut: one stat per missing level, on the UI thread (as F5/F6's).
         let anchor = dual::anchor(&to, shown, |path| path.exists());
@@ -264,7 +271,7 @@ fn one_file(view: &crate::view::View) -> Option<PathBuf> {
 pub fn split(view: &crate::view::View) {
     match one_file(view) {
         Some(path) => split_path(path),
-        None => view.note("Select one file to split".to_owned()),
+        None => view.note(t!("Select one file to split").into_owned()),
     }
 }
 
@@ -275,23 +282,26 @@ pub fn split_path(path: PathBuf) {
     let len = std::fs::metadata(&path).map_or(0, |meta| meta.len());
     let fat = gezik_platform::fs::drive_facts(&dir).ok().and_then(|facts| facts.max_file).is_some_and(|max| len > max);
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let message = format!(
-        "Parts of this size (100 MB, 650 MB, 700 MB, 4095 MB for FAT32, 4.7 GB for a DVD), as {name}.001… in {}:",
+    // TRANSLATORS: {0} is a file name, {1} a folder
+    let message = t!(
+        "Parts of this size (100 MB, 650 MB, 700 MB, 4095 MB for FAT32, 4.7 GB for a DVD), as {0}.001… in {1}:",
+        name,
         dir.display()
     );
     let note = move |typed: &str| match parse_size(typed).map(|size| part_count(len, size)) {
-        Ok(parts) if parts > MAX_PARTS => (format!("{parts} parts: at most {MAX_PARTS}"), true),
-        Ok(1) => ("1 part".to_owned(), false),
-        Ok(parts) => (format!("{parts} parts"), false),
+        Ok(parts) if parts > MAX_PARTS => {
+            (tn!("{n} part: at most {}" | "{n} parts: at most {}", parts, MAX_PARTS), true)
+        }
+        Ok(parts) => (tn!("{n} part" | "{n} parts", parts), false),
         Err(err) => (err, true),
     };
     let initial = if fat { "4095 MB" } else { "100 MB" };
     with_current(|ops| {
         ops.dialogs().ask_text_noted(
-            format!("Split \"{name}\""),
+            t!("Split \"{}\"", name),
             message,
             initial,
-            &["Split", "Cancel"],
+            &[&t!("Split"), &t!("Cancel")],
             note,
             move |text| {
                 let Some(text) = text else { return };
@@ -319,7 +329,7 @@ fn submit_split(path: PathBuf, dir: PathBuf, size: u64) {
 pub fn join(view: &crate::view::View) {
     match one_file(view).filter(|path| is_part(path)) {
         Some(path) => join_path(path),
-        None => view.note("Select one .001 part or its .crc file to join".to_owned()),
+        None => view.note(t!("Select one .001 part or its .crc file to join").into_owned()),
     }
 }
 

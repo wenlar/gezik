@@ -24,6 +24,7 @@ use gezik_core::batch::archive::{Format, archive_stem, detect, looks_like_archiv
 use gezik_core::batch::tools::{Platform, Tool, ToolBuild, build_for};
 use gezik_core::format_size;
 use gezik_core::ops::names::{NameRules, validate_name};
+use gezik_i18n::{t, tx};
 use gezik_ops::{JobId, Report};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -120,7 +121,7 @@ pub fn written_format(format: OutFormat, level: Level) -> OutFormat {
 
 /// The layer's note for `format` at `level` (empty: none).
 pub fn store_note(format: OutFormat, level: Level) -> &'static str {
-    if written_format(format, level) != format { "Store makes a plain .tar" } else { "" }
+    if written_format(format, level) != format { tx!("Store makes a plain .tar") } else { "" }
 }
 
 /// The name typed in the layer after the format or level changed from `from` to `to`
@@ -251,11 +252,11 @@ pub fn resolve_folder(typed: &str, base: &Path) -> Option<PathBuf> {
 /// The password question's title and message.
 pub fn password_text(archive: &Path, retry: bool) -> (String, String) {
     let message = if retry {
-        "Wrong password. Try again:".to_owned()
+        t!("Wrong password. Try again:").into_owned()
     } else {
-        format!("{} is encrypted. Password:", name_of(archive))
+        t!("{} is encrypted. Password:", name_of(archive))
     };
-    ("Password".to_owned(), message)
+    (t!("Password").into_owned(), message)
 }
 
 /// What a tool is needed for, which its box says.
@@ -302,7 +303,7 @@ impl Need {
 }
 
 /// The box offering pdfium (`failed`: the one there could not be loaded). Linux distributions
-/// do not package pdfium: no package to suggest.
+/// do not package pdfium: no package to suggest. Buttons are shown with `t`.
 fn pdfium_offer(
     failed: bool,
     lead: &str,
@@ -310,40 +311,46 @@ fn pdfium_offer(
     download: bool,
     hint: Option<&str>,
 ) -> (String, Vec<&'static str>) {
-    let ok = vec!["OK"];
+    let ok = vec![tx!("OK")];
     match size {
         Some(size) if download => {
-            let mut message = if failed {
-                format!("{} (~{}, free)", crate::pdf::PDFIUM_FAILED.trim_end_matches('?'), format_size(size))
-            } else {
-                format!("{lead} (~{}, free)", format_size(size))
-            };
+            let size = format_size(size);
             match hint {
+                // TRANSLATORS: {} is what to install first, "Install curl with your package manager (…)"
                 Some(hint) => {
-                    message.push_str(&format!(". {hint} to download it."));
-                    (message, ok)
+                    let first = if failed {
+                        t!("Could not load pdfium. Download it again (~{}, free).", size)
+                    } else {
+                        t!("{0} (~{1}, free).", lead, size)
+                    };
+                    (format!("{first} {}", t!("{} to download it.", hint)), ok)
                 }
-                None => {
-                    message.push(if failed { '?' } else { '.' });
-                    (message, vec!["Download", "Where does it come from?", "Cancel"])
-                }
+                None if failed => (t!("Could not load pdfium. Download it again (~{}, free)?", size), offer_buttons()),
+                // TRANSLATORS: {0} is what needs the tool, "PDF tools need pdfium"; {1} a size
+                None => (t!("{0} (~{1}, free).", lead, size), offer_buttons()),
             }
         }
         _ => {
-            let lead = if failed { "Could not load pdfium" } else { lead };
-            let why = if download {
-                "Gezik cannot download it for this system yet."
+            let lead = if failed { t!("Could not load pdfium") } else { std::borrow::Cow::Borrowed(lead) };
+            let message = if download {
+                t!("{}. Gezik cannot download it for this system yet.", lead)
             } else {
-                "Downloading tools is off ([tools] download = false in settings.toml)."
+                t!("{}. Downloading tools is off ([tools] download = false in settings.toml).", lead)
             };
-            (format!("{lead}. {why}"), ok)
+            (message, ok)
         }
     }
 }
 
-/// The box offering a tool for `need`: its title, message and buttons. `size`: the download
-/// for this system (none: Gezik has no build for it yet); `download`: `[tools] download`;
-/// `hint`: what to install first for downloading to work at all (Linux without curl or wget).
+/// Download / Where does it come from? / Cancel, shown with `t`.
+fn offer_buttons() -> Vec<&'static str> {
+    vec![tx!("Download"), tx!("Where does it come from?"), tx!("Cancel")]
+}
+
+/// The box offering a tool for `need`: its title, message and buttons (the title and buttons
+/// shown with `t`). `size`: the download for this system (none: Gezik has no build for it
+/// yet); `download`: `[tools] download`; `hint`: what to install first for downloading to work
+/// at all (Linux without curl or wget).
 pub fn tool_offer(
     need: &Need,
     size: Option<u64>,
@@ -354,83 +361,101 @@ pub fn tool_offer(
     let lead = match need {
         Need::Pdf | Need::PdfiumFailed | Need::PdfPages => {
             let failed = *need == Need::PdfiumFailed;
-            let lead = if *need == Need::PdfPages { "More PDF pages need pdfium" } else { "PDF tools need pdfium" };
-            let (message, buttons) = pdfium_offer(failed, lead, size, download, hint);
-            return (if failed { "pdfium failed to load" } else { "pdfium needed" }, message, buttons);
+            let lead =
+                if *need == Need::PdfPages { t!("More PDF pages need pdfium") } else { t!("PDF tools need pdfium") };
+            let (message, buttons) = pdfium_offer(failed, &lead, size, download, hint);
+            return (if failed { tx!("pdfium failed to load") } else { tx!("pdfium needed") }, message, buttons);
         }
         Need::Archive(ext) => {
             let (message, buttons) = seven_zip_offer(ext, size, download, linux);
-            return ("7-Zip needed", message, buttons);
+            return (tx!("7-Zip needed"), message, buttons);
         }
-        Need::ConfiguredTooOld | Need::ConfiguredUnknown => {
-            let which = if *need == Need::ConfiguredTooOld { "is older" } else { "does not say its version" };
-            let message = format!(
-                "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in \
-                 settings.toml {which}: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
-            );
-            return ("ffmpeg needed", message, vec!["OK"]);
+        Need::ConfiguredTooOld => {
+            let message =
+                t!("Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in \
+                 settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's download.");
+            return (tx!("ffmpeg needed"), message.into_owned(), vec![tx!("OK")]);
+        }
+        Need::ConfiguredUnknown => {
+            let message =
+                t!("Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in \
+                 settings.toml does not say its version: set it to ffmpeg 9 or newer, or remove it to use Gezik's \
+                 download.");
+            return (tx!("ffmpeg needed"), message.into_owned(), vec![tx!("OK")]);
         }
         Need::FfmpegFailed => {
-            let message = "ffmpeg failed to read these HEIC or AVIF pictures. Try again; if it fails again, the \
-                files may be damaged or of a kind ffmpeg does not read.";
-            return ("ffmpeg failed", message.to_owned(), vec!["OK"]);
+            let message = t!("ffmpeg failed to read these HEIC or AVIF pictures. Try again; if it fails again, the \
+                files may be damaged or of a kind ffmpeg does not read.");
+            return (tx!("ffmpeg failed"), message.into_owned(), vec![tx!("OK")]);
         }
-        Need::Media => "Video conversion needs ffmpeg",
-        Need::Playback => "Playing video and audio needs ffmpeg",
-        Need::Pictures => "Converting to this format needs ffmpeg",
-        Need::Heic => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer",
-        Need::NewerFfmpeg => "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found is older)",
+        Need::Media => t!("Video conversion needs ffmpeg"),
+        Need::Playback => t!("Playing video and audio needs ffmpeg"),
+        Need::Pictures => t!("Converting to this format needs ffmpeg"),
+        Need::Heic => t!("Reading HEIC and AVIF pictures needs ffmpeg 9 or newer"),
+        Need::NewerFfmpeg => t!("Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found is older)"),
         Need::UnknownFfmpeg => {
-            "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found does not say its version)"
+            t!("Reading HEIC and AVIF pictures needs ffmpeg 9 or newer (the one found does not say its version)")
         }
     };
     // Linux packages are often older than 9, which reads HEIC wrongly: no package hint then.
     let nine = matches!(need, Need::Heic | Need::NewerFfmpeg | Need::UnknownFfmpeg);
-    let yourself =
-        if nine { "install ffmpeg 9 or newer yourself" } else { "install it yourself (sudo apt install ffmpeg)" };
     let message = match size {
         Some(size) if download => {
-            let mut message = format!("{lead} (~{}, free).", format_size(size));
-            match hint {
-                Some(hint) => {
-                    message.push_str(&format!(" {hint} to download it, or {yourself}."));
-                    return ("ffmpeg needed", message, vec!["OK"]);
-                }
-                None if linux => message.push_str(&format!(" Download it, or {yourself}.")),
-                None => {}
-            }
-            return ("ffmpeg needed", message, vec!["Download", "Where does it come from?", "Cancel"]);
+            // TRANSLATORS: {0} is what needs the tool, "Video conversion needs ffmpeg"; {1} a size
+            let first = t!("{0} (~{1}, free).", lead, format_size(size));
+            let then = match hint {
+                // TRANSLATORS: {} is what to install first, "Install curl with your package manager (…)"
+                Some(hint) if nine => t!("{} to download it, or install ffmpeg 9 or newer yourself.", hint),
+                Some(hint) => t!("{} to download it, or install it yourself (sudo apt install ffmpeg).", hint),
+                None if !linux => return (tx!("ffmpeg needed"), first, offer_buttons()),
+                None if nine => t!("Download it, or install ffmpeg 9 or newer yourself.").into_owned(),
+                None => t!("Download it, or install it yourself (sudo apt install ffmpeg).").into_owned(),
+            };
+            let buttons = if hint.is_some() { vec![tx!("OK")] } else { offer_buttons() };
+            return (tx!("ffmpeg needed"), format!("{first} {then}"), buttons);
         }
-        _ if download => {
-            let how = if linux { yourself } else { "install it yourself" };
-            format!("{lead}. Gezik cannot download it for this system yet: {how}.")
+        _ if download && linux && nine => {
+            t!("{}. Gezik cannot download it for this system yet: install ffmpeg 9 or newer yourself.", lead)
         }
-        _ => format!("{lead}: install it yourself, or set ffmpeg under [convert] in settings.toml."),
+        _ if download && linux => {
+            t!("{}. Gezik cannot download it for this system yet: install it yourself (sudo apt install ffmpeg).", lead)
+        }
+        _ if download => t!("{}. Gezik cannot download it for this system yet: install it yourself.", lead),
+        _ => t!("{}: install it yourself, or set ffmpeg under [convert] in settings.toml.", lead),
     };
-    ("ffmpeg needed", message, vec!["OK"])
+    (tx!("ffmpeg needed"), message, vec![tx!("OK")])
 }
 
-/// The "needs 7-Zip" box: its message and buttons. `size`: the download for this system
-/// (none: Gezik has no build for it yet); `download`: `[tools] download`.
+/// The "needs 7-Zip" box: its message and buttons (shown with `t`). `size`: the download for
+/// this system (none: Gezik has no build for it yet); `download`: `[tools] download`.
 pub fn seven_zip_offer(ext: &str, size: Option<u64>, download: bool, linux: bool) -> (String, Vec<&'static str>) {
+    // TRANSLATORS: {} is a file ending, ".lzh"
     match size {
         Some(size) if download => {
-            let mut message = format!("Opening {ext} archives needs 7-Zip (~{}, free).", format_size(size));
+            let mut message = t!("Opening {0} archives needs 7-Zip (~{1}, free).", ext, format_size(size));
             if linux {
-                message.push_str(" Download it, or install 7-Zip 25 or newer yourself.");
+                message.push(' ');
+                message.push_str(&t!("Download it, or install 7-Zip 25 or newer yourself."));
             }
-            (message, vec!["Download", "Where does it come from?", "Cancel"])
+            (message, offer_buttons())
         }
-        _ => {
-            // An older one is not used (Gezik passes over it).
-            let how = "install 7-Zip 25 or newer yourself";
-            let message = if download {
-                format!("Opening {ext} archives needs 7-Zip. Gezik cannot download it for this system yet: {how}.")
-            } else {
-                format!("Opening {ext} archives needs 7-Zip: {how}, or set seven-zip under [tools] in settings.toml.")
-            };
-            (message, vec!["OK"])
-        }
+        // An older one is not used (Gezik passes over it).
+        _ if download => (
+            t!(
+                "Opening {} archives needs 7-Zip. Gezik cannot download it for this system yet: install 7-Zip 25 \
+                 or newer yourself.",
+                ext
+            ),
+            vec![tx!("OK")],
+        ),
+        _ => (
+            t!(
+                "Opening {} archives needs 7-Zip: install 7-Zip 25 or newer yourself, or set seven-zip under \
+                 [tools] in settings.toml.",
+                ext
+            ),
+            vec![tx!("OK")],
+        ),
     }
 }
 
@@ -441,7 +466,7 @@ pub fn split_bytes(choice: usize, mb: &str) -> Result<Option<u64>, String> {
         1..=3 => Ok(Some(split_sizes()[choice - 1].1)),
         _ => match mb.trim().parse::<u64>() {
             Ok(mb) if mb > 0 => Ok(Some(mb.saturating_mul(1_000_000))),
-            _ => Err("Type the size of a part in MB".to_owned()),
+            _ => Err(t!("Type the size of a part in MB").into_owned()),
         },
     }
 }
@@ -692,11 +717,17 @@ impl Archives {
         let Some(base) = archives.first().and_then(|a| a.parent()).map(Path::to_path_buf) else { return };
         let initial = self.0.state.borrow().last_extract_to.clone().unwrap_or_else(|| base.display().to_string());
         let this = self.clone();
-        self.0.dialogs.ask_text("Extract to", "Folder:", initial, &["Extract", "Cancel"], move |text| {
-            let Some(dir) = text.and_then(|text| resolve_folder(&text, &base)) else { return };
-            this.save_state(|state| state.last_extract_to = Some(dir.display().to_string()));
-            this.extract(archives, ExtractTo::Smart(dir), true);
-        });
+        self.0.dialogs.ask_text(
+            t!("Extract to"),
+            t!("Folder:"),
+            initial,
+            &[&t!("Extract"), &t!("Cancel")],
+            move |text| {
+                let Some(dir) = text.and_then(|text| resolve_folder(&text, &base)) else { return };
+                this.save_state(|state| state.last_extract_to = Some(dir.display().to_string()));
+                this.extract(archives, ExtractTo::Smart(dir), true);
+            },
+        );
     }
 
     /// Finds 7-Zip on a thread (it looks at the disk), then starts the job for what can be
@@ -787,9 +818,9 @@ impl Archives {
                 } else if report.failures.iter().any(|f| says_damaged(&f.message)) {
                     let this = self.clone();
                     self.0.dialogs.ask(
-                        "The download was damaged",
-                        "What arrived is not the file Gezik expected. Try again?",
-                        &["Try again", "Cancel"],
+                        t!("The download was damaged"),
+                        t!("What arrived is not the file Gezik expected. Try again?"),
+                        &[&t!("Try again"), &t!("Cancel")],
                         move |choice| {
                             if choice == Some(0) {
                                 this.0.ops.forget(id);
@@ -853,6 +884,9 @@ impl Archives {
         let offers = buttons.len() > 1;
         let escape = buttons.len() - 1;
         let this = self.clone();
+        let shown: Vec<_> = buttons.iter().map(|b| gezik_i18n::t("", b)).collect();
+        let buttons: Vec<&str> = shown.iter().map(AsRef::as_ref).collect();
+        let title = gezik_i18n::t("", title);
         self.0.dialogs.ask_escape(title, message, &buttons, escape, move |choice| {
             match (choice, build) {
                 (Some(1), _) if offers => {
@@ -931,7 +965,7 @@ impl Archives {
         window.set_cp_password("".into());
         window.set_cp_split_mb("".into());
         window.set_cp_error("".into());
-        window.set_cp_size_text("Calculating…".into());
+        window.set_cp_size_text(t!("Calculating…").as_ref().into());
         let sources: Vec<PathBuf> = items.into_iter().map(|(p, _)| p).collect();
         *self.0.layer.borrow_mut() = Some(Layer {
             sources: sources.clone(),
@@ -978,7 +1012,7 @@ impl Archives {
         window.set_cp_is_7z(format == OutFormat::SevenZ);
         window.set_cp_encrypt_names(layer.encrypt_names);
         window.set_cp_split(i32::try_from(layer.split).unwrap_or(0));
-        window.set_cp_note(store_note(format, layer.level).into());
+        window.set_cp_note(gezik_i18n::t("", store_note(format, layer.level)).as_ref().into());
     }
 
     fn edit(&self, f: impl FnOnce(&mut Layer)) {
@@ -1093,7 +1127,7 @@ impl Archives {
     fn ask_existing(&self) {
         let Some(base) = self.0.layer.borrow().as_ref().map(|layer| layer.folder.clone()) else { return };
         let this = self.clone();
-        self.0.dialogs.ask_text("Add to archive", "Archive:", "", &["Add", "Cancel"], move |text| {
+        self.0.dialogs.ask_text(t!("Add to archive"), t!("Archive:"), "", &[&t!("Add"), &t!("Cancel")], move |text| {
             let Some(archive) = text.and_then(|text| resolve_folder(&text, &base)) else { return };
             let Some(sources) = this.0.layer.borrow().as_ref().map(|layer| layer.sources.clone()) else { return };
             this.close();

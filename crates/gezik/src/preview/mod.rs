@@ -12,6 +12,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use gezik_core::batch::pdf_view::{Command, Reply};
+use gezik_i18n::{t, tn};
 use gezik_platform::{IconTarget, Rgba};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -328,9 +329,12 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
         Target::Nothing => PreviewInfo::default(),
         Target::Several { count, size, more } => PreviewInfo {
             kind: 5,
-            title: format!("{count} items selected").into(),
+            title: tn!("{n} item selected" | "{n} items selected", *count).into(),
             details: size
-                .map(|s| format!("Total size: {}{}", crate::view_options::size_text(s), if *more { "+" } else { "" }))
+                .map(|s| {
+                    let size = format!("{}{}", crate::view_options::size_text(s), if *more { "+" } else { "" });
+                    t!("Total size: {}", size)
+                })
                 .unwrap_or_default()
                 .into(),
             item_kind: 1,
@@ -343,20 +347,19 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                 lines.push(format!("{prefix}{}", crate::view_options::size_text(*size)));
             }
             if let Some((files, folders)) = counts {
-                let n = |v: u64, one: &str| match v {
-                    1 => format!("1 {one}"),
-                    v => format!("{} {one}s", with_commas(usize::try_from(v).unwrap_or(usize::MAX))),
-                };
-                lines.push(format!("{}, {}", n(*files, "file"), n(*folders, "folder")));
+                let n = |v: u64| with_commas(usize::try_from(v).unwrap_or(usize::MAX));
+                let files = tn!("{} file" | "{} files", *files, n(*files));
+                let folders = tn!("{} folder" | "{} folders", *folders, n(*folders));
+                lines.push(format!("{files}, {folders}"));
             }
             if *partial {
-                lines.push("Some folders could not be read".to_owned());
+                lines.push(t!("Some folders could not be read").into_owned());
             }
             if let Some(time) = modified {
-                lines.push(format!("Modified {}", crate::view_options::date_text(*time)));
+                lines.push(t!("Modified {}", crate::view_options::date_text(*time)));
             }
             if let Some(time) = created {
-                lines.push(format!("Created {}", crate::view_options::date_text(*time)));
+                lines.push(t!("Created {}", crate::view_options::date_text(*time)));
             }
             let mut info = PreviewInfo {
                 kind: if *is_dir { 4 } else { 3 },
@@ -371,7 +374,7 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                 None | Some(Body::None) => {}
                 Some(Body::Picture(picture, size)) => {
                     if let Some((w, h)) = size {
-                        lines.push(format!("{w} × {h} pixels"));
+                        lines.push(t!("{} × {} pixels", w, h));
                         info.kind = 1;
                     }
                     info.picture = Image::from_rgba8(picture);
@@ -380,7 +383,7 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                 // The viewer shows it (`Preview::loaded`).
                 Some(Body::Text(_)) => info.kind = 2,
                 Some(Body::Folder { count, more }) => lines.push(match (count, more) {
-                    (_, true) => format!("{}+ items", with_commas(MAX_COUNTED)),
+                    (_, true) => tn!("{}+ item" | "{}+ items", MAX_COUNTED, with_commas(MAX_COUNTED)),
                     (n, false) => crate::stack::count_text(n),
                 }),
             }
@@ -759,7 +762,9 @@ impl Preview {
                 }
                 with_current(|p| {
                     if let Some(window) = p.0.window.upgrade() {
-                        window.set_status("The system Quick Look panel did not open; Gezik's own is shown".into());
+                        window.set_status(
+                            t!("The system Quick Look panel did not open; Gezik's own is shown").as_ref().into(),
+                        );
                     }
                     p.open_own_quick_look();
                 });
@@ -839,7 +844,7 @@ impl Preview {
                 self.sync_view();
                 self.sync_frame();
             }
-            Err(err) => window.set_status(format!("Cannot open quick look: {err}").into()),
+            Err(err) => window.set_status(t!("Cannot open quick look: {}", err).into()),
         }
     }
 
@@ -993,7 +998,7 @@ impl Preview {
         } else if gezik_platform::only_in_cloud(&path) {
             // Reading it would download it.
             if let Some(window) = self.0.window.upgrade() {
-                window.set_status("This file is only in the cloud: it is not read".into());
+                window.set_status(t!("This file is only in the cloud: it is not read").as_ref().into());
             }
             return true;
         } else {
@@ -1174,9 +1179,9 @@ impl Preview {
             return;
         }
         let (page, pages) = self.0.viewer.borrow().pdf.as_ref().map_or((1, 0), |pdf| (pdf.page, pdf.pages));
-        let message = if pages > 0 { format!("Page (1 to {pages}):") } else { "Page:".to_owned() };
+        let message = if pages > 0 { t!("Page (1 to {}):", pages) } else { t!("Page:").into_owned() };
         crate::operations::with_current(|ops| {
-            ops.dialogs().ask_text("Go to Page", message, page.to_string(), &["Go", "Cancel"], |text| {
+            ops.dialogs().ask_text(t!("Go to Page"), message, page.to_string(), &[&t!("Go"), &t!("Cancel")], |text| {
                 if let Some(text) = text {
                     with_current(|p| p.pdf_go_to(&text));
                 }
@@ -1313,7 +1318,7 @@ impl Preview {
         if gezik_platform::only_in_cloud(&path) {
             // Reading it would download it.
             if let Some(window) = self.0.window.upgrade() {
-                window.set_status("This file is only in the cloud: it is not read".into());
+                window.set_status(t!("This file is only in the cloud: it is not read").as_ref().into());
             }
             return false;
         }
@@ -1696,12 +1701,12 @@ impl Preview {
             State::Password { wrong } => {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 let message = if wrong {
-                    "Wrong password. Try again:".to_owned()
+                    t!("Wrong password. Try again:").into_owned()
                 } else {
-                    format!("{name} is encrypted. Password:")
+                    t!("{} is encrypted. Password:", name)
                 };
                 crate::operations::with_current(|ops| {
-                    ops.dialogs().ask_secret("Password", message, &["Open", "Cancel"], move |text| {
+                    ops.dialogs().ask_secret(t!("Password"), message, &[&t!("Open"), &t!("Cancel")], move |text| {
                         let Some(text) = text else { return };
                         with_current(|p| {
                             if let Some(pdf) = p.0.viewer.borrow_mut().pdf.as_mut().filter(|pdf| pdf.path == path) {
@@ -1736,7 +1741,7 @@ impl Preview {
         if gezik_platform::only_in_cloud(&path) {
             // Playing it would download it.
             if let Some(window) = self.0.window.upgrade() {
-                window.set_status("This file is only in the cloud: it is not read".into());
+                window.set_status(t!("This file is only in the cloud: it is not read").as_ref().into());
             }
             return false;
         }

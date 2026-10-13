@@ -54,7 +54,7 @@ pub fn load_in_background() {
 /// tab of Gezik.
 pub fn open_folder() {
     let Some(dir) = dir() else {
-        crate::panes::with_active(|p| p.view.note("No config folder for templates".to_owned()));
+        crate::panes::with_active(|p| p.view.note(gezik_i18n::t!("No config folder for templates").into_owned()));
         return;
     };
     let window_id = crate::windows::current();
@@ -66,7 +66,7 @@ pub fn open_folder() {
             }
             Err(err) => {
                 let why = gezik_platform::fs::describe(&err);
-                crate::panes::with_active(|p| p.view.note(format!("Cannot make the templates folder: {why}")));
+                crate::panes::with_active(|p| p.view.note(gezik_i18n::t!("Cannot make the templates folder: {}", why)));
             }
         });
     });

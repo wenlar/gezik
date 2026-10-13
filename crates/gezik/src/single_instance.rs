@@ -131,7 +131,7 @@ pub fn apply(nav: &Navigator, opens: Vec<Open>, missing: Vec<PathBuf>, new_tab: 
     }
     if !missing.is_empty() {
         let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
-        crate::panes::with_active(|p| p.view.note(format!("{}: not found", names.join(", "))));
+        crate::panes::with_active(|p| p.view.note(gezik_i18n::t!("{}: not found", names.join(", "))));
     }
     if trash {
         match existing(&Location::Trash) {

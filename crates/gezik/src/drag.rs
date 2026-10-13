@@ -459,7 +459,7 @@ impl Drags {
         let sources = std::mem::take(&mut *self.0.dropped_files.borrow_mut());
         let Some(dir) = crate::panes::active_view().folder() else {
             if crate::panes::active_view().shows_results() {
-                crate::panes::active_view().note(crate::operations::NOT_HERE.to_owned());
+                crate::panes::active_view().note(gezik_i18n::t("", crate::operations::NOT_HERE).into_owned());
             }
             return;
         };
@@ -1112,7 +1112,7 @@ impl Drags {
                 ..
             }) => Answer { effect: Some(Effect::Copy), folder: Some(drag::folder_name(archive)) },
             Phase::Offer(Dragging { target: Some(Target { action: Some(Action::AddToStack), .. }), .. }) => {
-                Answer { effect: Some(Effect::Copy), folder: Some("Drop stack".to_owned()) }
+                Answer { effect: Some(Effect::Copy), folder: Some(gezik_i18n::t!("Drop stack").into_owned()) }
             }
             _ => Answer::default(),
         }
@@ -1162,7 +1162,7 @@ impl Drags {
         let Some(dir) = target.dir else {
             // Search results have no folder to drop into (spec 4.6).
             if matches!(target.hit, Hit::Background(_)) && crate::panes::active_view().shows_results() {
-                crate::panes::active_view().note(crate::operations::NOT_HERE.to_owned());
+                crate::panes::active_view().note(gezik_i18n::t("", crate::operations::NOT_HERE).into_owned());
             }
             return None;
         };

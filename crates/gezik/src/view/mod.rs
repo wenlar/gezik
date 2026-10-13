@@ -40,6 +40,7 @@ use gezik_core::view::{
 use gezik_core::view::{DateFormat, ViewOptions};
 use gezik_core::view_memory::ViewMemory;
 use gezik_core::view_rules::{Columns, Place, PlaceKind, RuleSpec, ViewRules, shown_columns};
+use gezik_i18n::{t, tn, tx};
 use gezik_search::results::{Batch, ResultSet, TrashLabel};
 use slint::{ComponentHandle, ModelRc};
 
@@ -61,12 +62,12 @@ const MAX_REMEMBERED: usize = 1000;
 pub const RESULTS_KEY: &str = "<results>";
 
 /// Sorting, grouping and filtering by tag in search results (plan 12c sapma 2).
-pub const TAGS_IN_FOLDERS: &str = "Tags and ratings sort, group and filter folders, not search results";
+pub const TAGS_IN_FOLDERS: &str = tx!("Tags and ratings sort, group and filter folders, not search results");
 /// Sorting, grouping and filtering by a property in search results (plan 13e sapma 3).
-pub const FIELDS_IN_FOLDERS: &str = "Properties sort, group and filter folders, not search results";
+pub const FIELDS_IN_FOLDERS: &str = tx!("Properties sort, group and filter folders, not search results");
 
 /// A ninth field column (spec 13 §8.1, decision 24).
-pub const TOO_MANY_FIELD_COLUMNS: &str = "At most 8 property columns: hide one first";
+pub const TOO_MANY_FIELD_COLUMNS: &str = tx!("At most 8 property columns: hide one first");
 
 /// views.toml's key for the trash's view (spec 7.1).
 pub const TRASH_KEY: &str = "<trash>";
@@ -907,11 +908,11 @@ impl View {
         // are property words (plan 13e sapma 3).
         if let Some(f) = next.as_mut().filter(|f| results.is_some() && !f.tags.is_empty()) {
             f.tags.clear();
-            f.error.get_or_insert_with(|| TAGS_IN_FOLDERS.to_owned());
+            f.error.get_or_insert_with(|| t("", TAGS_IN_FOLDERS).into_owned());
         }
         if let Some(f) = next.as_mut().filter(|f| results.is_some() && !f.fields.is_empty()) {
             f.fields.clear();
-            f.error.get_or_insert_with(|| FIELDS_IN_FOLDERS.to_owned());
+            f.error.get_or_insert_with(|| t("", FIELDS_IN_FOLDERS).into_owned());
         }
         let new_pattern = patterns(next.as_ref());
         let closing = next.is_none();
@@ -1636,7 +1637,7 @@ impl View {
     /// remembers it.
     pub fn set_sort(&self, spec: SortSpec) {
         if matches!(spec.key, SortKey::Tags | SortKey::Rating) && self.shows_results() {
-            return self.note(TAGS_IN_FOLDERS.to_owned());
+            return self.note(t("", TAGS_IN_FOLDERS).into_owned());
         }
         // A sort by a hidden column shows it, so a header carries the sort's arrow (12c screen test).
         let hidden = ColumnKey::ALL
@@ -1648,7 +1649,7 @@ impl View {
         }
         if let SortKey::Field(id) = spec.key {
             if self.shows_results() {
-                return self.note(FIELDS_IN_FOLDERS.to_owned());
+                return self.note(t("", FIELDS_IN_FOLDERS).into_owned());
             }
             // Its column shows, so a header carries the sort's arrow.
             self.show_field_column(id);
@@ -1689,7 +1690,7 @@ impl View {
     /// settings.toml (a failure is said in the status bar, and nothing changes).
     pub fn apply_to_all(&self) {
         if self.shows_results() {
-            return self.set_note("Open a folder to apply its view to all folders".to_owned());
+            return self.set_note(t!("Open a folder to apply its view to all folders").into_owned());
         }
         let view = self.0.current.get();
         let Some(store) = &self.0.store else { return self.applied_to_all(view) };
@@ -2441,7 +2442,7 @@ impl View {
                 ColumnKey::Field(id) => {
                     if !gezik_core::view::show_field(&mut columns, id) {
                         drop(columns);
-                        return self.note(TOO_MANY_FIELD_COLUMNS.to_owned());
+                        return self.note(t("", TOO_MANY_FIELD_COLUMNS).into_owned());
                     }
                 }
                 _ => {
@@ -2546,7 +2547,7 @@ impl View {
         let headers: Vec<crate::FieldColumn> = fields
             .iter()
             .map(|(id, width)| crate::FieldColumn {
-                title: id.def().label.into(),
+                title: t("", id.def().label).as_ref().into(),
                 width: *width as f32,
                 right: id.def().right_align(),
                 index: ColumnKey::Field(*id).index(),
@@ -2835,10 +2836,10 @@ impl View {
     /// Group by ▸ (spec 10 §6.2); the folder remembers it.
     pub fn set_group(&self, by: GroupBy) {
         if matches!(by, GroupBy::Tag | GroupBy::Rating) && self.shows_results() {
-            return self.note(TAGS_IN_FOLDERS.to_owned());
+            return self.note(t("", TAGS_IN_FOLDERS).into_owned());
         }
         if matches!(by, GroupBy::Field(_)) && self.shows_results() {
-            return self.note(FIELDS_IN_FOLDERS.to_owned());
+            return self.note(t("", FIELDS_IN_FOLDERS).into_owned());
         }
         self.change_view(|v| v.group = by);
     }
@@ -3055,7 +3056,7 @@ pub const MAX_OPEN_AT_ONCE: usize = 15;
 /// `items` if there are few enough to open at once, else the status bar message.
 pub fn limit_open<T>(items: Vec<T>) -> Result<Vec<T>, String> {
     if items.len() > MAX_OPEN_AT_ONCE {
-        Err(format!("Select at most {MAX_OPEN_AT_ONCE} items to open"))
+        Err(t!("Select at most {} items to open", MAX_OPEN_AT_ONCE))
     } else {
         Ok(items)
     }
@@ -3144,8 +3145,7 @@ fn hidden_count(pattern: Option<&Pattern>, names: &[String]) -> usize {
 pub fn hidden_note(hidden: usize) -> Option<String> {
     match hidden {
         0 => None,
-        1 => Some("1 item hidden by the filter".to_owned()),
-        n => Some(format!("{n} items hidden by the filter")),
+        n => Some(tn!("{n} item hidden by the filter" | "{n} items hidden by the filter", n)),
     }
 }
 
@@ -3174,11 +3174,11 @@ pub fn filter_count_text(shown: usize, total: usize) -> String {
 }
 
 /// The words for a cloud state in the status bar (Explorer's).
-pub fn cloud_words(state: gezik_core::CloudState) -> &'static str {
+pub fn cloud_words(state: gezik_core::CloudState) -> Cow<'static, str> {
     match state {
-        gezik_core::CloudState::OnlyInCloud => "Online only",
-        gezik_core::CloudState::Local => "Available on this device",
-        gezik_core::CloudState::AlwaysLocal => "Always available on this device",
+        gezik_core::CloudState::OnlyInCloud => t!("Online only"),
+        gezik_core::CloudState::Local => t!("Available on this device"),
+        gezik_core::CloudState::AlwaysLocal => t!("Always available on this device"),
     }
 }
 
@@ -3197,9 +3197,12 @@ pub fn status_text(count: usize, selected: usize, selected_size: Option<u64>, mo
     match (selected, selected_size) {
         (0, _) => items,
         (n, Some(size)) => {
-            format!("{items} · {n} selected ({}{})", crate::view_options::size_text(size), if more { "+" } else { "" })
+            let size = format!("{}{}", crate::view_options::size_text(size), if more { "+" } else { "" });
+            // TRANSLATORS: the status bar: "120 items · 3 selected (1.2 MB)"; {0} is the item count.
+            tn!("{0} · {n} selected ({1})" | "{0} · {n} selected ({1})", n, items, size)
         }
-        (n, None) => format!("{items} · {n} selected"),
+        // TRANSLATORS: the status bar: "120 items · 3 selected"; {0} is the item count.
+        (n, None) => tn!("{0} · {n} selected" | "{0} · {n} selected", n, items),
     }
 }
 

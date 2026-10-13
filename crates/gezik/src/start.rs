@@ -54,7 +54,10 @@ pub fn resolve_start_folder(
         Some(path) if kind(&path) == PathKind::Dir => (Location::Path(path), None),
         _ => (
             Location::Path(home.to_path_buf()),
-            Some(Warning::new("settings.toml", format!("start-folder: \"{text}\" is not a folder; using home"))),
+            Some(Warning::new(
+                "settings.toml",
+                gezik_i18n::t!("{0}: \"{1}\" is not a folder; using home", "start-folder", text),
+            )),
         ),
     }
 }
@@ -86,9 +89,13 @@ pub fn plan_start(
         warnings: warning.into_iter().collect(),
     };
     let (opens, missing) = group(targets, &kind);
-    let opening = if from_session { "opening the last tabs" } else { "opening start-folder" };
     for path in missing {
-        plan.warnings.push(Warning::new("command line", format!("{}: not found; {opening}", path.display())));
+        let said = if from_session {
+            gezik_i18n::t!("{}: not found; opening the last tabs", path.display())
+        } else {
+            gezik_i18n::t!("{}: not found; opening start-folder", path.display())
+        };
+        plan.warnings.push(Warning::new("command line", said));
     }
     if opens.is_empty() && !trash {
         return plan;

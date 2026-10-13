@@ -15,6 +15,7 @@ use gezik_config::store::ConfigStore;
 use gezik_config::tags::{Dots, TagListEdit, TagsSettings};
 use gezik_core::meta::{Meta, MetaEdit, Tag, TagColor, check_tag_name, same_name};
 use gezik_core::pattern::fold_text;
+use gezik_i18n::{t, tn};
 use gezik_ops::meta::MetaStore;
 use slint::{Color, ComponentHandle, ModelRc, VecModel};
 
@@ -428,7 +429,7 @@ pub fn toggle_dots() {
 /// status bar) for drives and the trash.
 fn targets(view: &View) -> Option<Vec<PathBuf>> {
     if view.shows_drives() || view.shows_trash() {
-        view.note("Tags work on files and folders".to_owned());
+        view.note(t!("Tags work on files and folders").into_owned());
         return None;
     }
     let mut items: Vec<PathBuf> = view.selected_items().into_iter().map(|(path, _)| path).collect();
@@ -521,7 +522,7 @@ pub fn all_have(metas: &[Meta], name: &str) -> bool {
 /// `tag-n` (1-based): the list's n-th tag on the selection, or off it when all have it.
 pub fn toggle_nth(n: usize, view: &View) {
     let Some(tag) = list().get(n.wrapping_sub(1)).cloned() else {
-        return view.note(format!("No tag {n} in your list ([tags] list)"));
+        return view.note(t!("No tag {} in your list ([tags] list)", n));
     };
     let Some(paths) = targets(view) else { return };
     toggle_on(tag, paths);
@@ -531,9 +532,12 @@ pub fn toggle_nth(n: usize, view: &View) {
 pub fn toggle_on(tag: Tag, paths: Vec<PathBuf>) {
     read_then(paths, move |paths, metas| {
         let off = all_have(&metas, &tag.name);
-        let what = crate::stack::count_text(paths.len());
-        let note =
-            if off { format!("{} removed from {what}", tag.name) } else { format!("{} added to {what}", tag.name) };
+        let n = paths.len();
+        let note = if off {
+            tn!("{} removed from {n} item" | "{} removed from {n} items", n, tag.name)
+        } else {
+            tn!("{} added to {n} item" | "{} added to {n} items", n, tag.name)
+        };
         let edit = if off { MetaEdit::RemoveTags(vec![tag.name.clone()]) } else { MetaEdit::AddTags(vec![tag]) };
         submit(paths, vec![edit]);
         crate::panes::active_view().note(note);
@@ -548,7 +552,7 @@ pub fn clear(view: &View) {
 }
 
 pub fn clear_paths(paths: Vec<PathBuf>) {
-    let note = format!("Tags cleared from {}", crate::stack::count_text(paths.len()));
+    let note = tn!("Tags cleared from {n} item" | "Tags cleared from {n} items", paths.len());
     submit(paths, vec![MetaEdit::ClearTags]);
     crate::panes::active_view().note(note);
 }
@@ -562,10 +566,11 @@ pub fn rate(stars: u8, view: &View) {
 }
 
 pub fn rate_paths(stars: u8, paths: Vec<PathBuf>) {
-    let what = crate::stack::count_text(paths.len());
+    let count = paths.len();
     let note = match stars.min(5) {
-        0 => format!("Rating removed from {what}"),
-        n => format!("{what} rated {}", "★".repeat(usize::from(n))),
+        0 => tn!("Rating removed from {n} item" | "Rating removed from {n} items", count),
+        // TRANSLATORS: {} is the stars given ("★★★").
+        n => tn!("{n} item rated {}" | "{n} items rated {}", count, "★".repeat(usize::from(n))),
     };
     submit(paths, vec![MetaEdit::Rating(stars.min(5))]);
     crate::panes::active_view().note(note);
@@ -593,11 +598,11 @@ pub fn comment_note(text: &str, differing: usize) -> (String, bool) {
     let count = text.chars().count();
     if count > gezik_core::meta::MAX_COMMENT {
         let count = gezik_core::group_digits(count as u64);
-        (format!("A comment is at most 1,000 characters; this one has {count}"), true)
+        (t!("A comment is at most 1,000 characters; this one has {}", count), true)
     } else if text.chars().any(char::is_control) {
-        ("Line breaks and tabs become spaces".to_owned(), false)
+        (t!("Line breaks and tabs become spaces").into_owned(), false)
     } else if text.is_empty() && differing > 0 {
-        (format!("Comments differ across {}", crate::stack::count_text(differing)), false)
+        (tn!("Comments differ across {n} item" | "Comments differ across {n} items", differing), false)
     } else {
         (String::new(), false)
     }
@@ -617,12 +622,13 @@ pub fn comment_answer(choice: usize, text: &str, initial: &str, differing: usize
 pub fn edit_comment_paths(paths: Vec<PathBuf>) {
     read_then(paths, |paths, metas| {
         let (initial, differing) = shared_comment(&metas);
-        let message = format!("Comment for {}:", crate::operations::items_text(&paths));
+        let message = t!("Comment for {}:", crate::operations::items_text(&paths));
         let note = move |text: &str| comment_note(text, differing);
         let unchanged = initial.clone();
-        let buttons: &[&str] = if differing > 0 { &["Save", "Remove Comments", "Cancel"] } else { &["Save", "Cancel"] };
+        let (save, remove, cancel) = (t!("Save"), t!("Remove Comments"), t!("Cancel"));
+        let buttons: &[&str] = if differing > 0 { &[&save, &remove, &cancel] } else { &[&save, &cancel] };
         crate::operations::with_current(|ops| {
-            ops.dialogs().ask_form("Comment", message, (initial, Vec::new()), buttons, note, move |answer| {
+            ops.dialogs().ask_form(t!("Comment"), message, (initial, Vec::new()), buttons, note, move |answer| {
                 let Some((choice, text, _)) = answer else { return };
                 if let Some(comment) = comment_answer(choice, &text, &unchanged, differing) {
                     submit(paths, vec![MetaEdit::Comment(comment.into())]);
@@ -974,7 +980,7 @@ impl TagPicker {
             }
             Line::Create(name) => {
                 if let Err(err) = check_tag_name(&name) {
-                    return crate::panes::active_view().note(format!("\"{name}\": {err}"));
+                    return crate::panes::active_view().note(format!("\"{name}\": {}", gezik_i18n::t("", err)));
                 }
                 let tag = Tag::new(&name, TagColor::None);
                 add_to_list(tag.clone());
@@ -1164,7 +1170,7 @@ pub fn sidebar_clicked(index: i32, new_tab: bool) {
     let Some(tag) = usize::try_from(index).ok().and_then(|i| list().get(i).cloned()) else { return };
     let folder = if cfg!(target_os = "macos") { None } else { shown_folder() };
     if folder.is_some() {
-        crate::panes::active_view().note(format!("Searching {} here; Search everywhere is in its menu", tag.name));
+        crate::panes::active_view().note(t!("Searching {} here; Search everywhere is in its menu", tag.name));
     }
     search_tag(&tag.name, folder, new_tab);
 }
@@ -1184,7 +1190,7 @@ pub fn row_menu_chosen(id: u32, name: &str) {
         TAG_SEARCH_HERE => match shown_folder() {
             Some(folder) => search_tag(name, Some(folder), false),
             None => crate::panes::active_view()
-                .note("No folder is shown here; Search everywhere looks on every drive".to_owned()),
+                .note(t!("No folder is shown here; Search everywhere looks on every drive").into_owned()),
         },
         TAG_SEARCH_EVERYWHERE => search_tag(name, None, false),
         TAG_FILTER => {
@@ -1195,7 +1201,7 @@ pub fn row_menu_chosen(id: u32, name: &str) {
         TAG_UP | TAG_DOWN => edit_list(TagListEdit::Move(name.into(), id == TAG_UP)),
         TAG_REMOVE => {
             edit_list(TagListEdit::Remove(name.into()));
-            crate::panes::active_view().note(format!("{name} left your list; files keep it"));
+            crate::panes::active_view().note(t!("{} left your list; files keep it", name));
         }
         TAGS_NEW => ask_new_tag(),
         id if (TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8).contains(&id) => {
@@ -1223,13 +1229,13 @@ fn edit_list(edit: TagListEdit) {
 pub fn name_note(old: &str, text: &str, list: &[Tag]) -> (String, bool) {
     let name = text.trim();
     if name.is_empty() {
-        return ("Type a name".to_owned(), true);
+        return (t!("Type a name").into_owned(), true);
     }
     if let Err(err) = check_tag_name(name) {
-        return (err.to_owned(), true);
+        return (gezik_i18n::t("", err).into_owned(), true);
     }
     if !same_name(name, old) && list.iter().any(|t| same_name(&t.name, name)) {
-        return (format!("{name} is in your list already"), true);
+        return (t!("{} is in your list already", name), true);
     }
     (String::new(), false)
 }
@@ -1238,8 +1244,9 @@ pub fn name_note(old: &str, text: &str, list: &[Tag]) -> (String, bool) {
 /// name. Search and Retag… also looks for the files with the old one.
 fn ask_rename(old: &str) {
     let old = old.to_owned();
-    let message = format!(
-        "New name for {old}. Files keep the tag they have ({old}); Search and Retag… finds them so you can give them the new one."
+    let message = t!(
+        "New name for {0}. Files keep the tag they have ({0}); Search and Retag… finds them so you can give them the new one.",
+        old
     );
     let note = {
         let old = old.clone();
@@ -1247,10 +1254,10 @@ fn ask_rename(old: &str) {
     };
     crate::operations::with_current(|ops| {
         ops.dialogs().ask_text_choice(
-            "Rename Tag",
+            t!("Rename Tag"),
             message,
             old.clone(),
-            &["Rename", "Search and Retag…", "Cancel"],
+            &[&t!("Rename"), &t!("Search and Retag…"), &t!("Cancel")],
             note,
             move |answer| {
                 let Some((button, text)) = answer else { return };
@@ -1283,9 +1290,11 @@ thread_local! {
 }
 
 fn retag(old: &str, new: Tag) {
-    let note = format!(
-        "Select the files, then Tags… ({}): {old} comes off and {} goes on, as one job",
+    // TRANSLATORS: {0} is the Tags… shortcut, {1} the old tag, {2} the new one.
+    let note = t!(
+        "Select the files, then Tags… ({0}): {1} comes off and {2} goes on, as one job",
         key_label_of(Action::Tags),
+        old,
         new.name
     );
     RETAG.with(|r| *r.borrow_mut() = Some((old.into(), new)));
@@ -1304,9 +1313,11 @@ pub fn retag_hint() -> Option<String> {
         let r = r.borrow();
         let (old, new) = r.as_ref()?;
         spec.tags.iter().any(|t| same_name(t, old)).then(|| {
-            format!(
-                "Select them, then Tags… ({}): {old} comes off and {} goes on",
+            // TRANSLATORS: {0} is the Tags… shortcut, {1} the old tag, {2} the new one.
+            t!(
+                "Select them, then Tags… ({0}): {1} comes off and {2} goes on",
                 key_label_of(Action::Tags),
+                old,
                 new.name
             )
         })
@@ -1331,10 +1342,10 @@ fn retag_edits() -> Option<Edits> {
 fn ask_new_tag() {
     crate::operations::with_current(|ops| {
         ops.dialogs().ask_text_noted(
-            "New Tag",
-            "Name of the new tag (its colour is in its menu):",
+            t!("New Tag"),
+            t!("Name of the new tag (its colour is in its menu):"),
             "",
-            &["Add", "Cancel"],
+            &[&t!("Add"), &t!("Cancel")],
             |text| name_note("", text, &list()),
             |text| {
                 let Some(name) = text.map(|t| t.trim().to_owned()) else { return };
@@ -1356,41 +1367,54 @@ pub fn drop_edits(list: &[Tag], index: usize) -> Option<(Tag, Vec<MetaEdit>)> {
 /// Files dropped on the sidebar's tag `index`: one job, one undo.
 pub fn drop_on_tag(index: usize, paths: Vec<PathBuf>) {
     let Some((tag, edits)) = drop_edits(&list(), index) else { return };
-    let note = format!("{} added to {}", tag.name, crate::stack::count_text(paths.len()));
+    let note = tn!("{} added to {n} item" | "{} added to {n} items", paths.len(), tag.name);
     submit(paths, edits);
     crate::panes::active_view().note(note);
 }
 
 /// The label beside files dragged over the sidebar's tag `name`.
 pub fn drop_label(name: &str, count: usize) -> String {
-    format!("Tag {} {name}", crate::stack::count_text(count))
+    // TRANSLATORS: beside files dragged over a tag in the sidebar; {} is the tag.
+    tn!("Tag {n} item {}" | "Tag {n} items {}", count, name)
 }
 
 /// The question of Clean Up Tag Store… for what `orphans` found; `None` when nothing is gone
 /// (the status bar says it then).
 pub fn clean_up_text(orphans: &gezik_ops::meta::Orphans) -> (Option<String>, String) {
     let n = orphans.gone.len();
-    let mut away = match orphans.unmounted {
-        0 => String::new(),
-        1 => " 1 entry on a drive that is not connected was left alone.".to_owned(),
-        m => {
-            format!(" {} entries on drives that are not connected were left alone.", gezik_core::group_digits(m as u64))
-        }
-    };
-    match orphans.unreachable {
-        0 => {}
-        1 => away.push_str(" 1 entry Gezik cannot look at (no access, or the drive does not answer) was left alone."),
-        m => away.push_str(&format!(
-            " {} entries Gezik cannot look at (no access, or the drive does not answer) were left alone.",
-            gezik_core::group_digits(m as u64)
-        )),
+    let digits = |n: usize| gezik_core::group_digits(n as u64);
+    // Whole sentences, each after a space.
+    let mut away = String::new();
+    if orphans.unmounted > 0 {
+        let m = orphans.unmounted;
+        away.push(' ');
+        away.push_str(&tn!(
+            "{} entry on a drive that is not connected was left alone."
+                | "{} entries on drives that are not connected were left alone.",
+            m,
+            digits(m)
+        ));
+    }
+    if orphans.unreachable > 0 {
+        let m = orphans.unreachable;
+        away.push(' ');
+        away.push_str(&tn!(
+            "{} entry Gezik cannot look at (no access, or the drive does not answer) was left alone."
+                | "{} entries Gezik cannot look at (no access, or the drive does not answer) were left alone.",
+            m,
+            digits(m)
+        ));
     }
     match n {
-        0 => (None, format!("No entries point to files that are gone.{away}")),
-        1 => (Some(format!("1 entry points to a file that is gone. Remove it?{away}")), String::new()),
+        0 => (None, format!("{}{away}", t!("No entries point to files that are gone."))),
         n => {
-            let n = gezik_core::group_digits(n as u64);
-            (Some(format!("{n} entries point to files that are gone. Remove them?{away}")), String::new())
+            let question = tn!(
+                "{} entry points to a file that is gone. Remove it?"
+                    | "{} entries point to files that are gone. Remove them?",
+                n,
+                digits(n)
+            );
+            (Some(format!("{question}{away}")), String::new())
         }
     }
 }
@@ -1406,13 +1430,13 @@ pub fn clean_up_store() {
             let orphans = match found {
                 Ok(orphans) => orphans,
                 Err(err) => {
-                    return crate::panes::active_view().note(format!("The tag store cannot be cleaned up: {err}"));
+                    return crate::panes::active_view().note(t!("The tag store cannot be cleaned up: {}", err));
                 }
             };
             let (question, note) = clean_up_text(&orphans);
             let Some(question) = question else { return crate::panes::active_view().note(note) };
             crate::operations::with_current(|ops| {
-                ops.dialogs().ask("Clean Up Tag Store", question, &["Remove", "Cancel"], move |answer| {
+                ops.dialogs().ask(t!("Clean Up Tag Store"), question, &[&t!("Remove"), &t!("Cancel")], move |answer| {
                     if answer != Some(0) {
                         return;
                     }
@@ -1420,15 +1444,13 @@ pub fn clean_up_store() {
                     let id = crate::windows::current();
                     let _ = std::thread::Builder::new().name("gezik-tags".into()).spawn(move || {
                         let note = match store.remove_orphans(&orphans.gone) {
-                            Ok(n) => format!(
-                                "{} removed from the tag store; the old one is tags-store.tsv.bak",
-                                if n == 1 {
-                                    "1 entry".to_owned()
-                                } else {
-                                    format!("{} entries", gezik_core::group_digits(n as u64))
-                                }
+                            Ok(n) => tn!(
+                                "{} entry removed from the tag store; the old one is tags-store.tsv.bak"
+                                    | "{} entries removed from the tag store; the old one is tags-store.tsv.bak",
+                                n,
+                                gezik_core::group_digits(n as u64)
                             ),
-                            Err(err) => format!("The tag store cannot be cleaned up: {err}"),
+                            Err(err) => t!("The tag store cannot be cleaned up: {}", err),
                         };
                         crate::windows::post(id, move || crate::panes::active_view().note(note));
                     });

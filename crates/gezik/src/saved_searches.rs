@@ -12,6 +12,7 @@ use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
 use gezik_core::search::{Scope, SearchSpec};
+use gezik_i18n::t;
 
 use crate::dialog::Dialogs;
 
@@ -62,11 +63,11 @@ pub fn resolve(folder: &str, here: &Location, dirs: &KnownDirs) -> Result<Scope,
         }),
         "drives" => Ok(Scope::AllDrives),
         text => {
-            let path = dirs.expand_checked(text).ok_or_else(|| format!("\"{text}\" must not contain \"..\""))?;
+            let path = dirs.expand_checked(text).ok_or_else(|| t!("\"{}\" must not contain \"..\"", text))?;
             if path.is_absolute() {
                 Ok(Scope::Folder(path))
             } else {
-                Err(format!("\"{text}\" is not a folder on this computer"))
+                Err(t!("\"{}\" is not a folder on this computer", text))
             }
         }
     }
@@ -103,32 +104,43 @@ impl SavedSearches {
                 let spec = SearchSpec { scope, name: Some(saved.name.clone()), ..saved.spec };
                 crate::panes::with_active(|p| p.search.run_saved(spec, new_tab));
             }
-            Err(why) => crate::panes::active_view().note(format!("Saved search \"{name}\": {why}")),
+            Err(why) => crate::panes::active_view().note(t!("Saved search \"{0}\": {1}", name, why)),
         }
     }
 
     /// "Save search…": a name (Replace? if it is there), then this folder or any folder.
     pub fn ask_save(&self, spec: SearchSpec) {
         let this = self.clone();
-        self.0.dialogs.ask_text("Save search", "Name for this search:", "", &["Save", "Cancel"], move |name| {
-            let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
-            let names: Vec<String> = latest().into_iter().map(|s| s.name).collect();
-            if !room_for(&names, &name) {
-                return crate::panes::active_view().note(format!("Up to {SEARCHES_MAX} saved searches"));
-            }
-            match names.iter().find(|n| same_name(n, &name)).cloned() {
-                Some(old) => {
-                    let again = this.clone();
-                    let message = format!("A search called \"{old}\" already exists. Replace it?");
-                    this.0.dialogs.ask("Save search", message, &["Replace", "Cancel"], move |choice| {
-                        if choice == Some(0) {
-                            again.ask_scope(name, spec);
-                        }
-                    });
+        self.0.dialogs.ask_text(
+            t!("Save search"),
+            t!("Name for this search:"),
+            "",
+            &[&t!("Save"), &t!("Cancel")],
+            move |name| {
+                let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
+                let names: Vec<String> = latest().into_iter().map(|s| s.name).collect();
+                if !room_for(&names, &name) {
+                    return crate::panes::active_view().note(t!("Up to {} saved searches", SEARCHES_MAX));
                 }
-                None => this.ask_scope(name, spec),
-            }
-        });
+                match names.iter().find(|n| same_name(n, &name)).cloned() {
+                    Some(old) => {
+                        let again = this.clone();
+                        let message = t!("A search called \"{}\" already exists. Replace it?", old);
+                        this.0.dialogs.ask(
+                            t!("Save search"),
+                            message,
+                            &[&t!("Replace"), &t!("Cancel")],
+                            move |choice| {
+                                if choice == Some(0) {
+                                    again.ask_scope(name, spec);
+                                }
+                            },
+                        );
+                    }
+                    None => this.ask_scope(name, spec),
+                }
+            },
+        );
     }
 
     fn ask_scope(&self, name: String, spec: SearchSpec) {
@@ -137,10 +149,11 @@ impl SavedSearches {
             Scope::AllDrives => "drives".to_owned(),
         };
         let this = self.clone();
-        let buttons = ["Save with this folder", "Save for any folder ({here})", "Cancel"];
-        let message = format!("Save \"{name}\" with {folder}, or for the folder shown when it runs?");
+        let buttons = [t!("Save with this folder"), t!("Save for any folder ({here})"), t!("Cancel")];
+        let buttons = buttons.each_ref().map(|b| b.as_ref());
+        let message = t!("Save \"{0}\" with {1}, or for the folder shown when it runs?", name, folder);
         // Esc: Cancel (the last button).
-        self.0.dialogs.ask("Save search", message, &buttons, move |choice| {
+        self.0.dialogs.ask(t!("Save search"), message, &buttons, move |choice| {
             let folder = match choice {
                 Some(0) => folder,
                 Some(1) => HERE.to_owned(),
@@ -163,18 +176,24 @@ impl SavedSearches {
     /// The sidebar's "Rename…".
     pub fn ask_rename(&self, name: &str) {
         let (this, old) = (self.clone(), name.to_owned());
-        self.0.dialogs.ask_text("Rename search", "New name:", name, &["Rename", "Cancel"], move |new| {
-            let Some(new) = new.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
-            let mut list = latest();
-            if list.iter().any(|s| same_name(&s.name, &new) && !same_name(&s.name, &old)) {
-                return crate::panes::active_view().note(format!("A search called \"{new}\" already exists"));
-            }
-            if let Some(search) = list.iter_mut().find(|s| s.name == old) {
-                crate::panes::active_nav().rename_search(&old, &new);
-                search.name = new;
-                this.write(list);
-            }
-        });
+        self.0.dialogs.ask_text(
+            t!("Rename search"),
+            t!("New name:"),
+            name,
+            &[&t!("Rename"), &t!("Cancel")],
+            move |new| {
+                let Some(new) = new.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
+                let mut list = latest();
+                if list.iter().any(|s| same_name(&s.name, &new) && !same_name(&s.name, &old)) {
+                    return crate::panes::active_view().note(t!("A search called \"{}\" already exists", new));
+                }
+                if let Some(search) = list.iter_mut().find(|s| s.name == old) {
+                    crate::panes::active_nav().rename_search(&old, &new);
+                    search.name = new;
+                    this.write(list);
+                }
+            },
+        );
     }
 
     pub fn delete(&self, name: &str) {

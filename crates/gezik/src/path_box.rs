@@ -14,6 +14,7 @@ use gezik_core::complete::{rank, shows_history, sort_names, split_typed};
 use gezik_core::history::{FolderHistory, Visit};
 use gezik_core::nav::{Location, expand_typed};
 use gezik_core::ops::paths::same_path;
+use gezik_i18n::{t, tx};
 use slint::{ModelRc, VecModel};
 
 use crate::navigation::{Navigator, resolve_typed};
@@ -100,11 +101,11 @@ pub fn history_rows(history: &FolderHistory, now: u64) -> Vec<Row> {
     let frequent = history.frequent(FREQUENT, now, &recent);
     let mut rows = Vec::new();
     if !recent.is_empty() {
-        rows.push(Row::Heading("Recent"));
+        rows.push(Row::Heading(tx!("Recent")));
         rows.extend(recent.iter().map(|visit| visit_row(visit)));
     }
     if !frequent.is_empty() {
-        rows.push(Row::Heading("Frequent"));
+        rows.push(Row::Heading(tx!("Frequent")));
         rows.extend(frequent.iter().map(|visit| visit_row(visit)));
     }
     rows
@@ -122,7 +123,7 @@ pub fn with_history(mut rows: Vec<Row>, history: &FolderHistory, typed: &str, no
         .collect();
     let found = history.matching(typed, HISTORY_MATCHES, now, |path| listed.iter().any(|l| same_path(l, path)));
     if !found.is_empty() {
-        rows.push(Row::Heading("History"));
+        rows.push(Row::Heading(tx!("History")));
         rows.extend(found.iter().map(|visit| visit_row(visit)));
     }
     rows
@@ -403,7 +404,9 @@ pub struct PathBox(Rc<Inner>);
 
 fn slint_row(row: &Row) -> PathRow {
     match row {
-        Row::Heading(title) => PathRow { title: (*title).into(), detail: "".into(), path: "".into(), heading: true },
+        Row::Heading(title) => {
+            PathRow { title: t("", title).as_ref().into(), detail: "".into(), path: "".into(), heading: true }
+        }
         Row::Folder { title, detail, path } => PathRow {
             title: title.as_str().into(),
             detail: detail.as_str().into(),
@@ -630,7 +633,7 @@ impl PathBox {
             self.save();
         }
         if say {
-            crate::panes::with_active(|p| p.view.note("Folder history cleared".to_owned()));
+            crate::panes::with_active(|p| p.view.note(t!("Folder history cleared").into_owned()));
         }
         if self.is_open() {
             self.update();

@@ -206,7 +206,7 @@ impl View {
         if spawned.is_err() {
             // Nothing reads: the next sort, filter or listing tries again.
             self.0.field_run.borrow_mut().take();
-            self.note("Properties could not be read (no thread to read them)".to_owned());
+            self.note(gezik_i18n::t!("Properties could not be read (no thread to read them)").into_owned());
         }
     }
 
@@ -218,7 +218,7 @@ impl View {
         match arrival {
             FieldArrival::Progress { done, total } => {
                 let (done, total) = (gezik_core::group_digits(done as u64), gezik_core::group_digits(total as u64));
-                *self.0.field_progress.borrow_mut() = Some(format!("Reading properties… {done} of {total}"));
+                *self.0.field_progress.borrow_mut() = Some(gezik_i18n::t!("Reading properties… {} of {}", done, total));
                 self.update_status();
             }
             FieldArrival::Done(values) => {

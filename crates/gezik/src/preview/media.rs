@@ -696,9 +696,9 @@ impl Player {
     /// The bar's note and link.
     pub fn note(&self) -> (String, &'static str) {
         match &self.state {
-            Play::NoFfmpeg(_) => ("Playing needs ffmpeg".into(), "Download"),
-            Play::Failed => ("Cannot play this file".into(), ""),
-            Play::Finding => ("Opening…".into(), ""),
+            Play::NoFfmpeg(_) => (gezik_i18n::t!("Playing needs ffmpeg").into_owned(), gezik_i18n::tx!("Download")),
+            Play::Failed => (gezik_i18n::t!("Cannot play this file").into_owned(), ""),
+            Play::Finding => (gezik_i18n::t!("Opening…").into_owned(), ""),
             _ => (self.no_sound.clone().unwrap_or_default(), ""),
         }
     }

@@ -277,7 +277,7 @@ pub(super) fn start(fetch: Fetch, progress: fn(u64), done: fn(Result<Vec<Candida
         });
     });
     if spawned.is_err() {
-        done(Err("Cannot start the download".to_owned()));
+        done(Err(t!("Cannot start the download").into_owned()));
     }
 }
 
@@ -315,13 +315,15 @@ fn candidates(fetch: &Fetch, bytes: &[u8]) -> Result<Vec<Candidate>, String> {
     let wanted = |name: &str| source::theme_entry(&fetch.folder, name).is_some();
     let most = source::MAX_THEME * source::MAX_THEMES as u64 + source::MAX_THEMES as u64;
     let entries = gezik_batch::archive::read_zip_entries(bytes, &wanted, source::MAX_THEME, source::MAX_THEMES, most)
-        .map_err(|err| format!("The download is not a zip: {err}"))?;
+        .map_err(|err| t!("The download is not a zip: {}", err))?;
     let found: Vec<Candidate> = entries
         .into_iter()
         .filter_map(|(name, data)| Some(source::candidate(source::theme_entry(&fetch.folder, &name)?, data)))
         .collect();
     match found.is_empty() {
-        true => Err(format!("No .toml file in {}the repository or its themes folder", fetch.folder)),
+        true if fetch.folder.is_empty() => Err(t!("No .toml file in the repository or its themes folder").into_owned()),
+        // TRANSLATORS: {} is a folder in the repository, such as "themes/dark/".
+        true => Err(t!("No .toml file in {}the repository or its themes folder", fetch.folder)),
         false => Ok(found),
     }
 }
@@ -329,16 +331,26 @@ fn candidates(fetch: &Fetch, bytes: &[u8]) -> Result<Vec<Candidate>, String> {
 /// A failed download in words.
 fn download_error(fetch: &Fetch, err: &std::io::Error) -> String {
     let text = gezik_platform::fs::describe(err);
-    let hint = match err.kind() {
-        std::io::ErrorKind::FileTooLarge => " (more than 5 MB: paste the address of a theme's .toml file instead)",
-        _ if fetch.url.starts_with("https://api.github.com/") && (text.contains("403") || text.contains("429")) => {
-            " (GitHub allows 60 downloads an hour without signing in: try again later, or paste the address of a \
-             theme's .toml file)"
-        }
-        _ => "",
-    };
     let missing = gezik_platform::http::tool_missing_hint().map(|h| format!(" — {h}")).unwrap_or_default();
-    format!("Cannot download {}: {text}{hint}{missing}", fetch.url)
+    // TRANSLATORS: {0} is an address, {1} why it failed, {2} a hint about a missing tool (or nothing).
+    match err.kind() {
+        std::io::ErrorKind::FileTooLarge => t!(
+            "Cannot download {0}: {1} (more than 5 MB: paste the address of a theme's .toml file instead){2}",
+            fetch.url,
+            text,
+            missing
+        ),
+        _ if fetch.url.starts_with("https://api.github.com/") && (text.contains("403") || text.contains("429")) => {
+            t!(
+                "Cannot download {0}: {1} (GitHub allows 60 downloads an hour without signing in: try again later, \
+                 or paste the address of a theme's .toml file){2}",
+                fetch.url,
+                text,
+                missing
+            )
+        }
+        _ => t!("Cannot download {0}: {1}{2}", fetch.url, text, missing),
+    }
 }
 
 #[cfg(test)]

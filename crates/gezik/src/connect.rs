@@ -8,9 +8,11 @@ use std::path::PathBuf;
 use gezik_config::settings::SERVERS_MAX;
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
+use gezik_i18n::{t, tx};
 use gezik_platform::network::{self, Connect, ConnectError, Login, ServerAddress};
 
-const TITLE: &str = "Connect to Server";
+/// Shown with `t`.
+const TITLE: &str = tx!("Connect to Server");
 
 thread_local! {
     static RECENT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
@@ -44,19 +46,22 @@ pub(crate) fn kept(address: &ServerAddress, windows: bool) -> String {
 /// The line under the field: where the address leads, or what is wrong with it.
 pub(crate) fn note_for(text: &str, windows: bool) -> (String, bool) {
     if text.trim().is_empty() {
-        return (network::EMPTY.to_owned(), false);
+        return (gezik_i18n::t("", network::EMPTY).into_owned(), false);
     }
     match network::parse_address(text, windows) {
-        Ok(address) => (format!("Opens {}", address.shown(windows)), false),
-        Err(why) => (why.to_owned(), true),
+        Ok(address) => (t!("Opens {}", address.shown(windows)), false),
+        Err(why) => (gezik_i18n::t("", why).into_owned(), true),
     }
 }
 
 /// Windows also offers to map the share to `letter` (Z down to D); Cancel is last (Esc).
 pub(crate) fn buttons(windows: bool, letter: Option<char>) -> Vec<String> {
     match (windows, letter) {
-        (true, Some(letter)) => vec!["Connect".to_owned(), format!("Map to {letter}:"), "Cancel".to_owned()],
-        _ => vec!["Connect".to_owned(), "Cancel".to_owned()],
+        (true, Some(letter)) => {
+            // TRANSLATORS: {} is a drive letter
+            vec![t!("Connect").into_owned(), t!("Map to {}:", letter), t!("Cancel").into_owned()]
+        }
+        _ => vec![t!("Connect").into_owned(), t!("Cancel").into_owned()],
     }
 }
 
@@ -70,7 +75,7 @@ pub fn open() {
     crate::operations::with_current(|ops| {
         let names: Vec<&str> = buttons.iter().map(String::as_str).collect();
         ops.dialogs().ask_text_choice(
-            TITLE,
+            gezik_i18n::t("", TITLE),
             "",
             initial,
             &names,
@@ -97,7 +102,7 @@ fn start(text: &str, letter: Option<char>) {
             let letter = letter_for(&address, letter);
             run(address, letter, None)
         }
-        Err(why) => status(why.to_owned()),
+        Err(why) => status(gezik_i18n::t("", why).into_owned()),
     }
 }
 
@@ -123,7 +128,7 @@ impl<F: FnOnce(Result<PathBuf, ConnectError>)> Reply<F> {
 impl<F: FnOnce(Result<PathBuf, ConnectError>)> Drop for Reply<F> {
     fn drop(&mut self) {
         if let Some(post) = self.post.take() {
-            post(self.result.take().unwrap_or_else(|| Err(ConnectError::Failed("Connection failed".to_owned()))));
+            post(self.result.take().unwrap_or_else(|| Err(ConnectError::Failed(t!("Connection failed").into_owned()))));
         }
     }
 }
@@ -131,10 +136,10 @@ impl<F: FnOnce(Result<PathBuf, ConnectError>)> Drop for Reply<F> {
 fn run(address: ServerAddress, letter: Option<char>, login: Option<Login>) {
     if BUSY.with(|b| b.replace(true)) {
         // `login` goes here: its password is wiped.
-        return status("Still connecting; try again when it is done".to_owned());
+        return status(t!("Still connecting; try again when it is done").into_owned());
     }
     let shown = address.shown(cfg!(windows));
-    status(format!("Connecting to {shown}…"));
+    status(t!("Connecting to {}…", shown));
     let mut owner = 0;
     crate::panes::with_active(|p| owner = p.nav.owner());
     let window_id = crate::windows::current();
@@ -166,8 +171,9 @@ fn finish(address: ServerAddress, shown: String, result: Result<PathBuf, Connect
             crate::panes::with_active(|p| p.nav.go(Location::Path(folder)));
         }
         Err(ConnectError::NeedsLogin) => ask_login(address),
-        Err(ConnectError::Cancelled) => status("Not connected".to_owned()),
-        Err(ConnectError::Failed(why)) => status(format!("Cannot connect to {shown}: {why}")),
+        Err(ConnectError::Cancelled) => status(t!("Not connected").into_owned()),
+        // TRANSLATORS: {0} is a server address, {1} why it failed
+        Err(ConnectError::Failed(why)) => status(t!("Cannot connect to {0}: {1}", shown, why)),
     }
 }
 
@@ -191,10 +197,12 @@ fn ask_login(address: ServerAddress) {
     let user = if address.user.is_empty() { std::env::var("USER").unwrap_or_default() } else { address.user.clone() };
     crate::operations::with_current(|ops| {
         let dialogs = ops.dialogs().clone();
-        let message = format!("User name for {}", kept(&address, false));
-        ops.dialogs().ask_text(TITLE, message, user, &["Next", "Cancel"], move |user| {
+        let message = t!("User name for {}", kept(&address, false));
+        let title = gezik_i18n::t("", TITLE).into_owned();
+        ops.dialogs().ask_text(title.clone(), message, user, &[&t!("Next"), &t!("Cancel")], move |user| {
             let Some(user) = user else { return };
-            dialogs.ask_secret(TITLE, format!("Password for {user}"), &["Connect", "Cancel"], move |password| {
+            let message = t!("Password for {}", user);
+            dialogs.ask_secret(title, message, &[&t!("Connect"), &t!("Cancel")], move |password| {
                 if let Some(password) = password {
                     run(address, None, Some(Login { user, domain: String::new(), password }));
                 }

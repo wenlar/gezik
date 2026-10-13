@@ -476,7 +476,7 @@ pub fn size_cell(e: &Entry, format: SizeFormat) -> String {
 /// known, until then `PNG File`.
 pub fn type_name_for(data: &ViewData, i: usize) -> String {
     if let Listing::Drives(_) = data.listing {
-        return "Drive".to_owned();
+        return gezik_i18n::t!("Drive").into_owned();
     }
     match data.listing.entry(i) {
         Some(e) => own_type_name(&e.name, e.is_dir)

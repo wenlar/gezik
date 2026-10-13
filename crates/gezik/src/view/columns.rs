@@ -29,7 +29,7 @@ const MAX_PARKED: usize = 64;
 const READ_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 
 /// The status line where only the list can show (spec 10 §7.3).
-pub const LIST_ONLY: &str = "Columns show folders only: the list is shown here";
+pub const LIST_ONLY: &str = gezik_i18n::tx!("Columns show folders only: the list is shown here");
 
 /// A column's listing; the focused column's is the view's.
 struct List {

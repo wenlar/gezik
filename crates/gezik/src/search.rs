@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use gezik_config::settings::SearchSettings;
 use gezik_core::nav::{DRIVES_NAME, Location};
 use gezik_core::search::{DateRange, HiddenRule, KindFilter, Scope, SearchSpec, parse_size, size_text};
+use gezik_i18n::{t, tn};
 use gezik_search::cache::{CACHE_LIMIT, CacheOutcome, NameCache};
 use gezik_search::content::ContentMatcher;
 use gezik_search::name::NameMatcher;
@@ -41,9 +42,10 @@ pub fn running() -> bool {
 
 /// The status bar while a search runs: `Searching… 12,345 found · 48,210 folders`.
 pub fn progress_text(found: usize, folders: usize) -> String {
+    let searching = tn!("Searching… {} found" | "Searching… {} found", found, with_commas(found));
     match folders {
-        0 => format!("Searching… {} found", with_commas(found)),
-        n => format!("Searching… {} found · {} folders", with_commas(found), with_commas(n)),
+        0 => searching,
+        n => format!("{searching} · {}", tn!("{} folder" | "{} folders", n, with_commas(n))),
     }
 }
 
@@ -58,20 +60,22 @@ fn recounted(summary: &mut Summary, len: usize) -> bool {
 
 /// The status bar once it ended (spec 4.3).
 pub fn done_text(summary: &Summary) -> String {
-    let found = with_commas(summary.found);
-    let results = if summary.found == 1 { "result" } else { "results" };
+    let (n, found) = (summary.found, with_commas(summary.found));
     let mut text = if summary.limit_reached {
-        format!("Stopped at {found} results. Narrow the search.")
+        tn!("Stopped at {} result. Narrow the search." | "Stopped at {} results. Narrow the search.", n, found)
     } else if summary.cancelled {
-        format!("Stopped · {found} {results}")
+        format!("{} · {}", t!("Stopped"), tn!("{} result" | "{} results", n, found))
     } else {
-        format!("{found} {results} in {:.1} s", summary.elapsed.as_secs_f64())
+        let seconds = format!("{:.1}", summary.elapsed.as_secs_f64());
+        tn!("{0} result in {1} s" | "{0} results in {1} s", n, found, seconds)
     };
     if summary.everything {
-        text.push_str(" via Everything");
+        // TRANSLATORS: {} is how many results were found, like "12 results in 0.3 s".
+        text = t!("{} via Everything", text);
     }
     if summary.spotlight {
-        text.push_str(" via Spotlight (drives it does not index are not in it)");
+        // TRANSLATORS: {} is how many results were found, like "12 results in 0.3 s".
+        text = t!("{} via Spotlight (drives it does not index are not in it)", text);
     }
     push_unread(&mut text, summary);
     text
@@ -79,29 +83,29 @@ pub fn done_text(summary: &Summary) -> String {
 
 /// What a search left out, after its count: skipped folders, folders it could not read.
 fn push_unread(text: &mut String, summary: &Summary) {
-    match summary.skipped {
-        0 => {}
-        1 => text.push_str(" · Skipped 1 folder (search.skip)"),
-        n => text.push_str(&format!(" · Skipped {} folders (search.skip)", with_commas(n))),
+    if let n @ 1.. = summary.skipped {
+        text.push_str(" · ");
+        text.push_str(&tn!("Skipped {} folder (search.skip)" | "Skipped {} folders (search.skip)", n, with_commas(n)));
     }
-    match summary.problems.count {
-        0 => {}
-        1 => text.push_str(" · 1 folder could not be read"),
-        n => text.push_str(&format!(" · {} folders could not be read", with_commas(n))),
+    if let n @ 1.. = summary.problems.count {
+        text.push_str(" · ");
+        text.push_str(&tn!("{} folder could not be read" | "{} folders could not be read", n, with_commas(n)));
     }
 }
 
 /// The status bar while duplicates are looked for (spec 11 §9.2): the walk, then the reads.
 pub fn scanned_text(files: usize, folders: usize) -> String {
-    format!("Scanned {} files · {} folders", with_commas(files), with_commas(folders))
+    let scanned = tn!("Scanned {} file" | "Scanned {} files", files, with_commas(files));
+    format!("{scanned} · {}", tn!("{} folder" | "{} folders", folders, with_commas(folders)))
 }
 
 pub fn comparing_text(scanned: usize, files: usize, bytes: u64) -> String {
+    let size = gezik_core::format_size(bytes);
     format!(
-        "Scanned {} files · comparing {} of same size ({})",
-        with_commas(scanned),
-        with_commas(files),
-        gezik_core::format_size(bytes)
+        "{} · {}",
+        tn!("Scanned {} file" | "Scanned {} files", scanned, with_commas(scanned)),
+        // TRANSLATORS: files of the same size are read to find duplicates; {1} is their total size.
+        tn!("comparing {0} of same size ({1})" | "comparing {0} of same size ({1})", files, with_commas(files), size)
     )
 }
 
@@ -110,22 +114,23 @@ pub fn comparing_text(scanned: usize, files: usize, bytes: u64) -> String {
 pub fn duplicates_text((groups, files, freed): (usize, usize, u64), summary: &Summary) -> String {
     let freed = gezik_core::format_size(freed);
     let mut text = match groups {
-        0 => "No duplicates".to_owned(),
-        1 => format!("1 group · {} files · {freed} could be freed", with_commas(files)),
-        n => format!("{} groups · {} files · {freed} could be freed", with_commas(n), with_commas(files)),
+        0 => t!("No duplicates").into_owned(),
+        n => {
+            let groups = tn!("{} group" | "{} groups", n, with_commas(n));
+            let files = tn!("{} file" | "{} files", files, with_commas(files));
+            format!("{groups} · {files} · {}", t!("{} could be freed", freed))
+        }
     };
     if summary.cancelled {
-        text = format!("Stopped · {text}");
+        text = format!("{} · {text}", t!("Stopped"));
     }
-    match summary.online {
-        0 => {}
-        1 => text.push_str(" · 1 online-only file not read"),
-        n => text.push_str(&format!(" · {} online-only files not read", with_commas(n))),
+    if let n @ 1.. = summary.online {
+        text.push_str(" · ");
+        text.push_str(&tn!("{} online-only file not read" | "{} online-only files not read", n, with_commas(n)));
     }
-    match summary.hard_links {
-        0 => {}
-        1 => text.push_str(" · 1 hard link counted once"),
-        n => text.push_str(&format!(" · {} hard links counted once", with_commas(n))),
+    if let n @ 1.. = summary.hard_links {
+        text.push_str(" · ");
+        text.push_str(&tn!("{} hard link counted once" | "{} hard links counted once", n, with_commas(n)));
     }
     push_unread(&mut text, summary);
     text
@@ -151,11 +156,14 @@ pub fn select_duplicates(view: &View, id: u32) {
 
 /// What "Select all in this folder" says when `groups` had every copy there.
 fn kept_note(groups: usize) -> Option<String> {
-    match groups {
-        0 => None,
-        1 => Some("1 group had every copy in this folder; one copy is kept".to_owned()),
-        n => Some(format!("{} groups had every copy in this folder; one copy of each is kept", with_commas(n))),
-    }
+    (groups > 0).then(|| {
+        tn!(
+            "{} group had every copy in this folder; one copy is kept"
+                | "{} groups had every copy in this folder; one copy of each is kept",
+            groups,
+            with_commas(groups)
+        )
+    })
 }
 
 /// The status bar of results that ended: a duplicates search's or another's.
@@ -175,7 +183,7 @@ fn name_of(path: &Path) -> String {
 pub fn scope_choices(origin: Option<&Path>) -> Vec<(Scope, String)> {
     let mut out = Vec::new();
     if let Some(folder) = origin {
-        out.push((Scope::Folder(folder.to_path_buf()), format!("This folder ({})", name_of(folder))));
+        out.push((Scope::Folder(folder.to_path_buf()), t!("This folder ({})", name_of(folder))));
         let root = folder.ancestors().last().unwrap_or(folder);
         for above in folder.ancestors().skip(1).filter(|p| p.parent().is_some()).take(5) {
             out.push((Scope::Folder(above.to_path_buf()), name_of(above)));
@@ -183,19 +191,25 @@ pub fn scope_choices(origin: Option<&Path>) -> Vec<(Scope, String)> {
         if root != folder {
             let drive = root.display().to_string();
             let drive = if drive.len() > 1 { drive.trim_end_matches(['\\', '/']).to_owned() } else { drive };
-            out.push((Scope::Folder(root.to_path_buf()), format!("Whole drive ({drive})")));
+            out.push((Scope::Folder(root.to_path_buf()), t!("Whole drive ({})", drive)));
         }
     }
-    out.push((Scope::AllDrives, DRIVES_NAME.to_owned()));
+    out.push((Scope::AllDrives, t("", DRIVES_NAME).into_owned()));
     out
+}
+
+/// The scope's name: its folder's, or This PC.
+fn scope_name(scope: &Scope) -> String {
+    match scope {
+        Scope::Folder(folder) => name_of(folder),
+        Scope::AllDrives => t("", DRIVES_NAME).into_owned(),
+    }
 }
 
 /// The scope button's text: `in Work`, `in This PC`.
 pub fn scope_label(scope: &Scope) -> String {
-    match scope {
-        Scope::Folder(folder) => format!("in {}", name_of(folder)),
-        Scope::AllDrives => format!("in {DRIVES_NAME}"),
-    }
+    // TRANSLATORS: the search's scope button; {} is a folder's name or This PC.
+    t!("in {}", scope_name(scope))
 }
 
 /// The search a location shows: its own, or the flat view's.
@@ -459,7 +473,7 @@ pub fn parse_tag_names(text: &str) -> Result<(Vec<String>, bool), String> {
         if name.eq_ignore_ascii_case("none") {
             untagged = true;
         } else {
-            gezik_core::meta::check_tag_name(name).map_err(|err| format!("\"{name}\": {err}"))?;
+            gezik_core::meta::check_tag_name(name).map_err(|err| t!("\"{}\": {}", name, t("", err)))?;
             names.push(name.to_owned());
         }
     }
@@ -619,6 +633,12 @@ impl Searches {
     /// `[search]` (every resolve).
     pub fn set_settings(&self, settings: SearchSettings) {
         *self.0.settings.borrow_mut() = settings;
+        // Settings come again after a language change: the bar's texts (Filters, the scope, an
+        // error) are written in it once the pane is in place (15b's follow-up).
+        if crate::panes::with_id(self.0.id, |_| ()).is_some() {
+            self.0.checked.borrow_mut().take();
+            self.sync_bar();
+        }
     }
 
     fn view_shown() -> (bool, bool) {
@@ -745,7 +765,7 @@ impl Searches {
         crate::panes::edit(id, |d| {
             d.search_open = self.0.open.get();
             d.search_scope = if draft.duplicates {
-                format!("Find duplicates {}", scope_label(&draft.scope)).into()
+                t!("Find duplicates in {}", scope_name(&draft.scope)).into()
             } else {
                 scope_label(&draft.scope).into()
             };
@@ -799,7 +819,7 @@ impl Searches {
 
     fn content_toggle(&self) {
         if self.0.draft.borrow().duplicates {
-            return self.0.view.note("Duplicates compare whole files; text in files is not used".to_owned());
+            return self.0.view.note(t!("Duplicates compare whole files; text in files is not used").into_owned());
         }
         let open = !self.0.content_open.get();
         self.0.content_open.set(open);
@@ -854,8 +874,8 @@ impl Searches {
                 )
             }
             Live::Wait => self.0.live_waiting.set(true),
-            Live::Large => self.0.view.note("Large folder: press Enter to search".to_owned()),
-            Live::Enter => self.0.view.note("Press Enter to search".to_owned()),
+            Live::Large => self.0.view.note(t!("Large folder: press Enter to search").into_owned()),
+            Live::Enter => self.0.view.note(t!("Press Enter to search").into_owned()),
             Live::Never => {}
             Live::Warm => {
                 self.0.live_waiting.set(true);
@@ -882,7 +902,7 @@ impl Searches {
     fn run(&self, new_tab: bool, live: bool) {
         let spec = self.0.draft.borrow().clone();
         if !spec.is_query() {
-            return self.0.view.note("Type something to search".to_owned());
+            return self.0.view.note(t!("Type something to search").into_owned());
         }
         if crate::panes::data(self.0.id)
             .is_some_and(|d| !d.search_error.is_empty() || !d.search_content_error.is_empty())
@@ -934,7 +954,7 @@ impl Searches {
         };
         match spec.filter(SearchSpec::is_query) {
             Some(spec) => crate::saved_searches::with_current(|s| s.ask_save(spec)),
-            None => self.0.view.note("Open a search to save it".to_owned()),
+            None => self.0.view.note(t!("Open a search to save it").into_owned()),
         }
     }
 
@@ -987,7 +1007,7 @@ impl Searches {
             }
             location => match location.folder() {
                 Some(folder) => self.0.nav.go(Location::Flat(folder.to_path_buf())),
-                None => self.0.view.note("Flat view works in folders".to_owned()),
+                None => self.0.view.note(t!("Flat view works in folders").into_owned()),
             },
         }
     }
@@ -1313,7 +1333,7 @@ impl Searches {
         let generation = self.0.generation.get() + 1;
         self.0.generation.set(generation);
         if !spec.is_query() {
-            return self.0.view.set_results_status(Some("Type something to search".to_owned()));
+            return self.0.view.set_results_status(Some(t!("Type something to search").into_owned()));
         }
         let settings = self.0.settings.borrow().clone();
         let options = QueryOptions::local(settings.content_max_size, settings.max_results);
@@ -1366,7 +1386,7 @@ impl Searches {
         if spawned.is_err() {
             self.0.running.borrow_mut().take();
             self.0.view.set_searching(false);
-            self.0.view.set_results_status(Some("Cannot start the search".to_owned()));
+            self.0.view.set_results_status(Some(t!("Cannot start the search").into_owned()));
             crate::panes::edit(self.0.id, |d| d.search_running = false);
         }
     }
@@ -1399,7 +1419,7 @@ impl Searches {
         if spawned.is_err() {
             self.0.running.borrow_mut().take();
             self.0.view.set_searching(false);
-            self.0.view.set_results_status(Some("Cannot start the search".to_owned()));
+            self.0.view.set_results_status(Some(t!("Cannot start the search").into_owned()));
             crate::panes::edit(self.0.id, |d| d.search_running = false);
         }
     }
@@ -1689,17 +1709,19 @@ impl Searches {
         let properties = id == ids::SEARCH_PROPERTIES;
         let (title, message, initial) = match id {
             ids::SEARCH_PROPERTIES => (
-                "Properties",
-                "Property words, like artist:tarkan duration>3m (empty: any):",
+                t!("Properties"),
+                t!("Property words, like artist:tarkan duration>3m (empty: any):"),
                 Some(draft.fields.clone()),
             ),
             ids::SIZE_MIN => {
-                ("Size at least", "Smallest size, like 500 MB (empty: any):", draft.size.min.map(size_text))
+                (t!("Size at least"), t!("Smallest size, like 500 MB (empty: any):"), draft.size.min.map(size_text))
             }
-            ids::SIZE_MAX => ("Size at most", "Largest size, like 4 GB (empty: any):", draft.size.max.map(size_text)),
+            ids::SIZE_MAX => {
+                (t!("Size at most"), t!("Largest size, like 4 GB (empty: any):"), draft.size.max.map(size_text))
+            }
             _ => (
-                "Modified between",
-                "Two days, like 2026-01-01..2026-06-30:",
+                t!("Modified between"),
+                t!("Two days, like 2026-01-01..2026-06-30:"),
                 matches!(draft.modified, DateRange::Between(..)).then(|| draft.modified.text()),
             ),
         };
@@ -1713,7 +1735,7 @@ impl Searches {
             } else if between {
                 match DateRange::parse(text)? {
                     DateRange::Between(..) => Ok(()),
-                    _ => Err("Two days, like 2026-01-01..2026-06-30".to_owned()),
+                    _ => Err(t!("Two days, like 2026-01-01..2026-06-30").into_owned()),
                 }
             } else {
                 parse_size(text).map(|_| ())
@@ -1725,7 +1747,7 @@ impl Searches {
             title,
             message,
             initial.unwrap_or_default(),
-            &["OK", "Cancel"],
+            &[&t!("OK"), &t!("Cancel")],
             move |text| match check(text) {
                 Ok(()) => (String::new(), false),
                 // The keys the last word may become, as it is typed (`art` → artist, album-artist).
@@ -1764,16 +1786,17 @@ impl Searches {
             if draft.untagged {
                 names.push("none".to_owned());
             }
-            ("Tags", "Tags every item has, with commas (none: items without tags; empty: any):", names.join(", "))
+            let message = t!("Tags every item has, with commas (none: items without tags; empty: any):");
+            (t!("Tags"), message, names.join(", "))
         } else {
-            ("Comment", "Text the comment holds (empty: any):", draft.comment.clone())
+            (t!("Comment"), t!("Text the comment holds (empty: any):"), draft.comment.clone())
         };
         let searches = self.clone();
         self.0.dialogs.ask_text_noted(
             title,
             message,
             initial,
-            &["OK", "Cancel"],
+            &[&t!("OK"), &t!("Cancel")],
             move |text| match (tags, parse_tag_names(text)) {
                 (true, Err(why)) => (why, true),
                 _ => (String::new(), false),
@@ -1799,7 +1822,7 @@ impl Searches {
     fn show_problems(&self) {
         let lines: Vec<String> =
             self.0.problems.borrow().iter().map(|(path, why)| format!("{}: {why}", path.display())).collect();
-        self.0.dialogs.ask("Folders that could not be read", lines.join("\n"), &["Close"], |_| {});
+        self.0.dialogs.ask(t!("Folders that could not be read"), lines.join("\n"), &[&t!("Close")], |_| {});
     }
 }
 
