@@ -62,6 +62,7 @@ msgstr "缺少第 {} 部分"
 #: crates/gezik-batch/src/archive/sevenz.rs
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/external.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
 #, fuzzy
 msgid "no password"
 msgstr "没有密码"
@@ -387,6 +388,7 @@ msgstr "保留两者"
 #: crates/gezik/src/tab_sets.rs
 #: crates/gezik/src/tags.rs
 #: crates/gezik/src/trash_view.rs
+#: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -634,6 +636,7 @@ msgid_plural "Extract {n} archives"
 msgstr[0] "解压 {n} 个压缩包"
 
 #: crates/gezik-batch/src/tasks/mod.rs
+#: crates/gezik/src/navigation.rs
 #, fuzzy
 msgid "7-Zip needed to open this kind of archive"
 msgstr "打开此类压缩包需要 7-Zip"
@@ -1307,6 +1310,12 @@ msgstr "全部"
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
 msgctxt "choice:archives.double-click"
+msgid "browse"
+msgstr "作为文件夹打开"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:archives.double-click"
 msgid "system"
 msgstr "系统"
 
@@ -1621,8 +1630,13 @@ msgstr "{0}：应为类似 \"20 MB/s\" 的速度或 \"\"，实际为 {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
-msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
-msgstr "{0}：应为 \"system\" 或 \"extract-here\"，实际为 {1}"
+msgid "{0}: expected \"browse\", \"system\" or \"extract-here\", got {1}"
+msgstr "{0}：应为 \"browse\"、\"system\" 或 \"extract-here\"，实际为 {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
+msgid "{0}: expected a number from 1 to 4096, got {1}"
+msgstr "{0}：应为 1 到 4096 之间的数字，实际为 {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2205,6 +2219,7 @@ msgid "Open Terminal as Administrator"
 msgstr "以管理员身份打开终端"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/size_map.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
@@ -2580,6 +2595,7 @@ msgid "Find Duplicates"
 msgstr "查找重复文件"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Copy To…"
@@ -2711,6 +2727,13 @@ msgstr "导出设置…"
 #, fuzzy
 msgid "Import Settings…"
 msgstr "导入设置…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/archives.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Open as Folder"
+msgstr "作为文件夹打开"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -4734,6 +4757,11 @@ msgstr "匹配"
 msgid "Comment"
 msgstr "备注"
 
+#: crates/gezik-core/src/view.rs
+#, fuzzy
+msgid "Packed"
+msgstr "压缩后"
+
 #. {} is what is undone, "Copy 3 items"
 #: crates/gezik-ops/src/engine.rs
 #, fuzzy
@@ -4794,6 +4822,7 @@ msgid "It is too big for this drive (files there can be at most {} GB)"
 msgstr "对此驱动器而言过大（此处文件最大为 {} GB）"
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copy {n} item"
 msgid_plural "Copy {n} items"
@@ -6212,6 +6241,32 @@ msgstr "在此文件夹中搜索失败"
 msgid "Could not start the search"
 msgstr "无法开始搜索"
 
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+#, fuzzy
+msgid "7-Zip could not read it"
+msgstr "7-Zip 无法读取"
+
+#: crates/gezik-vfs/src/lib.rs
+#, fuzzy
+msgid "Archives nested more than {} deep are not opened"
+msgstr "嵌套超过 {} 层的压缩包不会打开"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Copying {}"
+msgstr "正在复制 {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Copying {n} item"
+msgid_plural "Copying {n} items"
+msgstr[0] "正在复制 {n} 个项目"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Copy {}"
+msgstr "复制 {}"
+
 #: crates/gezik/src/actions.rs
 #, fuzzy
 msgid "Commands run on files and folders"
@@ -6374,6 +6429,11 @@ msgstr "更改 {0} 的标志：{1}"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
+msgid "Open with System App"
+msgstr "用系统应用打开"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
 msgid "Extract here"
 msgstr "解压到此处"
 
@@ -6432,6 +6492,7 @@ msgstr "密码"
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
 msgid "OK"
 msgstr "确定"
@@ -7893,6 +7954,16 @@ msgstr "显示备注"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
+msgid "Hide Packed"
+msgstr "隐藏压缩后大小"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Show Packed"
+msgstr "显示压缩后大小"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
 msgid "Connect to {}"
 msgstr "连接到 {}"
 
@@ -8530,6 +8601,7 @@ msgstr "无法使用剪贴板：{}"
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/src/sidebar.rs
+#: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
 msgid "Cannot open {}: {}"
 msgstr "无法打开 {}：{}"
@@ -9070,6 +9142,16 @@ msgstr "比较  {}  ↔  {}  ·  {}"
 #, fuzzy
 msgid "Cannot copy: {}"
 msgstr "无法复制：{}"
+
+#: crates/gezik/src/drag.rs
+#, fuzzy
+msgid "Use Copy To… for large selections"
+msgstr "选择较大时请使用“复制到…”"
+
+#: crates/gezik/src/drag.rs
+#, fuzzy
+msgid "Still taking the items out of the archive…"
+msgstr "仍在从压缩包中取出项目…"
 
 #: crates/gezik/src/dual.rs
 #, fuzzy
@@ -10304,6 +10386,12 @@ msgstr[0] "{n} 个已锁定的标签页保持打开"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Reading {}: {n} item"
+msgid_plural "Reading {}: {n} items"
+msgstr[0] "正在读取 {}：{n} 个项目"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} 已不存在"
 
@@ -10422,6 +10510,11 @@ msgstr "已存在同名文件"
 msgid "Not in search results: open a folder first"
 msgstr "不适用于搜索结果：请先打开文件夹"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Items in an archive can only be copied out"
+msgstr "压缩包中的项目只能复制出来"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -10432,6 +10525,12 @@ msgstr "{} 适用于搜索结果"
 #, fuzzy
 msgid "can't be undone"
 msgstr "无法撤销"
+
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Copied {n} item"
+msgid_plural "Copied {n} items"
+msgstr[0] "已复制 {n} 个项目"
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -13255,6 +13354,11 @@ msgid "Permanently delete {} item? This cannot be undone."
 msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "永久删除 {} 个项目？此操作无法撤销。"
 
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Extracting {}…"
+msgstr "正在解压 {}…"
+
 #: crates/gezik/src/view/columns.rs
 #, fuzzy
 msgid "Columns show folders only: the list is shown here"
@@ -13869,6 +13973,12 @@ msgstr "评分"
 msgctxt "column"
 msgid "Comment"
 msgstr "备注"
+
+#: crates/gezik/ui/widgets/file-view.slint
+#, fuzzy
+msgctxt "column"
+msgid "Packed"
+msgstr "压缩后"
 
 #: crates/gezik/ui/widgets/file-view.slint
 #, fuzzy
@@ -14807,8 +14917,20 @@ msgstr "双击"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:archives.double-click"
-msgid "System | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
-msgstr "system | extract-here。双击压缩包时的操作：用系统程序打开，或解压到其所在位置。"
+msgid "Browse | system | extract-here. What double-clicking an archive does: go into it as into a folder, open it with the system's program, or extract it next to itself."
+msgstr "Browse | system | extract-here。双击压缩包时：像文件夹一样进入、用系统程序打开，或解压到旁边。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:archives.preview-limit"
+msgid "Preview limit"
+msgstr "预览上限"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:archives.preview-limit"
+msgid "MB: files inside an archive up to this size are extracted for the preview by themselves"
+msgstr "MB：压缩包中不超过此大小的文件会自动解压以供预览"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15103,3 +15225,11 @@ msgstr "高亮规则"
 msgctxt "setting:commands"
 msgid "Commands"
 msgstr "命令"
+
+#~ #, fuzzy
+#~ msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
+#~ msgstr "{0}：应为 \"system\" 或 \"extract-here\"，实际为 {1}"
+#~ #, fuzzy
+#~ msgctxt "setting:archives.double-click"
+#~ msgid "System | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
+#~ msgstr "system | extract-here。双击压缩包时的操作：用系统程序打开，或解压到其所在位置。"

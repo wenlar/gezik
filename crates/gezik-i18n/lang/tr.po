@@ -53,6 +53,7 @@ msgstr "{}. parça eksik"
 #: crates/gezik-batch/src/archive/sevenz.rs
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/external.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
 msgid "no password"
 msgstr "parola yok"
 
@@ -324,6 +325,7 @@ msgstr "İkisini de tut"
 #: crates/gezik/src/tab_sets.rs
 #: crates/gezik/src/tags.rs
 #: crates/gezik/src/trash_view.rs
+#: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -526,6 +528,7 @@ msgid_plural "Extract {n} archives"
 msgstr[0] "{n} arşivi ayıkla"
 
 #: crates/gezik-batch/src/tasks/mod.rs
+#: crates/gezik/src/navigation.rs
 msgid "7-Zip needed to open this kind of archive"
 msgstr "Bu tür arşivi açmak için 7-Zip gerekli"
 
@@ -1081,6 +1084,11 @@ msgstr "tümü"
 
 #: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:archives.double-click"
+msgid "browse"
+msgstr "klasör gibi aç"
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:archives.double-click"
 msgid "system"
 msgstr "sistem"
 
@@ -1336,8 +1344,12 @@ msgid "{0}: expected a speed like \"20 MB/s\" or \"\", got {1}"
 msgstr "{0}: \"20 MB/s\" gibi bir hız ya da \"\" bekleniyordu, gelen: {1}"
 
 #: crates/gezik-config/src/settings.rs
-msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
-msgstr "{0}: \"system\" ya da \"extract-here\" bekleniyordu, gelen: {1}"
+msgid "{0}: expected \"browse\", \"system\" or \"extract-here\", got {1}"
+msgstr "{0}: \"browse\", \"system\" ya da \"extract-here\" bekleniyordu, gelen: {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected a number from 1 to 4096, got {1}"
+msgstr "{0}: 1 ile 4096 arası bir sayı bekleniyordu, gelen: {1}"
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: \"{1}\" must be a full path (it is ignored)"
@@ -1822,6 +1834,7 @@ msgid "Open Terminal as Administrator"
 msgstr "Yönetici olarak terminal aç"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/size_map.rs
 #: crates/gezik/ui/app.slint
 msgid "Copy Path"
@@ -2136,6 +2149,7 @@ msgid "Find Duplicates"
 msgstr "Yinelenenleri bul"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Copy To…"
 msgstr "Şuraya kopyala…"
@@ -2244,6 +2258,12 @@ msgstr "Ayarları dışa aktar…"
 #: crates/gezik-config/src/shortcuts.rs
 msgid "Import Settings…"
 msgstr "Ayarları içe aktar…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/archives.rs
+#: crates/gezik/ui/app.slint
+msgid "Open as Folder"
+msgstr "Klasör olarak aç"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "{0}: unknown action"
@@ -3885,6 +3905,10 @@ msgstr "Eşleşme"
 msgid "Comment"
 msgstr "Yorum"
 
+#: crates/gezik-core/src/view.rs
+msgid "Packed"
+msgstr "Sıkıştırılmış"
+
 #. {} is what is undone, "Copy 3 items"
 #: crates/gezik-ops/src/engine.rs
 msgid "Undoing {}"
@@ -3934,6 +3958,7 @@ msgid "It is too big for this drive (files there can be at most {} GB)"
 msgstr "Bu sürücü için çok büyük (oradaki dosyalar en çok {} GB olabilir)"
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik-vfs/src/tasks.rs
 msgid "Copy {n} item"
 msgid_plural "Copy {n} items"
 msgstr[0] "{n} öğeyi kopyala"
@@ -5083,6 +5108,27 @@ msgstr "Bu klasörde arama başarısız oldu"
 msgid "Could not start the search"
 msgstr "Arama başlatılamadı"
 
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+msgid "7-Zip could not read it"
+msgstr "7-Zip okuyamadı"
+
+#: crates/gezik-vfs/src/lib.rs
+msgid "Archives nested more than {} deep are not opened"
+msgstr "{} düzeyden daha derin iç içe arşivler açılmaz"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Copying {}"
+msgstr "Kopyalanıyor: {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Copying {n} item"
+msgid_plural "Copying {n} items"
+msgstr[0] "{n} öğe kopyalanıyor"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Copy {}"
+msgstr "Kopyala: {}"
+
 #: crates/gezik/src/actions.rs
 msgid "Commands run on files and folders"
 msgstr "Dosya ve klasörlerde çalışan komutlar"
@@ -5216,6 +5262,10 @@ msgid "Change the flags of {0}: {1}"
 msgstr "Bayrakları değiştir ({0}): {1}"
 
 #: crates/gezik/src/archives.rs
+msgid "Open with System App"
+msgstr "Sistem uygulamasıyla aç"
+
+#: crates/gezik/src/archives.rs
 msgid "Extract here"
 msgstr "Buraya ayıkla"
 
@@ -5265,6 +5315,7 @@ msgstr "Parola"
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/src/vfs_mounts.rs
 msgid "OK"
 msgstr "Tamam"
 
@@ -6452,6 +6503,14 @@ msgid "Show Comment"
 msgstr "Yorumu göster"
 
 #: crates/gezik/src/context_menu.rs
+msgid "Hide Packed"
+msgstr "Sıkıştırılmış boyutu gizle"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Packed"
+msgstr "Sıkıştırılmış boyutu göster"
+
+#: crates/gezik/src/context_menu.rs
 msgid "Connect to {}"
 msgstr "Bağlan: {}"
 
@@ -6968,6 +7027,7 @@ msgstr "Pano kullanılamıyor: {}"
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/src/sidebar.rs
+#: crates/gezik/src/vfs_mounts.rs
 msgid "Cannot open {}: {}"
 msgstr "{} açılamıyor: {}"
 
@@ -7408,6 +7468,14 @@ msgstr "Karşılaştır  {}  ↔  {}  ·  {}"
 #: crates/gezik/src/diff.rs
 msgid "Cannot copy: {}"
 msgstr "Kopyalanamıyor: {}"
+
+#: crates/gezik/src/drag.rs
+msgid "Use Copy To… for large selections"
+msgstr "Büyük seçimler için Şuraya kopyala… komutunu kullanın"
+
+#: crates/gezik/src/drag.rs
+msgid "Still taking the items out of the archive…"
+msgstr "Öğeler hâlâ arşivden çıkarılıyor…"
 
 #: crates/gezik/src/dual.rs
 msgid "F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E"
@@ -8417,6 +8485,11 @@ msgid_plural "{n} locked tabs stay open"
 msgstr[0] "{n} kilitli sekme açık kalıyor"
 
 #: crates/gezik/src/navigation.rs
+msgid "Reading {}: {n} item"
+msgid_plural "Reading {}: {n} items"
+msgstr[0] "Okunuyor: {} ({n} öğe)"
+
+#: crates/gezik/src/navigation.rs
 msgid "{} no longer exists"
 msgstr "{} artık yok"
 
@@ -8514,6 +8587,10 @@ msgstr "Bu adda bir dosya zaten var"
 msgid "Not in search results: open a folder first"
 msgstr "Arama sonuçlarında olmaz: önce bir klasör açın"
 
+#: crates/gezik/src/operations.rs
+msgid "Items in an archive can only be copied out"
+msgstr "Arşivdeki öğeler yalnız dışarı kopyalanabilir"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 msgid "{} works in search results"
@@ -8522,6 +8599,11 @@ msgstr "{} arama sonuçlarında çalışır"
 #: crates/gezik/src/operations.rs
 msgid "can't be undone"
 msgstr "geri alınamaz"
+
+#: crates/gezik/src/operations.rs
+msgid "Copied {n} item"
+msgid_plural "Copied {n} items"
+msgstr[0] "{n} öğe kopyalandı"
 
 #: crates/gezik/src/operations.rs
 msgid "Cannot cut a drive"
@@ -10807,6 +10889,10 @@ msgid "Permanently delete {} item? This cannot be undone."
 msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "{} öğe kalıcı olarak silinsin mi? Bu geri alınamaz."
 
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Extracting {}…"
+msgstr "Ayıklanıyor: {}…"
+
 #: crates/gezik/src/view/columns.rs
 msgid "Columns show folders only: the list is shown here"
 msgstr "Sütunlar yalnız klasörleri gösterir: liste burada gösteriliyor"
@@ -11302,6 +11388,11 @@ msgstr "Puan"
 msgctxt "column"
 msgid "Comment"
 msgstr "Yorum"
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Packed"
+msgstr "Sıkıştırılmış"
 
 #: crates/gezik/ui/widgets/file-view.slint
 msgid "{}, collapsed"
@@ -12068,8 +12159,18 @@ msgstr "Çift tıklama"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:archives.double-click"
-msgid "System | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
-msgstr "System | extract-here. Bir arşive çift tıklayınca ne olur: sistemin programıyla açılır ya da yanına ayıklanır."
+msgid "Browse | system | extract-here. What double-clicking an archive does: go into it as into a folder, open it with the system's program, or extract it next to itself."
+msgstr "Browse | system | extract-here. Bir arşive çift tıklayınca ne olur: klasör gibi içine girilir, sistemin programıyla açılır ya da yanına ayıklanır."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:archives.preview-limit"
+msgid "Preview limit"
+msgstr "Önizleme sınırı"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:archives.preview-limit"
+msgid "MB: files inside an archive up to this size are extracted for the preview by themselves"
+msgstr "MB: bir arşivin içinde bu boyuta kadar olan dosyalar önizleme için kendiliğinden ayıklanır"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:convert.ffmpeg"
@@ -12315,3 +12416,9 @@ msgstr "Vurgu kuralları"
 msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Komutlar"
+
+#~ msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
+#~ msgstr "{0}: \"system\" ya da \"extract-here\" bekleniyordu, gelen: {1}"
+#~ msgctxt "setting:archives.double-click"
+#~ msgid "System | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
+#~ msgstr "System | extract-here. Bir arşive çift tıklayınca ne olur: sistemin programıyla açılır ya da yanına ayıklanır."
