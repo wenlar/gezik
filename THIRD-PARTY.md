@@ -36,6 +36,7 @@ and text, and for reading and writing PDFs; each keeps its own licence.
 | vecmath (through pdfium-render) | 1.0.0 | MIT | https://github.com/pistondevelopers/vecmath |
 | piston-float (through vecmath) | 1.0.1 | MIT | https://github.com/pistondevelopers/float |
 | md-5 (checksums) | 0.11.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hashes |
+| tr (Slint's translator interface) | 0.1.11 | MIT | https://github.com/woboq/tr |
 
 ## Independent JPEG Group
 

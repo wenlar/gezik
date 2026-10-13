@@ -105,6 +105,7 @@ cargo test
 | `crates/gezik-batch` | batch operations (rename rules, archives, conversion, PDF) |
 | `crates/gezik-search` | searching folder trees (scanner, name and content matching, Everything) |
 | `crates/gezik-platform` | the parts that differ per OS (drives, icons, clipboard, trash, menus) |
+| `crates/gezik-i18n` | translations (`.po` catalogues, plural rules, the language in use; `gezik-lang` for translators) |
 | `crates/gezik` | the desktop app (Slint UI) |
 
 </details>
