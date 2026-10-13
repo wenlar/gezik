@@ -200,7 +200,7 @@ export component RenameBatch inherits Rectangle {
                     color: Theme.foreground;
                 }
                 TextButton {
-                    text: "Presets";
+                    text: @tr("Presets");
                     icon: root.menu-arrow;
                     clicked => { root.presets(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                 }
@@ -214,7 +214,7 @@ export component RenameBatch inherits Rectangle {
                 VerticalLayout {
                     width: min(360px, parent.width * 0.42);
                     spacing: Theme.spacing;
-                    Text { text: "Rules"; color: Theme.foreground-muted; }
+                    Text { text: @tr("Rules"); color: Theme.foreground-muted; }
                     rule-list := ListView {
                         vertical-stretch: 1;
                         for rule[i] in root.rules: Rectangle {
@@ -255,13 +255,13 @@ export component RenameBatch inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.spacing;
                         TextButton {
-                            text: "+ Add rule";
+                            text: @tr("+ Add rule");
                             icon: root.menu-arrow;
                             clicked => { root.add-rule(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                         }
                         TextButton { text: "↑"; min-width: 32px; clicked => { root.move-rule(-1); } }
                         TextButton { text: "↓"; min-width: 32px; clicked => { root.move-rule(1); } }
-                        TextButton { label: "Remove rule"; icon: "M 1 1 L 7 7 M 7 1 L 1 7"; min-width: 32px; clicked => { root.remove-rule(); } }
+                        TextButton { label: @tr("Remove rule"); icon: "M 1 1 L 7 7 M 7 1 L 1 7"; min-width: 32px; clicked => { root.remove-rule(); } }
                     }
                     if root.selected-rule >= 0 && root.rules[root.selected-rule].error != "": Text {
                         text: root.rules[root.selected-rule].error;
@@ -271,63 +271,63 @@ export component RenameBatch inherits Rectangle {
                     // The selected rule's options.
                     if root.options.kind == "replace": VerticalLayout {
                         spacing: Theme.spacing;
-                        Labeled { label: "Find"; TextField { text <=> root.opt-find; edited(t) => { root.option-text("find", t); } } }
-                        Labeled { label: "Replace"; TextField { text <=> root.opt-with; edited(t) => { root.option-text("with", t); } } }
+                        Labeled { label: @tr("Find"); TextField { text <=> root.opt-find; edited(t) => { root.option-text("find", t); } } }
+                        Labeled { label: @tr("Replace"); TextField { text <=> root.opt-with; edited(t) => { root.option-text("with", t); } } }
                         HorizontalLayout {
                             spacing: Theme.spacing * 2;
-                            Check { text: "Regex"; checked: root.options.regex; toggled => { root.option-flag("regex", !root.options.regex); } }
-                            Check { text: "Match case"; checked: root.options.case-sensitive; toggled => { root.option-flag("case-sensitive", !root.options.case-sensitive); } }
-                            Check { text: "All"; checked: root.options.all; toggled => { root.option-flag("all", !root.options.all); } }
+                            Check { text: @tr("Regex"); checked: root.options.regex; toggled => { root.option-flag("regex", !root.options.regex); } }
+                            Check { text: @tr("Match case"); checked: root.options.case-sensitive; toggled => { root.option-flag("case-sensitive", !root.options.case-sensitive); } }
+                            Check { text: @tr("All"); checked: root.options.all; toggled => { root.option-flag("all", !root.options.all); } }
                         }
                     }
                     if root.options.kind == "number": VerticalLayout {
                         spacing: Theme.spacing;
                         HorizontalLayout {
                             spacing: Theme.spacing;
-                            Labeled { label: "Start"; TextField { text <=> root.opt-start; edited(t) => { root.option-text("start", t); } } }
-                            Labeled { label: "Step"; TextField { text <=> root.opt-step; edited(t) => { root.option-text("step", t); } } }
+                            Labeled { label: @tr("Start"); TextField { text <=> root.opt-start; edited(t) => { root.option-text("start", t); } } }
+                            Labeled { label: @tr("Step"); TextField { text <=> root.opt-step; edited(t) => { root.option-text("step", t); } } }
                         }
                         HorizontalLayout {
                             spacing: Theme.spacing;
-                            Labeled { label: "Digits"; TextField { text <=> root.opt-digits; edited(t) => { root.option-text("digits", t); } } }
-                            Labeled { label: "Separator"; TextField { text <=> root.opt-separator; edited(t) => { root.option-text("separator", t); } } }
+                            Labeled { label: @tr("Digits"); TextField { text <=> root.opt-digits; edited(t) => { root.option-text("digits", t); } } }
+                            Labeled { label: @tr("Separator"); TextField { text <=> root.opt-separator; edited(t) => { root.option-text("separator", t); } } }
                         }
                         HorizontalLayout {
                             spacing: Theme.spacing;
-                            TextButton { text: "At start"; checked: root.options.at-start; clicked => { root.option-flag("at-start", true); } }
-                            TextButton { text: "At end"; checked: !root.options.at-start; clicked => { root.option-flag("at-start", false); } }
-                            Check { text: "Per folder"; checked: root.options.per-folder; toggled => { root.option-flag("per-folder", !root.options.per-folder); } }
+                            TextButton { text: @tr("At start"); checked: root.options.at-start; clicked => { root.option-flag("at-start", true); } }
+                            TextButton { text: @tr("At end"); checked: !root.options.at-start; clicked => { root.option-flag("at-start", false); } }
+                            Check { text: @tr("Per folder"); checked: root.options.per-folder; toggled => { root.option-flag("per-folder", !root.options.per-folder); } }
                         }
                     }
                     if root.options.kind == "case": HorizontalLayout {
                         spacing: Theme.spacing;
-                        TextButton { text: "lower"; checked: root.options.mode == 0; clicked => { root.option-mode(0); } }
-                        TextButton { text: "UPPER"; checked: root.options.mode == 1; clicked => { root.option-mode(1); } }
-                        TextButton { text: "Title"; checked: root.options.mode == 2; clicked => { root.option-mode(2); } }
-                        TextButton { text: "Sentence"; checked: root.options.mode == 3; clicked => { root.option-mode(3); } }
+                        TextButton { text: @tr("case" => "lower"); checked: root.options.mode == 0; clicked => { root.option-mode(0); } }
+                        TextButton { text: @tr("case" => "UPPER"); checked: root.options.mode == 1; clicked => { root.option-mode(1); } }
+                        TextButton { text: @tr("case" => "Title"); checked: root.options.mode == 2; clicked => { root.option-mode(2); } }
+                        TextButton { text: @tr("case" => "Sentence"); checked: root.options.mode == 3; clicked => { root.option-mode(3); } }
                     }
                     if root.options.kind == "add-text": VerticalLayout {
                         spacing: Theme.spacing;
-                        Labeled { label: "Before"; TextField { text <=> root.opt-prefix; edited(t) => { root.option-text("prefix", t); } } }
-                        Labeled { label: "After"; TextField { text <=> root.opt-suffix; edited(t) => { root.option-text("suffix", t); } } }
+                        Labeled { label: @tr("Before"); TextField { text <=> root.opt-prefix; edited(t) => { root.option-text("prefix", t); } } }
+                        Labeled { label: @tr("After"); TextField { text <=> root.opt-suffix; edited(t) => { root.option-text("suffix", t); } } }
                     }
                     if root.options.kind == "extension": VerticalLayout {
                         spacing: Theme.spacing;
                         HorizontalLayout {
                             spacing: Theme.spacing;
-                            TextButton { text: "New"; checked: root.options.mode == 0; clicked => { root.option-mode(0); } }
-                            TextButton { text: "lower"; checked: root.options.mode == 1; clicked => { root.option-mode(1); } }
-                            TextButton { text: "UPPER"; checked: root.options.mode == 2; clicked => { root.option-mode(2); } }
+                            TextButton { text: @tr("New"); checked: root.options.mode == 0; clicked => { root.option-mode(0); } }
+                            TextButton { text: @tr("case" => "lower"); checked: root.options.mode == 1; clicked => { root.option-mode(1); } }
+                            TextButton { text: @tr("case" => "UPPER"); checked: root.options.mode == 2; clicked => { root.option-mode(2); } }
                         }
-                        if root.options.mode == 0: Labeled { label: "Extension"; TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } } }
+                        if root.options.mode == 0: Labeled { label: @tr("Extension"); TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } } }
                     }
                     if root.options.kind == "template": VerticalLayout {
                         spacing: Theme.spacing;
                         Labeled {
-                            label: "Name";
+                            label: @tr("Name");
                             TextField { text <=> root.opt-text; edited(t) => { root.option-text("text", t); } }
                             TextButton {
-                                text: "Fields";
+                                text: @tr("Fields");
                                 icon: root.menu-arrow;
                                 clicked => { root.fields(self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
                             }
@@ -341,13 +341,13 @@ export component RenameBatch inherits Rectangle {
                     }
                     if root.options.kind == "clean": VerticalLayout {
                         spacing: Theme.spacing;
-                        Check { text: "Trim spaces at the ends"; checked: root.options.trim; toggled => { root.option-flag("trim", !root.options.trim); } }
-                        Check { text: "Collapse repeated spaces"; checked: root.options.collapse; toggled => { root.option-flag("collapse", !root.options.collapse); } }
-                        Check { text: "_ . - become spaces"; checked: root.options.separators; toggled => { root.option-flag("separators", !root.options.separators); } }
-                        Check { text: "Spaces become _"; checked: root.options.underscores; toggled => { root.option-flag("underscores", !root.options.underscores); } }
+                        Check { text: @tr("Trim spaces at the ends"); checked: root.options.trim; toggled => { root.option-flag("trim", !root.options.trim); } }
+                        Check { text: @tr("Collapse repeated spaces"); checked: root.options.collapse; toggled => { root.option-flag("collapse", !root.options.collapse); } }
+                        Check { text: @tr("_ . - become spaces"); checked: root.options.separators; toggled => { root.option-flag("separators", !root.options.separators); } }
+                        Check { text: @tr("Spaces become _"); checked: root.options.underscores; toggled => { root.option-flag("underscores", !root.options.underscores); } }
                     }
                     Check {
-                        text: "Include extension";
+                        text: @tr("Include extension");
                         checked: root.include-extension;
                         toggled => { root.toggle-extension(); }
                     }
@@ -361,20 +361,20 @@ export component RenameBatch inherits Rectangle {
                     spacing: Theme.spacing;
                     HorizontalLayout {
                         spacing: Theme.spacing;
-                        Text { text: "Preview"; horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
-                        Text { text: "Sort by"; color: Theme.foreground-muted; vertical-alignment: center; }
-                        TextButton { text: "Name"; clicked => { root.sort(0); } }
-                        TextButton { text: "Date"; clicked => { root.sort(1); } }
-                        TextButton { text: "Size"; clicked => { root.sort(2); } }
-                        Check { text: "Only changed"; checked: root.only-changed; toggled => { root.toggle-only-changed(); } }
+                        Text { text: @tr("Preview"); horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: @tr("Sort by"); color: Theme.foreground-muted; vertical-alignment: center; }
+                        TextButton { text: @tr("Name"); clicked => { root.sort(0); } }
+                        TextButton { text: @tr("Date"); clicked => { root.sort(1); } }
+                        TextButton { text: @tr("Size"); clicked => { root.sort(2); } }
+                        Check { text: @tr("Only changed"); checked: root.only-changed; toggled => { root.toggle-only-changed(); } }
                     }
                     HorizontalLayout {
                         height: Theme.row-height;
                         // Lines up with the rows: their padding, handle and spacing.
                         padding-left: Theme.spacing * 3 + 14px;
                         spacing: Theme.spacing * 2;
-                        Text { text: "Old name"; horizontal-stretch: 1; preferred-width: 0px; color: Theme.foreground-muted; vertical-alignment: center; }
-                        Text { text: "New name"; horizontal-stretch: 1; preferred-width: 0px; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: @tr("Old name"); horizontal-stretch: 1; preferred-width: 0px; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: @tr("New name"); horizontal-stretch: 1; preferred-width: 0px; color: Theme.foreground-muted; vertical-alignment: center; }
                     }
                     preview := ListView {
                         vertical-stretch: 1;
@@ -384,7 +384,7 @@ export component RenameBatch inherits Rectangle {
                             height: Theme.row-height;
                             background: row.selected ? Theme.selection : row-touch.has-hover ? Theme.hover : transparent;
                             accessible-role: list-item;
-                            accessible-label: row.old-name + " to " + row.new-name;
+                            accessible-label: @tr("{} to {}", row.old-name, row.new-name);
                             accessible-description: row.note;
                             accessible-item-selectable: true;
                             accessible-item-selected: row.selected;
@@ -474,13 +474,13 @@ export component RenameBatch inherits Rectangle {
                     }
                     HorizontalLayout {
                         spacing: Theme.spacing;
-                        Text { text: "Name"; vertical-alignment: center; color: Theme.foreground-muted; }
+                        Text { text: @tr("Name"); vertical-alignment: center; color: Theme.foreground-muted; }
                         name-field := TextField {
                             text <=> root.name-text;
                             enabled: root.name-enabled;
                             edited(t) => { root.name-edited(t); }
                         }
-                        TextButton { text: "Reset to rules"; clicked => { root.name-reset(); } }
+                        TextButton { text: @tr("Reset to rules"); clicked => { root.name-reset(); } }
                     }
                 }
             }
@@ -495,9 +495,9 @@ export component RenameBatch inherits Rectangle {
                     overflow: elide;
                     color: Theme.foreground-muted;
                 }
-                TextButton { text: "Cancel"; clicked => { root.cancel(); } }
+                TextButton { text: @tr("Cancel"); clicked => { root.cancel(); } }
                 TextButton {
-                    text: "Rename";
+                    text: @tr("Rename");
                     primary: root.can-rename;
                     clicked => { if root.can-rename { root.rename(); } }
                 }

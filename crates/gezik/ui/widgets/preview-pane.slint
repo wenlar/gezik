@@ -353,7 +353,7 @@ export component PreviewPane inherits Rectangle {
                     source: root.frame-shown ? PreviewActions.frame : root.info.picture;
                     image-fit: root.info.zoomed ? fill : contain;
                     accessible-role: image;
-                    accessible-label: root.info.pages > 0 ? "Page \{root.info.page} of \{root.info.pages}" : root.info.title;
+                    accessible-label: root.info.pages > 0 ? @tr("Page {} of {}", root.info.page, root.info.pages) : root.info.title;
                 }
             }
 
@@ -435,7 +435,7 @@ export component PreviewPane inherits Rectangle {
             if root.info.kind == 0: Text {
                 width: parent.width;
                 height: parent.height;
-                text: "Select a file to preview";
+                text: @tr("Select a file to preview");
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;
@@ -454,7 +454,7 @@ export component PreviewPane inherits Rectangle {
             spacing: Theme.spacing;
             if root.info.bar == 1 || root.info.bar == 2: TextButton {
                 compact: true;
-                text: "Text";
+                text: @tr("Text");
                 checked: root.info.bar == 1;
                 clicked => {
                     if root.info.bar == 2 {
@@ -464,7 +464,7 @@ export component PreviewPane inherits Rectangle {
             }
             if root.info.bar < 4: TextButton {
                 compact: true;
-                text: "Hex";
+                text: @tr("Hex");
                 checked: root.info.bar == 2;
                 clicked => {
                     if root.info.bar != 2 {
@@ -490,8 +490,8 @@ export component PreviewPane inherits Rectangle {
             }
             if root.info.bar == 1: TextButton {
                 compact: true;
-                text: "Wrap";
-                label: root.info.wrap ? "Wrap lines, on" : "Wrap lines, off";
+                text: @tr("Wrap");
+                label: root.info.wrap ? @tr("Wrap lines, on") : @tr("Wrap lines, off");
                 checked: root.info.wrap;
                 clicked => {
                     PreviewActions.toggle-wrap();
@@ -500,7 +500,7 @@ export component PreviewPane inherits Rectangle {
             if root.info.bar == 6 && root.info.seek >= 0: Track {
                 horizontal-stretch: 1;
                 value: root.info.seek;
-                label: "Position";
+                label: @tr("Position");
                 moved-to(at, done) => {
                     PreviewActions.surface(done ? 11 : 12, at * 1px, 0, 0, 0);
                 }
@@ -522,8 +522,8 @@ export component PreviewPane inherits Rectangle {
             }
             if root.info.bar == 6: TextButton {
                 compact: true;
-                text: "Mute";
-                label: root.info.muted ? "Mute, on" : "Mute, off";
+                text: @tr("Mute");
+                label: root.info.muted ? @tr("Mute, on") : @tr("Mute, off");
                 checked: root.info.muted;
                 clicked => {
                     PreviewActions.surface(13, 0, 0, 0, 0);
@@ -532,7 +532,7 @@ export component PreviewPane inherits Rectangle {
             if root.info.bar == 6 && root.info.volume >= 0: Track {
                 width: 56px;
                 value: root.info.muted ? 0 : root.info.volume;
-                label: "Volume";
+                label: @tr("Volume");
                 moved-to(at, done) => {
                     PreviewActions.surface(14, at * 1px, 0, done ? 1px : 0, 0);
                 }

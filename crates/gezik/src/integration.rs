@@ -49,17 +49,17 @@ impl Command {
 
     pub fn title(self) -> &'static str {
         match self {
-            Command::MakeDefault => "Make Gezik the default file manager",
-            Command::RestoreDefault => "Restore the system file manager",
-            Command::AddToPath => "Add gezik to PATH",
-            Command::RemoveFromPath => "Remove gezik from PATH",
-            Command::UndoAll => "Undo all system changes",
-            Command::TrayOn => "Turn on tray icon",
-            Command::TrayOff => "Turn off tray icon",
-            Command::HotkeyOn => "Set a global shortcut",
-            Command::HotkeyOff => "Turn off the global shortcut",
-            Command::LoginOn => "Start Gezik at login",
-            Command::LoginOff => "Do not start Gezik at login",
+            Command::MakeDefault => gezik_i18n::tx!("Make Gezik the default file manager"),
+            Command::RestoreDefault => gezik_i18n::tx!("Restore the system file manager"),
+            Command::AddToPath => gezik_i18n::tx!("Add gezik to PATH"),
+            Command::RemoveFromPath => gezik_i18n::tx!("Remove gezik from PATH"),
+            Command::UndoAll => gezik_i18n::tx!("Undo all system changes"),
+            Command::TrayOn => gezik_i18n::tx!("Turn on tray icon"),
+            Command::TrayOff => gezik_i18n::tx!("Turn off tray icon"),
+            Command::HotkeyOn => gezik_i18n::tx!("Set a global shortcut"),
+            Command::HotkeyOff => gezik_i18n::tx!("Turn off the global shortcut"),
+            Command::LoginOn => gezik_i18n::tx!("Start Gezik at login"),
+            Command::LoginOff => gezik_i18n::tx!("Do not start Gezik at login"),
         }
     }
 
@@ -525,7 +525,7 @@ impl Integration {
         self.0.current.set(0);
         self.0.open.set(true);
         window.set_tp_rows(ModelRc::from(self.0.model.clone()));
-        window.set_tp_label("System integration".into());
+        window.set_tp_label(gezik_i18n::t!("System integration").as_ref().into());
         window.set_tp_empty("".into());
         window.set_tp_query("".into());
         window.set_tp_current(0);

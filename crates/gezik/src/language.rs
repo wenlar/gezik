@@ -46,6 +46,9 @@ pub fn apply(setting: &str, files: &ConfigFiles) {
     let catalog = Catalog::open(&code, file).map(Arc::new);
     gezik_i18n::set(catalog.clone());
     crate::translator::install(catalog);
+    // What Rust holds of the texts: the windows' sidebars, menus and Settings follow the
+    // reload that brought the change (`apply_config`); the tray's menu (macOS keeps it built).
+    crate::resident::refresh_pins();
 }
 
 /// The language row's choices (spec 15 §5.1): `code — name`, the first part is written.

@@ -365,10 +365,10 @@ pub fn menu_entries(items: &[(PathBuf, bool)], commands: &[CommandSpec], states:
     let runnable = sub.iter().any(|(_, _, enabled)| *enabled);
     let mut top = Vec::new();
     if convertible || runnable {
-        top.push((CONVERT, "Convert…".to_owned()));
+        top.push((CONVERT, gezik_i18n::t!("Convert…").into_owned()));
     }
     if items.iter().any(|(path, is_dir)| !is_dir && is_pdf_picture(&name_of(path))) {
-        top.push((IMAGES_TO_PDF, "Images to PDF…".to_owned()));
+        top.push((IMAGES_TO_PDF, gezik_i18n::t!("Images to PDF…").into_owned()));
     }
     (top, (!sub.is_empty()).then_some(sub))
 }

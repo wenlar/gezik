@@ -143,8 +143,8 @@ impl TabTools {
         *self.0.rows.borrow_mut() = all;
         self.0.current.set(crate::panes::active_nav().active_index());
         window.set_tp_rows(ModelRc::from(self.0.model.clone()));
-        window.set_tp_label("Tabs".into());
-        window.set_tp_empty("No tabs match".into());
+        window.set_tp_label(gezik_i18n::t!("Tabs").as_ref().into());
+        window.set_tp_empty(gezik_i18n::t!("No tabs match").as_ref().into());
         window.set_tp_query("".into());
         self.show(&window);
         window.set_tp_open(true);

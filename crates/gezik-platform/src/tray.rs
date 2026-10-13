@@ -64,14 +64,14 @@ pub enum MenuLine {
 
 /// Show Gezik, the first nine pins, Quit Gezik (spec 9.1).
 pub fn menu(pins: &[String], windows: bool) -> Vec<MenuLine> {
-    let mut lines = vec![MenuLine::Item(SHOW, "Show Gezik".into()), MenuLine::Separator];
+    let mut lines = vec![MenuLine::Item(SHOW, gezik_i18n::t!("Show Gezik").into_owned()), MenuLine::Separator];
     for (i, pin) in pins.iter().take(MAX_PINS).enumerate() {
         lines.push(MenuLine::Item(PIN_FIRST + i as u32, menu_label(pin, windows)));
     }
     if !pins.is_empty() {
         lines.push(MenuLine::Separator);
     }
-    lines.push(MenuLine::Item(QUIT, "Quit Gezik".into()));
+    lines.push(MenuLine::Item(QUIT, gezik_i18n::t!("Quit Gezik").into_owned()));
     lines
 }
 

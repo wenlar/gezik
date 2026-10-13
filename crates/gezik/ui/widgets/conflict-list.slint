@@ -113,34 +113,34 @@ export component ConflictList inherits Rectangle {
             HorizontalLayout {
                 spacing: Theme.spacing;
                 TextButton {
-                    text: "Replace";
+                    text: @tr("button" => "Replace");
                     clicked => { root.decide(0); }
                 }
                 TextButton {
-                    text: "Skip";
+                    text: @tr("Skip");
                     clicked => { root.decide(1); }
                 }
                 TextButton {
-                    text: "Keep both";
+                    text: @tr("Keep both");
                     clicked => { root.decide(2); }
                 }
                 TextButton {
-                    text: "If newer";
+                    text: @tr("If newer");
                     clicked => { root.decide(3); }
                 }
                 Rectangle { horizontal-stretch: 1; }
                 Text {
-                    text: "Apply to:";
+                    text: @tr("Apply to:");
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
                 TextButton {
-                    text: "Selected";
+                    text: @tr("Selected");
                     checked: !root.apply-all;
                     clicked => { root.set-apply-all(false); }
                 }
                 TextButton {
-                    text: "All";
+                    text: @tr("All");
                     checked: root.apply-all;
                     clicked => { root.set-apply-all(true); }
                 }
@@ -149,7 +149,7 @@ export component ConflictList inherits Rectangle {
             if root.identical-count > 0: HorizontalLayout {
                 alignment: LayoutAlignment.start;
                 TextButton {
-                    text: (root.hide-identical ? "Show identical (" : "Hide identical (") + root.identical-count + ")";
+                    text: root.hide-identical ? @tr("Show identical ({})", root.identical-count) : @tr("Hide identical ({})", root.identical-count);
                     checked: root.hide-identical;
                     clicked => { root.toggle-identical(); }
                 }
@@ -160,25 +160,25 @@ export component ConflictList inherits Rectangle {
                 padding-left: Theme.spacing;
                 spacing: Theme.spacing * 2;
                 Text {
-                    text: "Name";
+                    text: @tr("Name");
                     horizontal-stretch: 1;
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
                 Text {
-                    text: "Source";
+                    text: @tr("Source");
                     width: 200px;
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
                 Text {
-                    text: "Target";
+                    text: @tr("Target");
                     width: 200px;
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
                 Text {
-                    text: "Action";
+                    text: @tr("Action");
                     width: 110px;
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
@@ -217,22 +217,22 @@ export component ConflictList inherits Rectangle {
                         padding-left: Theme.spacing;
                         spacing: Theme.spacing * 2;
                         Text {
-                            text: row.name + (row.kind == 1 ? "  (folder)" : row.kind == 2 ? "  (file and folder)" : "")
-                                + (row.identical ? "  · identical" : "");
+                            text: (row.kind == 1 ? @tr("{}  (folder)", row.name) : row.kind == 2 ? @tr("{}  (file and folder)", row.name) : row.name)
+                                + (row.identical ? "  · " + @tr("identical") : "");
                             horizontal-stretch: 1;
                             vertical-alignment: center;
                             overflow: elide;
                             color: line.fg;
                         }
                         Text {
-                            text: row.source-size + "  " + row.source-date + (row.newer == 1 ? "  (newer)" : "");
+                            text: row.newer == 1 ? @tr("{}  {}  (newer)", row.source-size, row.source-date) : row.source-size + "  " + row.source-date;
                             width: 200px;
                             vertical-alignment: center;
                             overflow: elide;
                             color: line.muted;
                         }
                         Text {
-                            text: row.target-size + "  " + row.target-date + (row.newer == 2 ? "  (newer)" : "");
+                            text: row.newer == 2 ? @tr("{}  {}  (newer)", row.target-size, row.target-date) : row.target-size + "  " + row.target-date;
                             width: 200px;
                             vertical-alignment: center;
                             overflow: elide;
@@ -286,11 +286,11 @@ export component ConflictList inherits Rectangle {
                     color: Theme.foreground-muted;
                 }
                 TextButton {
-                    text: "Cancel operation";
+                    text: @tr("Cancel operation");
                     clicked => { root.cancel-operation(); }
                 }
                 TextButton {
-                    text: "Start";
+                    text: @tr("button" => "Start");
                     primary: true;
                     clicked => { root.start(); }
                 }

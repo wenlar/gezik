@@ -92,13 +92,14 @@ impl FieldPicker {
         window.set_tp_rows(ModelRc::from(self.0.model.clone()));
         window.set_tp_label(
             match purpose {
-                Purpose::Columns => "More columns",
-                Purpose::Sort => "Sort by property",
-                Purpose::Group => "Group by property",
+                Purpose::Columns => gezik_i18n::t!("More columns"),
+                Purpose::Sort => gezik_i18n::t!("Sort by property"),
+                Purpose::Group => gezik_i18n::t!("Group by property"),
             }
+            .as_ref()
             .into(),
         );
-        window.set_tp_empty("No properties match".into());
+        window.set_tp_empty(gezik_i18n::t!("No properties match").as_ref().into());
         window.set_tp_query("".into());
         self.show(&window);
         window.set_tp_open(true);
@@ -188,7 +189,9 @@ impl FieldPicker {
                 PickRow {
                     title: id.def().label.into(),
                     detail: id.def().group.label().into(),
-                    tag: if on && purpose == Purpose::Columns { "Shown" } else { "" }.into(),
+                    tag: if on && purpose == Purpose::Columns { gezik_i18n::t!("Shown") } else { "".into() }
+                        .as_ref()
+                        .into(),
                     keys: "".into(),
                     bold: on,
                     dot: slint::Color::default(),

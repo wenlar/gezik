@@ -13,23 +13,25 @@ use std::path::PathBuf;
 
 use gezik_config::bundle::{self, Group};
 use gezik_config::sync_folder::Difference;
+use gezik_i18n::{t, tn, tx};
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::SettingItem;
 use crate::settings_backup::{Change, Incoming, Preview, Undo};
 
-pub(super) const IMPORT: &str = "Import";
-pub(super) const UNDO: &str = "Undo";
-pub(super) const OPEN_DATA: &str = "Open Data Folder";
-pub(super) const OPEN_SYNC: &str = "Open Settings Folder";
-pub(super) const CHECK_AGAIN: &str = "Check Again";
-pub(super) const STOP: &str = "Stop Keeping Settings There";
-pub(super) const USE: &str = "Use the Settings in This Folder";
-pub(super) const REPLACE: &str = "Replace Them with This Computer's";
-pub(super) const REVIEW: &str = "Review…";
-pub(super) const THIS_COPY: &str = "This copy";
-pub(super) const OTHER_COPY: &str = "Other copy";
-pub(super) const MERGE: &str = "Merge";
+pub(super) const IMPORT: &str = tx!("Import");
+pub(super) const UNDO: &str = tx!("Undo");
+pub(super) const OPEN_DATA: &str = tx!("Open Data Folder");
+pub(super) const OPEN_SYNC: &str = tx!("Open Settings Folder");
+pub(super) const CHECK_AGAIN: &str = tx!("Check Again");
+pub(super) const STOP: &str = tx!("Stop Keeping Settings There");
+pub(super) const USE: &str = tx!("Use the Settings in This Folder");
+pub(super) const REPLACE: &str = tx!("Replace Them with This Computer's");
+pub(super) const REVIEW: &str = tx!("Review…");
+pub(super) const THIS_COPY: &str = tx!("This copy");
+pub(super) const OTHER_COPY: &str = tx!("Other copy");
+pub(super) const MERGE: &str = tx!("Merge");
+pub(super) const CANCEL: &str = tx!("Cancel");
 
 thread_local! {
     /// The last import of this run, for Undo Import (it outlives the window).
@@ -177,44 +179,52 @@ impl Backup {
                 Row::Portable => {
                     let location = gezik_config::paths::location();
                     let data = location.dirs.as_ref().map(|d| d.local.display().to_string()).unwrap_or_default();
-                    let read_only = if location.read_only { " It is read-only: changes are not saved." } else { "" };
+                    let description = if location.read_only {
+                        t!("A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: \
+                            changes are not saved. Delete that file to use this computer's settings folder again (the \
+                            data stays); Export and Import move settings between the two.")
+                    } else {
+                        t!("A gezik-portable file next to Gezik keeps everything in this folder. Delete that file to \
+                            use this computer's settings folder again (the data stays); Export and Import move \
+                            settings between the two.")
+                    };
                     (
                         1,
-                        format!("Portable: settings are kept in {data}"),
+                        t!("Portable: settings are kept in {}", data),
                         "gezik-portable".to_owned(),
-                        "On".to_owned(),
-                        format!(
-                            "A gezik-portable file next to Gezik keeps everything in this folder.{read_only} Delete \
-                             that file to use this computer's settings folder again (the data stays); Export and \
-                             Import move settings between the two."
-                        ),
+                        t!("On").into_owned(),
+                        description.into_owned(),
                         vec![OPEN_DATA],
                     )
                 }
                 Row::Sync => self.sync_item(),
                 Row::Existing => (
                     1,
-                    "This folder has Gezik settings already".to_owned(),
+                    t!("This folder has Gezik settings already").into_owned(),
                     self.found.as_ref().map(|f| f.display().to_string()).unwrap_or_default(),
-                    "Choose".to_owned(),
-                    "Use them: this computer's settings are backed up to backups/ and the folder's are used. Replace \
-                     them: the folder's are backed up to backups/, then this computer's are written there. Nothing \
-                     is merged."
-                        .to_owned(),
-                    vec![USE, REPLACE, "Cancel"],
+                    t!("Choose").into_owned(),
+                    t!("Use them: this computer's settings are backed up to backups/ and the folder's are used. \
+                        Replace them: the folder's are backed up to backups/, then this computer's are written there. \
+                        Nothing is merged.")
+                    .into_owned(),
+                    vec![USE, REPLACE, CANCEL],
                 ),
                 Row::Conflict(i) => {
                     let name = self.conflicts.get(i).cloned().unwrap_or_default();
-                    let of = if name.starts_with("themes/") { "a theme" } else { "settings.toml" };
+                    let description = if name.starts_with("themes/") {
+                        t!("A sync service made it when two computers changed a theme at once. Review lists each \
+                            key the two copies differ in and you choose which to keep; nothing is merged on its own.")
+                    } else {
+                        t!("A sync service made it when two computers changed settings.toml at once. Review lists \
+                            each key the two copies differ in and you choose which to keep; nothing is merged on its \
+                            own.")
+                    };
                     (
                         1,
-                        format!("Conflicting copy: {name}"),
+                        t!("Conflicting copy: {}", name),
                         name,
-                        "Not reviewed".to_owned(),
-                        format!(
-                            "A sync service made it when two computers changed {of} at once. Review lists each key \
-                             the two copies differ in and you choose which to keep; nothing is merged on its own."
-                        ),
+                        t!("Not reviewed").into_owned(),
+                        description.into_owned(),
                         vec![REVIEW],
                     )
                 }
@@ -222,7 +232,7 @@ impl Backup {
                     let review = self.review.as_ref();
                     let difference = review.and_then(|r| r.differences.get(i));
                     let take = review.and_then(|r| r.take.get(i)).copied().unwrap_or_default();
-                    let not_set = || "(not set)".to_owned();
+                    let not_set = || t!("(not set)").into_owned();
                     let (this, other) = difference
                         .map(|d| (d.this.clone().unwrap_or_else(not_set), d.other.clone().unwrap_or_else(not_set)))
                         .unwrap_or_default();
@@ -230,8 +240,8 @@ impl Backup {
                         1,
                         difference.map(Difference::key).unwrap_or_default(),
                         review.map(|r| r.original.clone()).unwrap_or_default(),
-                        if take { OTHER_COPY } else { THIS_COPY }.to_owned(),
-                        format!("This copy: {this}  —  other copy: {other}"),
+                        t("", if take { OTHER_COPY } else { THIS_COPY }).into_owned(),
+                        t!("This copy: {}  —  other copy: {}", this, other),
                         vec![THIS_COPY, OTHER_COPY],
                     )
                 }
@@ -241,60 +251,62 @@ impl Backup {
                     let (copy, original) = review.map(|r| (r.copy.clone(), r.original.clone())).unwrap_or_default();
                     (
                         1,
-                        format!("Merge {copy}"),
+                        t!("Merge {}", copy),
                         original.clone(),
-                        match taken {
-                            1 => "1 key from the other copy".to_owned(),
-                            n => format!("{n} keys from the other copy"),
+                        tn!("{n} key from the other copy" | "{n} keys from the other copy", taken),
+                        if review.is_some_and(|r| r.numbered) {
+                            t!(
+                                "Merge writes the keys set to Other copy above into {} (the rest stays as it is) and \
+                                 leaves the copy where it is (its name may be one of yours). Cancel leaves both as \
+                                 they are.",
+                                original
+                            )
+                        } else {
+                            t!(
+                                "Merge writes the keys set to Other copy above into {} (the rest stays as it is) and \
+                                 moves the conflicting copy to the trash. Cancel leaves both as they are.",
+                                original
+                            )
                         },
-                        format!(
-                            "Merge writes the keys set to Other copy above into {original} (the rest stays as it \
-                             is) and {}. Cancel leaves both as they are.",
-                            if review.is_some_and(|r| r.numbered) {
-                                "leaves the copy where it is (its name may be one of yours)"
-                            } else {
-                                "moves the conflicting copy to the trash"
-                            }
-                        ),
-                        vec![MERGE, "Cancel"],
+                        vec![MERGE, CANCEL],
                     )
                 }
                 Row::Export => (
                     2,
-                    "Export Settings".to_owned(),
+                    t!("Export Settings").into_owned(),
                     "export-settings".to_owned(),
                     self.export_to.clone(),
-                    "Writes settings.toml and the themes (and what is ticked below) to this zip: change the path if \
-                     you like and press Enter. state.toml, the tag store, the system changes, the tools and the \
-                     backups stay on this computer."
-                        .to_owned(),
+                    t!("Writes settings.toml and the themes (and what is ticked below) to this zip: change the path \
+                        if you like and press Enter. state.toml, the tag store, the system changes, the tools and the \
+                        backups stay on this computer.")
+                    .into_owned(),
                     Vec::new(),
                 ),
                 Row::Templates => (
                     0,
-                    "Export Templates".to_owned(),
+                    t!("Export Templates").into_owned(),
                     "export-settings.templates".to_owned(),
                     check(!self.without_templates),
-                    "The New > templates (at most 256 MB)".to_owned(),
+                    t!("The New > templates (at most 256 MB)").into_owned(),
                     Vec::new(),
                 ),
                 Row::Views => (
                     0,
-                    "Export Folder Views".to_owned(),
+                    t!("Export Folder Views").into_owned(),
                     "export-settings.views".to_owned(),
                     check(self.with_views),
-                    "views.toml: the view each folder was left in (their paths are this computer's)".to_owned(),
+                    t!("views.toml: the view each folder was left in (their paths are this computer's)").into_owned(),
                     Vec::new(),
                 ),
                 Row::Import => (
                     2,
-                    "Import Settings".to_owned(),
+                    t!("Import Settings").into_owned(),
                     "import-settings".to_owned(),
                     self.import_from.clone(),
-                    "Type or paste the path of a zip made by Export Settings and press Enter: the rows below show \
-                     what it would change, and nothing is written until you choose Import. Each file replaces the \
-                     one here (nothing is merged), after a backup."
-                        .to_owned(),
+                    t!("Type or paste the path of a zip made by Export Settings and press Enter: the rows below show \
+                        what it would change, and nothing is written until you choose Import. Each file replaces the \
+                        one here (nothing is merged), after a backup.")
+                    .into_owned(),
                     Vec::new(),
                 ),
                 Row::Group(group) => self.group_item(group),
@@ -302,10 +314,10 @@ impl Backup {
                     let programs = self.preview.as_ref().map(|p| p.programs.as_slice()).unwrap_or_default();
                     (
                         7,
-                        "These run programs on this computer".to_owned(),
+                        t!("These run programs on this computer").into_owned(),
                         "import-settings.programs".to_owned(),
-                        format!("{} in settings.toml", programs.len()),
-                        format!("{}. Import only files you trust: nothing runs while importing.", programs.join("; ")),
+                        t!("{} in settings.toml", programs.len()),
+                        t!("{}. Import only files you trust: nothing runs while importing.", programs.join("; ")),
                         Vec::new(),
                     )
                 }
@@ -313,19 +325,18 @@ impl Backup {
                 Row::Restore => {
                     let backups = self.backups.as_deref().unwrap_or_default();
                     let value = match (&self.backups, backups.len()) {
-                        (None, _) => "Looking…".to_owned(),
-                        (_, 0) => "No backups yet".to_owned(),
-                        (_, 1) => "1 backup".to_owned(),
-                        (_, n) => format!("{n} backups"),
+                        (None, _) => t!("Looking…").into_owned(),
+                        (_, 0) => t!("No backups yet").into_owned(),
+                        (_, n) => tn!("{n} backup" | "{n} backups", n),
                     };
                     (
                         if backups.is_empty() { 6 } else { 1 },
-                        "Restore Backup".to_owned(),
+                        t!("Restore Backup").into_owned(),
                         "backups/".to_owned(),
                         value,
-                        "Before each import Gezik backs up the files it replaces here (the last 10 are kept): choose \
-                         one to see what it would put back, then Import."
-                            .to_owned(),
+                        t!("Before each import Gezik backs up the files it replaces here (the last 10 are kept): \
+                            choose one to see what it would put back, then Import.")
+                        .into_owned(),
                         backups.iter().map(String::as_str).collect(),
                     )
                 }
@@ -333,10 +344,10 @@ impl Backup {
                     let backup = last().and_then(|u| u.backup.file_name().map(|n| n.to_string_lossy().into_owned()));
                     (
                         1,
-                        "Undo Import".to_owned(),
+                        t!("Undo Import").into_owned(),
                         "import-settings.undo".to_owned(),
-                        "Imported".to_owned(),
-                        format!(
+                        t!("Imported").into_owned(),
+                        t!(
                             "Puts back the files the last import replaced, byte for byte, from backups/{}, and \
                              removes those it added",
                             backup.unwrap_or_default()
@@ -345,7 +356,11 @@ impl Backup {
                     )
                 }
             };
-        let options: Vec<SharedString> = options.into_iter().map(SharedString::from).collect();
+        // A backup's name is data; the other options are labels.
+        let options: Vec<SharedString> = match row {
+            Row::Restore => options.into_iter().map(SharedString::from).collect(),
+            _ => options.into_iter().map(|o| t("", o).as_ref().into()).collect(),
+        };
         SettingItem {
             kind,
             title: title.into(),
@@ -364,54 +379,54 @@ impl Backup {
         let key = gezik_config::sync_folder::LOCATION_FILE.to_owned();
         let Some(folder) = &self.synced else {
             let suggest = match &self.suggest {
-                Some(cloud) => format!(" (say, {})", cloud.join("Gezik").display()),
+                Some(cloud) => format!(" {}", t!("(say, {})", cloud.join("Gezik").display())),
                 None => String::new(),
             };
             return (
                 2,
-                "Keep Settings in a Folder".to_owned(),
+                t!("Keep Settings in a Folder").into_owned(),
                 key,
                 self.sync_to.clone(),
-                format!(
-                    "Type a folder in OneDrive, Dropbox, iCloud Drive or Syncthing{suggest} and press Enter: \
+                t!(
+                    "Type a folder in OneDrive, Dropbox, iCloud Drive or Syncthing{} and press Enter: \
                      settings.toml, the themes and the templates are kept there for every computer that uses it. \
                      State, folder views, tools, backups and the tag store stay on this computer, and so do \
-                     [system] and what you mark Only on This Computer (right-click a setting)."
+                     [system] and what you mark Only on This Computer (right-click a setting).",
+                    suggest
                 ),
                 Vec::new(),
             );
         };
         let waiting = match self.unsaved {
             0 => String::new(),
-            1 => " 1 change waits for it.".to_owned(),
-            n => format!(" {n} changes wait for it."),
+            n => format!(" {}", tn!("{n} change waits for it." | "{n} changes wait for it.", n)),
         };
         let (value, description) = if self.offline {
             (
                 match self.unsaved {
-                    0 => "Not available".to_owned(),
-                    1 => "Not available — 1 change waits".to_owned(),
-                    n => format!("Not available — {n} changes wait"),
+                    0 => t!("Not available").into_owned(),
+                    n => tn!("Not available — {n} change waits" | "Not available — {n} changes wait", n),
                 },
-                format!(
+                t!(
                     "The folder cannot be read (a drive not plugged in, the sync app not running): the last copy \
-                     is used and the settings are read-only.{waiting} Check Again looks once more."
+                     is used and the settings are read-only.{} Check Again looks once more.",
+                    waiting
                 ),
             )
         } else {
             (
-                "On".to_owned(),
-                "Shared by the computers that use this folder; this computer's own values are in \
-                 settings.local.toml. Stop copies the folder's settings back here (after a backup) and leaves the \
-                 folder as it is."
-                    .to_owned(),
+                t!("On").into_owned(),
+                t!("Shared by the computers that use this folder; this computer's own values are in \
+                    settings.local.toml. Stop copies the folder's settings back here (after a backup) and leaves the \
+                    folder as it is.")
+                .into_owned(),
             )
         };
         let mut options = vec![OPEN_SYNC, STOP];
         if self.offline {
             options.insert(1, CHECK_AGAIN);
         }
-        (1, format!("Settings are kept in {}", folder.display()), key, value, description, options)
+        (1, t!("Settings are kept in {}", folder.display()), key, value, description, options)
     }
 
     /// A kind of file in the zip: a box, or "The same" when every file of it is.
@@ -424,21 +439,24 @@ impl Backup {
             .filter(|f| f.change != Change::Same)
             .map(|f| {
                 let name = f.name.split_once('/').map_or(f.name.as_str(), |(_, rest)| rest);
-                format!("{name} {}", if f.change == Change::New { "new" } else { "replaces" })
+                if f.change == Change::New { t!("{} new", name) } else { t!("{} replaces", name) }
             })
             .collect();
         let mut description = match group {
             Group::Settings => preview.map(|p| bundle::summary(&p.settings)).unwrap_or_default(),
-            _ if changing.len() > 8 => format!("{} and {} more", changing[..8].join(", "), changing.len() - 8),
+            _ if changing.len() > 8 => t!("{} and {} more", changing[..8].join(", "), changing.len() - 8),
             _ => changing.join(", "),
         };
         if same > 0 && group != Group::Settings {
-            description.push_str(&format!("{}{same} the same here", if changing.is_empty() { "" } else { "; " }));
+            let same = t!("{} the same here", same);
+            description.push_str(&if changing.is_empty() { same } else { format!("; {same}") });
         }
-        let title = format!("Import {}", group.title());
+        // settings.toml is a file's name, the others are words.
+        let what = if group == Group::Settings { group.title().into() } else { t("", group.title()) };
+        let title = t!("Import {}", what);
         let key = format!("import-settings.{}", group.title().to_lowercase().replace([' ', '.'], "-"));
         match changing.is_empty() {
-            true => (6, title, key, "The same".to_owned(), description, Vec::new()),
+            true => (6, title, key, t!("The same").into_owned(), description, Vec::new()),
             false => (0, title, key, (!self.skipped.contains(&group)).to_string(), description, Vec::new()),
         }
     }
@@ -451,31 +469,34 @@ impl Backup {
         let count =
             preview.files.iter().filter(|f| f.change != Change::Same && !self.skipped.contains(&f.group)).count();
         let mut description =
-            "The files it replaces are backed up to backups/ first; Undo Import puts them back.".to_owned();
+            t!("The files it replaces are backed up to backups/ first; Undo Import puts them back.").into_owned();
         if !preview.left_out.is_empty() {
             let shown: Vec<&str> = preview.left_out.iter().take(5).map(String::as_str).collect();
-            description.push_str(&format!(
-                " {} entries that may not come in are left out: {}.",
+            description.push(' ');
+            description.push_str(&tn!(
+                "{n} entry that may not come in is left out: {}."
+                    | "{n} entries that may not come in are left out: {}.",
                 preview.left_out.len(),
                 shown.join(", ")
             ));
         }
         if !preview.os.is_empty() && preview.os != std::env::consts::OS {
-            description.push_str(&format!(
-                " Exported on {}: paths written without a {{token}} may not be on this computer.",
+            description.push(' ');
+            description.push_str(&t!(
+                "Exported on {}: paths written without a {{token}} may not be on this computer.",
                 preview.os
             ));
         }
         let key = preview.source.display().to_string();
         match count {
-            0 => (6, format!("Import from {name}"), key, "Nothing to import".to_owned(), description, Vec::new()),
+            0 => (6, t!("Import from {}", name), key, t!("Nothing to import").into_owned(), description, Vec::new()),
             n => (
                 1,
-                format!("Import from {name}"),
+                t!("Import from {}", name),
                 key,
-                format!("{n} file{} to write", if n == 1 { "" } else { "s" }),
+                tn!("{n} file to write" | "{n} files to write", n),
                 description,
-                vec![IMPORT, "Cancel"],
+                vec![IMPORT, CANCEL],
             ),
         }
     }
@@ -542,7 +563,7 @@ mod tests {
         assert!(programs.description.starts_with("Command \"Wipe\": cmd /c del {in}. Import only files you trust"));
         let confirm = backup.item(Row::Confirm);
         assert_eq!((confirm.kind, confirm.value.as_str()), (1, "2 files to write"));
-        assert!(confirm.description.contains("1 entries that may not come in are left out: ../evil."));
+        assert!(confirm.description.contains("1 entry that may not come in is left out: ../evil."));
         assert!(confirm.description.contains("Exported on plan9"));
 
         backup.skipped.push(Group::Themes);

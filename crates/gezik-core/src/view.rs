@@ -126,10 +126,10 @@ impl DateFormat {
     /// Its line in the Date format menu.
     pub fn label(self) -> &'static str {
         match self {
-            DateFormat::Relative => "Relative",
-            DateFormat::Short => "Short",
-            DateFormat::Iso => "ISO",
-            DateFormat::System => "System",
+            DateFormat::Relative => gezik_i18n::tx!("Relative"),
+            DateFormat::Short => gezik_i18n::tx!("Short"),
+            DateFormat::Iso => gezik_i18n::tx!("ISO"),
+            DateFormat::System => gezik_i18n::tx!("System"),
         }
     }
 }
@@ -160,8 +160,8 @@ impl SizeFormat {
 
     pub fn label(self) -> &'static str {
         match self {
-            SizeFormat::Binary => "Binary (1 KB = 1024 bytes)",
-            SizeFormat::Decimal => "Decimal (1 kB = 1000 bytes)",
+            SizeFormat::Binary => gezik_i18n::tx!("Binary (1 KB = 1024 bytes)"),
+            SizeFormat::Decimal => gezik_i18n::tx!("Decimal (1 kB = 1000 bytes)"),
         }
     }
 }

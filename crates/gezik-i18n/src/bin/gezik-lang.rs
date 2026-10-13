@@ -8,7 +8,8 @@
 //!
 //! `extract` reads `t!`, `tn!` and `tx!` in the crates' `src/` (not this crate's, not after a
 //! file's `#[cfg(test)]`, not in comments; a `// TRANSLATORS:` comment above is a note for the
-//! translators) and `@tr` in `crates/gezik/ui`. Order: by file path, then first use.
+//! translators) and `@tr` in `crates/gezik/ui`, then the settings window's titles and
+//! descriptions from the settings template (spec 15 §7). Order: by file path, then first use.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,6 +17,14 @@ use std::process::ExitCode;
 
 use gezik_i18n::po::{self, Entry, PoFile};
 use gezik_i18n::{blob, check};
+
+/// The settings window's fields and the template's lines, as gezik-config reads them.
+#[allow(dead_code)]
+#[path = "../../../gezik-config/src/schema/table.rs"]
+mod table;
+
+/// The settings template, whose comments are the window's descriptions.
+const TEMPLATE: &str = "crates/gezik-config/templates/settings.toml";
 
 const HEADER: &str = "Project-Id-Version: Gezik\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\n\
 Content-Transfer-Encoding: 8bit\nPlural-Forms: nplurals=2; plural=(n != 1);\n";
@@ -97,10 +106,15 @@ fn sources(root: &Path) -> Vec<String> {
 fn extract(root: &Path) -> Result<String, String> {
     let mut entries: Vec<Entry> = Vec::new();
     let mut at: HashMap<String, usize> = HashMap::new();
+    let mut files: Vec<(String, Vec<Found>)> = Vec::new();
     for file in sources(root) {
         let text = read(&root.join(&file))?;
         let found = if file.ends_with(".slint") { scan_slint(&text) } else { scan_rust(&text) };
-        for f in found.map_err(|why| format!("{file}: {why}"))? {
+        files.push((file.clone(), found.map_err(|why| format!("{file}: {why}"))?));
+    }
+    files.push((TEMPLATE.to_owned(), settings_texts(&read(&root.join(TEMPLATE))?)));
+    for (file, found) in files {
+        for f in found {
             let key = po::key(&f.context, &f.id);
             let i = *at.entry(key).or_insert_with(|| {
                 let strs = vec![String::new(); if f.plural.is_some() { 2 } else { 1 }];
@@ -129,6 +143,22 @@ fn extract(root: &Path) -> Result<String, String> {
         }
     }
     Ok(po::write(&PoFile { header: HEADER.to_owned(), entries, obsolete: Vec::new() }))
+}
+
+/// Each settings field's title and description (the template's comment) in its `setting:`
+/// context, as the settings window shows them.
+fn settings_texts(template: &str) -> Vec<Found> {
+    let lines = table::template_lines(template);
+    let mut out = Vec::new();
+    for field in table::FIELDS {
+        let context = field.context();
+        out.push(Found { context: context.clone(), id: field.title(), plural: None, note: None });
+        let description = table::line_of(&lines, field).map(table::description).unwrap_or_default();
+        if !description.is_empty() {
+            out.push(Found { context, id: description, plural: None, note: None });
+        }
+    }
+    out
 }
 
 /// A string literal at the start of `s` (after spaces): its text and the rest after it.
@@ -465,6 +495,89 @@ mod tests {
         let (lines, fails) = report("fr.po", machine, &keys);
         assert!(!fails, "{lines:?}");
         assert_eq!(lines, ["fr.po: 1 of 2 translated, 1 not reviewed, 1 missing, 0 unused (machine)"]);
+    }
+
+    /// The string literals of a Slint file that are not `@tr`'s, `@image-url`'s or an import's,
+    /// with their lines.
+    fn plain_slint_literals(text: &str) -> Vec<(usize, String)> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        let line = |at: usize| text[..at].matches('\n').count() + 1;
+        while i < text.len() {
+            let rest = &text[i..];
+            let c = rest.chars().next().unwrap_or_default();
+            let at_line_start = i == 0 || text[..i].trim_end_matches([' ', '\t']).ends_with('\n');
+            if rest.starts_with("//") || (at_line_start && rest.starts_with("import ")) {
+                i += rest.find(if rest.starts_with("//") { '\n' } else { ';' }).unwrap_or(rest.len());
+            } else if rest.starts_with("/*") {
+                i += rest.find("*/").map_or(rest.len(), |e| e + 2);
+            } else if let Some(mark) = ["@tr(", "@image-url("].iter().find(|m| rest.starts_with(**m)) {
+                // The marked texts (with a context and a plural); the arguments after are code.
+                let mut after = &rest[mark.len()..];
+                while let Some((_, next)) = literal(after, true) {
+                    let next = next.trim_start();
+                    after = next.strip_prefix("=>").or_else(|| next.strip_prefix('|')).unwrap_or(next);
+                    if after.len() == next.len() {
+                        break;
+                    }
+                }
+                i = text.len() - after.len();
+            } else if c == '"' {
+                let (found, after) = literal(rest, true).expect("a Slint string literal");
+                out.push((line(i), found));
+                i = text.len() - after.len();
+            } else {
+                i += c.len_utf8();
+            }
+        }
+        out
+    }
+
+    /// A literal that is no text for the user: no letter, an id (`new-window`, `tag:`, `true`),
+    /// an SVG path, `{token}`s only, or a name that stays as it is.
+    fn not_a_text(literal: &str) -> bool {
+        const KEPT: [&str; 7] = ["Gezik", "PNG", "JPEG", "LF", "CRLF", "CR", "A4"];
+        let mut tokenless = String::new();
+        let mut depth = 0;
+        for c in literal.chars() {
+            depth += i32::from(c == '{');
+            if depth == 0 {
+                tokenless.push(c);
+            }
+            depth -= i32::from(c == '}' && depth > 0);
+        }
+        let svg = literal.starts_with(['M', 'm'])
+            && literal.chars().all(|c| "MmLlHhVvCcSsQqTtAaZz0123456789 .,-".contains(c));
+        !tokenless.chars().any(char::is_alphabetic)
+            || literal.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "-_:./%".contains(c))
+            || svg
+            || KEPT.contains(&literal)
+    }
+
+    /// Spec 15 §6: a text the user sees in a `.slint` file goes through `@tr`.
+    #[test]
+    fn slint_texts_are_marked() {
+        let found = plain_slint_literals(
+            r#"import { A } from "a.slint";
+// "comment"
+text: @tr("ctx" => "{n} a" | "{n} b" % n);
+icon: @image-url("x.svg"); t: "Plain" + @tr("{}", "arg"); u: "Page \{n}";"#,
+        );
+        assert_eq!(found, [(4, "Plain".to_owned()), (4, "arg".to_owned()), (4, "Page ".to_owned())]);
+        assert!(
+            not_a_text("new-window") && not_a_text("M 1 2 L 3 4") && not_a_text("  ·  ") && not_a_text("{name} {ext}")
+        );
+        assert!(!not_a_text("Cancel") && !not_a_text("sorted ascending") && !not_a_text("Page "));
+        let root = root();
+        let mut plain = Vec::new();
+        for file in sources(&root).into_iter().filter(|f| f.ends_with(".slint")) {
+            for (line, literal) in plain_slint_literals(&read(&root.join(&file)).unwrap()) {
+                if !not_a_text(&literal) {
+                    plain.push(format!("{file}:{line}: {literal:?}"));
+                }
+            }
+        }
+        assert!(plain.is_empty(), "texts without @tr (spec 15 §6):\n{}", plain.join("\n"));
     }
 
     /// The CI's tie (spec 15 §11.2): the template is the code's, and the built-in languages hold.

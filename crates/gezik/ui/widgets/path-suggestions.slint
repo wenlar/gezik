@@ -27,7 +27,7 @@ export component PathSuggestions inherits Rectangle {
     drop-shadow-blur: 8px;
     drop-shadow-color: Theme.shadow;
     accessible-role: list;
-    accessible-label: "Suggestions";
+    accessible-label: @tr("Suggestions");
     // Fades in as it opens (it is made by an `if`, so it starts hidden).
     property <bool> shown;
     init => { root.shown = true; }

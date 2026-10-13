@@ -41,7 +41,7 @@ export component RenameField inherits Rectangle {
     border-color: root.invalid ? Theme.danger : Theme.accent;
     border-radius: 2px;
     accessible-role: text-input;
-    accessible-label: "Name";
+    accessible-label: @tr("Name");
     accessible-value: root.text;
 
     FocusScope {

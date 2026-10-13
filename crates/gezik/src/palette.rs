@@ -12,6 +12,7 @@ use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
 use gezik_core::palette::{Folded, Item, Kind, Mode, fold_items, mode_of, rank, remember};
 use gezik_core::view::{DateFormat, SizeFormat};
+use gezik_i18n::{t, tx};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::context_menu as ids;
@@ -136,8 +137,8 @@ impl Palette {
         *self.0.targets.borrow_mut() = targets;
         self.0.open.set(true);
         window.set_tp_rows(ModelRc::from(self.0.model.clone()));
-        window.set_tp_label(if commands { "Command palette" } else { "Quick open" }.into());
-        window.set_tp_empty(if commands { "No commands match" } else { "Nothing matches" }.into());
+        window.set_tp_label(if commands { t!("Command palette") } else { t!("Quick open") }.as_ref().into());
+        window.set_tp_empty(if commands { t!("No commands match") } else { t!("Nothing matches") }.as_ref().into());
         let text = if commands { ">" } else { "" };
         window.set_tp_query(text.into());
         self.edited(text);
@@ -148,9 +149,12 @@ impl Palette {
     /// Every item and what it does (spec 7.2).
     pub fn add_items(&self, items: &mut Vec<Item>, targets: &mut Vec<Target>) {
         let mut add = |kind: Kind, id: String, title: String, detail: String, target: Target| {
-            items.push(Item { kind, id, title, detail });
+            items.push(Item { kind, id, title, detail, also: String::new() });
             targets.push(target);
+            items.len() - 1
         };
+        // A translated title is also found by its English one (spec 15 §13.2).
+        let mut english = Vec::new();
         for action in Action::ALL {
             // `tag-1…7` are the `Toggle Tag: <name>` items below, which name the tag.
             let skip = matches!(action, Action::CommandPalette | Action::QuickOpen)
@@ -161,13 +165,9 @@ impl Palette {
                 || (matches!(action, Action::KeepOffline | Action::FreeUpSpace)
                     && !cfg!(any(windows, target_os = "macos")));
             if !skip {
-                add(
-                    Kind::Action,
-                    action.name().to_owned(),
-                    action.title().to_owned(),
-                    String::new(),
-                    Target::Action(action),
-                );
+                let title = gezik_i18n::t("", action.title()).into_owned();
+                let at = add(Kind::Action, action.name().to_owned(), title, String::new(), Target::Action(action));
+                english.push((at, action.title()));
             }
         }
         for name in crate::convert::command_names() {
@@ -175,35 +175,38 @@ impl Palette {
         }
         // Actions like `tag-1…7` (remembered as `action:toggle-tag:Red`), named by the tag.
         for tag in crate::tags::list() {
-            let (id, title) = (format!("toggle-tag:{}", tag.name), format!("Toggle Tag: {}", tag.name));
+            let (id, title) = (format!("toggle-tag:{}", tag.name), t!("Toggle Tag: {}", tag.name));
             add(Kind::Action, id, title, String::new(), Target::ToggleTag(tag.name.into()));
         }
         let resident = crate::resident::status();
         for command in crate::integration::Command::ALL.into_iter().filter(|c| c.applies(&resident)) {
-            let title = command.title().to_owned();
-            add(Kind::Command, title.clone(), title, String::new(), Target::System(command));
+            let title = gezik_i18n::t("", command.title()).into_owned();
+            let at = add(Kind::Command, command.title().to_owned(), title, String::new(), Target::System(command));
+            english.push((at, command.title()));
         }
         let options = crate::view_options::current();
-        let on = |on: bool| if on { "On" } else { "Off" }.to_owned();
+        let on = |on: bool| if on { t!("On") } else { t!("Off") }.into_owned();
         let mut toggles = vec![
-            (ids::HIDE_EXTENSIONS, "Hide extensions", options.hide_extensions),
-            (ids::FOLDERS_FIRST, "Folders first", options.folders_first),
-            (ids::SINGLE_CLICK_OPEN, "Single-click to open", options.single_click_open),
+            (ids::HIDE_EXTENSIONS, tx!("Hide extensions"), options.hide_extensions),
+            (ids::FOLDERS_FIRST, tx!("Folders first"), options.folders_first),
+            (ids::SINGLE_CLICK_OPEN, tx!("Single-click to open"), options.single_click_open),
         ];
         if cfg!(windows) {
-            toggles.push((ids::SHOW_SYSTEM, "Show system items", options.show_system));
+            toggles.push((ids::SHOW_SYSTEM, tx!("Show system items"), options.show_system));
         }
         for (id, title, value) in toggles {
-            add(Kind::ViewOption, id.to_string(), title.to_owned(), on(value), Target::ViewOption(id));
+            let shown = gezik_i18n::t("", title).into_owned();
+            let at = add(Kind::ViewOption, id.to_string(), shown, on(value), Target::ViewOption(id));
+            english.push((at, title));
         }
         for (i, format) in DateFormat::ALL.iter().enumerate() {
             let id = ids::DATE_FORMAT_FIRST + i as u32;
-            let title = format!("Date format: {}", format.label());
+            let title = t!("Date format: {}", gezik_i18n::t("", format.label()));
             add(Kind::ViewOption, id.to_string(), title, on(*format == options.date_format), Target::ViewOption(id));
         }
         for (i, format) in SizeFormat::ALL.iter().enumerate() {
             let id = ids::SIZE_FORMAT_FIRST + i as u32;
-            let title = format!("Size format: {}", format.label());
+            let title = t!("Size format: {}", gezik_i18n::t("", format.label()));
             add(Kind::ViewOption, id.to_string(), title, on(*format == options.size_format), Target::ViewOption(id));
         }
         let mut pinned = Vec::new();
@@ -235,7 +238,7 @@ impl Palette {
             );
         }
         for profile in crate::sync::profiles() {
-            let title = format!("Sync: {}", profile.name);
+            let title = t!("Sync: {}", profile.name);
             let detail = format!("{} ⇄ {}", profile.left, profile.right);
             add(Kind::SyncProfile, profile.name.clone(), title, detail, Target::SyncProfile(profile.name));
         }
@@ -247,6 +250,11 @@ impl Palette {
                 saved.folder,
                 Target::SavedSearch(saved.name),
             );
+        }
+        for (at, source) in english {
+            if items[at].title != source {
+                source.clone_into(&mut items[at].also);
+            }
         }
     }
 
@@ -385,7 +393,7 @@ impl Palette {
                     PickRow {
                         title: item.title.as_str().into(),
                         detail: item.detail.as_str().into(),
-                        tag: item.kind.tag().into(),
+                        tag: gezik_i18n::t("", item.kind.tag()).as_ref().into(),
                         keys: keys.into(),
                         bold: false,
                         dot: slint::Color::default(),
@@ -395,16 +403,16 @@ impl Palette {
                 }
                 Line::SearchFor(text) => {
                     let place = match crate::panes::active_nav().active_location() {
-                        Location::Drives => "This PC".to_owned(),
+                        Location::Drives => t!("This PC").into_owned(),
                         location => location
                             .folder()
                             .and_then(|f| f.file_name())
-                            .map_or_else(|| "This PC".to_owned(), |n| n.to_string_lossy().into_owned()),
+                            .map_or_else(|| t!("This PC").into_owned(), |n| n.to_string_lossy().into_owned()),
                     };
                     PickRow {
-                        title: format!("Search for \"{text}\" in {place}").into(),
+                        title: t!("Search for \"{}\" in {}", text, place).into(),
                         detail: "".into(),
-                        tag: "Search".into(),
+                        tag: t!("Search").as_ref().into(),
                         keys: "".into(),
                         bold: false,
                         dot: slint::Color::default(),
@@ -425,7 +433,7 @@ mod tests {
     use gezik_core::palette::{Item, Kind, fold_items};
 
     fn item(kind: Kind, title: &str) -> Item {
-        Item { kind, id: title.into(), title: title.into(), detail: String::new() }
+        Item { kind, id: title.into(), title: title.into(), detail: String::new(), also: String::new() }
     }
 
     #[test]
@@ -446,7 +454,7 @@ mod tests {
     fn the_menu_bar_titles_are_the_actions_titles() {
         let slint = include_str!("../ui/app.slint");
         let mut checked = 0;
-        for line in slint.lines().filter(|l| l.contains("MenuItem { title: \"")) {
+        for line in slint.lines().filter(|l| l.contains("MenuItem { title: @tr(\"")) {
             let Some(name) = line.split("menu-command(\"").nth(1).and_then(|r| r.split('"').next()) else { continue };
             let Some(action) = Action::from_name(name) else { continue };
             // The View menu says "as List", "as Grid" and Group By's "None" … under its own titles
@@ -463,7 +471,7 @@ mod tests {
             ) {
                 continue;
             }
-            let title = line.split("title: \"").nth(1).and_then(|r| r.split('"').next()).unwrap_or_default();
+            let title = line.split("title: @tr(\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or_default();
             assert_eq!(title, action.title(), "{name}");
             checked += 1;
         }

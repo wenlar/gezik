@@ -235,7 +235,7 @@ impl Conflicts {
                 ConflictKind::Folder => 1,
                 ConflictKind::Mismatch => 2,
             },
-            decision: item.decision.label().into(),
+            decision: gezik_i18n::t("", item.decision.label()).as_ref().into(),
             selected: false,
             focused: false,
         }
@@ -245,7 +245,7 @@ impl Conflicts {
     fn row(data: &Data, position: usize) -> Option<ConflictRow> {
         let i = *data.shown.get(position)?;
         let mut row = data.rows.get(i)?.clone();
-        row.decision = data.decisions.get(i)?.label().into();
+        row.decision = gezik_i18n::t("", data.decisions.get(i)?.label()).as_ref().into();
         row.selected = data.selection.is_selected(position);
         row.focused = data.selection.focus() == Some(position);
         Some(row)

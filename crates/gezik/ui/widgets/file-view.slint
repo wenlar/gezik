@@ -140,7 +140,7 @@ component HeaderCell inherits Rectangle {
 
     accessible-role: button;
     accessible-label: root.text;
-    accessible-description: root.sorted ? (root.descending ? "sorted descending" : "sorted ascending") : "";
+    accessible-description: root.sorted ? (root.descending ? @tr("sorted descending") : @tr("sorted ascending")) : "";
     accessible-action-default => { root.clicked(); }
     background: touch.has-hover ? Theme.hover : transparent;
 
@@ -342,7 +342,7 @@ export component FileView inherits Rectangle {
     // The inactive one of two panes (spec 10 §4.3): its selection in the selection color at 45%.
     in property <bool> dimmed;
     // What a screen reader calls the list ("Left pane, C:\Work" with two panes).
-    in property <string> label: "Files";
+    in property <string> label: @tr("Files");
     // The gap above and below the visible list (the rows' inset leaves room for it); the
     // grid's is its inset (Theme.inset + the cells' 4px above the first line); none
     // in the classic themes.
@@ -473,7 +473,7 @@ export component FileView inherits Rectangle {
             HeaderCell {
                 horizontal-stretch: 1;
                 min-width: 150px;
-                text: "Name";
+                text: @tr("column" => "Name");
                 indent: Theme.icon-size + root.gap;
                 resizable: false;
                 sorted: root.sort-column == 0;
@@ -484,7 +484,7 @@ export component FileView inherits Rectangle {
             if root.col-folder > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-folder;
-                text: root.trash ? "Original location" : "Folder";
+                text: root.trash ? @tr("column" => "Original location") : @tr("column" => "Folder");
                 sorted: root.sort-column == 5;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(5); }
@@ -495,7 +495,7 @@ export component FileView inherits Rectangle {
             if root.col-match > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-match;
-                text: "Match";
+                text: @tr("column" => "Match");
                 clicked => { root.header-clicked(6); }
                 menu(x, y) => { root.header-menu(x, y); }
                 resize(w) => { root.col-match = clamp(w, 50px, 600px); }
@@ -504,7 +504,7 @@ export component FileView inherits Rectangle {
             if root.col-modified > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-modified;
-                text: root.trash ? "Date deleted" : "Modified";
+                text: root.trash ? @tr("column" => "Date deleted") : @tr("column" => "Modified");
                 sorted: root.sort-column == 1;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(1); }
@@ -515,7 +515,7 @@ export component FileView inherits Rectangle {
             if root.col-created > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-created;
-                text: "Created";
+                text: @tr("column" => "Created");
                 sorted: root.sort-column == 2;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(2); }
@@ -526,7 +526,7 @@ export component FileView inherits Rectangle {
             if root.col-type > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-type;
-                text: "Type";
+                text: @tr("column" => "Type");
                 sorted: root.sort-column == 3;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(3); }
@@ -537,7 +537,7 @@ export component FileView inherits Rectangle {
             if root.col-size > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-size;
-                text: "Size";
+                text: @tr("column" => "Size");
                 right-aligned: true;
                 sorted: root.sort-column == 4;
                 descending: root.sort-desc;
@@ -549,7 +549,7 @@ export component FileView inherits Rectangle {
             if root.col-tags > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-tags;
-                text: "Tags";
+                text: @tr("column" => "Tags");
                 sorted: root.sort-column == 7;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(7); }
@@ -560,7 +560,7 @@ export component FileView inherits Rectangle {
             if root.col-rating > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-rating;
-                text: "Rating";
+                text: @tr("column" => "Rating");
                 sorted: root.sort-column == 8;
                 descending: root.sort-desc;
                 clicked => { root.header-clicked(8); }
@@ -572,7 +572,7 @@ export component FileView inherits Rectangle {
             if root.col-comment > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-comment;
-                text: "Comment";
+                text: @tr("column" => "Comment");
                 menu(x, y) => { root.header-menu(x, y); }
                 resize(w) => { root.col-comment = clamp(w, 50px, 600px); }
                 resize-done => { root.columns-resized(); }
@@ -676,7 +676,7 @@ export component FileView inherits Rectangle {
                 border-width: root.drop-entry == self.index ? 1px : 0px;
                 border-color: Theme.accent;
                 accessible-role: list-item;
-                accessible-label: self.file.name + (self.file.tag-names != "" ? ", tags " + self.file.tag-names : "");
+                accessible-label: self.file.tag-names != "" ? @tr("{}, tags {}", self.file.name, self.file.tag-names) : self.file.name;
                 accessible-item-selectable: true;
                 accessible-item-selected: self.file.selected;
                 accessible-item-index: self.index;
@@ -911,7 +911,7 @@ export component FileView inherits Rectangle {
                         width: root.cell-width;
                         height: root.cell-height;
                         accessible-role: list-item;
-                        accessible-label: tile.cell.name + (tile.cell.tag-names != "" ? ", tags " + tile.cell.tag-names : "");
+                        accessible-label: tile.cell.tag-names != "" ? @tr("{}, tags {}", tile.cell.name, tile.cell.tag-names) : tile.cell.name;
                         accessible-item-selectable: true;
                         accessible-item-selected: tile.cell.selected;
                         accessible-item-index: self.index;
@@ -1046,7 +1046,7 @@ export component FileView inherits Rectangle {
                 x: Theme.inset;
                 width: parent.width - 2 * Theme.inset;
                 accessible-role: button;
-                accessible-label: item.header + (item.collapsed ? ", collapsed" : ", expanded");
+                accessible-label: item.collapsed ? @tr("{}, collapsed", item.header) : @tr("{}, expanded", item.header);
                 accessible-action-default => { root.group-toggled(item.first); }
                 TouchArea {
                     scroll-event(event) => { return root.wheel(event); }

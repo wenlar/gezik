@@ -13,6 +13,7 @@ use gezik_config::shortcuts::{Action, Chord, Platform};
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
 use gezik_core::tree::{self, Listed, NodeId, Read, RootKey};
+use gezik_i18n::t;
 use slint::{ComponentHandle, ModelRc};
 
 use crate::places::Places;
@@ -54,7 +55,9 @@ fn known_icon(index: usize, name: &str) -> i32 {
 }
 
 /// The drives' section title: Finder calls it "Locations".
-const DRIVES_HEADER: &str = if cfg!(target_os = "macos") { "LOCATIONS" } else { "DRIVES" };
+fn drives_header() -> std::borrow::Cow<'static, str> {
+    if cfg!(target_os = "macos") { t!("LOCATIONS") } else { t!("DRIVES") }
+}
 
 /// How often the (cheap) drive signature is checked.
 const DRIVE_POLL: Duration = Duration::from_secs(3);
@@ -170,7 +173,7 @@ pub fn cloud_rows(roots: &[gezik_platform::cloud::CloudRoot], on: bool) -> Vec<S
     }
     let mut rows = vec![SidebarRow {
         header: true,
-        label: "CLOUD".into(),
+        label: t!("CLOUD").as_ref().into(),
         section: SECTION_CLOUD,
         index: -1,
         active: false,
@@ -208,7 +211,7 @@ pub fn tag_rows(list: &[gezik_core::meta::Tag], on: bool) -> Vec<SidebarRow> {
     let linux = cfg!(target_os = "linux");
     let mut rows = vec![SidebarRow {
         header: true,
-        label: "TAGS".into(),
+        label: t!("TAGS").as_ref().into(),
         section: SECTION_TAGS,
         index: -1,
         ..SidebarRow::default()
@@ -217,7 +220,7 @@ pub fn tag_rows(list: &[gezik_core::meta::Tag], on: bool) -> Vec<SidebarRow> {
         label: (*tag.name).into(),
         section: SECTION_TAGS,
         index: i32::try_from(i).unwrap_or(i32::MAX),
-        tip: format!("Files tagged {}; drop files here to tag them", tag.name).into(),
+        tip: t!("Files tagged {}; drop files here to tag them", tag.name).into(),
         dot: crate::tags::color_of(crate::tags::shown_color(tag, list, linux)),
         ..SidebarRow::default()
     }));
@@ -1244,7 +1247,7 @@ impl Sidebar {
                 dot: Default::default(),
             };
 
-            let mut rows = vec![header("FOLDERS", SECTION_FOLDERS, -1)];
+            let mut rows = vec![header(&t!("FOLDERS"), SECTION_FOLDERS, -1)];
             rows.extend(
                 places
                     .known
@@ -1258,7 +1261,7 @@ impl Sidebar {
             let mut groups: Vec<String> = Vec::new();
             for line in &lines {
                 rows.push(match line {
-                    PinLine::Header(None) => header("PINNED", SECTION_PINNED, -1),
+                    PinLine::Header(None) => header(&t!("PINNED"), SECTION_PINNED, -1),
                     PinLine::Header(Some(group)) => {
                         groups.push(group.clone());
                         header(group.as_str(), SECTION_GROUP, index(groups.len() - 1))
@@ -1294,7 +1297,7 @@ impl Sidebar {
             rows.extend(cloud);
             let searches = crate::saved_searches::names();
             if !searches.is_empty() {
-                rows.push(header("SEARCHES", SECTION_SEARCHES, -1));
+                rows.push(header(&t!("SEARCHES"), SECTION_SEARCHES, -1));
                 rows.extend(searches.iter().enumerate().map(|(i, name)| SidebarRow {
                     header: false,
                     label: name.as_str().into(),
@@ -1309,7 +1312,7 @@ impl Sidebar {
                 }));
             }
             rows.extend(crate::tags::with_list(|list| tag_rows(list, inner.show_tags)));
-            rows.push(header(DRIVES_HEADER, SECTION_DRIVES, -1));
+            rows.push(header(&drives_header(), SECTION_DRIVES, -1));
             rows.extend(
                 places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path, ICON_DRIVE)),
             );

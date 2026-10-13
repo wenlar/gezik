@@ -46,13 +46,13 @@ impl TagColor {
     pub fn default_name(self) -> &'static str {
         match self {
             TagColor::None => "",
-            TagColor::Gray => "Gray",
-            TagColor::Green => "Green",
-            TagColor::Purple => "Purple",
-            TagColor::Blue => "Blue",
-            TagColor::Yellow => "Yellow",
-            TagColor::Red => "Red",
-            TagColor::Orange => "Orange",
+            TagColor::Gray => gezik_i18n::tx!("Gray"),
+            TagColor::Green => gezik_i18n::tx!("Green"),
+            TagColor::Purple => gezik_i18n::tx!("Purple"),
+            TagColor::Blue => gezik_i18n::tx!("Blue"),
+            TagColor::Yellow => gezik_i18n::tx!("Yellow"),
+            TagColor::Red => gezik_i18n::tx!("Red"),
+            TagColor::Orange => gezik_i18n::tx!("Orange"),
         }
     }
 }

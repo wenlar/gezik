@@ -9,17 +9,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gezik_config::theme::BUILTIN_THEMES;
 use gezik_config::theme_source::{self as source, Candidate, Fetch};
+use gezik_i18n::{t, tn, tx};
 use slint::{ModelRc, SharedString, VecModel};
 
 use crate::SettingItem;
 
-pub(super) const USE_NOW: &str = "Use Now";
-pub(super) const CHECK: &str = "Check for Updates";
-pub(super) const SOURCE_PAGE: &str = "Open Source Page";
-pub(super) const DELETE: &str = "Delete Theme";
-pub(super) const INSTALL: &str = "Install";
-pub(super) const REPLACE: &str = "Replace";
-pub(super) const KEEP_BOTH: &str = "Keep Both";
+pub(super) const USE_NOW: &str = tx!("Use Now");
+pub(super) const CHECK: &str = tx!("Check for Updates");
+pub(super) const SOURCE_PAGE: &str = tx!("Open Source Page");
+pub(super) const DELETE: &str = tx!("Delete Theme");
+pub(super) const INSTALL: &str = tx!("Install");
+pub(super) const REPLACE: &str = tx!("Replace");
+pub(super) const KEEP_BOTH: &str = tx!("Keep Both");
 
 /// Counts the downloads: one goes on only while it is the last asked for (a new address, or the
 /// window closing, stops it).
@@ -112,51 +113,65 @@ impl Themes {
         {
             Row::Get => (
                 2,
-                "Get Theme".to_owned(),
+                t!("Get Theme").into_owned(),
                 "install-theme".to_owned(),
                 self.address.clone(),
-                "Paste a GitHub repository (github.com/owner/repo, …/tree/<branch>/<folder>, …/blob/…/x.toml) \
-                 or an https address of a .toml file and press Enter. A theme is data only: colors, sizes and \
-                 a font's name."
-                    .to_owned(),
+                t!("Paste a GitHub repository (github.com/owner/repo, …/tree/<branch>/<folder>, …/blob/…/x.toml) \
+                    or an https address of a .toml file and press Enter. A theme is data only: colors, sizes and \
+                    a font's name.")
+                .into_owned(),
                 &[],
             ),
             Row::Found(i) => {
                 let found = &self.found[i];
                 let skipped = match found.skipped {
                     0 => String::new(),
-                    n => format!(" {n} of its values are wrong and are skipped."),
+                    n => format!(
+                        " {}",
+                        tn!(
+                            "{n} of its values is wrong and is skipped."
+                                | "{n} of its values are wrong and are skipped.",
+                            n
+                        )
+                    ),
                 };
                 let (id, state) = self.target(found);
                 match (&found.problem, state) {
-                    (Some(problem), _) => {
-                        (6, found.name.clone(), found.entry.clone(), "Cannot install".into(), problem.clone(), &[])
-                    }
+                    (Some(problem), _) => (
+                        6,
+                        found.name.clone(),
+                        found.entry.clone(),
+                        t!("Cannot install").into_owned(),
+                        problem.clone(),
+                        &[],
+                    ),
                     (None, State::Same) => (
                         6,
                         found.name.clone(),
                         found.entry.clone(),
-                        "Installed".into(),
-                        format!("The same as themes/{id}.toml"),
+                        t!("Installed").into_owned(),
+                        t!("The same as themes/{}.toml", id),
                         &[],
                     ),
                     (None, State::New) => (
                         1,
                         found.name.clone(),
                         found.entry.clone(),
-                        "Not installed".into(),
-                        format!("Installs as themes/{id}.toml; point at Install to preview it.{skipped}"),
+                        t!("Not installed").into_owned(),
+                        t!("Installs as themes/{}.toml; point at Install to preview it.{}", id, skipped),
                         &[INSTALL],
                     ),
                     (None, State::Differs) => (
                         1,
                         found.name.clone(),
                         found.entry.clone(),
-                        "Differs".into(),
-                        format!(
-                            "themes/{id}.toml is there and differs: Replace writes over it, Keep Both installs \
-                             this as themes/{}.toml; point at either to preview it.{skipped}",
-                            source::free_id(&found.id, |id| self.taken(id))
+                        t!("Differs").into_owned(),
+                        t!(
+                            "themes/{0}.toml is there and differs: Replace writes over it, Keep Both installs \
+                             this as themes/{1}.toml; point at either to preview it.{2}",
+                            id,
+                            source::free_id(&found.id, |id| self.taken(id)),
+                            skipped
                         ),
                         &[REPLACE, KEEP_BOTH],
                     ),
@@ -173,13 +188,13 @@ impl Themes {
                     1,
                     title,
                     format!("themes/{}.toml", theme.id),
-                    "Installed".into(),
-                    format!("From {} ({})", theme.address, theme.entry),
+                    t!("Installed").into_owned(),
+                    t!("From {} ({})", theme.address, theme.entry),
                     &[USE_NOW, CHECK, SOURCE_PAGE, DELETE],
                 )
             }
         };
-        let options: Vec<SharedString> = options.iter().map(|o| SharedString::from(*o)).collect();
+        let options: Vec<SharedString> = options.iter().map(|o| t("", o).as_ref().into()).collect();
         SettingItem {
             kind,
             title: title.into(),

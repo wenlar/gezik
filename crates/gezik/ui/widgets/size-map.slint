@@ -54,8 +54,8 @@ export component SizeMapLayer inherits Rectangle {
                     horizontal-stretch: 1;
                     color: Theme.foreground;
                 }
-                TextButton { text: "Up"; clicked => { root.up(); } }
-                TextButton { text: "Close"; clicked => { root.close(); } }
+                TextButton { text: @tr("Up"); clicked => { root.up(); } }
+                TextButton { text: @tr("Close"); clicked => { root.close(); } }
             }
             area := Rectangle {
                 vertical-stretch: 1;

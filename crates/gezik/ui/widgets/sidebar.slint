@@ -131,7 +131,7 @@ export component Sidebar inherits Rectangle {
         focus-on-click: false;
         focus-changed-event => { root.focused = self.has-focus; }
         accessible-role: tree;
-        accessible-label: "Places";
+        accessible-label: @tr("Places");
 
         list := ListView {
             y: Theme.spacing;
@@ -192,7 +192,7 @@ export component Sidebar inherits Rectangle {
                     border-color: Theme.accent;
                     accessible-role: list-item;
                     accessible-label: row.label;
-                    accessible-description: row.depth > 0 ? "Level \{row.depth + 1}" : "";
+                    accessible-description: row.depth > 0 ? @tr("Level {}", row.depth + 1) : "";
                     accessible-item-selectable: true;
                     // While the tree has the keyboard, its row is the one a screen reader follows.
                     accessible-item-selected: root.focused ? i == root.cursor : row.active;

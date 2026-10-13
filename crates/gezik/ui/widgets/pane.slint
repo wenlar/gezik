@@ -300,7 +300,7 @@ export component PaneView inherits Rectangle {
     property <bool> search-content-focus;
     property <string> search-error;
     property <string> search-content-error;
-    property <string> search-filters: "Filters";
+    property <string> search-filters: @tr("Filters");
     property <bool> search-running;
     // The requests done: each `*-request` counter as last seen, the scroll asked last, the
     // rename whose text is in the field.
@@ -556,25 +556,25 @@ export component PaneView inherits Rectangle {
                     padding-top: (Theme.control-height - Theme.row-height) / 2;
                     padding-bottom: (Theme.control-height - Theme.row-height) / 2;
                     ToolButton {
-                        text: "Back";
+                        text: @tr("Back");
                         icon: Glyph.back;
                         enabled: root.can-go-back;
                         clicked => { root.go-back(root.index); }
                     }
                     ToolButton {
-                        text: "Forward";
+                        text: @tr("Forward");
                         icon: Glyph.forward;
                         enabled: root.can-go-forward;
                         clicked => { root.go-forward(root.index); }
                     }
                     ToolButton {
-                        text: "Up";
+                        text: @tr("Up");
                         icon: Glyph.up;
                         enabled: root.can-go-up;
                         clicked => { root.go-up(root.index); }
                     }
                     refresh-button := ToolButton {
-                        text: "Refresh";
+                        text: @tr("Refresh");
                         icon: Glyph.refresh;
                         clicked => { root.refresh(root.index); }
                     }
@@ -594,8 +594,8 @@ export component PaneView inherits Rectangle {
                 }
                 // In a narrow pane its glyph only, leaving the address room for the folder's name.
                 TextButton {
-                    text: root.narrow ? "" : "View";
-                    label: "View";
+                    text: root.narrow ? "" : @tr("View");
+                    label: @tr("View");
                     lead-icon: Glyph.view;
                     icon: root.narrow ? "" : Glyph.chevron-down;
                     compact: root.narrow;
@@ -696,7 +696,7 @@ export component PaneView inherits Rectangle {
                             mode: root.view-mode;
                             picture-size: root.grid-size;
                             dimmed: root.dual && !root.active;
-                            label: !root.dual ? "Files" : (root.index == 0 ? "Left pane, " : "Right pane, ") + root.current-path;
+                            label: !root.dual ? @tr("Files") : root.index == 0 ? @tr("Left pane, {}", root.current-path) : @tr("Right pane, {}", root.current-path);
                             trash: root.trash-shown;
                             grid-columns-changed(n) => { root.grid-columns-changed(root.index, n); }
                             zoom(bigger) => { root.zoom(root.index, bigger); }

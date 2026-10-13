@@ -35,9 +35,9 @@ impl Group {
     pub fn title(self) -> &'static str {
         match self {
             Group::Settings => "settings.toml",
-            Group::Themes => "Themes",
-            Group::Templates => "Templates",
-            Group::Views => "Folder views",
+            Group::Themes => gezik_i18n::tx!("Themes"),
+            Group::Templates => gezik_i18n::tx!("Templates"),
+            Group::Views => gezik_i18n::tx!("Folder views"),
         }
     }
 }

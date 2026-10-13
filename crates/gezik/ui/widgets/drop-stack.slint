@@ -69,7 +69,7 @@ export component DropStack inherits Rectangle {
     height: Theme.row-height + 6px;
     background: root.highlight ? Theme.drop-target : Theme.surface;
     accessible-role: list;
-    accessible-label: "Drop stack";
+    accessible-label: @tr("Drop stack");
 
     HorizontalLayout {
         padding-left: Theme.spacing + 4px;
@@ -78,11 +78,11 @@ export component DropStack inherits Rectangle {
         Rectangle {
             width: caption.preferred-width + Theme.spacing * 2;
             accessible-role: button;
-            accessible-label: root.rows.length == 0 ? "Drop files here" : "Drag all " + root.count;
+            accessible-label: root.rows.length == 0 ? @tr("Drop files here") : @tr("Drag all {}", root.count);
             caption := Text {
                 x: Theme.spacing;
                 height: parent.height;
-                text: root.rows.length == 0 ? "Drop files here" : root.count;
+                text: root.rows.length == 0 ? @tr("Drop files here") : root.count;
                 vertical-alignment: center;
                 color: Theme.foreground-muted;
             }
@@ -141,7 +141,7 @@ export component DropStack inherits Rectangle {
                         x: parent.width - 20px;
                         width: 20px;
                         height: 20px;
-                        text: "Remove " + row.name;
+                        text: @tr("Remove {}", row.name);
                         icon: "M 5 5 L 11 11 M 11 5 L 5 11";
                         clicked => { root.remove(i); }
                     }
@@ -153,8 +153,8 @@ export component DropStack inherits Rectangle {
                 }
             }
         }
-        TextButton { text: "Copy here"; clicked => { root.copy-here(); } }
-        TextButton { text: "Move here"; clicked => { root.move-here(); } }
-        TextButton { text: "Clear"; clicked => { root.clear(); } }
+        TextButton { text: @tr("Copy here"); clicked => { root.copy-here(); } }
+        TextButton { text: @tr("Move here"); clicked => { root.move-here(); } }
+        TextButton { text: @tr("Clear"); clicked => { root.clear(); } }
     }
 }

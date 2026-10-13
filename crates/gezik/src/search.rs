@@ -751,8 +751,8 @@ impl Searches {
             };
             d.search_content_open = self.0.content_open.get();
             d.search_filters = match draft.filter_count() {
-                0 => "Filters".into(),
-                n => format!("Filters ({n})").into(),
+                0 => gezik_i18n::t!("Filters").as_ref().into(),
+                n => gezik_i18n::t!("Filters ({})", n).into(),
             };
             d.search_running = self.0.running.borrow().is_some();
             if let Some((_, name_error, content_error)) = last.as_ref() {
@@ -1575,7 +1575,9 @@ impl Searches {
                 let names = crate::saved_searches::names();
                 let mut items = ids::search_more_items(self.0.problems.borrow().len(), &names, draft.is_query());
                 if self.0.view.shows_duplicates() {
-                    let select = ids::duplicate_select_items().into_iter().map(|(id, t)| (id, t.to_owned(), true));
+                    let select = ids::duplicate_select_items()
+                        .into_iter()
+                        .map(|(id, title)| (id, gezik_i18n::t("", title).into_owned(), true));
                     items.splice(0..0, select);
                 }
                 *self.0.menu_names.borrow_mut() = names;

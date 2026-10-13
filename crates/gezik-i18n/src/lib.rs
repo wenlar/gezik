@@ -57,8 +57,8 @@ pub fn set(catalog: Option<Arc<Catalog>>) {
     *current = catalog;
 }
 
-/// `found` as `'static`: borrowed when it is the source text itself.
-fn keep(found: Cow<'_, str>, source: &'static str) -> Cow<'static, str> {
+/// `found` as long as `source` lives: borrowed when it is the source text itself.
+fn keep<'a>(found: Cow<'_, str>, source: &'a str) -> Cow<'a, str> {
     match found {
         Cow::Borrowed(s) if std::ptr::eq(s, source) => Cow::Borrowed(source),
         other => Cow::Owned(other.into_owned()),
@@ -70,9 +70,10 @@ pub fn current() -> Option<Arc<Catalog>> {
     CURRENT.read().unwrap_or_else(PoisonError::into_inner).clone()
 }
 
-/// `id` (in `context`, `""` for none) in the language in use. `t!` comes here.
+/// `id` (in `context`, `""` for none) in the language in use. `t!` comes here, and a text
+/// marked with `tx!` or read from the settings template is shown through it.
 /// English costs one atomic load: the text itself, borrowed.
-pub fn t(context: &str, id: &'static str) -> Cow<'static, str> {
+pub fn t<'a>(context: &str, id: &'a str) -> Cow<'a, str> {
     if ENGLISH.load(Ordering::Acquire) {
         return Cow::Borrowed(id);
     }
@@ -136,6 +137,9 @@ macro_rules! tn {
 #[macro_export]
 macro_rules! tx {
     ($id:literal) => {
+        $id
+    };
+    ($context:literal => $id:literal) => {
         $id
     };
 }

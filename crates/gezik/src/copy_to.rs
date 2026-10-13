@@ -342,11 +342,14 @@ pub fn menu_items(rows: &[(PathBuf, bool)]) -> Vec<(u32, String)> {
     if rows.is_empty() {
         return Vec::new();
     }
-    let mut items = vec![(TOOLS_COPY_TO, "Copy to…".to_owned()), (TOOLS_MOVE_TO, "Move to…".to_owned())];
+    let mut items = vec![
+        (TOOLS_COPY_TO, gezik_i18n::t!("Copy to…").into_owned()),
+        (TOOLS_MOVE_TO, gezik_i18n::t!("Move to…").into_owned()),
+    ];
     if let [(path, false)] = rows {
-        items.push((TOOLS_SPLIT, "Split file…".to_owned()));
+        items.push((TOOLS_SPLIT, gezik_i18n::t!("Split file…").into_owned()));
         if is_part(path) {
-            items.push((TOOLS_JOIN, "Join files".to_owned()));
+            items.push((TOOLS_JOIN, gezik_i18n::t!("Join files").into_owned()));
         }
     }
     items

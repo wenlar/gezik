@@ -668,8 +668,8 @@ pub fn menu_sub(paths: &[PathBuf], at: usize) -> crate::context_menu::Submenu {
             (TAGS_TAG_FIRST + i as u32, format!("{mark}{}", tag.name), true)
         })
         .collect();
-    items.push((TAGS_PICKER, "Tags…".to_owned(), true));
-    items.push((TAGS_CLEAR, "Clear tags".to_owned(), true));
+    items.push((TAGS_PICKER, gezik_i18n::t!("Tags…").into_owned(), true));
+    items.push((TAGS_CLEAR, gezik_i18n::t!("Clear tags").into_owned(), true));
     // The stars, marked when every row is known to have them (12d).
     let same = known
         .split_first()
@@ -677,11 +677,12 @@ pub fn menu_sub(paths: &[PathBuf], at: usize) -> crate::context_menu::Submenu {
         .and_then(|(first, rest)| rest.iter().all(|r| r.meta.rating == first.meta.rating).then_some(first.meta.rating));
     for stars in 0..=5u8 {
         let mark = if same == Some(stars) { "• " } else { "    " };
-        let title = if stars == 0 { "No rating".to_owned() } else { "★".repeat(usize::from(stars)) };
+        let title =
+            if stars == 0 { gezik_i18n::t!("No rating").into_owned() } else { "★".repeat(usize::from(stars)) };
         items.push((TAGS_RATING_FIRST + u32::from(stars), format!("{mark}{title}"), true));
     }
-    items.push((TAGS_COMMENT, "Comment…".to_owned(), true));
-    crate::context_menu::Submenu { title: "Tags".to_owned(), at, items }
+    items.push((TAGS_COMMENT, gezik_i18n::t!("Comment…").into_owned(), true));
+    crate::context_menu::Submenu { title: gezik_i18n::t!("Tags").into_owned(), at, items }
 }
 
 /// A `Tags ▸` item chosen for `paths`; returns whether `id` was one.
@@ -894,7 +895,7 @@ impl TagPicker {
         self.0.current.set(0);
         self.0.open.set(true);
         window.set_tp_rows(ModelRc::from(self.0.model.clone()));
-        window.set_tp_empty("No tags match".into());
+        window.set_tp_empty(gezik_i18n::t!("No tags match").as_ref().into());
         window.set_tp_query("".into());
         self.show();
         window.set_tp_open(true);
@@ -1015,8 +1016,8 @@ impl TagPicker {
         let lines = picker_lines(&list, metas.as_deref(), &edits, &self.0.query.borrow());
         let paths = self.0.paths.borrow();
         let label = match (metas.is_some(), paths.as_slice()) {
-            (false, _) => "Reading tags…".to_owned(),
-            (true, many) => format!("Tags for {}", crate::operations::items_text(many)),
+            (false, _) => gezik_i18n::t!("Reading tags…").into_owned(),
+            (true, many) => gezik_i18n::t!("Tags for {}", crate::operations::items_text(many)),
         };
         let rows: Vec<PickRow> = lines
             .iter()
@@ -1026,7 +1027,7 @@ impl TagPicker {
                     let linux = cfg!(target_os = "linux");
                     PickRow {
                         title: (*tag.name).into(),
-                        detail: if *listed { "" } else { "Not in your list" }.into(),
+                        detail: if *listed { "".into() } else { gezik_i18n::t!("Not in your list").as_ref().into() },
                         tag: "".into(),
                         keys: keys.into(),
                         bold: false,
@@ -1035,17 +1036,19 @@ impl TagPicker {
                         stars: -1,
                     }
                 }
-                Line::Create(name) => {
-                    PickRow { title: format!("Create \"{name}\"").into(), tag: "New tag".into(), ..plain_row() }
-                }
+                Line::Create(name) => PickRow {
+                    title: gezik_i18n::t!("Create \"{}\"", name).into(),
+                    tag: gezik_i18n::t!("New tag").as_ref().into(),
+                    ..plain_row()
+                },
                 Line::Rating => PickRow {
-                    title: "Rating".into(),
+                    title: gezik_i18n::t!("Rating").as_ref().into(),
                     keys: if cfg!(target_os = "macos") { "" } else { "Alt+0…5" }.into(),
                     tag: " ".into(),
                     stars: edits.stars(metas.as_deref()),
                     ..plain_row()
                 },
-                Line::Comment => PickRow { title: "Comment…".into(), ..plain_row() },
+                Line::Comment => PickRow { title: gezik_i18n::t!("Comment…").as_ref().into(), ..plain_row() },
             })
             .collect();
         drop((metas, edits, paths));

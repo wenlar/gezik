@@ -92,8 +92,8 @@ component SettingLine inherits Rectangle {
     in property <bool> read-only;
     // The text the control speaks: the title, the value, and "default" when it is one, else the
     // default.
-    property <string> spoken: root.item.title + ", " + root.item.value + (root.item.place == 2 ? ", this computer" : "")
-        + (root.item.is-default ? ", default" : root.item.default == "" ? "" : ", default " + root.item.default);
+    property <string> spoken: root.item.title + ", " + root.item.value + (root.item.place == 2 ? ", " + @tr("this computer") : "")
+        + (root.item.is-default ? ", " + @tr("default") : root.item.default == "" ? "" : ", " + @tr("default {}", root.item.default));
     property <string> value: root.item.value;
     property <bool> on: root.value == "true";
     // The choices or the right-click menu, under the row (no popup window: less code).
@@ -127,7 +127,7 @@ component SettingLine inherits Rectangle {
     changed value => {
         if root.item.kind == 2 && field.has-focus {
             if field.text != root.value {
-                root.say(root.item.title + " changed in settings.toml: " + root.value);
+                root.say(@tr("{} changed in settings.toml: {}", root.item.title, root.value));
             }
         } else {
             field.text = root.value;
@@ -173,7 +173,7 @@ component SettingLine inherits Rectangle {
 
     // Replace or Cancel: the key is another's.
     function ask-replace() {
-        root.lines = ["Replace", "Cancel"];
+        root.lines = [@tr("Replace"), @tr("Cancel")];
         root.menu-shown = false;
         root.cursor = 0;
         root.lines-open = true;
@@ -193,8 +193,8 @@ component SettingLine inherits Rectangle {
     }
 
     function open-lines(menu: bool) {
-        root.lines = !menu ? root.item.options : root.item.place == 0 ? ["Reset to Default", "Copy Key", "Edit in settings.toml"]
-            : ["Reset to Default", "Copy Key", "Edit in settings.toml", root.item.place == 2 ? "Use the Shared Value" : "Only on This Computer"];
+        root.lines = !menu ? root.item.options : root.item.place == 0 ? [@tr("Reset to Default"), @tr("Copy Key"), @tr("Edit in settings.toml")]
+            : [@tr("Reset to Default"), @tr("Copy Key"), @tr("Edit in settings.toml"), root.item.place == 2 ? @tr("Use the Shared Value") : @tr("Only on This Computer")];
         root.menu-shown = menu;
         root.cursor = -1;
         root.lines-open = true;
@@ -272,7 +272,7 @@ component SettingLine inherits Rectangle {
                     visible: root.item.kind >= 3;
                     width: parent.width - (button.visible ? button.width + Theme.spacing : 0px);
                     height: parent.height;
-                    text: root.capturing ? "Press keys…" : root.value;
+                    text: root.capturing ? @tr("Press keys…") : root.value;
                     color: Theme.foreground-muted;
                     vertical-alignment: center;
                     overflow: elide;
@@ -283,15 +283,15 @@ component SettingLine inherits Rectangle {
                     visible: root.item.kind != 0 && root.item.kind != 2 && root.item.kind < 6;
                     width: root.item.kind == 1 ? parent.width : self.min-width;
                     x: parent.width - self.width;
-                    text: root.item.kind == 1 ? root.value : root.item.kind == 3 ? "Edit in settings.toml" : root.item.kind == 5 ? "Set Key…" : "System Integration…";
+                    text: root.item.kind == 1 ? root.value : root.item.kind == 3 ? @tr("Edit in settings.toml") : root.item.kind == 5 ? @tr("Set Key…") : @tr("System Integration…");
                     arrow: root.item.kind == 1;
                     enabled: (root.item.kind != 1 && root.item.kind != 5) || !root.read-only;
-                    accessible-label: root.item.kind == 1 ? root.spoken : root.item.kind == 5 ? "Set Key for " + root.spoken : self.text;
+                    accessible-label: root.item.kind == 1 ? root.spoken : root.item.kind == 5 ? @tr("Set Key for {}", root.spoken) : self.text;
                     clicked => {
                         if root.item.kind == 5 {
                             root.capturing = true;
                             key-scope.focus();
-                            root.say("Press the keys for " + root.item.title + ": Esc cancels, Backspace leaves it no key");
+                            root.say(@tr("Press the keys for {}: Esc cancels, Backspace leaves it no key", root.item.title));
                         } else if root.item.kind != 1 {
                             root.button();
                         } else if root.lines-open {
@@ -308,7 +308,7 @@ component SettingLine inherits Rectangle {
                     focus-on-click: false;
                     focus-on-tab-navigation: false;
                     accessible-role: text-input;
-                    accessible-label: root.capturing ? "Press the keys for " + root.item.title + ": Escape cancels, Backspace leaves it no key" : "";
+                    accessible-label: root.capturing ? @tr("Press the keys for {}: Escape cancels, Backspace leaves it no key", root.item.title) : "";
                     key-pressed(event) => {
                         if !root.capturing {
                             return reject;
@@ -347,7 +347,7 @@ component SettingLine inherits Rectangle {
         }
         // The key, "default", the template's comment: one text (each element is code).
         Text {
-            text: root.item.key + (root.item.place == 2 ? "  ·  this computer" : "") + (root.item.is-default ? "  ·  default" : "") + (root.item.description == "" ? "" : "  —  " + root.item.description);
+            text: root.item.key + (root.item.place == 2 ? "  ·  " + @tr("this computer") : "") + (root.item.is-default ? "  ·  " + @tr("default") : "") + (root.item.description == "" ? "" : "  —  " + root.item.description);
             color: Theme.foreground-muted;
             font-size: Theme.font-size-small;
             wrap: word-wrap;
@@ -360,7 +360,7 @@ component SettingLine inherits Rectangle {
             border-color: Theme.border;
             border-radius: Theme.radius;
             accessible-role: list;
-            accessible-label: (root.menu-shown ? "Menu of " : "Choices for ") + root.item.title;
+            accessible-label: root.menu-shown ? @tr("Menu of {}", root.item.title) : @tr("Choices for {}", root.item.title);
             FocusScope {
                 init => { self.focus(); }
                 key-pressed(event) => {
@@ -378,7 +378,7 @@ component SettingLine inherits Rectangle {
                     if event.text == Key.Escape {
                         // Esc on Replace? is Cancel (Rust clears the question).
                         if root.item.kind == 5 && !root.menu-shown {
-                            root.write("Cancel");
+                            root.write(@tr("Cancel"));
                         } else {
                             root.close-lines();
                         }
@@ -489,7 +489,7 @@ export component SettingsWindow inherits Window {
             // The page list is one stop of Tab; Up and Down choose a page, Enter the links.
             pages-scope := FocusScope {
                 accessible-role: tab-list;
-                accessible-label: "Settings pages: " + root.pages[root.page-cursor];
+                accessible-label: @tr("Settings pages: {}", root.pages[root.page-cursor]);
                 key-pressed(event) => {
                     if event.text == Key.DownArrow || event.text == Key.UpArrow {
                         root.page-cursor = event.text == Key.DownArrow ? min(root.page-cursor + 1, root.pages.length - 1) : max(root.page-cursor - 1, 0);
@@ -540,7 +540,7 @@ export component SettingsWindow inherits Window {
             spacing: Theme.spacing;
             // Its hint is the status line's when nothing else is said there.
             search-field := TextField {
-                accessible-label: "Search settings";
+                accessible-label: @tr("Search settings");
                 // Not `edited`: a screen reader's or a test's set value searches too.
                 changed text => { root.search(self.text); }
             }

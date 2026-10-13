@@ -48,18 +48,19 @@ const QUICK_ORDER: [Kind; 10] = [
 
 impl Kind {
     /// The label at the right of its line.
+    /// Its tag in English (marked; shown through `gezik_i18n::t`).
     pub fn tag(self) -> &'static str {
         match self {
-            Kind::Action => "Action",
-            Kind::Command => "Command",
-            Kind::ViewOption => "View",
-            Kind::Pinned => "Pinned",
-            Kind::Recent => "Recent",
-            Kind::Tab => "Tab",
-            Kind::TabSet => "Tab set",
-            Kind::SavedSearch => "Saved search",
-            Kind::SavedFilter => "Saved filter",
-            Kind::SyncProfile => "Sync profile",
+            Kind::Action => gezik_i18n::tx!("Action"),
+            Kind::Command => gezik_i18n::tx!("Command"),
+            Kind::ViewOption => gezik_i18n::tx!("View"),
+            Kind::Pinned => gezik_i18n::tx!("Pinned"),
+            Kind::Recent => gezik_i18n::tx!("Recent"),
+            Kind::Tab => gezik_i18n::tx!("Tab"),
+            Kind::TabSet => gezik_i18n::tx!("Tab set"),
+            Kind::SavedSearch => gezik_i18n::tx!("Saved search"),
+            Kind::SavedFilter => gezik_i18n::tx!("Saved filter"),
+            Kind::SyncProfile => gezik_i18n::tx!("Sync profile"),
         }
     }
 
@@ -114,6 +115,8 @@ pub struct Item {
     pub title: String,
     /// The dim line under the title: a path, a pattern, a state.
     pub detail: String,
+    /// Not shown, also found by: the English title of a translated one (spec 15 §13.2).
+    pub also: String,
 }
 
 impl Item {
@@ -131,7 +134,8 @@ pub struct Folded {
 }
 
 pub fn fold_items(items: &[Item]) -> Vec<Folded> {
-    items.iter().map(|i| Folded { title: fold(&i.title), detail: fold(&i.detail), key: i.key() }).collect()
+    let title = |i: &Item| if i.also.is_empty() { fold(&i.title) } else { fold(&format!("{} {}", i.title, i.also)) };
+    items.iter().map(|i| Folded { title: title(i), detail: fold(&i.detail), key: i.key() }).collect()
 }
 
 /// Lower case with the Turkish i folded (6a's rule), `/` as `\` (a path is typed with either).
@@ -199,7 +203,7 @@ mod tests {
     use super::*;
 
     fn item(kind: Kind, title: &str, detail: &str) -> Item {
-        Item { kind, id: title.to_lowercase(), title: title.into(), detail: detail.into() }
+        Item { kind, id: title.to_lowercase(), title: title.into(), detail: detail.into(), also: String::new() }
     }
 
     fn titles(items: &[Item], text: &str, mode: Mode, recent: &[String]) -> Vec<String> {
