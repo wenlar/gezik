@@ -128,7 +128,8 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     let mut loaded = store::resolve(files, dark);
     // The language first: what the windows are given below is in it (spec 15 §5.3). A new one
     // reads the settings again so their warnings are in it too.
-    if language::apply(&loaded.settings.language, files) {
+    let language_changed = language::apply(&loaded.settings.language, files);
+    if language_changed {
         loaded = store::resolve(files, dark);
     }
     // First: a pane told `[session] restore` below writes the tabs as it now says.
@@ -139,6 +140,10 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     }
     for p in panes::everywhere() {
         p.nav.set_session_restore(loaded.settings.session.restore);
+        // The window title and the tabs' names ("{} — Gezik", This PC) are made on navigation.
+        if language_changed {
+            p.nav.update_chrome();
+        }
     }
     dual::set_confirm(loaded.settings.panes_confirm);
     preview::fields::set_properties(loaded.settings.preview_properties);
