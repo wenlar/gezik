@@ -3,8 +3,21 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownFolder {
     pub path: PathBuf,
-    /// Name in the OS language (`Belgeler` on Turkish Windows); `Home` for the home folder.
+    /// Name in the OS language (`Belgeler` on Turkish Windows); `Home` (untranslated) for the
+    /// home folder: [`KnownFolder::label`] translates it when shown.
     pub name: String,
+}
+
+impl KnownFolder {
+    /// The name to show. The home folder's is translated here, not when the list is made, so a
+    /// language switch reaches it.
+    pub fn label(&self) -> std::borrow::Cow<'_, str> {
+        if dirs::home_dir().as_deref() == Some(self.path.as_path()) {
+            gezik_i18n::t!("Home")
+        } else {
+            std::borrow::Cow::Borrowed(&self.name)
+        }
+    }
 }
 
 /// Home, Desktop, Documents, Downloads, Pictures, Music, Videos — those that exist.
@@ -25,7 +38,7 @@ pub fn known_folders() -> Vec<KnownFolder> {
             continue; // e.g. Desktop == Home on some Linux setups
         }
         let name = if index == 0 {
-            gezik_i18n::t!("Home").into_owned()
+            "Home".to_owned()
         } else {
             display_name(&path)
                 .unwrap_or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())

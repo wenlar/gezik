@@ -2249,7 +2249,7 @@ msgstr "Klavye kısayolları…"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "Get Theme…"
-msgstr "Tema edin…"
+msgstr "Tema al…"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "Export Settings…"
@@ -4952,7 +4952,6 @@ msgid "the download failed (WinHTTP error {})"
 msgstr "indirme başarısız oldu (WinHTTP hatası {})"
 
 #: crates/gezik-platform/src/known.rs
-#: crates/gezik/src/sidebar.rs
 msgid "Home"
 msgstr "Giriş klasörü"
 
@@ -7934,11 +7933,13 @@ msgstr "Önce {} dosyasını düzeltin ya da silin"
 
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/palette.rs
+#: crates/gezik/src/settings_window.rs
 msgid "Off"
 msgstr "Kapalı"
 
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/palette.rs
+#: crates/gezik/src/settings_window.rs
 #: crates/gezik/src/settings_window/backup.rs
 msgid "On"
 msgstr "Açık"
@@ -9603,12 +9604,37 @@ msgid "Not one of the choices"
 msgstr "Seçeneklerden biri değil"
 
 #: crates/gezik/src/settings_window.rs
+msgctxt "choice:theme"
+msgid "auto"
+msgstr "otomatik"
+
+#: crates/gezik/src/settings_window.rs
+msgctxt "choice:theme"
+msgid "light"
+msgstr "açık"
+
+#: crates/gezik/src/settings_window.rs
+msgctxt "choice:theme"
+msgid "dark"
+msgstr "koyu"
+
+#: crates/gezik/src/settings_window.rs
+msgctxt "choice:theme"
+msgid "classic-light"
+msgstr "klasik açık"
+
+#: crates/gezik/src/settings_window.rs
+msgctxt "choice:theme"
+msgid "classic-dark"
+msgstr "klasik koyu"
+
+#: crates/gezik/src/settings_window.rs
 msgid "Cannot open Settings: {}"
 msgstr "Ayarlar açılamıyor: {}"
 
 #: crates/gezik/src/settings_window.rs
 msgid "Paste the address in Get Theme and press Enter"
-msgstr "Adresi Tema edin bölümüne yapıştırıp Enter'a basın"
+msgstr "Adresi Tema al bölümüne yapıştırıp Enter'a basın"
 
 #: crates/gezik/src/settings_window.rs
 msgid "Type the zip's path in Import Settings and press Enter"
@@ -10126,7 +10152,7 @@ msgstr "İkisini de tut"
 
 #: crates/gezik/src/settings_window/themes.rs
 msgid "Get Theme"
-msgstr "Tema edin"
+msgstr "Tema al"
 
 #: crates/gezik/src/settings_window/themes.rs
 msgid "Paste a GitHub repository (github.com/owner/repo, …/tree/<branch>/<folder>, …/blob/…/x.toml) or an https address of a .toml file and press Enter. A theme is data only: colors, sizes and a font's name."
@@ -11548,7 +11574,7 @@ msgstr "Önizlemek için bir dosya seçin"
 
 #: crates/gezik/ui/widgets/preview-pane.slint
 msgid "Wrap"
-msgstr "Kaydır"
+msgstr "Satır kaydır"
 
 #: crates/gezik/ui/widgets/preview-pane.slint
 msgid "Wrap lines, on"
@@ -11963,8 +11989,8 @@ msgstr "Simgeler"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.icons"
-msgid "System | gezik (Gezik's own icons, colored by the theme)"
-msgstr "System | gezik (Gezik'in kendi simgeleri, temaya göre renkli)"
+msgid "system | gezik (Gezik's own icons, colored by the theme)"
+msgstr "system | gezik (Gezik'in kendi simgeleri, temaya göre renkli)"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.thumbnails"
@@ -11993,8 +12019,8 @@ msgstr "Tarih biçimi"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.date-format"
-msgid "Relative | short | iso | system"
-msgstr "Relative | short | iso | system"
+msgid "relative | short | iso | system"
+msgstr "relative | short | iso | system"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.size-format"
@@ -12003,8 +12029,8 @@ msgstr "Boyut biçimi"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.size-format"
-msgid "Binary (1024, KB) | decimal (1000, kB)"
-msgstr "Binary (1024, KB) | decimal (1000, kB)"
+msgid "binary (1024, KB) | decimal (1000, kB)"
+msgstr "binary (1024, KB) | decimal (1000, kB)"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.show-hidden"
@@ -12033,8 +12059,8 @@ msgstr "Mod"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.mode"
-msgid "List | grid | columns. How folders look. A folder you change keeps its own view; \"Apply to all folders\" in the View menu writes mode, sort, sort-dir, grid-size and group here."
-msgstr "List | grid | columns. Klasörlerin görünüşü. Değiştirdiğiniz klasör kendi görünümünü tutar; Görünüm menüsündeki \"Tüm klasörlere uygula\" mode, sort, sort-dir, grid-size ve group değerlerini buraya yazar."
+msgid "list | grid | columns. How folders look. A folder you change keeps its own view; \"Apply to all folders\" in the View menu writes mode, sort, sort-dir, grid-size and group here."
+msgstr "list | grid | columns. Klasörlerin görünüşü. Değiştirdiğiniz klasör kendi görünümünü tutar; Görünüm menüsündeki \"Tüm klasörlere uygula\" mode, sort, sort-dir, grid-size ve group değerlerini buraya yazar."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.sort"
@@ -12043,8 +12069,8 @@ msgstr "Sıralama"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.sort"
-msgid "Name | modified | created | type | size | tags | rating"
-msgstr "Name | modified | created | type | size | tags | rating"
+msgid "name | modified | created | type | size | tags | rating"
+msgstr "name | modified | created | type | size | tags | rating"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.sort-dir"
@@ -12053,8 +12079,8 @@ msgstr "Sıralama yönü"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.sort-dir"
-msgid "Asc | desc"
-msgstr "Asc | desc"
+msgid "asc | desc"
+msgstr "asc | desc"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.grid-size"
@@ -12063,8 +12089,8 @@ msgstr "Izgara boyutu"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.grid-size"
-msgid "Small | medium | large"
-msgstr "Small | medium | large"
+msgid "small | medium | large"
+msgstr "small | medium | large"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.group"
@@ -12073,8 +12099,8 @@ msgstr "Grup"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.group"
-msgid "None | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
-msgstr "None | type | date | size | tag | rating: klasörün kendi görünümü yoksa listenin grupları"
+msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
+msgstr "none | type | date | size | tag | rating: klasörün kendi görünümü yoksa listenin grupları"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.folders-first"
@@ -12139,7 +12165,7 @@ msgstr "ETİKETLER: [tags] listeniz; tıklayınca o etiketi taşıyan dosyalar g
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:sidebar.tree-follow"
 msgid "Tree follow"
-msgstr "Ağaç izlesin"
+msgstr "Ağacı açık klasöre genişlet"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:sidebar.tree-follow"
@@ -12154,7 +12180,7 @@ msgstr "Özellikler"
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:preview.properties"
 msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
-msgstr "Önizleme bölmesi ve Hızlı bakış, dosyanın özelliklerini bilgilerinin altında gösterir (kamera, sanatçı, süre, sayfa …); Gezik bunları önizleme sırasında dosyadan okur. Kapalı: hiçbir şey okunmaz."
+msgstr "Önizleme bölmesi ve Hızlı bakış, dosyanın temel bilgilerinin altında özelliklerini de gösterir (kamera, sanatçı, süre, sayfa …); Gezik bunları önizleme sırasında dosyadan okur. Kapalı: hiçbir şey okunmaz."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:archives.double-click"
@@ -12163,8 +12189,8 @@ msgstr "Çift tıklama"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:archives.double-click"
-msgid "Browse | system | extract-here. What double-clicking an archive does: go into it as into a folder, open it with the system's program, or extract it next to itself."
-msgstr "Browse | system | extract-here. Bir arşive çift tıklayınca ne olur: klasör gibi içine girilir, sistemin programıyla açılır ya da yanına ayıklanır."
+msgid "browse | system | extract-here. What double-clicking an archive does: go into it as into a folder, open it with the system's program, or extract it next to itself."
+msgstr "browse | system | extract-here. Bir arşive çift tıklayınca ne olur: klasör gibi içine girilir, sistemin programıyla açılır ya da yanına ayıklanır."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:archives.preview-limit"
@@ -12233,8 +12259,8 @@ msgstr "Everything"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:search.everything"
-msgid "Auto | off. Windows: ask Everything (voidtools) for names when it runs; \"off\": Gezik's own scanner always."
-msgstr "Auto | off. Windows: çalışıyorsa adları Everything'e (voidtools) sor; \"off\": her zaman Gezik'in kendi tarayıcısı."
+msgid "auto | off. Windows: ask Everything (voidtools) for names when it runs; \"off\": Gezik's own scanner always."
+msgstr "auto | off. Windows: çalışıyorsa adları Everything'e (voidtools) sor; \"off\": her zaman Gezik'in kendi tarayıcısı."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:search.max-results"
@@ -12293,8 +12319,8 @@ msgstr "Yazma"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:keyboard.typing"
-msgid "Jump | filter. What typing a letter on the file list does: \"jump\" goes to the first name starting with what you typed; \"filter\" opens the filter (Ctrl+F, or / ) with it."
-msgstr "Jump | filter. Dosya listesinde bir harf yazınca ne olur: \"jump\" yazdığınızla başlayan ilk ada gider; \"filter\" filtreyi (Ctrl+F ya da / ) onunla açar."
+msgid "jump | filter. What typing a letter on the file list does: \"jump\" goes to the first name starting with what you typed; \"filter\" opens the filter (Ctrl+F, or / ) with it."
+msgstr "jump | filter. Dosya listesinde bir harf yazınca ne olur: \"jump\" yazdığınızla başlayan ilk ada gider; \"filter\" filtreyi (Ctrl+F ya da / ) onunla açar."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:shortcuts"
@@ -12318,8 +12344,8 @@ msgstr "Hızlı bakış"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:system.quick-look"
-msgid "System | gezik. macOS: Space opens the system Quick Look panel (\"system\") or Gezik's own window (\"gezik\"). Windows and Linux always use Gezik's own."
-msgstr "System | gezik. macOS: Ara çubuğu sistemin Hızlı Bakış panelini (\"system\") ya da Gezik'in kendi penceresini (\"gezik\") açar. Windows ve Linux her zaman Gezik'inkini kullanır."
+msgid "system | gezik. macOS: Space opens the system Quick Look panel (\"system\") or Gezik's own window (\"gezik\"). Windows and Linux always use Gezik's own."
+msgstr "system | gezik. macOS: Ara çubuğu sistemin Hızlı Bakış panelini (\"system\") ya da Gezik'in kendi penceresini (\"gezik\") açar. Windows ve Linux her zaman Gezik'inkini kullanır."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:system.tray"
@@ -12424,5 +12450,5 @@ msgstr "Komutlar"
 #~ msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
 #~ msgstr "{0}: \"system\" ya da \"extract-here\" bekleniyordu, gelen: {1}"
 #~ msgctxt "setting:archives.double-click"
-#~ msgid "System | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
-#~ msgstr "System | extract-here. Bir arşive çift tıklayınca ne olur: sistemin programıyla açılır ya da yanına ayıklanır."
+#~ msgid "system | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
+#~ msgstr "system | extract-here. Bir arşive çift tıklayınca ne olur: sistemin programıyla açılır ya da yanına ayıklanır."

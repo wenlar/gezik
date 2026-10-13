@@ -55,8 +55,9 @@ pub(super) enum Pressed {
 pub(super) fn rows(settings: &Settings, platform: Platform) -> Vec<KeyRow> {
     let shortcuts = &settings.shortcuts;
     let mut actions: Vec<Action> = Action::ALL.to_vec();
-    // By the title shown (spec 15): the English one still finds it (`with_haystack`).
-    actions.sort_by_cached_key(|a| t("", a.title()).into_owned());
+    // By the title shown (spec 15), in the names' order (Ç after C, not after Z): the English
+    // one still finds it (`with_haystack`).
+    actions.sort_by(|a, b| gezik_core::sort::natural_cmp(&t("", a.title()), &t("", b.title())));
     let mut rows: Vec<KeyRow> = actions
         .into_iter()
         .map(|action| {

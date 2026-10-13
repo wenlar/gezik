@@ -428,6 +428,8 @@ export component SettingsWindow inherits Window {
     icon: @image-url("../../icons/gezik-64.png");
     preferred-width: 820px;
     preferred-height: 600px;
+    // Room for a row's title beside its 240 px control: narrower, the titles shrank to nothing.
+    min-width: page-pane.width + 400px;
     background: Theme.background;
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;
@@ -486,8 +488,9 @@ export component SettingsWindow inherits Window {
             return reject;
         }
     HorizontalLayout {
-        Rectangle {
-            width: 180px;
+        page-pane := Rectangle {
+            // As wide as the longest page title (a translated one too), within a cap.
+            width: clamp(page-list.preferred-width, 180px, 280px);
             background: Theme.chrome;
             // The page list is one stop of Tab; Up and Down choose a page, Enter the links.
             pages-scope := FocusScope {
@@ -508,7 +511,7 @@ export component SettingsWindow inherits Window {
                     return reject;
                 }
             }
-            VerticalLayout {
+            page-list := VerticalLayout {
                 padding: Theme.spacing * 2;
                 spacing: 2px;
                 alignment: start;
@@ -522,12 +525,15 @@ export component SettingsWindow inherits Window {
                     accessible-label: title;
                     accessible-item-selected: i == root.page;
                     accessible-action-default => { root.page-chosen(i); }
-                    Text {
-                        x: Theme.spacing * 2;
-                        height: parent.height;
-                        text: title;
-                        vertical-alignment: center;
-                        color: i == root.page ? Theme.selection-foreground : Theme.foreground;
+                    HorizontalLayout {
+                        padding-left: Theme.spacing * 2;
+                        padding-right: Theme.spacing * 2;
+                        Text {
+                            text: title;
+                            vertical-alignment: center;
+                            overflow: elide;
+                            color: i == root.page ? Theme.selection-foreground : Theme.foreground;
+                        }
                     }
                     page-touch := TouchArea {
                         clicked => {

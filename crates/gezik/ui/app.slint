@@ -458,6 +458,12 @@ export component AppWindow inherits Window {
     // in state.toml on close.
     in property <bool> preview-open;
     in-out property <length> preview-width: 280px;
+    // One pane: the room its row leaves the preview beside the sidebar, the splitters and the
+    // list at its narrowest (`sheet-min`). The preview narrows into it down to 160 px, then
+    // hides, so the row never runs past the window's edge and takes the toolbar with it.
+    pure function preview-room(sheet-min: length) -> length {
+        root.panes-room - (root.sidebar-position == 2 ? 2 * Theme.inset : root.sidebar-width + 5px + Theme.inset) - 5px - sheet-min
+    }
     in property <PreviewInfo> preview;
     // A fixed-width font for text previews.
     in property <string> mono-font;
@@ -1140,7 +1146,8 @@ export component AppWindow inherits Window {
                             background-menu(p, x, y) => { root.background-menu(p, x, y); }
                             marquee(p, x, y, w, h, additive) => { root.marquee(p, x, y, w, h, additive); }
                             marquee-done(p) => { root.marquee-done(p); }
-                            preview-open: root.preview-open;
+                            // Hidden for want of room: the Miller columns show their own.
+                            preview-open: root.preview-open && (root.dual || root.preview-room(self.sheet-min-width) >= 160px);
                             preview: root.preview;
                             mono-font: root.mono-font;
                             column-width <=> root.column-width;
@@ -1203,7 +1210,7 @@ export component AppWindow inherits Window {
                                     min-height: pane.sheet-min-height;
                                 }
                                 // Grabbable over 5px; the line shows only while hovered or dragged.
-                                if !root.dual && root.preview-open: Rectangle {
+                                if !root.dual && root.preview-open && root.preview-room(pane.sheet-min-width) >= 160px: Rectangle {
                                     width: 5px;
                                     accessible-role: none;
                                     Rectangle {
@@ -1217,8 +1224,11 @@ export component AppWindow inherits Window {
                                         changed pressed => { if !self.pressed { root.preview-resized(); } }
                                     }
                                 }
-                                if !root.dual && root.preview-open: PreviewPane {
-                                    width: root.preview-width;
+                                if !root.dual && root.preview-open && root.preview-room(pane.sheet-min-width) >= 160px: PreviewPane {
+                                    // Not `width`: that would make the window's minimum follow its width.
+                                    min-width: 160px;
+                                    preferred-width: min(root.preview-width, root.preview-room(pane.sheet-min-width));
+                                    max-width: self.preferred-width;
                                     info: root.preview;
                                     mono-font: root.mono-font;
                                     // Its own sheet, like the list's.

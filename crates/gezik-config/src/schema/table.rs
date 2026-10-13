@@ -418,7 +418,9 @@ pub fn description(line: &TemplateLine<'_>) -> String {
     let hint = hint(line.body).trim_start_matches('#').trim();
     if !hint.is_empty() {
         let mut first = hint.to_owned();
-        if let Some(letter) = first.get_mut(..1) {
+        // A list of the values first (`list | grid | columns`) stays as they are written.
+        let values = hint.split_once(" | ").is_some_and(|(before, _)| !before.contains(':'));
+        if let Some(letter) = first.get_mut(..1).filter(|_| !values) {
             letter.make_ascii_uppercase();
         }
         if !description.is_empty() {
