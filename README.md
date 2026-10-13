@@ -42,6 +42,8 @@ Windows · macOS · Linux
 
 **Tags.** Color tags, star ratings and comments kept in the files (Finder and Dolphin read them), tag dots and columns, `tag:`/`rating:` filters and search, a TAGS sidebar section, and highlight rules that color rows. → [Tags](docs/features.md#tags)
 
+**Languages.** English and Turkish, plus machine-translated German, Spanish, French and Simplified Chinese; Gezik follows the system's language unless you pick one. A new language is a plain `.po` file in the settings folder. → [Translating](docs/translating.md)
+
 **The system.** A command line, a single instance, one Trash view for every bin, and PATH integration you can undo. → [System integration](docs/features.md#system-integration)
 
 **Tools.** Checksums and their verification, file and folder compare, a sync (two-way, left to right or mirror) that asks first and deletes only to the trash (it is stateless: a delete spreads only with mirror or a row turned to `×`), duplicates, a size map and list export; Copy To with a filter, split and join; copies that can be verified, speed-limited and reordered in the queue. → [Tools](docs/features.md#tools) · [Compare and sync](docs/features.md#tabs-address-bar-and-terminal) · [Copy options](docs/features.md#file-operations) · [Export list](docs/features.md#export-list)
