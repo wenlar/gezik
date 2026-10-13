@@ -340,6 +340,7 @@ msgstr[1] "…und {n} weitere"
 #: crates/gezik/src/settings_window.rs
 #: crates/gezik/src/settings_window/themes.rs
 #: crates/gezik/src/tab_sets.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
 #, fuzzy
@@ -1738,8 +1739,12 @@ msgstr "{0} müssen [[{1}]]-Tabellen sein"
 
 #: crates/gezik-config/src/settings_writer.rs
 #, fuzzy
-msgid "# Settings changes Gezik could not write yet; written when it can.\n{}"
-msgstr "# Einstellungsänderungen, die Gezik noch nicht schreiben konnte; werden geschrieben, sobald möglich.\n{}"
+msgid ""
+"# Settings changes Gezik could not write yet; written when it can.\n"
+"{}"
+msgstr ""
+"# Einstellungsänderungen, die Gezik noch nicht schreiben konnte; werden geschrieben, sobald möglich.\n"
+"{}"
 
 #: crates/gezik-config/src/settings_writer.rs
 #: crates/gezik-config/src/store.rs
@@ -4359,6 +4364,7 @@ msgstr "Wenn neuer"
 
 #: crates/gezik-core/src/ops/conflict.rs
 #: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #, fuzzy
 msgid "Merge"
 msgstr "Zusammenführen"
@@ -7415,8 +7421,14 @@ msgstr "Ja, alles auf {} in den Papierkorb verschieben"
 #. {0} and {1} are the two folders, {2} the lines saying what will be done.
 #: crates/gezik/src/compare.rs
 #, fuzzy
-msgid "Synchronize {0} and {1}\n\n{2}"
-msgstr "{0} und {1} synchronisieren\n\n{2}"
+msgid ""
+"Synchronize {0} and {1}\n"
+"\n"
+"{2}"
+msgstr ""
+"{0} und {1} synchronisieren\n"
+"\n"
+"{2}"
 
 #: crates/gezik/src/compare.rs
 #, fuzzy
@@ -9112,14 +9124,22 @@ msgstr "Wird verglichen…"
 #. {0} is what was said first (the compare program was not found), {1} the answer.
 #: crates/gezik/src/diff.rs
 #, fuzzy
-msgid "{0}.\n{1}"
-msgstr "{0}.\n{1}"
+msgid ""
+"{0}.\n"
+"{1}"
+msgstr ""
+"{0}.\n"
+"{1}"
 
 #. {0} and {1} are file names, {2} the answer ("The files are identical").
 #: crates/gezik/src/diff.rs
 #, fuzzy
-msgid "{0} and {1}\n{2}"
-msgstr "{0} und {1}\n{2}"
+msgid ""
+"{0} and {1}\n"
+"{2}"
+msgstr ""
+"{0} und {1}\n"
+"{2}"
 
 #: crates/gezik/src/diff.rs
 #, fuzzy
@@ -10016,8 +10036,14 @@ msgstr "{0} = {1} in {2}"
 #. {0} is why the journal does not read, {1} its path.
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "{0}\n\nNothing was changed. Fix or delete {1}."
-msgstr "{0}\n\nNichts wurde geändert. Reparieren oder löschen Sie {1}."
+msgid ""
+"{0}\n"
+"\n"
+"Nothing was changed. Fix or delete {1}."
+msgstr ""
+"{0}\n"
+"\n"
+"Nichts wurde geändert. Reparieren oder löschen Sie {1}."
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10026,13 +10052,25 @@ msgstr "Gezik kennt seinen eigenen Pfad oder die Benutzerordner nicht; nichts wu
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "Gezik puts these back as they were, newest first, each only if it is still what Gezik wrote:\n\n{}"
-msgstr "Gezik stellt diese wieder her, neueste zuerst, jeweils nur, wenn noch unverändert:\n\n{}"
+msgid ""
+"Gezik puts these back as they were, newest first, each only if it is still what Gezik wrote:\n"
+"\n"
+"{}"
+msgstr ""
+"Gezik stellt diese wieder her, neueste zuerst, jeweils nur, wenn noch unverändert:\n"
+"\n"
+"{}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "Gezik writes these, each noted in {0} before it is made; what is there already is kept:\n\n{1}"
-msgstr "Gezik schreibt diese, jeweils vorher in {0} notiert; Vorhandenes bleibt erhalten:\n\n{1}"
+msgid ""
+"Gezik writes these, each noted in {0} before it is made; what is there already is kept:\n"
+"\n"
+"{1}"
+msgstr ""
+"Gezik schreibt diese, jeweils vorher in {0} notiert; Vorhandenes bleibt erhalten:\n"
+"\n"
+"{1}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10051,8 +10089,14 @@ msgstr "Gezik ist bereits der Standard-Dateimanager."
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "Gezik writes these, each noted in {0} before it is made; if anything is in the way, nothing is written:\n\n{1}"
-msgstr "Gezik schreibt diese, jeweils vorher in {0} notiert; steht etwas im Weg, wird nichts geschrieben:\n\n{1}"
+msgid ""
+"Gezik writes these, each noted in {0} before it is made; if anything is in the way, nothing is written:\n"
+"\n"
+"{1}"
+msgstr ""
+"Gezik schreibt diese, jeweils vorher in {0} notiert; steht etwas im Weg, wird nichts geschrieben:\n"
+"\n"
+"{1}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10066,8 +10110,14 @@ msgstr "Gezik ist nicht der Standard-Dateimanager; nichts wiederherzustellen."
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "Gezik takes back its registrations and makes them again for this Gezik:\n\n{}"
-msgstr "Gezik nimmt seine Registrierungen zurück und legt sie für dieses Gezik neu an:\n\n{}"
+msgid ""
+"Gezik takes back its registrations and makes them again for this Gezik:\n"
+"\n"
+"{}"
+msgstr ""
+"Gezik nimmt seine Registrierungen zurück und legt sie für dieses Gezik neu an:\n"
+"\n"
+"{}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10082,18 +10132,36 @@ msgstr "{} ist vorhanden und stammt nicht von Gezik; es bleibt unverändert."
 #. {0} is what is taken back, {1} what is written again.
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "{0}\n\nThen, for this Gezik: {1}"
-msgstr "{0}\n\nDann, für dieses Gezik: {1}"
+msgid ""
+"{0}\n"
+"\n"
+"Then, for this Gezik: {1}"
+msgstr ""
+"{0}\n"
+"\n"
+"Dann, für dieses Gezik: {1}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "Gezik puts every change in {0} back as it was, newest first; anything changed since by something else is left as it is:\n\n{1}"
-msgstr "Gezik stellt jede Änderung in {0} wieder her, neueste zuerst; seither anderweitig Geändertes bleibt:\n\n{1}"
+msgid ""
+"Gezik puts every change in {0} back as it was, newest first; anything changed since by something else is left as it is:\n"
+"\n"
+"{1}"
+msgstr ""
+"Gezik stellt jede Änderung in {0} wieder her, neueste zuerst; seither anderweitig Geändertes bleibt:\n"
+"\n"
+"{1}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "{0} lists no changes. Gezik takes back these, found by Gezik's own names and shapes:\n\n{1}"
-msgstr "{0} listet keine Änderungen. Gezik nimmt diese zurück, erkannt an Geziks eigenen Namen und Formen:\n\n{1}"
+msgid ""
+"{0} lists no changes. Gezik takes back these, found by Gezik's own names and shapes:\n"
+"\n"
+"{1}"
+msgstr ""
+"{0} listet keine Änderungen. Gezik nimmt diese zurück, erkannt an Geziks eigenen Namen und Formen:\n"
+"\n"
+"{1}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10107,8 +10175,18 @@ msgstr "Gezik startet bereits bei Anmeldung."
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "Gezik writes these, each noted in {0} before it is made; what is there already is kept:\n\n{1}\n\nAt sign-in Gezik starts with --background: without a window while the tray icon is on, else with its window."
-msgstr "Gezik schreibt diese, jeweils vorher in {0} notiert; Vorhandenes bleibt erhalten:\n\n{1}\n\nBei Anmeldung startet Gezik mit --background: ohne Fenster, solange das Tray-Symbol an ist, sonst mit Fenster."
+msgid ""
+"Gezik writes these, each noted in {0} before it is made; what is there already is kept:\n"
+"\n"
+"{1}\n"
+"\n"
+"At sign-in Gezik starts with --background: without a window while the tray icon is on, else with its window."
+msgstr ""
+"Gezik schreibt diese, jeweils vorher in {0} notiert; Vorhandenes bleibt erhalten:\n"
+"\n"
+"{1}\n"
+"\n"
+"Bei Anmeldung startet Gezik mit --background: ohne Fenster, solange das Tray-Symbol an ist, sonst mit Fenster."
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10117,8 +10195,22 @@ msgstr "Gezik startet nicht bei Anmeldung; nichts auszuschalten."
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "Gezik takes back its start at login entry, newest first, each only if it is still what Gezik wrote:\n\n{0}\n\nThen, for this Gezik, it writes these, each noted in {1} before it is made:\n\n{2}"
-msgstr "Gezik nimmt seinen Autostart-Eintrag zurück, neueste zuerst, jeweils nur, wenn noch unverändert:\n\n{0}\n\nDann schreibt es für dieses Gezik diese, jeweils vorher in {1} notiert:\n\n{2}"
+msgid ""
+"Gezik takes back its start at login entry, newest first, each only if it is still what Gezik wrote:\n"
+"\n"
+"{0}\n"
+"\n"
+"Then, for this Gezik, it writes these, each noted in {1} before it is made:\n"
+"\n"
+"{2}"
+msgstr ""
+"Gezik nimmt seinen Autostart-Eintrag zurück, neueste zuerst, jeweils nur, wenn noch unverändert:\n"
+"\n"
+"{0}\n"
+"\n"
+"Dann schreibt es für dieses Gezik diese, jeweils vorher in {1} notiert:\n"
+"\n"
+"{2}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10218,8 +10310,14 @@ msgstr "gezik ist jetzt ein Befehl"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
-msgid "If gezik is not found in a new terminal, add this line to your shell profile (~/.zshrc, ~/.bashrc):\n\n{}"
-msgstr "Wird gezik in einem neuen Terminal nicht gefunden, fügen Sie diese Zeile Ihrem Shell-Profil hinzu (~/.zshrc, ~/.bashrc):\n\n{}"
+msgid ""
+"If gezik is not found in a new terminal, add this line to your shell profile (~/.zshrc, ~/.bashrc):\n"
+"\n"
+"{}"
+msgstr ""
+"Wird gezik in einem neuen Terminal nicht gefunden, fügen Sie diese Zeile Ihrem Shell-Profil hinzu (~/.zshrc, ~/.bashrc):\n"
+"\n"
+"{}"
 
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -14017,11 +14115,6 @@ msgstr "Ihre Gruppen"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy
-msgid "Everyone"
-msgstr "Jeder"
-
-#: crates/gezik/ui/widgets/info.slint
-#, fuzzy
 msgid "Read"
 msgstr "Lesen"
 
@@ -14045,6 +14138,11 @@ msgstr "Ausgeblendet"
 #, fuzzy
 msgid "Locked"
 msgstr "Geschützt"
+
+#: crates/gezik/ui/widgets/info.slint
+#, fuzzy
+msgid "Everyone"
+msgstr "Jeder"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy

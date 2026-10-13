@@ -338,6 +338,7 @@ msgstr[0] "…以及另外 {n} 个"
 #: crates/gezik/src/settings_window.rs
 #: crates/gezik/src/settings_window/themes.rs
 #: crates/gezik/src/tab_sets.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
 #, fuzzy
@@ -4338,6 +4339,7 @@ msgstr "如果较新"
 
 #: crates/gezik-core/src/ops/conflict.rs
 #: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #, fuzzy
 msgid "Merge"
 msgstr "合并"
@@ -13914,11 +13916,6 @@ msgstr "你的组"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy
-msgid "Everyone"
-msgstr "所有人"
-
-#: crates/gezik/ui/widgets/info.slint
-#, fuzzy
 msgid "Read"
 msgstr "读取"
 
@@ -13942,6 +13939,11 @@ msgstr "隐藏"
 #, fuzzy
 msgid "Locked"
 msgstr "已锁定"
+
+#: crates/gezik/ui/widgets/info.slint
+#, fuzzy
+msgid "Everyone"
+msgstr "所有人"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy

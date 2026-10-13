@@ -340,6 +340,7 @@ msgstr[1] "…et {n} autres"
 #: crates/gezik/src/settings_window.rs
 #: crates/gezik/src/settings_window/themes.rs
 #: crates/gezik/src/tab_sets.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
 #, fuzzy
@@ -4363,6 +4364,7 @@ msgstr "Si plus récent"
 
 #: crates/gezik-core/src/ops/conflict.rs
 #: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #, fuzzy
 msgid "Merge"
 msgstr "Fusionner"
@@ -14113,11 +14115,6 @@ msgstr "Vos groupes"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy
-msgid "Everyone"
-msgstr "Tout le monde"
-
-#: crates/gezik/ui/widgets/info.slint
-#, fuzzy
 msgid "Read"
 msgstr "Lecture"
 
@@ -14141,6 +14138,11 @@ msgstr "Caché"
 #, fuzzy
 msgid "Locked"
 msgstr "Verrouillé"
+
+#: crates/gezik/ui/widgets/info.slint
+#, fuzzy
+msgid "Everyone"
+msgstr "Tout le monde"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy

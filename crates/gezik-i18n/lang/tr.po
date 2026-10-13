@@ -278,6 +278,7 @@ msgstr[0] "…ve {n} tane daha"
 #: crates/gezik/src/settings_window.rs
 #: crates/gezik/src/settings_window/themes.rs
 #: crates/gezik/src/tab_sets.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
 msgid "Replace"
@@ -3562,6 +3563,7 @@ msgstr "Daha yeniyse"
 
 #: crates/gezik-core/src/ops/conflict.rs
 #: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 msgid "Merge"
 msgstr "Birleştir"
 
@@ -11337,10 +11339,6 @@ msgid "Your groups"
 msgstr "Gruplarınız"
 
 #: crates/gezik/ui/widgets/info.slint
-msgid "Everyone"
-msgstr "Herkes"
-
-#: crates/gezik/ui/widgets/info.slint
 msgid "Read"
 msgstr "Okuma"
 
@@ -11360,6 +11358,10 @@ msgstr "Gizli"
 #: crates/gezik/ui/widgets/tab-bar.slint
 msgid "Locked"
 msgstr "Kilitli"
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Everyone"
+msgstr "Herkes"
 
 #: crates/gezik/ui/widgets/info.slint
 msgid "Octal"
