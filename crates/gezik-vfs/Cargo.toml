@@ -17,3 +17,5 @@ gezik-batch.workspace = true
 
 [dev-dependencies]
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
+# Writes the gzip file a read-only test opens.
+flate2 = "1.1.10"

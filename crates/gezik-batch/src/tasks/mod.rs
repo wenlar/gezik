@@ -28,7 +28,10 @@ use gezik_core::batch::archive::archive_stem;
 
 use gezik_ops::RunCx;
 
-pub use self::add::AddToArchiveTask;
+pub use self::add::{
+    AddToArchiveTask, Fault, Rewritten, check_space, confirm_no_trash, plan_archive, put_sources, read_only, replace,
+    rewrite, writable,
+};
 pub use self::command::{CommandTask, find_program};
 pub use self::compress::{CompressTask, default_name};
 pub use self::convert::{ConvertTask, ConvertTools, ConvertWhat, is_ffmpeg_needed, skipped_inputs};

@@ -554,7 +554,12 @@ impl RunCx<'_> {
             if let Some(pending) = self.pending().filter(|_| crate::pending::can_hold(&path)) {
                 pending.add(&path)?;
             }
-            match std::fs::create_dir(&path) {
+            // Private to the user on Unix: an archive may be unpacked here (decrypted).
+            #[cfg_attr(not(unix), allow(unused_mut))]
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            match builder.create(&path) {
                 Ok(()) => {
                     let _ = gezik_platform::fs::set_hidden(&path);
                     if let Some((_, job)) = self.job {

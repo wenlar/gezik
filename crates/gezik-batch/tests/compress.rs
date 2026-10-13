@@ -9,7 +9,8 @@ use std::time::{Duration, Instant};
 
 use gezik_batch::archive::write::{self, Input, WriteCx};
 use gezik_batch::archive::{self, ExtractCx};
-use gezik_batch::tasks::{AddToArchiveTask, CompressOptions, CompressTask, Level, OutFormat, default_name};
+use gezik_batch::tasks::{AddToArchiveTask, CompressOptions, CompressTask, Fault, Level, OutFormat, default_name};
+use gezik_core::vfs::Edit;
 use gezik_ops::{Answer, Decision, Engine, Event, JobId, PendingDeletes, Question, Report, Settings};
 
 fn dir(name: &str) -> PathBuf {
@@ -823,5 +824,258 @@ fn a_part_that_cannot_land_brings_the_old_set_back() {
     assert!(PendingDeletes::new(d.join("pending-deletes")).restores().is_empty(), "put back: no note left");
     std::fs::remove_dir(d.join("set.7z.003")).unwrap();
     assert_eq!(unpacked(&d.join("set.7z.001"), &d, "back", None), tree(&old));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+// --- Changing an archive (spec 16 §6) ---
+
+/// Runs edits of `archive` (with `fault` injected); `on` answers its questions.
+fn edit(
+    engine: &Engine,
+    archive: &Path,
+    edits: Vec<Edit>,
+    password: Option<&str>,
+    fault: Option<Fault>,
+    on: impl FnMut(&Engine, JobId, &Event) -> bool,
+) -> (Report, Vec<Event>) {
+    let mut task = AddToArchiveTask::edit(archive.to_path_buf(), edits, password.map(str::to_owned));
+    if let Some(fault) = fault {
+        task = task.with_fault(fault);
+    }
+    finish(engine, engine.submit(Box::new(task)), on)
+}
+
+/// Each entry's Unix mode as a 7z or tar unpack reports it, by name.
+#[derive(Default)]
+struct Modes {
+    password: Option<String>,
+    modes: RefCell<Vec<(String, Option<u32>)>>,
+}
+
+impl ExtractCx for Modes {
+    fn add_bytes(&self, _: u64) {}
+    fn entry_done(&self) {}
+    fn stopped(&self) -> bool {
+        false
+    }
+    fn password(&self, retry: bool) -> Option<String> {
+        if retry { None } else { self.password.clone() }
+    }
+    fn entry_failed(&self, name: &str, err: &io::Error) {
+        panic!("{name}: {err}");
+    }
+    fn entry_header(&self, path: &Path, header: &archive::Header) {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        self.modes.borrow_mut().push((name, header.mode));
+    }
+}
+
+/// The date and Unix mode of entry `name` in `archive`.
+fn facts(archive: &Path, d: &Path, name: &str, password: Option<&str>) -> (Option<std::time::SystemTime>, Option<u32>) {
+    let cx = R::new(password);
+    let listed = archive::list_all(archive::open(archive).unwrap().as_mut(), &cx).unwrap();
+    let date = listed.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("{name} listed")).modified;
+    let last = name.rsplit('/').next().unwrap();
+    let mode = if archive.extension().is_some_and(|e| e == "zip") {
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(archive).unwrap()).unwrap();
+        let i = zip.index_for_name(name).unwrap();
+        zip.by_index_raw(i).unwrap().unix_mode().map(|m| m & 0o7777)
+    } else {
+        let stage = d.join("modes");
+        let _ = std::fs::remove_dir_all(&stage);
+        std::fs::create_dir_all(&stage).unwrap();
+        let cx = Modes { password: password.map(str::to_owned), ..Modes::default() };
+        archive::open(archive).unwrap().extract(&stage, &cx).unwrap();
+        let mode = cx.modes.borrow().iter().find(|(n, _)| n == last).and_then(|(_, mode)| *mode);
+        let _ = std::fs::remove_dir_all(&stage);
+        mode
+    };
+    (date, mode)
+}
+
+#[test]
+fn edits_round_trip_in_every_writable_format() {
+    let d = dir("edit-all");
+    let src = d.join("src");
+    make(&src, &[("docs/a.txt", b"a"), ("docs/sub/b.txt", b"bb"), ("keep.sh", b"#!/bin/sh"), ("gone.txt", b"gone")]);
+    let more = d.join("more");
+    make(&more, &[("new/n.txt", b"new"), ("single.txt", b"one")]);
+    let engine = engine(&d);
+    let cases = [
+        (OutFormat::Zip, None),
+        (OutFormat::Zip, Some("Passw0rd")),
+        (OutFormat::SevenZ, None),
+        (OutFormat::SevenZ, Some("Passw0rd")),
+        (OutFormat::TarGz, None),
+        (OutFormat::Tar, None),
+    ];
+    for (format, password) in cases {
+        let archive = d.join(format!("e.{}", format.extension()));
+        let mut items = inputs(&children(&src));
+        for item in &mut items {
+            item.modified = Some(std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000));
+            if item.name == "keep.sh" {
+                item.mode = 0o751;
+                item.keep_mode = true;
+            }
+        }
+        let opts = CompressOptions { password: password.map(str::to_owned), ..options(format, Level::Normal) };
+        write::write(&items, &archive, &opts, 1, &W::default()).unwrap();
+        let before = std::fs::read(&archive).unwrap();
+        let kept = facts(&archive, &d, "keep.sh", password);
+        let edits = vec![
+            Edit::Delete("gone.txt".into()),
+            Edit::Rename { from: "docs/sub".into(), to: "docs/inner".into() },
+            Edit::MakeDir("empty".into()),
+            Edit::Put { from: more.join("new"), to: "docs/new".into() },
+            Edit::Put { from: more.join("single.txt"), to: "docs/one.txt".into() },
+        ];
+        // The password is not given: it is asked for.
+        let (report, _) = edit(&engine, &archive, edits, None, None, |engine, job, event| {
+            let Event::Question { id, .. } = event else { return false };
+            engine.answer(job, *id, Answer::Text(password.unwrap_or_default().into()));
+            true
+        });
+        assert!(report.failures.is_empty(), "{format:?}: {:?}", report.failures);
+        let back = unpacked(&archive, &d, "back", password);
+        let names: Vec<(&str, &[u8])> = back.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+        assert_eq!(
+            names,
+            [
+                ("docs/a.txt", b"a".as_slice()),
+                ("docs/inner/b.txt", b"bb"),
+                ("docs/new/n.txt", b"new"),
+                ("docs/one.txt", b"one"),
+                ("keep.sh", b"#!/bin/sh"),
+            ],
+            "{format:?}"
+        );
+        assert!(d.join("back/empty").is_dir(), "{format:?}: the new folder");
+        assert_eq!(facts(&archive, &d, "keep.sh", password), kept, "{format:?}: date and mode kept");
+        assert_eq!(kept.1, Some(0o751), "{format:?}");
+        if format == OutFormat::Zip && password.is_some() {
+            let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive).unwrap()).unwrap();
+            assert!(
+                zip.by_index_raw(zip.index_for_name("docs/one.txt").unwrap()).unwrap().encrypted(),
+                "new entries take the password"
+            );
+        }
+        if format == OutFormat::SevenZ && password.is_some() {
+            assert!(sevenz_rust2::Archive::open(&archive).is_ok(), "names were not hidden, and are not now");
+            let cx = R::new(None);
+            let stage = d.join("nopw");
+            std::fs::create_dir_all(&stage).unwrap();
+            let opened = archive::open(&archive).unwrap().extract(&stage, &cx);
+            assert!(opened.is_err() || !cx.failed.borrow().is_empty(), "nothing comes out without the password");
+            let _ = std::fs::remove_dir_all(&stage);
+        }
+        seven_zip_tests(&archive, password);
+        assert!(leftovers(&d).is_empty(), "{format:?}: {:?}", leftovers(&d));
+        let job = engine.undo().unwrap();
+        let (report, _) = finish(&engine, job, nothing);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(std::fs::read(&archive).unwrap(), before, "{format:?}: undo brings the old archive back");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_failure_at_any_step_leaves_the_archive_as_it_was() {
+    let d = dir("edit-faults");
+    let src = d.join("src");
+    make(&src, &[("a.txt", b"a"), ("b.txt", b"b")]);
+    let more = d.join("more");
+    make(&more, &[("big.bin", &noise(300_000, 7))]);
+    let engine = engine(&d);
+    for format in [OutFormat::Zip, OutFormat::TarGz, OutFormat::SevenZ] {
+        let archive = d.join(format!("f.{}", format.extension()));
+        write::write(&inputs(&children(&src)), &archive, &options(format, Level::Normal), 1, &W::default()).unwrap();
+        let before = std::fs::read(&archive).unwrap();
+        for fault in [Fault::Space, Fault::Write, Fault::Spoil, Fault::Replace] {
+            let edits =
+                vec![Edit::Delete("a.txt".into()), Edit::Put { from: more.join("big.bin"), to: "big.bin".into() }];
+            let (report, _) = edit(&engine, &archive, edits, None, Some(fault), nothing);
+            assert_eq!(report.failures.len(), 1, "{format:?} {fault:?}: {:?}", report.failures);
+            if fault == Fault::Spoil {
+                assert!(report.failures[0].message.contains("did not read back"), "{}", report.failures[0].message);
+            }
+            assert_eq!(std::fs::read(&archive).unwrap(), before, "{format:?} {fault:?}: unchanged");
+            assert!(leftovers(&d).is_empty(), "{format:?} {fault:?}: {:?}", leftovers(&d));
+            let pending = PendingDeletes::new(d.join("pending-deletes"));
+            assert!(pending.restores().is_empty(), "{format:?} {fault:?}: nothing left aside");
+        }
+    }
+    // Cancelled while writing.
+    let archive = d.join("f.zip");
+    let before = std::fs::read(&archive).unwrap();
+    let big = d.join("huge");
+    let files: Vec<(String, Vec<u8>)> = (0..6).map(|i| (format!("n{i}.bin"), noise(2_000_000, i))).collect();
+    let list: Vec<(&str, &[u8])> = files.iter().map(|(n, d)| (n.as_str(), d.as_slice())).collect();
+    make(&big, &list);
+    let edits = vec![Edit::Put { from: big, to: "huge".into() }];
+    let (report, _) = edit(&engine, &archive, edits, None, None, |engine, job, event| match event {
+        Event::Progress { job: j, progress } if *j == job && progress.bytes_done > 0 => {
+            engine.cancel(job);
+            true
+        }
+        _ => false,
+    });
+    assert!(report.cancelled);
+    assert_eq!(std::fs::read(&archive).unwrap(), before, "cancelled: unchanged");
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn without_a_trash_the_change_is_asked_for() {
+    let d = dir("edit-notrash");
+    let src = d.join("src");
+    make(&src, &[("a.txt", b"a"), ("b.txt", b"b")]);
+    let archive = d.join("n.zip");
+    write::write(&inputs(&children(&src)), &archive, &options(OutFormat::Zip, Level::Normal), 1, &W::default())
+        .unwrap();
+    let before = std::fs::read(&archive).unwrap();
+    let engine = engine(&d);
+    let mut asked = Vec::new();
+    for button in [1, 0] {
+        let edits = vec![Edit::Delete("a.txt".into())];
+        let (report, _) = edit(&engine, &archive, edits, None, Some(Fault::NoTrash), |engine, job, event| {
+            let Event::Question { id, question, .. } = event else { return false };
+            asked.push(question.clone());
+            engine.answer(job, *id, Answer::Button(button));
+            true
+        });
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        if button == 1 {
+            assert_eq!(std::fs::read(&archive).unwrap(), before, "Cancel: unchanged");
+        }
+    }
+    let Question::Confirm { title, buttons, .. } = &asked[0] else { panic!("{asked:?}") };
+    assert_eq!(title, "The old archive cannot be kept for undo");
+    assert_eq!(buttons, &["Change", "Cancel"]);
+    assert_eq!(asked.len(), 2);
+    assert_eq!(unpacked(&archive, &d, "back", None), vec![("b.txt".to_owned(), b"b".to_vec())]);
+    assert!(leftovers(&d).is_empty(), "{:?}", leftovers(&d));
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn read_only_formats_are_refused() {
+    let d = dir("edit-ro");
+    let single = d.join("x.txt.gz");
+    {
+        let mut gz =
+            flate2::write::GzEncoder::new(std::fs::File::create(&single).unwrap(), flate2::Compression::fast());
+        io::Write::write_all(&mut gz, b"x").unwrap();
+        gz.finish().unwrap();
+    }
+    std::fs::write(d.join("parts.7z.001"), b"7z\xBC\xAF\x27\x1C").unwrap();
+    assert!(!gezik_batch::tasks::writable(&single) && !gezik_batch::tasks::writable(&d.join("parts.7z.001")));
+    let engine = engine(&d);
+    let before = std::fs::read(&single).unwrap();
+    let (report, _) = edit(&engine, &single, vec![Edit::MakeDir("new".into())], None, None, nothing);
+    assert_eq!(report.failures.len(), 1);
+    assert!(report.failures[0].message.contains("can only be read"), "{}", report.failures[0].message);
+    assert_eq!(std::fs::read(&single).unwrap(), before);
     let _ = std::fs::remove_dir_all(&d);
 }

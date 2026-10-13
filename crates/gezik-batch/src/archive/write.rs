@@ -395,11 +395,11 @@ fn write_zip(
     zw.finish()?.flush()
 }
 
-/// Writes `archive`'s entries that `keep` accepts (copied as they are, encrypted ones too:
-/// nothing is unpacked) and then `inputs` to `out` as a new zip.
+/// Writes `archive`'s entries that `keep` gives a name (copied as they are under it, encrypted
+/// ones too: nothing is unpacked) and then `inputs` to `out` as a new zip.
 pub fn rewrite_zip<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
-    keep: &dyn Fn(&str) -> bool,
+    keep: &dyn Fn(&str) -> Option<String>,
     inputs: &[Input],
     out: &Path,
     password: Option<&str>,
@@ -420,8 +420,10 @@ pub fn rewrite_zip<R: Read + Seek>(
                 return Err(stop());
             }
             let file = archive.by_index_raw(i)?;
-            if keep(file.name()) {
-                zw.raw_copy_file(file)?;
+            match keep(file.name()) {
+                Some(name) if name == file.name() => zw.raw_copy_file(file)?,
+                Some(name) => zw.raw_copy_file_rename(file, name)?,
+                None => {}
             }
         }
         zip_inputs(&mut zw, inputs, &options, workers, out, cx)?;

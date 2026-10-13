@@ -1880,6 +1880,7 @@ dependencies = [
 name = "gezik-vfs"
 version = "0.1.0-rc.2"
 dependencies = [
+ "flate2",
  "gezik-batch",
  "gezik-core",
  "gezik-i18n",

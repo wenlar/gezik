@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 use gezik_batch::archive::{self, Entry as Listed, ExtractCx};
 use gezik_core::Entry;
-use gezik_core::vfs::VfsRoot;
+use gezik_core::vfs::{Caps, VfsRoot};
 
 use self::index::Index;
 use crate::Vfs;
@@ -30,7 +30,8 @@ pub struct ArchiveVfs {
     /// Where its entries are taken out to.
     stage: PathBuf,
     /// The archive it is in: kept open while this one is (its file is in that one's folder).
-    _outer: Option<Arc<dyn Vfs>>,
+    outer: Option<Arc<dyn Vfs>>,
+    caps: Caps,
 }
 
 impl ArchiveVfs {
@@ -59,6 +60,11 @@ impl ArchiveVfs {
         };
         let index = Index::build(entries);
         let password = password.password.into_inner().unwrap_or_else(PoisonError::into_inner);
+        // Gezik writes what it reads itself and has a writer for (spec 16 §6.1); an archive in
+        // an archive only if that one is written too.
+        let writes = seven_zip.is_none()
+            && gezik_batch::tasks::writable(&file)
+            && outer.as_ref().is_none_or(|outer| outer.caps().has(Caps::WRITE));
         Ok(ArchiveVfs {
             root,
             file,
@@ -67,19 +73,29 @@ impl ArchiveVfs {
             seven_zip,
             password: Mutex::new(password),
             stage: crate::stage::new_folder()?,
-            _outer: outer,
+            outer,
+            caps: if writes { Caps::EDIT } else { Caps::default() },
         })
     }
 
-    /// Whether its file is still as it was read.
+    /// Whether its file is still as it was read, and the archive it is in too (a change there
+    /// may have changed this one).
     pub fn unchanged(&self) -> bool {
-        facts(&self.file).is_ok_and(|now| now == self.seen)
+        facts(&self.file).is_ok_and(|now| now == self.seen) && self.outer.as_ref().is_none_or(|outer| outer.unchanged())
     }
 }
 
 impl Vfs for ArchiveVfs {
     fn root(&self) -> &VfsRoot {
         &self.root
+    }
+
+    fn caps(&self) -> Caps {
+        self.caps
+    }
+
+    fn archive(&self) -> Option<(PathBuf, Option<String>)> {
+        Some((self.file.clone(), self.password.lock().unwrap_or_else(PoisonError::into_inner).clone()))
     }
 
     fn list(&self, dir: &str) -> Option<Vec<Entry>> {
