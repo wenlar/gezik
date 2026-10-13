@@ -744,9 +744,14 @@ mod tests {
             })
             .collect();
         let place = Place { path: Some(PathBuf::from("/u/Pictures/2024")), kinds: 0 };
-        let started = Instant::now();
-        let counts = Counts::of(&entries);
-        let counting = started.elapsed();
+        // Best of five: one run on a shared CI runner can be slowed by a neighbour.
+        let (counts, counting) = (0..5)
+            .map(|_| {
+                let started = Instant::now();
+                (Counts::of(&entries), started.elapsed())
+            })
+            .min_by_key(|(_, took)| *took)
+            .unwrap();
         assert!(counting < Duration::from_millis(2) * slow, "count: {counting:?}");
         let started = Instant::now();
         for _ in 0..1000 {
