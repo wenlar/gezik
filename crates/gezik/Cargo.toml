@@ -12,6 +12,7 @@ gezik-platform.workspace = true
 gezik-ops.workspace = true
 gezik-batch.workspace = true
 gezik-search.workspace = true
+gezik-vfs.workspace = true
 gezik-i18n.workspace = true
 # Software renderer only: no GPU or OpenGL driver needed, and it measured far lower
 # memory than FemtoVG (5 MB vs 35 MB idle) at the same scrolling CPU cost.

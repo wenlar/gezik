@@ -32,6 +32,12 @@ msgid "the image is damaged: {}"
 msgstr "la imagen está dañada: {}"
 
 #: crates/gezik-batch/src/archive/mod.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+#, fuzzy
+msgid "The archive has more than {} entries"
+msgstr "El archivo comprimido tiene más de {} entradas"
+
+#: crates/gezik-batch/src/archive/mod.rs
 #, fuzzy
 msgid "not a known archive"
 msgstr "no es un archivo comprimido conocido"
@@ -62,6 +68,7 @@ msgstr "falta la parte {}"
 #: crates/gezik-batch/src/archive/sevenz.rs
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/external.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
 #, fuzzy
 msgid "no password"
 msgstr "sin contraseña"
@@ -389,6 +396,7 @@ msgstr "Conservar ambos"
 #: crates/gezik/src/tab_sets.rs
 #: crates/gezik/src/tags.rs
 #: crates/gezik/src/trash_view.rs
+#: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -640,6 +648,7 @@ msgstr[0] "Extraer {n} archivo comprimido"
 msgstr[1] "Extraer {n} archivos comprimidos"
 
 #: crates/gezik-batch/src/tasks/mod.rs
+#: crates/gezik/src/navigation.rs
 #, fuzzy
 msgid "7-Zip needed to open this kind of archive"
 msgstr "Se necesita 7-Zip para abrir este tipo de archivo comprimido"
@@ -1320,6 +1329,12 @@ msgstr "todas"
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
 msgctxt "choice:archives.double-click"
+msgid "browse"
+msgstr "abrir como carpeta"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:archives.double-click"
 msgid "system"
 msgstr "del sistema"
 
@@ -1634,8 +1649,13 @@ msgstr "{0}: se esperaba una velocidad como \"20 MB/s\" o \"\", se obtuvo {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
-msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
-msgstr "{0}: se esperaba \"system\" o \"extract-here\", se obtuvo {1}"
+msgid "{0}: expected \"browse\", \"system\" or \"extract-here\", got {1}"
+msgstr "{0}: se esperaba \"browse\", \"system\" o \"extract-here\", se obtuvo {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
+msgid "{0}: expected a number from 1 to 4096, got {1}"
+msgstr "{0}: se esperaba un número de 1 a 4096, se obtuvo {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2220,6 +2240,7 @@ msgid "Open Terminal as Administrator"
 msgstr "Abrir terminal como administrador"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/size_map.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
@@ -2595,6 +2616,7 @@ msgid "Find Duplicates"
 msgstr "Buscar duplicados"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Copy To…"
@@ -2726,6 +2748,13 @@ msgstr "Exportar configuración…"
 #, fuzzy
 msgid "Import Settings…"
 msgstr "Importar configuración…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/archives.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Open as Folder"
+msgstr "Abrir como carpeta"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -4762,6 +4791,11 @@ msgstr "Coincidencia"
 msgid "Comment"
 msgstr "Comentario"
 
+#: crates/gezik-core/src/view.rs
+#, fuzzy
+msgid "Packed"
+msgstr "Comprimido"
+
 #. {} is what is undone, "Copy 3 items"
 #: crates/gezik-ops/src/engine.rs
 #, fuzzy
@@ -4822,6 +4856,7 @@ msgid "It is too big for this drive (files there can be at most {} GB)"
 msgstr "Es demasiado grande para esta unidad (los archivos allí pueden ocupar como máximo {} GB)"
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copy {n} item"
 msgid_plural "Copy {n} items"
@@ -6264,6 +6299,38 @@ msgstr "La búsqueda falló en esta carpeta"
 msgid "Could not start the search"
 msgstr "No se pudo iniciar la búsqueda"
 
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+#, fuzzy
+msgid "7-Zip could not read it"
+msgstr "7-Zip no pudo leerlo"
+
+#: crates/gezik-vfs/src/lib.rs
+#, fuzzy
+msgid "Some items could not be taken out of the archive"
+msgstr "No se pudieron sacar algunos elementos del archivo comprimido"
+
+#: crates/gezik-vfs/src/lib.rs
+#, fuzzy
+msgid "Archives nested more than {} deep are not opened"
+msgstr "No se abren archivos comprimidos anidados a más de {} niveles"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Copying {}"
+msgstr "Copiando {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Copying {n} item"
+msgid_plural "Copying {n} items"
+msgstr[0] "Copiando {n} elemento"
+msgstr[1] "Copiando {n} elementos"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Copy {}"
+msgstr "Copiar {}"
+
 #: crates/gezik/src/actions.rs
 #, fuzzy
 msgid "Commands run on files and folders"
@@ -6428,6 +6495,11 @@ msgstr "Cambiar los indicadores de {0}: {1}"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
+msgid "Open with System App"
+msgstr "Abrir con la app del sistema"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
 msgid "Extract here"
 msgstr "Extraer aquí"
 
@@ -6486,6 +6558,7 @@ msgstr "Contraseña"
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
 msgid "OK"
 msgstr "Aceptar"
@@ -7979,6 +8052,16 @@ msgstr "Mostrar Comentario"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
+msgid "Hide Packed"
+msgstr "Ocultar Comprimido"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Show Packed"
+msgstr "Mostrar Comprimido"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
 msgid "Connect to {}"
 msgstr "Conectar a {}"
 
@@ -8617,6 +8700,7 @@ msgstr "No se puede usar el portapapeles: {}"
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/src/sidebar.rs
+#: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
 msgid "Cannot open {}: {}"
 msgstr "No se puede abrir {}: {}"
@@ -9167,6 +9251,16 @@ msgstr "Comparar  {}  ↔  {}  ·  {}"
 #, fuzzy
 msgid "Cannot copy: {}"
 msgstr "No se puede copiar: {}"
+
+#: crates/gezik/src/drag.rs
+#, fuzzy
+msgid "Use Copy To… for large selections"
+msgstr "Para selecciones grandes, use Copiar en…"
+
+#: crates/gezik/src/drag.rs
+#, fuzzy
+msgid "Still taking the items out of the archive…"
+msgstr "Aún se están sacando los elementos del archivo comprimido…"
 
 #: crates/gezik/src/dual.rs
 #, fuzzy
@@ -10415,6 +10509,13 @@ msgstr[1] "{n} pestañas bloqueadas siguen abiertas"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Reading {}: {n} item"
+msgid_plural "Reading {}: {n} items"
+msgstr[0] "Leyendo {}: {n} elemento"
+msgstr[1] "Leyendo {}: {n} elementos"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} ya no existe"
 
@@ -10540,6 +10641,11 @@ msgstr "Ya existe un archivo con este nombre"
 msgid "Not in search results: open a folder first"
 msgstr "No en los resultados de búsqueda: abra primero una carpeta"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Items in an archive can only be copied out"
+msgstr "Los elementos de un archivo comprimido solo se pueden copiar fuera"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -10550,6 +10656,13 @@ msgstr "{} funciona en los resultados de búsqueda"
 #, fuzzy
 msgid "can't be undone"
 msgstr "no se puede deshacer"
+
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Copied {n} item"
+msgid_plural "Copied {n} items"
+msgstr[0] "{n} elemento copiado"
+msgstr[1] "{n} elementos copiados"
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11529,6 +11642,11 @@ msgstr "Abra una búsqueda para guardarla"
 #, fuzzy
 msgid "Flat view works in folders"
 msgstr "La vista plana funciona en carpetas"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
+msgid "Inside an archive only names, sizes, dates and types are searched"
+msgstr "Dentro de un archivo comprimido solo se busca por nombre, tamaño, fecha y tipo"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
@@ -13483,6 +13601,11 @@ msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "¿Eliminar permanentemente {} elemento? No se puede deshacer."
 msgstr[1] "¿Eliminar permanentemente {} elementos? No se puede deshacer."
 
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Extracting {}…"
+msgstr "Extrayendo {}…"
+
 #: crates/gezik/src/view/columns.rs
 #, fuzzy
 msgid "Columns show folders only: the list is shown here"
@@ -14100,6 +14223,12 @@ msgstr "Valoración"
 msgctxt "column"
 msgid "Comment"
 msgstr "Comentario"
+
+#: crates/gezik/ui/widgets/file-view.slint
+#, fuzzy
+msgctxt "column"
+msgid "Packed"
+msgstr "Comprimido"
 
 #: crates/gezik/ui/widgets/file-view.slint
 #, fuzzy
@@ -15039,8 +15168,20 @@ msgstr "Doble clic"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:archives.double-click"
-msgid "system | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
-msgstr "system | extract-here. Lo que hace un doble clic en un archivo comprimido: abrirlo con el programa del sistema o extraerlo a su lado."
+msgid "browse | system | extract-here. What double-clicking an archive does: go into it as into a folder, open it with the system's program, or extract it next to itself."
+msgstr "browse | system | extract-here. Lo que hace un doble clic en un archivo comprimido: entrar en él como en una carpeta, abrirlo con el programa del sistema o extraerlo a su lado."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:archives.preview-limit"
+msgid "Preview limit"
+msgstr "Límite de vista previa"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:archives.preview-limit"
+msgid "MB: files inside an archive up to this size are extracted for the preview by themselves"
+msgstr "MB: los archivos de un archivo comprimido de hasta este tamaño se extraen solos para la vista previa"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15335,3 +15476,11 @@ msgstr "Reglas de resaltado"
 msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Comandos"
+
+#~ #, fuzzy
+#~ msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
+#~ msgstr "{0}: se esperaba \"system\" o \"extract-here\", se obtuvo {1}"
+#~ #, fuzzy
+#~ msgctxt "setting:archives.double-click"
+#~ msgid "system | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
+#~ msgstr "system | extract-here. Lo que hace un doble clic en un archivo comprimido: abrirlo con el programa del sistema o extraerlo a su lado."

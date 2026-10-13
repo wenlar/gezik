@@ -1,0 +1,19 @@
+[package]
+name = "gezik-vfs"
+description = "Places that are no folder on disk for the Gezik file manager: inside archives, and later phones"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gezik-core.workspace = true
+gezik-i18n.workspace = true
+# 7-Zip as a child process (no window, its process tree ended on cancel).
+gezik-platform.workspace = true
+# Copying out runs as an engine job (questions, conflicts, one undo).
+gezik-ops.workspace = true
+# The archive readers, `extract_some` and finding 7-Zip.
+gezik-batch.workspace = true
+
+[dev-dependencies]
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }

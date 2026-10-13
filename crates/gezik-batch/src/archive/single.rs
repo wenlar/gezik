@@ -51,6 +51,17 @@ impl ArchiveSource for SingleSource {
             let mut stream = decoder(self.codec, self.volumes.reader()?);
             (read_full(&mut stream, &mut first).map_err(damaged)?, stream)
         };
+        let listed = Entry {
+            name: name.clone(),
+            is_dir: false,
+            size: None,
+            packed: None,
+            encrypted: false,
+            modified: meta.modified,
+        };
+        if !cx.wants(&listed) {
+            return Ok(());
+        }
         let Some(path) = safe_join(dest, &name) else {
             cx.entry_failed(&name, &unsafe_path());
             return Ok(());

@@ -93,6 +93,8 @@ impl Place {
             Location::Trash => return Place::with(PlaceKind::Trash),
             Location::Flat(_) => return Place::with(PlaceKind::Flat),
             Location::Search(spec) => return Place::with(if spec.flat { PlaceKind::Flat } else { PlaceKind::Search }),
+            // Inside an archive: no folder of its own; rules by content still apply.
+            Location::Vfs(_) => return Place::default(),
         };
         let mut kinds = 0;
         let text = path.to_string_lossy();

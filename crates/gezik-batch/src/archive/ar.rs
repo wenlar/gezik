@@ -41,6 +41,7 @@ impl ArchiveSource for ArSource {
                 size: Some(header.size()),
                 packed: Some(header.size()),
                 encrypted: false,
+                modified: i64::try_from(header.mtime()).ok().and_then(unix_time),
             });
         }
         Ok(Some(entries))
@@ -63,19 +64,22 @@ impl ArchiveSource for ArSource {
                     continue;
                 };
                 let target = if folder.is_empty() { dest.to_path_buf() } else { dest.join(folder) };
-                extract_tar(decoder(codec, BufReader::new(&mut entry)), &target, cx)?;
+                let prefix = if folder.is_empty() { String::new() } else { format!("{folder}/") };
+                extract_tar(decoder(codec, BufReader::new(&mut entry)), &target, &prefix, cx)?;
+                continue;
+            }
+            let modified = i64::try_from(header.mtime()).ok().and_then(unix_time);
+            let size = header.size();
+            let listed =
+                Entry { name: name.clone(), is_dir: false, size: Some(size), packed: None, encrypted: false, modified };
+            if !cx.wants(&listed) {
                 continue;
             }
             let Some(path) = safe_join(dest, &name) else {
                 cx.entry_failed(&name, &unsafe_path());
                 continue;
             };
-            let meta = Meta {
-                modified: i64::try_from(header.mtime()).ok().and_then(unix_time),
-                mode: Some(header.mode()),
-                attributes: None,
-            };
-            let size = header.size();
+            let meta = Meta { modified, mode: Some(header.mode()), attributes: None };
             let result = write_file(&mut entry, dest, &path, Some(size), &meta, cx).map(|()| true);
             report_stream(&name, result, cx)?;
         }

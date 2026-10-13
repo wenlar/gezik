@@ -536,6 +536,8 @@ actions! {
     ExportSettings,
     /// Settings' Sync and Backup page, at Import Settings (spec 14 §7.2).
     ImportSettings,
+    /// Goes into the selected archive as into a folder (spec 16 §5.1; no key).
+    BrowseArchive,
 }
 
 impl Action {
@@ -673,6 +675,7 @@ impl Action {
             Action::InstallTheme => "install-theme",
             Action::ExportSettings => "export-settings",
             Action::ImportSettings => "import-settings",
+            Action::BrowseArchive => "browse-archive",
         }
     }
 
@@ -823,6 +826,7 @@ impl Action {
             Action::InstallTheme => tx!("Get Theme…"),
             Action::ExportSettings => tx!("Export Settings…"),
             Action::ImportSettings => tx!("Import Settings…"),
+            Action::BrowseArchive => tx!("Open as Folder"),
         }
     }
 
@@ -2385,6 +2389,8 @@ copy-path = \"ctrl+k\"
         assert_eq!(Action::from_name("edit-shortcuts"), Some(Action::EditShortcuts));
         assert_eq!(Action::from_name("install-theme"), Some(Action::InstallTheme));
         assert_eq!(Action::from_name("import-settings"), Some(Action::ImportSettings));
+        assert_eq!(Action::from_name("browse-archive"), Some(Action::BrowseArchive));
+        assert_eq!(Action::ALL.len(), 133);
     }
 
     #[test]

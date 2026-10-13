@@ -14,7 +14,7 @@ use gezik_core::view::{
     ViewSettings, normalize_columns,
 };
 use gezik_i18n::{t, tx};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThemeChoice {
@@ -132,17 +132,27 @@ pub struct ConvertState {
 /// What double-clicking an archive does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DoubleClick {
-    /// Opens it with the system's program for it.
+    /// Goes into it as into a folder (spec 16 §5.1).
     #[default]
+    Browse,
+    /// Opens it with the system's program for it.
     System,
     /// Extracts it next to itself.
     ExtractHere,
 }
 
 /// `[archives]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ArchivesSettings {
     pub double_click: DoubleClick,
+    /// Files in an archive up to this many MB are taken out for the preview by themselves.
+    pub preview_limit: u64,
+}
+
+impl Default for ArchivesSettings {
+    fn default() -> Self {
+        ArchivesSettings { double_click: DoubleClick::default(), preview_limit: 64 }
+    }
 }
 
 /// What Space shows on macOS (`[system] quick-look`, spec 9 §4.5).
@@ -1064,6 +1074,8 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
     let folder = match &spec.scope {
         Scope::Folder(path) => text(&path.to_string_lossy()),
         Scope::AllDrives => text("drives"),
+        // Its address: read back as a folder, the search finds its way into the archive again.
+        Scope::Vfs(at) => text(&at.text()),
     };
     table.insert("folder".into(), folder);
     if !spec.pattern.is_empty() {
@@ -1581,11 +1593,21 @@ fn parse_archives(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
     let mut out = ArchivesSettings::default();
     if let Some(value) = table.get("double-click") {
         match value.as_str() {
+            Some("browse") => out.double_click = DoubleClick::Browse,
             Some("system") => out.double_click = DoubleClick::System,
             Some("extract-here") => out.double_click = DoubleClick::ExtractHere,
             _ => warnings.push(Warning::new(
                 file,
-                t!("{0}: expected \"system\" or \"extract-here\", got {1}", "archives.double-click", value),
+                t!("{0}: expected \"browse\", \"system\" or \"extract-here\", got {1}", "archives.double-click", value),
+            )),
+        }
+    }
+    if let Some(value) = table.get("preview-limit") {
+        match value.as_integer().and_then(|n| u64::try_from(n).ok()).filter(|n| (1..=4096).contains(n)) {
+            Some(mb) => out.preview_limit = mb,
+            None => warnings.push(Warning::new(
+                file,
+                t!("{0}: expected a number from 1 to 4096, got {1}", "archives.preview-limit", value),
             )),
         }
     }
@@ -1989,6 +2011,12 @@ fn session_state(value: Option<&toml::Value>, tabs: &str, active: &str) -> Sessi
                 continue;
             }
             Location::Flat(flat)
+        } else if tab.contains_key("archive") || tab.contains_key("device") {
+            // Inside an archive or on a phone (spec 16 §4.2); an older Gezik leaves these out.
+            match vfs_from_toml(tab) {
+                Some(at) => Location::Vfs(at),
+                None => continue,
+            }
         } else {
             match tab.get("path").and_then(|v| v.as_str()).map(PathBuf::from) {
                 Some(path) if path.is_absolute() => Location::Path(path),
@@ -2437,6 +2465,39 @@ fn window_toml(at: Option<WindowState>) -> toml::Table {
     window
 }
 
+/// A place inside an archive or on a phone as a tab keeps it: the archive's file and what is
+/// inside at each level (`archive`, `inner`), or the phone's id, name and path (`device`,
+/// `device-name`, `inner`). Never parsed back from text.
+fn vfs_to_toml(at: &gezik_core::vfs::VfsPath, table: &mut toml::Table) {
+    use gezik_core::vfs::VfsRoot;
+    let text = |s: &str| toml::Value::String(s.to_owned());
+    match (&at.root, at.levels()) {
+        (_, Some((file, inner))) => {
+            table.insert("archive".into(), text(&file.to_string_lossy()));
+            table.insert("inner".into(), toml::Value::Array(inner.iter().map(|s| text(s)).collect()));
+        }
+        (VfsRoot::Device { id, name }, None) => {
+            table.insert("device".into(), text(id));
+            table.insert("device-name".into(), text(name));
+            table.insert("inner".into(), text(&at.inner));
+        }
+        (VfsRoot::Archive(_), None) => {}
+    }
+}
+
+fn vfs_from_toml(tab: &toml::Table) -> Option<gezik_core::vfs::VfsPath> {
+    use gezik_core::vfs::{VfsPath, VfsRoot};
+    if let Some(file) = tab.get("archive").and_then(|v| v.as_str()).map(PathBuf::from) {
+        let inner: Option<Vec<String>> =
+            tab.get("inner")?.as_array()?.iter().map(|v| v.as_str().map(str::to_owned)).collect();
+        return VfsPath::from_levels(file, &inner?).filter(|at| at.disk().is_some_and(Path::is_absolute));
+    }
+    let id = tab.get("device")?.as_str()?.to_owned();
+    let name = tab.get("device-name").and_then(|v| v.as_str()).unwrap_or(&id).to_owned();
+    let inner = tab.get("inner").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+    Some(VfsPath { root: VfsRoot::Device { id, name }, inner })
+}
+
 /// A session's tabs as `[[session.tabs]]` writes them.
 fn tabs_toml(session: &Session) -> toml::Value {
     toml::Value::Array(
@@ -2461,6 +2522,7 @@ fn tabs_toml(session: &Session) -> toml::Value {
                     Location::Flat(path) => {
                         table.insert("flat".into(), toml::Value::String(path.to_string_lossy().into_owned()));
                     }
+                    Location::Vfs(at) => vfs_to_toml(at, &mut table),
                 }
                 if tab.locked {
                     table.insert("locked".into(), toml::Value::Boolean(true));
@@ -2967,16 +3029,17 @@ rules = []
     fn reads_archives_and_tools() {
         let program = if cfg!(windows) { "C:/7-Zip/7z.exe" } else { "/opt/7-Zip/7zz" };
         let (settings, warnings) = parse(&format!(
-            "[archives]\ndouble-click = \"extract-here\"\n[tools]\ndownload = false\nseven-zip = \"{program}\"\n"
+            "[archives]\ndouble-click = \"extract-here\"\npreview-limit = 8\n[tools]\ndownload = false\nseven-zip = \"{program}\"\n"
         ));
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(settings.archives.double_click, DoubleClick::ExtractHere);
+        assert_eq!(settings.archives, ArchivesSettings { double_click: DoubleClick::ExtractHere, preview_limit: 8 });
         assert_eq!(
             settings.tools,
             ToolsSettings { download: false, seven_zip: Some(program.to_owned()), ..ToolsSettings::default() }
         );
         let defaults = Settings::default();
-        assert_eq!((defaults.archives.double_click, defaults.tools.download), (DoubleClick::System, true));
+        assert_eq!((defaults.archives.double_click, defaults.tools.download), (DoubleClick::Browse, true));
+        assert_eq!(defaults.archives.preview_limit, 64);
         // Empty means none set.
         let (settings, warnings) = parse("[tools]\nseven-zip = \"\"\n");
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -3051,15 +3114,17 @@ diff-args = \"{left}\"
 
     #[test]
     fn bad_archives_and_tools_values_keep_defaults_with_warnings() {
-        let (settings, warnings) =
-            parse("[archives]\ndouble-click = \"open\"\n[tools]\ndownload = \"yes\"\nseven-zip = 7\n");
+        let (settings, warnings) = parse(
+            "[archives]\ndouble-click = \"open\"\npreview-limit = 0\n[tools]\ndownload = \"yes\"\nseven-zip = 7\n",
+        );
         assert_eq!(settings.archives, ArchivesSettings::default());
         assert_eq!(settings.tools, ToolsSettings::default());
         let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
-        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert_eq!(messages.len(), 4, "{messages:?}");
         assert!(messages[0].starts_with("archives.double-click:") && messages[0].contains("\"open\""));
-        assert!(messages[1].starts_with("tools.download:"));
-        assert!(messages[2].starts_with("tools.seven-zip:"));
+        assert!(messages[1].starts_with("archives.preview-limit:"));
+        assert!(messages[2].starts_with("tools.download:"));
+        assert!(messages[3].starts_with("tools.seven-zip:"));
         let (_, warnings) = parse("tools = 1\narchives = \"x\"\n");
         let messages: Vec<_> = warnings.iter().map(|w| w.message.as_str()).collect();
         assert!(messages.iter().any(|m| m.starts_with("tools: expected a table")), "{messages:?}");
@@ -3724,6 +3789,34 @@ shortcut = \"shift+f8\"
         };
         assert_eq!(State::parse(&state.to_toml()), state);
         assert!(!State::default().to_toml().contains("session"));
+    }
+
+    #[test]
+    fn tabs_inside_archives_and_on_phones_round_trip_and_older_entries_stay() {
+        use gezik_core::nav::{Location, Session, SessionTab};
+        use gezik_core::vfs::{VfsPath, VfsRoot};
+        let zip = std::env::temp_dir().join("yedek ş.zip");
+        let docs = VfsPath::archive(zip.clone()).join("docs");
+        let nested = VfsPath::inside(VfsPath::archive(zip).join("eski/a.tar.gz")).join("src");
+        let phone = VfsPath {
+            root: VfsRoot::Device { id: "usb#vid_18d1".into(), name: "Pixel 8".into() },
+            inner: "DCIM".into(),
+        };
+        let tab = |at: VfsPath| SessionTab { location: Location::Vfs(at), locked: false };
+        let state = State {
+            session: Session { tabs: vec![tab(docs), tab(nested), tab(phone)], active: 2 },
+            ..State::default()
+        };
+        let text = state.to_toml();
+        assert!(text.contains(r#"inner = ["eski/a.tar.gz", "src"]"#), "{text}");
+        assert_eq!(State::parse(&text), state);
+        // A relative archive path, or no `inner`, is left out (as a bad path is).
+        let root = if cfg!(windows) { "C:/" } else { "/" };
+        let bad = format!(
+            "[session]\ntabs = [{{ archive = \"x.zip\", inner = [\"\"] }}, {{ archive = \"{root}a.zip\" }}, {{ path = \"{root}w\" }}]\n"
+        );
+        let tabs: Vec<Location> = State::parse(&bad).session.tabs.into_iter().map(|t| t.location).collect();
+        assert_eq!(tabs, [Location::Path(format!("{root}w").into())]);
     }
 
     #[test]

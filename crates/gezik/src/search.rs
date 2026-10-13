@@ -18,7 +18,7 @@ use gezik_search::cache::{CACHE_LIMIT, CacheOutcome, NameCache};
 use gezik_search::content::ContentMatcher;
 use gezik_search::name::NameMatcher;
 use gezik_search::query::{Query, QueryError, QueryOptions};
-use gezik_search::results::ResultSet;
+use gezik_search::results::{Batch, ResultSet};
 use gezik_search::run::{Event, Running, Summary, plan_walk, send_whole, start_adding};
 use gezik_search::walk::Walk;
 
@@ -199,11 +199,37 @@ pub fn scope_choices(origin: Option<&Path>) -> Vec<(Scope, String)> {
     out
 }
 
+/// What `query` finds under `dir` in an archive's index, as one batch of results (folders
+/// under `dir` with `/`), and whether `max-results` stopped it.
+fn search_inside(vfs: &dyn gezik_vfs::Vfs, dir: &str, query: &Query, cancel: &AtomicBool) -> (Batch, bool) {
+    let mut batch = Batch::default();
+    let mut folders: HashMap<String, u32> = HashMap::new();
+    let mut limit = false;
+    vfs.walk(dir, &mut |folder, entry| {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        if query.passes(&entry.name, entry.is_dir, entry.size, entry.modified) {
+            let parent = *folders.entry(folder.to_owned()).or_insert_with(|| {
+                batch.folders.push(folder.into());
+                batch.folders.len() as u32 - 1
+            });
+            batch.entries.push(entry);
+            batch.parent.push(parent);
+            batch.matches.push(None);
+            limit = batch.entries.len() >= query.max_results();
+        }
+        !limit
+    });
+    (batch, limit)
+}
+
 /// The scope's name: its folder's, or This PC.
 fn scope_name(scope: &Scope) -> String {
     match scope {
         Scope::Folder(folder) => name_of(folder),
         Scope::AllDrives => t("", DRIVES_NAME).into_owned(),
+        Scope::Vfs(at) => at.name(),
     }
 }
 
@@ -218,8 +244,14 @@ pub fn spec_of(location: &Location) -> Option<SearchSpec> {
     match location {
         Location::Search(spec) => Some((**spec).clone()),
         Location::Flat(folder) => Some(SearchSpec::flat_view(folder.clone())),
-        Location::Path(_) | Location::Drives | Location::Trash => None,
+        Location::Path(_) | Location::Drives | Location::Trash | Location::Vfs(_) => None,
     }
+}
+
+/// Where a duplicates search from inside an archive looks: the archive's folder (contents
+/// inside archives are not compared).
+fn archive_scope(location: &Location) -> Scope {
+    location.on_disk().and_then(Path::parent).map_or(Scope::AllDrives, |folder| Scope::Folder(folder.to_path_buf()))
 }
 
 /// The search bar's menus.
@@ -672,6 +704,7 @@ impl Searches {
             Location::Search(spec) => (**spec).clone(),
             Location::Path(folder) | Location::Flat(folder) => SearchSpec::new(Scope::Folder(folder.clone())),
             Location::Drives | Location::Trash => SearchSpec::new(Scope::AllDrives),
+            Location::Vfs(at) => SearchSpec::new(Scope::Vfs(at.clone())),
         };
         self.show_bar(spec, location.folder().map(Path::to_path_buf));
         self.focus_later();
@@ -685,6 +718,7 @@ impl Searches {
             Location::Search(spec) => spec.scope.clone(),
             Location::Path(folder) | Location::Flat(folder) => Scope::Folder(folder.clone()),
             Location::Drives | Location::Trash => Scope::AllDrives,
+            Location::Vfs(at) => Scope::Vfs(at.clone()),
         };
         let spec = SearchSpec { pattern: text.to_owned(), ..SearchSpec::new(scope) };
         self.show_bar(spec, location.folder().map(Path::to_path_buf));
@@ -701,6 +735,7 @@ impl Searches {
             (_, Location::Search(spec)) => spec.scope.clone(),
             (_, Location::Path(folder) | Location::Flat(folder)) => Scope::Folder(folder),
             (_, Location::Drives | Location::Trash) => Scope::AllDrives,
+            (_, location @ Location::Vfs(_)) => archive_scope(&location),
         };
         let origin = scope.folder().map(Path::to_path_buf);
         self.show_bar(SearchSpec { duplicates: true, ..SearchSpec::new(scope) }, origin);
@@ -1035,9 +1070,17 @@ impl Searches {
         let root = spec.scope.folder().map(Path::to_path_buf).unwrap_or_default();
         let content = !spec.content.is_empty();
         let duplicates = spec.duplicates;
+        let inside = match &spec.scope {
+            Scope::Vfs(at) => Some(at.clone()),
+            _ => None,
+        };
         *self.0.pending.borrow_mut() = Some(spec.clone());
         *self.0.showing.borrow_mut() = Some(Showing { tab, spec, summary: None, complete: false, changes: None });
-        let set = if duplicates { ResultSet::duplicates(root) } else { ResultSet::new(root, content) };
+        let set = match inside {
+            Some(at) => ResultSet::inside(at),
+            None if duplicates => ResultSet::duplicates(root),
+            None => ResultSet::new(root, content),
+        };
         Listing::Results(Arc::new(set))
     }
 
@@ -1336,6 +1379,11 @@ impl Searches {
         if !spec.is_query() {
             return self.0.view.set_results_status(Some(t!("Type something to search").into_owned()));
         }
+        // Inside an archive: names, sizes and dates in its index (spec 16 §5.5).
+        if matches!(spec.scope, Scope::Vfs(_)) && (!spec.content.is_empty() || spec.has_meta() || spec.duplicates) {
+            let why = t!("Inside an archive only names, sizes, dates and types are searched");
+            return self.0.view.set_results_status(Some(why.into_owned()));
+        }
         let settings = self.0.settings.borrow().clone();
         let options = QueryOptions::local(settings.content_max_size, settings.max_results);
         let query = match compiled(&spec, &options) {
@@ -1353,6 +1401,24 @@ impl Searches {
         let started = Instant::now();
         if spec.duplicates {
             return self.start_duplicates(spec, query, settings.skip, running, sink);
+        }
+        if let Scope::Vfs(at) = spec.scope {
+            let flag = running.flag();
+            std::thread::spawn(move || {
+                let cx = crate::vfs_mounts::UiCx::new(&at, Box::new(|| flag.load(Ordering::Relaxed)));
+                let Ok(vfs) = gezik_vfs::mount(&at.root, &cx) else {
+                    return sink(Event::Done(Summary { cancelled: true, ..Summary::default() }));
+                };
+                let (batch, limit_reached) = search_inside(vfs.as_ref(), &at.inner, &query, &flag);
+                // The tab holds the archive while its results show.
+                let _ = slint::invoke_from_event_loop(move || crate::vfs_mounts::hold(vfs));
+                let (found, folders) = (batch.entries.len(), batch.folders.len());
+                sink(Event::Batch(batch));
+                let cancelled = flag.load(Ordering::Relaxed);
+                let elapsed = started.elapsed();
+                sink(Event::Done(Summary { found, folders, limit_reached, cancelled, elapsed, ..Summary::default() }));
+            });
+            return;
         }
         // Every drive with tags: Spotlight (macOS) or the walk with the tag store's files.
         let everywhere_tags = spec.has_meta() && spec.scope == Scope::AllDrives;
@@ -1831,6 +1897,35 @@ impl Searches {
 mod tests {
     use super::*;
     use gezik_search::walk::Problems;
+
+    #[test]
+    fn a_search_inside_an_archive_reads_its_index_and_its_rows_have_no_path() {
+        let dir = std::env::temp_dir().join(format!("gezik-search-zip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.zip");
+        let files: Vec<(String, Vec<u8>)> = [("docs/x.txt", "xx"), ("docs/sub/y.TXT", "y"), ("z.png", "z")]
+            .into_iter()
+            .map(|(n, d)| (n.to_owned(), d.as_bytes().to_vec()))
+            .collect();
+        std::fs::write(&file, gezik_batch::archive::write_zip_entries(&files).unwrap()).unwrap();
+        let at = gezik_core::vfs::VfsPath::archive(file);
+        let cx = crate::vfs_mounts::UiCx::new(&at, Box::new(|| false));
+        let vfs = gezik_vfs::mount(&at.root, &cx).unwrap();
+        let spec = SearchSpec { pattern: "*.txt".into(), ..SearchSpec::new(Scope::Vfs(at.clone())) };
+        let query = compiled(&spec, &QueryOptions::local(1 << 20, 100)).unwrap();
+        let (batch, limit) = search_inside(vfs.as_ref(), "", &query, &AtomicBool::new(false));
+        assert!(!limit);
+        let mut set = ResultSet::inside(at.clone());
+        set.append(batch);
+        let mut found: Vec<String> = (0..set.len()).map(|i| set.item_at(i).unwrap().inner).collect();
+        found.sort();
+        assert_eq!(found, ["docs/sub/y.TXT", "docs/x.txt"], "any case, in every folder");
+        assert!((0..set.len()).all(|i| set.path_at(i).is_none()), "no path on disk");
+        let one = compiled(&spec, &QueryOptions::local(1 << 20, 1)).unwrap();
+        assert!(search_inside(vfs.as_ref(), "", &one, &AtomicBool::new(false)).1, "max-results stops it");
+        drop(vfs);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_status_bar_says_how_far_and_how_it_ended() {

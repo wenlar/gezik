@@ -103,6 +103,7 @@ export component AppWindow inherits Window {
             MenuItem { title: @tr("Move to the Other Pane"); activated => { root.menu-command("move-to-other-pane"); } }
             MenuItem { title: @tr("Make Alias"); shortcut: root.menu-keys ? root.bar-key("make-alias", root.keys-version) : @keys(); activated => { root.menu-command("make-alias"); } }
             MenuItem { title: @tr("Show Package Contents"); activated => { root.menu-command("show-package-contents"); } }
+            MenuItem { title: @tr("Open as Folder"); activated => { root.menu-command("browse-archive"); } }
             MenuItem { title: @tr("Share…"); activated => { root.menu-command("share"); } }
             MenuItem { title: @tr("Eject"); shortcut: root.menu-keys ? root.bar-key("eject", root.keys-version) : @keys(); activated => { root.menu-command("eject"); } }
             Menu {
@@ -495,6 +496,7 @@ export component AppWindow inherits Window {
     in-out property <length> col-tags;
     in-out property <length> col-rating;
     in-out property <length> col-comment;
+    in-out property <length> col-packed;
     callback header-clicked(int, int);
     // Right-click on the column header, at a window position.
     callback header-menu(int, length, length);
@@ -1079,6 +1081,7 @@ export component AppWindow inherits Window {
                             col-tags <=> root.col-tags;
                             col-rating <=> root.col-rating;
                             col-comment <=> root.col-comment;
+                            col-packed <=> root.col-packed;
                             sheet-x: sheet-place.x;
                             sheet-y: sheet-place.y;
                             sheet-width: sheet-place.width;

@@ -264,10 +264,12 @@ pub const FIELDS: &[Field] = &[
         "double-click",
         FilesAndTools,
         Choice(&[
+            tx!("choice:archives.double-click" => "browse"),
             tx!("choice:archives.double-click" => "system"),
             tx!("choice:archives.double-click" => "extract-here"),
         ]),
     ),
+    f(Some("archives"), "preview-limit", FilesAndTools, Int),
     f(Some("convert"), "ffmpeg", FilesAndTools, Path),
     f(Some("tools"), "download", FilesAndTools, Bool),
     f(Some("tools"), "seven-zip", FilesAndTools, Path),

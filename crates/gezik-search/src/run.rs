@@ -254,6 +254,8 @@ fn collect(
 pub fn plan_walk(spec: &SearchSpec, skip: &[String], view_shown: (bool, bool)) -> Walk {
     let (roots, absolute): (Vec<PathBuf>, bool) = match &spec.scope {
         Scope::Folder(folder) => (vec![folder.clone()], false),
+        // Searched in its index, never walked (the app's `search.rs`).
+        Scope::Vfs(_) => (Vec::new(), false),
         Scope::AllDrives => (
             gezik_platform::drives()
                 .into_iter()

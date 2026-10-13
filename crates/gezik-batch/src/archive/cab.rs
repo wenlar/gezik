@@ -89,6 +89,7 @@ impl ArchiveSource for CabSource {
                 size: Some(info.size),
                 packed: None,
                 encrypted: false,
+                modified: info.meta.modified,
             })
             .collect();
         Ok(Some(entries))
@@ -101,6 +102,17 @@ impl ArchiveSource for CabSource {
                 return Err(cancelled());
             }
             let name = info.name.replace('\\', "/");
+            let listed = Entry {
+                name: name.clone(),
+                is_dir: false,
+                size: Some(info.size),
+                packed: None,
+                encrypted: false,
+                modified: info.meta.modified,
+            };
+            if !cx.wants(&listed) {
+                continue;
+            }
             let Some(path) = safe_join(dest, &info.name) else {
                 cx.entry_failed(&name, &unsafe_path());
                 continue;

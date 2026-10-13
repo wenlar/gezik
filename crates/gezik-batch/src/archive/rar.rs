@@ -130,7 +130,9 @@ impl RarSource {
             if cx.stopped() {
                 return End::Cancelled;
             }
+            let listed = Entry { name: name.clone(), is_dir, size: None, packed: None, encrypted, modified: None };
             let next = match safe_join(dest, &name) {
+                _ if !cx.wants(&listed) => header.skip(),
                 None => {
                     cx.entry_failed(&name, &unsafe_path());
                     header.skip()
@@ -226,6 +228,7 @@ impl ArchiveSource for RarSource {
                         size: Some(h.unpacked_size),
                         packed: None,
                         encrypted: h.is_encrypted(),
+                        modified: None,
                     }),
                     // Encrypted headers: no password yet, or a wrong one.
                     Err(e) if needs_password(&e) => {

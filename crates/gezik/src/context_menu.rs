@@ -416,6 +416,7 @@ fn meta_column_id(key: ColumnKey) -> Option<u32> {
         ColumnKey::Tags => Some(TAGS_COLUMN),
         ColumnKey::Rating => Some(RATING_COLUMN),
         ColumnKey::Comment => Some(COMMENT_COLUMN),
+        ColumnKey::Packed => Some(PACKED_COLUMN),
         _ => None,
     }
 }
@@ -451,6 +452,8 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
                 (ColumnKey::Rating, false) => tx!("Show Rating"),
                 (ColumnKey::Comment, true) => tx!("Hide Comment"),
                 (ColumnKey::Comment, false) => tx!("Show Comment"),
+                (ColumnKey::Packed, true) => tx!("Hide Packed"),
+                (ColumnKey::Packed, false) => tx!("Show Packed"),
                 (ColumnKey::Field(_), _) => "",
             };
             (id, t("", title).into_owned())
@@ -859,6 +862,30 @@ pub const HEADING: u32 = 0;
 /// `FIRST_SHELL_ID` on Windows). 1000-4095 are new ranges (spec 11.1).
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const GEZIK_IDS_END: u32 = 4096;
+
+// Step 16's ids are 3200–3599 (spec 16 §11.3): archives 3200–3229, inside a place 3230–3249.
+/// An archive's row: into it as into a folder (`browse-archive`).
+pub const BROWSE_ARCHIVE: u32 = 3200;
+/// An archive's row: opened with the system's program for it.
+pub const OPEN_SYSTEM_APP: u32 = 3201;
+/// The header menu's Packed column, offered only inside an archive.
+pub const PACKED_COLUMN: u32 = 3202;
+/// A folder's row inside an archive: in a new tab.
+pub const INSIDE_NEW_TAB: u32 = 3230;
+/// Rows inside an archive: Copy To….
+pub const INSIDE_COPY_TO: u32 = 3231;
+/// Rows inside an archive (else the place shown): their address as text.
+pub const INSIDE_COPY_PATH: u32 = 3232;
+
+/// A row inside an archive (spec 16 §4.7): what works there, nothing else shown.
+pub fn inside_row_items(folder: bool) -> Vec<(u32, &'static str)> {
+    let mut out = vec![(OPEN, tx!("Open"))];
+    if folder {
+        out.push((INSIDE_NEW_TAB, tx!("Open in new tab")));
+    }
+    out.extend([(COPY, tx!("Copy")), (INSIDE_COPY_TO, tx!("Copy To…")), (INSIDE_COPY_PATH, tx!("Copy Path"))]);
+    out
+}
 #[cfg(windows)]
 const _: () = assert!(gezik_platform::FIRST_SHELL_ID == GEZIK_IDS_END, "Gezik's ids end where Explorer's begin");
 /// Most submenus a menu shows: app.slint and popup-menu.slint have this many places (a macOS
@@ -1386,6 +1413,8 @@ enum Subject {
     SizeMap,
     /// The preview's viewer.
     Preview,
+    /// Rows or empty space inside an archive (they have no path on disk).
+    Inside,
     /// A property row of the preview, by its value.
     /// A property row's value, and its field when the row is one (Show Column).
     PreviewValue(String, Option<gezik_core::fields::FieldId>),
@@ -1516,6 +1545,13 @@ impl Menus {
         if crate::panes::active_view().shows_trash() {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint(&trash_row_items(), Anchor::point(x, y));
+        }
+        if let Some((at, is_dir)) = crate::panes::active_view().vfs_item(i) {
+            let one = crate::panes::active_view().selection_count() <= 1;
+            // An archive in it opens as a folder too.
+            let is_dir = is_dir || crate::archives::browses(std::path::Path::new(&at.name()));
+            *self.subject.borrow_mut() = Some(Subject::Inside);
+            return self.open_slint(&inside_row_items(one && is_dir), Anchor::point(x, y));
         }
         let at = at_position.then_some((x, y));
         let native = cfg!(windows);
@@ -1759,6 +1795,18 @@ impl Menus {
             let items = drives_background_items(&crate::connect::recent());
             return self.open_slint_entries(&items, Vec::new(), Anchor::point(x, y));
         }
+        // Inside an archive: nothing is made or pasted there (spec 16 §4.7).
+        if crate::panes::active_view().shows_vfs() {
+            let (undo, redo) = (self.ops.undo_label(), self.ops.redo_label());
+            let mut list: Vec<(u32, String, bool)> =
+                background_items(undo.as_deref(), redo.as_deref(), false, None, false)
+                    .into_iter()
+                    .map(|(id, title)| (id, title, true))
+                    .collect();
+            list.push((INSIDE_COPY_PATH, t!("Copy Path").into_owned(), true));
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
+        }
         let Location::Path(dir) = crate::panes::active_nav().active_location() else { return };
         self.ops.clipboard_check();
         // One clipboard query each, shared by the menu and its Paste item.
@@ -1888,8 +1936,11 @@ impl Menus {
                 .map(|(id, t)| (id, t, true))
                 .collect()
         } else {
+            // Packed only inside an archive (spec 16 §5.2).
+            let vfs = crate::panes::active_view().shows_vfs();
             header_items(&crate::panes::active_view().columns_shown())
                 .into_iter()
+                .filter(|(id, _)| vfs || *id != PACKED_COLUMN)
                 .map(|(id, t)| (id, t, true))
                 .collect()
         };
@@ -2325,6 +2376,7 @@ impl Menus {
             (TAGS_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Tags),
             (RATING_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Rating),
             (COMMENT_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Comment),
+            (PACKED_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Packed),
             (COLLAPSE_GROUPS, _) => crate::panes::active_view().collapse_all(true),
             (EXPAND_GROUPS, _) => crate::panes::active_view().collapse_all(false),
             (id, Subject::TagRow(name)) => crate::tags::row_menu_chosen(id, &name),
@@ -2485,6 +2537,19 @@ impl Menus {
             (OPEN_IN_NEW_TAB, Subject::Row(path) | Subject::SidebarEntry(path)) => {
                 crate::panes::active_nav().open_tab(Location::Path(path), false);
             }
+            (BROWSE_ARCHIVE, Subject::Row(path)) => {
+                crate::panes::active_nav().go(Location::Vfs(gezik_core::vfs::VfsPath::archive(path)));
+            }
+            (OPEN, Subject::Inside) => crate::panes::active_nav().open_selected(),
+            (INSIDE_NEW_TAB, Subject::Inside) => {
+                let view = crate::panes::active_view();
+                if let Some((at, _)) = view.single_selected().or_else(|| view.focus()).and_then(|i| view.vfs_item(i)) {
+                    crate::panes::active_nav().open_tab(Location::Vfs(at), false);
+                }
+            }
+            (COPY, Subject::Inside) => self.ops.copy(false),
+            (INSIDE_COPY_TO, Subject::Inside) => crate::copy_to::copy_to(&crate::panes::active_view(), false),
+            (INSIDE_COPY_PATH, _) => crate::copy_path::copy_selection(&crate::panes::active_view()),
             (PIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.pin(path),
             (UNPIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.unpin_path(&path),
             (MOVE_UP | MOVE_DOWN, Subject::SidebarEntry(path)) => self.sidebar.move_in_group(&path, id == MOVE_UP),
@@ -2543,7 +2608,7 @@ impl Menus {
                     crate::panes::active_nav().close_other_tabs(i);
                 }
             }
-            (OPEN | OPEN_DEFAULT, Subject::Row(path)) => {
+            (OPEN | OPEN_DEFAULT | OPEN_SYSTEM_APP, Subject::Row(path)) => {
                 if let Err(err) = open::that_detached(&path)
                     && let Some(window) = self.window.upgrade()
                 {
@@ -2998,6 +3063,17 @@ mod tests {
     #[test]
     fn gezik_ids_end_where_explorers_begin() {
         assert_eq!(gezik_platform::FIRST_SHELL_ID, GEZIK_IDS_END);
+    }
+
+    #[test]
+    fn rows_inside_an_archive_offer_only_what_works_there() {
+        // Spec 16 §4.7: no tags, links, tools, terminal, Explorer menu, rename or delete.
+        let ids = |folder| inside_row_items(folder).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        assert_eq!(ids(false), [OPEN, COPY, INSIDE_COPY_TO, INSIDE_COPY_PATH]);
+        assert_eq!(ids(true), [OPEN, INSIDE_NEW_TAB, COPY, INSIDE_COPY_TO, INSIDE_COPY_PATH]);
+        for id in [BROWSE_ARCHIVE, OPEN_SYSTEM_APP, PACKED_COLUMN, INSIDE_NEW_TAB, INSIDE_COPY_TO, INSIDE_COPY_PATH] {
+            assert!((3200..3600).contains(&id) && id < GEZIK_IDS_END, "{id}: step 16's ids");
+        }
     }
 
     #[test]
@@ -3788,6 +3864,8 @@ mod tests {
                 (TAGS_COLUMN, "Show Tags"),
                 (RATING_COLUMN, "Show Rating"),
                 (COMMENT_COLUMN, "Show Comment"),
+                // `header` leaves it out outside archives.
+                (PACKED_COLUMN, "Show Packed"),
                 (COLUMNS_MORE, "More Columns…"),
                 (RESET_COLUMNS, "Reset columns"),
             ]

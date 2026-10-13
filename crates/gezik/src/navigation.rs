@@ -12,6 +12,7 @@ use gezik_core::kind::is_package_name;
 use gezik_core::nav::{Closed, Crumb, History, Location, Session, Step, Tabs, ViewState, crumbs, nearest_existing};
 use gezik_core::ops::paths::same_path;
 use gezik_core::refresh::{QUIET, RefreshPace};
+use gezik_core::vfs::{Container, VfsPath, VfsRoot, split_archive, split_inner};
 use gezik_core::view_rules::Place;
 use gezik_core::{Entry, list_dir};
 use gezik_i18n::{t, tn, tx};
@@ -58,6 +59,14 @@ enum LoadResult {
     Trash(crate::trash_view::Loaded),
     /// A folder in a bin: shown as the trash instead, never as a plain folder.
     InBin,
+    /// A place inside an archive, and the open archive it was read from (spec 16 §5).
+    Vfs(VfsPath, Arc<dyn gezik_vfs::Vfs>, Vec<Entry>),
+    /// The path leads into an archive (or into an archive in one): shown there instead.
+    Redirect(Location),
+    /// The archive's password was not given: nothing changes.
+    Declined,
+    /// Only 7-Zip reads the archive, and there is none (its ending): it is offered.
+    SevenZipNeeded(String),
 }
 
 /// Lists `location`. Runs on a background thread.
@@ -66,7 +75,7 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
     let folder = match location {
         Location::Path(path) | Location::Flat(path) => Some(path.as_path()),
         Location::Search(spec) => spec.scope.folder(),
-        Location::Drives | Location::Trash => None,
+        Location::Drives | Location::Trash | Location::Vfs(_) => None,
     };
     if folder.is_some_and(gezik_ops::in_a_bin_folder) {
         return LoadResult::InBin;
@@ -85,6 +94,10 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
                 entries.retain(|entry| !gezik_ops::pending::is_internal_name(&entry.name));
                 LoadResult::Files(path.clone(), entries)
             }
+            // A path through an archive file (typed, a tab set's, a session's): inside it.
+            Err(_) if let Some(inside) = split_archive(path, Path::is_file) => {
+                LoadResult::Redirect(Location::Vfs(inside))
+            }
             Err(err) if *mode == Mode::Show && err.kind() == std::io::ErrorKind::NotFound => {
                 LoadResult::Gone { fallback: nearest_existing(location, |p| p.is_dir()) }
             }
@@ -97,12 +110,82 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
         },
         // A search or the flat view reads no folder here (`search::Searches` runs it).
         Location::Search(spec) => match spec.scope.folder() {
+            // A saved search's folder text that leads into an archive: searched there.
+            Some(folder)
+                if !folder.is_dir()
+                    && let Some(inside) = split_archive(folder, Path::is_file) =>
+            {
+                let scope = gezik_core::search::Scope::Vfs(inside);
+                LoadResult::Redirect(Location::Search(Box::new(gezik_core::search::SearchSpec {
+                    scope,
+                    ..(**spec).clone()
+                })))
+            }
             Some(folder) if !folder.is_dir() => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
             _ => LoadResult::Results,
         },
         Location::Flat(folder) if !folder.is_dir() => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
         Location::Flat(_) => LoadResult::Results,
         Location::Trash => LoadResult::Trash(crate::trash_view::load()),
+        // Read by `list_vfs`, which can ask for a password.
+        Location::Vfs(_) => LoadResult::Failed(std::io::ErrorKind::Unsupported.into()),
+    }
+}
+
+/// Lists the place `at` inside an archive, opening the archive if no tab has it open (spec 16
+/// §5.2). Runs on a background thread; `cx` asks for a password in a window and stops once
+/// the load is overtaken.
+fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResult {
+    if let Some(file) = at.disk()
+        && !file.is_file()
+    {
+        // Gone with its archive: as a gone folder.
+        return match mode {
+            Mode::Show => LoadResult::Gone { fallback: nearest_existing(&Location::Vfs(at.clone()), |p| p.is_dir()) },
+            Mode::Move(_) => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
+        };
+    }
+    let vfs = match gezik_vfs::mount(&at.root, cx) {
+        // No password for an encrypted header: nothing was read (and nothing is kept).
+        _ if cx.declined() => return LoadResult::Declined,
+        Ok(vfs) => vfs,
+        Err(err) if gezik_batch::tasks::is_seven_zip_needed(&err) => {
+            let name = at.root.name();
+            let ending = Path::new(&name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            return LoadResult::SevenZipNeeded(ending);
+        }
+        Err(err) => return LoadResult::Failed(err),
+    };
+    if let Some(entries) = vfs.list(&at.inner) {
+        return LoadResult::Vfs(at.clone(), vfs, entries);
+    }
+    // A path through an archive in this one (typed, or that archive's row opened).
+    match split_inner(&at.inner, |path| vfs.is_file(path)) {
+        Some((file, rest)) => {
+            let outer = VfsPath { root: at.root.clone(), inner: file };
+            LoadResult::Redirect(Location::Vfs(VfsPath {
+                root: VfsRoot::Archive(Container::Inside(Box::new(outer))),
+                inner: rest,
+            }))
+        }
+        None => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
+    }
+}
+
+/// The steps of `mode` going to `to` where they went to `from` (a path found to lead into an
+/// archive).
+fn redirected(mode: Mode, from: &Location, to: &Location) -> Mode {
+    match mode {
+        Mode::Show => Mode::Show,
+        Mode::Move(steps) => Mode::Move(
+            steps
+                .into_iter()
+                .map(|step| match step {
+                    Step::Navigate(location) if location == *from => Step::Navigate(to.clone()),
+                    other => other,
+                })
+                .collect(),
+        ),
     }
 }
 
@@ -113,6 +196,33 @@ pub(crate) fn read_folder(path: &Path) -> Option<Vec<Entry>> {
         LoadResult::Files(_, entries) => Some(entries),
         _ => None,
     }
+}
+
+/// The folder an archive place's archive is in on disk (watched for changes to it).
+fn archive_folder(location: &Location) -> Option<PathBuf> {
+    match location {
+        Location::Vfs(at) => at.disk()?.parent().map(Path::to_path_buf),
+        _ => None,
+    }
+}
+
+/// What the status bar says while a stream archive (tar.gz, 7z) is read through: how many
+/// entries so far, while this load is the pane's and the pane the active one.
+fn reading_status(
+    id: PaneId,
+    window: slint::Weak<AppWindow>,
+    generation: Arc<AtomicU64>,
+    ticket: u64,
+    name: String,
+) -> Box<dyn Fn(u64)> {
+    Box::new(move |n| {
+        let (generation, name) = (generation.clone(), name.clone());
+        let _ = window.upgrade_in_event_loop(move |w| {
+            if generation.load(Ordering::SeqCst) == ticket && crate::panes::is_active(id) {
+                w.set_status(tn!("Reading {}: {n} item" | "Reading {}: {n} items", n, name).into());
+            }
+        });
+    })
 }
 
 /// The server of a bare `\\server` path (Windows), whose shares are its listing.
@@ -136,7 +246,7 @@ fn listing_after_failure(mode: &Mode, location: &Location) -> Option<Listing> {
     (*mode == Mode::Show).then(|| match location {
         Location::Path(path) => Listing::Files(path.clone(), Rc::default()),
         Location::Drives => Listing::Drives(Vec::new()),
-        Location::Search(_) | Location::Flat(_) | Location::Trash => Listing::default(),
+        Location::Search(_) | Location::Flat(_) | Location::Trash | Location::Vfs(_) => Listing::default(),
     })
 }
 
@@ -434,10 +544,14 @@ impl Navigator {
             inner.watched.clone()
         };
         let Some(watched) = watched else { return };
-        if !matches!(self.active_location(), Location::Path(ref path) if same_path(path, &watched)) {
-            return;
+        match self.active_location() {
+            Location::Path(ref path) if same_path(path, &watched) => self.reread(Location::Path(watched)),
+            // The archive's folder changed: its index is read again only if the archive did.
+            location @ Location::Vfs(_) if archive_folder(&location).is_some_and(|f| same_path(&f, &watched)) => {
+                self.reread(location);
+            }
+            _ => {}
         }
-        self.reread(Location::Path(watched));
     }
 
     /// Reads the folder on screen again, quietly, keeping what the user does meanwhile.
@@ -448,7 +562,7 @@ impl Navigator {
         inner.reread = Some(inner.generation.load(Ordering::SeqCst));
     }
 
-    fn id(&self) -> PaneId {
+    pub(crate) fn id(&self) -> PaneId {
         self.0.borrow().id
     }
 
@@ -491,6 +605,7 @@ impl Navigator {
         self.watch_shown(&location);
         match &location {
             Location::Path(path) if server_of(path).is_none() => self.reread(location),
+            Location::Vfs(_) => self.reread(location),
             Location::Trash => self.refresh_trash(),
             _ => {}
         }
@@ -755,6 +870,7 @@ impl Navigator {
                 let location = history.location();
                 let path = match location {
                     Location::Path(path) => path.display().to_string(),
+                    Location::Vfs(at) => at.text(),
                     Location::Drives | Location::Trash => String::new(),
                     // Task 7 places these.
                     Location::Search(_) | Location::Flat(_) => {
@@ -872,10 +988,14 @@ impl Navigator {
             return;
         }
         let root = view.column_up_root();
+        let left = match self.active_location() {
+            Location::Vfs(at) => Some(at.name()),
+            _ => None,
+        };
         if self.queue(|base| base.parent().map(Step::Navigate)) {
             crate::dual::stepped(self.id());
             // After the load it started, which drops any older names.
-            self.0.borrow_mut().select_next = root.map(|name| vec![name]);
+            self.0.borrow_mut().select_next = root.or(left).map(|name| vec![name]);
         }
     }
 
@@ -1047,11 +1167,17 @@ impl Navigator {
     }
 
     /// Enter: opens the selected files with their default apps and goes into the first
-    /// selected folder; with nothing selected, the focused entry.
+    /// selected folder (or archive, `[archives] double-click = "browse"`); with nothing
+    /// selected, the focused entry.
     pub fn open_selected(&self) {
         let view = self.0.borrow().view.clone();
         if view.shows_trash() {
             return self.status(crate::trash_view::open_note());
+        }
+        if view.shows_vfs() {
+            let mut items = view.selected_vfs_items();
+            items.extend(view.focus().filter(|_| items.is_empty()).and_then(|i| view.vfs_item(i)));
+            return self.open_inside(items);
         }
         let mut items = view.selected_items();
         if items.is_empty() {
@@ -1065,18 +1191,42 @@ impl Navigator {
         }
         let mut folder = None;
         for (path, is_dir) in items {
+            if !is_dir && crate::archives::browses(&path) {
+                folder.get_or_insert(Location::Vfs(VfsPath::archive(path)));
+                continue;
+            }
             match system_opening(path, is_dir) {
                 Opening::Launch(path) => self.launch(&path),
                 Opening::Go(path) => {
-                    folder.get_or_insert(path);
+                    folder.get_or_insert(Location::Path(path));
                 }
                 Opening::MissingAlias(alias) => crate::operations::with_current(|ops| ops.missing_alias(alias)),
             }
         }
-        if let Some(folder) = folder
-            && !view.column_enter(&folder)
-        {
-            self.go(Location::Path(folder));
+        let in_column = matches!(&folder, Some(Location::Path(path)) if view.column_enter(path));
+        if let Some(folder) = folder.filter(|_| !in_column) {
+            self.go(folder);
+            crate::dual::stepped(self.id());
+        }
+    }
+
+    /// Opens entries inside an archive: files with their apps (taken out first), the first
+    /// folder or archive among them gone into.
+    pub fn open_inside(&self, items: Vec<(VfsPath, bool)>) {
+        let files: Vec<&VfsPath> = items.iter().filter(|(_, is_dir)| !is_dir).map(|(at, _)| at).collect();
+        if let Err(message) = crate::view::limit_open(files) {
+            return self.status(message);
+        }
+        let mut folder = None;
+        for (at, is_dir) in items {
+            if is_dir || crate::archives::browses(Path::new(&at.name())) {
+                folder.get_or_insert(at);
+            } else {
+                crate::vfs_mounts::open_file(at);
+            }
+        }
+        if let Some(at) = folder {
+            self.go(Location::Vfs(at));
             crate::dual::stepped(self.id());
         }
     }
@@ -1178,8 +1328,27 @@ impl Navigator {
         {
             w.set_status(t!("Loading…").as_ref().into());
         }
+        if matches!(location, Location::Vfs(_)) {
+            crate::archives::tell_vfs_tools();
+        }
         std::thread::spawn(move || {
-            let result = list(&location, &mode);
+            let result = match &location {
+                Location::Vfs(at) => {
+                    let cx = crate::vfs_mounts::UiCx::new(at, {
+                        let generation = generation.clone();
+                        Box::new(move || generation.load(Ordering::SeqCst) != ticket)
+                    })
+                    .with_progress(reading_status(
+                        id,
+                        window.clone(),
+                        generation.clone(),
+                        ticket,
+                        at.root.name(),
+                    ));
+                    list_vfs(at, &mode, &cx)
+                }
+                _ => list(&location, &mode),
+            };
             let _ = window.upgrade_in_event_loop(move |_| {
                 if generation.load(Ordering::SeqCst) != ticket {
                     return;
@@ -1208,6 +1377,7 @@ impl Navigator {
         };
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
+            Location::Vfs(at) => at.text(),
             Location::Drives => t("", gezik_core::nav::DRIVES_NAME).into_owned(),
             Location::Trash => t("", gezik_core::nav::TRASH_NAME).into_owned(),
             Location::Search(spec) => spec.title(),
@@ -1221,6 +1391,32 @@ impl Navigator {
                 Listing::Files(path, Rc::new(entries))
             }
             LoadResult::Drives(drives) => Listing::Drives(drives),
+            LoadResult::Vfs(at, vfs, entries) => {
+                crate::vfs_mounts::hold(vfs.clone());
+                Listing::Vfs(Rc::new(crate::view::VfsDir { at, vfs }), Rc::new(entries))
+            }
+            LoadResult::Redirect(target) => {
+                // The path leads into an archive: the tab is there (no step of its own).
+                if mode == Mode::Show {
+                    self.keep_active_tab(|tabs| tabs.active_mut().replace(target.clone()));
+                }
+                let mode = redirected(mode, &location, &target);
+                return self.load(target, mode, note);
+            }
+            LoadResult::Declined => {
+                self.show_failed(&mode, &location, String::new());
+                // Nothing changed: the status bar says what it said before ("Loading…" goes).
+                let view = self.0.borrow().view.clone();
+                return view.update_status();
+            }
+            LoadResult::SevenZipNeeded(ending) => {
+                let (id, again_at) = (self.id(), location.clone());
+                let again: Rc<dyn Fn()> =
+                    Rc::new(move || _ = crate::panes::with_id(id, |p| p.nav.go(again_at.clone())));
+                crate::archives::with_current(|archives| archives.offer_seven_zip(ending, again));
+                let why = t!("7-Zip needed to open this kind of archive");
+                return self.show_failed(&mode, &location, t!("Cannot open {}: {}", shown, why));
+            }
             LoadResult::Trash(loaded) => {
                 note = crate::trash_view::shown(&loaded.bins, loaded.denied).or(note);
                 Listing::Results(Arc::new(loaded.set))
@@ -1302,9 +1498,16 @@ impl Navigator {
         // Results are not watched (spec 4.7).
         let folder = match location {
             Location::Path(path) if active && server_of(path).is_none() => Some(path.clone()),
+            // An archive's folder, for changes to the archive (spec 16 §5.6).
+            Location::Vfs(_) if active => archive_folder(location),
             // The trash's bins are watched by `trash_view` while it shows; a server's shares
             // are not watched.
-            Location::Path(_) | Location::Drives | Location::Search(_) | Location::Flat(_) | Location::Trash => None,
+            Location::Path(_)
+            | Location::Drives
+            | Location::Search(_)
+            | Location::Flat(_)
+            | Location::Trash
+            | Location::Vfs(_) => None,
         };
         if active && *location != Location::Trash {
             crate::trash_view::left();
@@ -1444,6 +1647,7 @@ impl Navigator {
                 d.crumbs = ModelRc::new(VecModel::from(parts));
                 d.current_path = match &location {
                     Location::Path(p) => p.display().to_string().into(),
+                    Location::Vfs(at) => at.text().into(),
                     Location::Drives | Location::Trash => "".into(),
                     Location::Search(_) | Location::Flat(_) => {
                         location.folder().map(|p| p.display().to_string()).unwrap_or_default().into()
@@ -1472,6 +1676,8 @@ impl Navigator {
             f(&location);
         }
         self.send_session();
+        // A place in an archive no tab shows any more is let go of.
+        crate::vfs_mounts::sweep();
     }
 
     /// Tells `sink` the tabs whenever they change, while `restore` is on (spec 5.1); `saved`
@@ -1759,6 +1965,73 @@ mod tests {
         let file = tmp.0.join("f.txt");
         std::fs::write(&file, "x").expect("write");
         assert!(matches!(list(&Location::Path(file), &Mode::Show), LoadResult::Failed(_)));
+    }
+
+    /// A zip at `path` of (name, contents).
+    fn zip(path: &Path, files: &[(&str, &[u8])]) {
+        let files: Vec<(String, Vec<u8>)> = files.iter().map(|(n, d)| ((*n).to_owned(), d.to_vec())).collect();
+        std::fs::write(path, gezik_batch::archive::write_zip_entries(&files).expect("zip")).expect("write");
+    }
+
+    fn quiet() -> crate::vfs_mounts::UiCx<'static> {
+        crate::vfs_mounts::UiCx::new(&VfsPath::archive("x.zip".into()), Box::new(|| false))
+    }
+
+    #[test]
+    fn a_path_through_an_archive_leads_inside_it() {
+        let tmp = TempDir::new("into-zip");
+        let file = tmp.0.join("a.zip");
+        zip(&file, &[("docs/x.txt", b"x"), ("old/b.zip", b"")]);
+        for (typed, inner) in [(file.join("docs"), "docs"), (file.clone(), "")] {
+            match list(&Location::Path(typed), &Mode::Show) {
+                LoadResult::Redirect(Location::Vfs(at)) => assert_eq!(at, VfsPath::archive(file.clone()).join(inner)),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        let inside = VfsPath::archive(file.clone()).join("docs");
+        match list_vfs(&inside, &Mode::Show, &quiet()) {
+            LoadResult::Vfs(at, _, entries) => {
+                assert_eq!(at, inside);
+                assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["x.txt"]);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(
+            list_vfs(&VfsPath::archive(file.clone()).join("nope"), &Mode::Show, &quiet()),
+            LoadResult::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn an_archive_in_an_archive_opens_and_a_gone_one_falls_back() {
+        let tmp = TempDir::new("nested-zip");
+        let inner = tmp.0.join("inner.zip");
+        zip(&inner, &[("src/main.rs", b"fn main() {}")]);
+        let file = tmp.0.join("outer.zip");
+        zip(&file, &[("old/inner.zip", &std::fs::read(&inner).expect("read"))]);
+        let typed = VfsPath::archive(file.clone()).join("old/inner.zip/src");
+        let LoadResult::Redirect(Location::Vfs(nested)) = list_vfs(&typed, &Mode::Show, &quiet()) else {
+            panic!("expected the inner archive");
+        };
+        assert_eq!(nested, VfsPath::inside(VfsPath::archive(file.clone()).join("old/inner.zip")).join("src"));
+        assert!(
+            matches!(list_vfs(&nested, &Mode::Show, &quiet()), LoadResult::Vfs(_, _, entries) if entries.len() == 1)
+        );
+        let gone = VfsPath::archive(tmp.0.join("gone.zip")).join("a");
+        match list_vfs(&gone, &Mode::Show, &quiet()) {
+            LoadResult::Gone { fallback } => assert_eq!(fallback, Location::Path(tmp.0.clone())),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(matches!(list_vfs(&gone, &moves()[0], &quiet()), LoadResult::Failed(_)));
+    }
+
+    #[test]
+    fn a_redirect_replaces_the_step_that_led_there() {
+        let (typed, inside) =
+            (Location::Path("/w/a.zip/docs".into()), Location::Vfs(VfsPath::archive("/w/a.zip".into())));
+        let mode = Mode::Move(vec![Step::Back, Step::Navigate(typed.clone())]);
+        assert_eq!(redirected(mode, &typed, &inside), Mode::Move(vec![Step::Back, Step::Navigate(inside.clone())]));
+        assert_eq!(redirected(Mode::Show, &typed, &inside), Mode::Show);
     }
 
     #[test]

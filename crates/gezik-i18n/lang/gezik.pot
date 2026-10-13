@@ -24,6 +24,11 @@ msgid "the image is damaged: {}"
 msgstr ""
 
 #: crates/gezik-batch/src/archive/mod.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+msgid "The archive has more than {} entries"
+msgstr ""
+
+#: crates/gezik-batch/src/archive/mod.rs
 msgid "not a known archive"
 msgstr ""
 
@@ -49,6 +54,7 @@ msgstr ""
 #: crates/gezik-batch/src/archive/sevenz.rs
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-batch/src/tasks/external.rs
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
 msgid "no password"
 msgstr ""
 
@@ -322,6 +328,7 @@ msgstr ""
 #: crates/gezik/src/tab_sets.rs
 #: crates/gezik/src/tags.rs
 #: crates/gezik/src/trash_view.rs
+#: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -528,6 +535,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: crates/gezik-batch/src/tasks/mod.rs
+#: crates/gezik/src/navigation.rs
 msgid "7-Zip needed to open this kind of archive"
 msgstr ""
 
@@ -1090,6 +1098,11 @@ msgstr ""
 
 #: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:archives.double-click"
+msgid "browse"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:archives.double-click"
 msgid "system"
 msgstr ""
 
@@ -1345,7 +1358,11 @@ msgid "{0}: expected a speed like \"20 MB/s\" or \"\", got {1}"
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
-msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
+msgid "{0}: expected \"browse\", \"system\" or \"extract-here\", got {1}"
+msgstr ""
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected a number from 1 to 4096, got {1}"
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
@@ -1829,6 +1846,7 @@ msgid "Open Terminal as Administrator"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/size_map.rs
 #: crates/gezik/ui/app.slint
 msgid "Copy Path"
@@ -2143,6 +2161,7 @@ msgid "Find Duplicates"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Copy To…"
 msgstr ""
@@ -2250,6 +2269,12 @@ msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "Import Settings…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/archives.rs
+#: crates/gezik/ui/app.slint
+msgid "Open as Folder"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
@@ -3905,6 +3930,10 @@ msgstr ""
 msgid "Comment"
 msgstr ""
 
+#: crates/gezik-core/src/view.rs
+msgid "Packed"
+msgstr ""
+
 #. {} is what is undone, "Copy 3 items"
 #: crates/gezik-ops/src/engine.rs
 msgid "Undoing {}"
@@ -3954,6 +3983,7 @@ msgid "It is too big for this drive (files there can be at most {} GB)"
 msgstr ""
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik-vfs/src/tasks.rs
 msgid "Copy {n} item"
 msgid_plural "Copy {n} items"
 msgstr[0] ""
@@ -5127,6 +5157,32 @@ msgstr ""
 msgid "Could not start the search"
 msgstr ""
 
+#: crates/gezik-vfs/src/archive/sevenzip_list.rs
+msgid "7-Zip could not read it"
+msgstr ""
+
+#: crates/gezik-vfs/src/lib.rs
+msgid "Some items could not be taken out of the archive"
+msgstr ""
+
+#: crates/gezik-vfs/src/lib.rs
+msgid "Archives nested more than {} deep are not opened"
+msgstr ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Copying {}"
+msgstr ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Copying {n} item"
+msgid_plural "Copying {n} items"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Copy {}"
+msgstr ""
+
 #: crates/gezik/src/actions.rs
 msgid "Commands run on files and folders"
 msgstr ""
@@ -5262,6 +5318,10 @@ msgid "Change the flags of {0}: {1}"
 msgstr ""
 
 #: crates/gezik/src/archives.rs
+msgid "Open with System App"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
 msgid "Extract here"
 msgstr ""
 
@@ -5311,6 +5371,7 @@ msgstr ""
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/src/vfs_mounts.rs
 msgid "OK"
 msgstr ""
 
@@ -6527,6 +6588,14 @@ msgid "Show Comment"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+msgid "Hide Packed"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Packed"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 msgid "Connect to {}"
 msgstr ""
 
@@ -7044,6 +7113,7 @@ msgstr ""
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/src/sidebar.rs
+#: crates/gezik/src/vfs_mounts.rs
 msgid "Cannot open {}: {}"
 msgstr ""
 
@@ -7489,6 +7559,14 @@ msgstr ""
 
 #: crates/gezik/src/diff.rs
 msgid "Cannot copy: {}"
+msgstr ""
+
+#: crates/gezik/src/drag.rs
+msgid "Use Copy To… for large selections"
+msgstr ""
+
+#: crates/gezik/src/drag.rs
+msgid "Still taking the items out of the archive…"
 msgstr ""
 
 #: crates/gezik/src/dual.rs
@@ -8474,6 +8552,12 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: crates/gezik/src/navigation.rs
+msgid "Reading {}: {n} item"
+msgid_plural "Reading {}: {n} items"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/navigation.rs
 msgid "{} no longer exists"
 msgstr ""
 
@@ -8578,6 +8662,10 @@ msgstr ""
 msgid "Not in search results: open a folder first"
 msgstr ""
 
+#: crates/gezik/src/operations.rs
+msgid "Items in an archive can only be copied out"
+msgstr ""
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 msgid "{} works in search results"
@@ -8586,6 +8674,12 @@ msgstr ""
 #: crates/gezik/src/operations.rs
 msgid "can't be undone"
 msgstr ""
+
+#: crates/gezik/src/operations.rs
+msgid "Copied {n} item"
+msgid_plural "Copied {n} items"
+msgstr[0] ""
+msgstr[1] ""
 
 #: crates/gezik/src/operations.rs
 msgid "Cannot cut a drive"
@@ -9387,6 +9481,10 @@ msgstr ""
 
 #: crates/gezik/src/search.rs
 msgid "Flat view works in folders"
+msgstr ""
+
+#: crates/gezik/src/search.rs
+msgid "Inside an archive only names, sizes, dates and types are searched"
 msgstr ""
 
 #: crates/gezik/src/search.rs
@@ -10976,6 +11074,10 @@ msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] ""
 msgstr[1] ""
 
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Extracting {}…"
+msgstr ""
+
 #: crates/gezik/src/view/columns.rs
 msgid "Columns show folders only: the list is shown here"
 msgstr ""
@@ -11473,6 +11575,11 @@ msgstr ""
 #: crates/gezik/ui/widgets/file-view.slint
 msgctxt "column"
 msgid "Comment"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Packed"
 msgstr ""
 
 #: crates/gezik/ui/widgets/file-view.slint
@@ -12241,7 +12348,17 @@ msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:archives.double-click"
-msgid "system | extract-here. What double-clicking an archive does: open it with the system's program, or extract it next to itself."
+msgid "browse | system | extract-here. What double-clicking an archive does: go into it as into a folder, open it with the system's program, or extract it next to itself."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:archives.preview-limit"
+msgid "Preview limit"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:archives.preview-limit"
+msgid "MB: files inside an archive up to this size are extracted for the preview by themselves"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

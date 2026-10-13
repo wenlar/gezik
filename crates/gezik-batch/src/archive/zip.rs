@@ -67,6 +67,7 @@ impl ArchiveSource for ZipSource {
                 size: Some(file.size()),
                 packed: Some(file.compressed_size()),
                 encrypted: file.encrypted(),
+                modified: file.last_modified().and_then(dos_time),
             });
         }
         Ok(Some(entries))
@@ -82,6 +83,9 @@ impl ArchiveSource for ZipSource {
                 return Err(cancelled());
             }
             let info = info(&mut archive, i)?;
+            if !cx.wants(&info.entry()) {
+                continue;
+            }
             let Some(path) = safe_join(dest, &info.name) else {
                 cx.entry_failed(&info.name, &unsafe_path());
                 continue;
@@ -136,6 +140,19 @@ impl ArchiveSource for ZipSource {
         }
         links.create(dest, cx);
         Ok(())
+    }
+}
+
+impl Info {
+    fn entry(&self) -> Entry {
+        Entry {
+            name: self.name.clone(),
+            is_dir: self.is_dir,
+            size: Some(self.size),
+            packed: None,
+            encrypted: self.encrypted,
+            modified: self.meta.modified,
+        }
     }
 }
 

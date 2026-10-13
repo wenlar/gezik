@@ -44,6 +44,8 @@ export struct FileRow {
     rating: string,
     rating-faint: bool,
     comment: string,
+    // What a file inside an archive takes packed (spec 16 §5.2).
+    packed: string,
     // The first highlight rule matching the row (spec 12 §9.3): its text color (transparent:
     // the theme's) and a bold name.
     tint: color,
@@ -226,6 +228,7 @@ export component FileView inherits Rectangle {
     in-out property <length> col-tags;
     in-out property <length> col-rating;
     in-out property <length> col-comment;
+    in-out property <length> col-packed;
     // The field columns after Size (spec 13 §8.1), their widths' sum and count.
     in property <[FieldColumn]> field-columns;
     in property <length> field-width;
@@ -353,14 +356,14 @@ export component FileView inherits Rectangle {
     property <int> shown-columns: (root.col-modified > 0 ? 1 : 0) + (root.col-created > 0 ? 1 : 0)
         + (root.col-type > 0 ? 1 : 0) + (root.col-size > 0 ? 1 : 0) + (root.col-folder > 0 ? 1 : 0)
         + (root.col-match > 0 ? 1 : 0) + (root.col-tags > 0 ? 1 : 0) + (root.col-rating > 0 ? 1 : 0)
-        + (root.col-comment > 0 ? 1 : 0) + root.field-count;
+        + (root.col-comment > 0 ? 1 : 0) + (root.col-packed > 0 ? 1 : 0) + root.field-count;
 
     // Right edge of the Name column, in a row's own coordinates (rows are inset from the
     // list's edges): a drag that starts right of it, on a row, selects with a rectangle; from
     // the name it is kept for dragging files (sub-project 4).
     property <length> name-end: root.mode == 2 ? list.visible-width : max(root.side + 150px, list.visible-width - 2 * Theme.inset - root.side - root.col-modified - root.col-created
         - root.col-type - root.col-size - root.col-folder - root.col-match - root.col-tags - root.col-rating
-        - root.col-comment - root.field-width - root.gap * root.shown-columns);
+        - root.col-comment - root.col-packed - root.field-width - root.gap * root.shown-columns);
 
     property <bool> marquee-active;
     property <bool> marquee-additive;
@@ -575,6 +578,16 @@ export component FileView inherits Rectangle {
                 text: @tr("column" => "Comment");
                 menu(x, y) => { root.header-menu(x, y); }
                 resize(w) => { root.col-comment = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
+            // Not sorted by: a click does nothing.
+            if root.col-packed > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-packed;
+                text: @tr("column" => "Packed");
+                right-aligned: true;
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-packed = clamp(w, 50px, 600px); }
                 resize-done => { root.columns-resized(); }
             }
             for column[i] in root.field-columns: HeaderCell {
@@ -874,6 +887,14 @@ export component FileView inherits Rectangle {
                     if root.col-comment > 0 && root.mode == 0: Text {
                         width: root.col-comment;
                         text: entry.file.comment;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
+                    if root.col-packed > 0 && root.mode == 0: Text {
+                        width: root.col-packed;
+                        text: entry.file.packed;
+                        horizontal-alignment: right;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;

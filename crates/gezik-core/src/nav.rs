@@ -4,6 +4,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use crate::search::SearchSpec;
+use crate::vfs::{Container, VfsPath, VfsRoot};
 
 /// The most back entries a tab keeps; older ones are dropped.
 pub const MAX_BACK: usize = 100;
@@ -19,6 +20,8 @@ pub enum Location {
     Flat(PathBuf),
     /// Every bin of this user in one list (spec 7.1).
     Trash,
+    /// Inside an archive or on a phone (spec 16 §4).
+    Vfs(VfsPath),
 }
 
 impl Location {
@@ -37,11 +40,24 @@ impl Location {
                     None => share_server(path).map_or(Location::Drives, Location::Path),
                 }
             }),
-            Location::Search(spec) => Some(match spec.scope.folder() {
-                Some(folder) => Location::Path(folder.to_path_buf()),
-                None => Location::Drives,
+            Location::Search(spec) => Some(match (&spec.scope, spec.scope.folder()) {
+                (_, Some(folder)) => Location::Path(folder.to_path_buf()),
+                // Inside an archive: the place searched.
+                (crate::search::Scope::Vfs(at), None) => Location::Vfs(at.clone()),
+                _ => Location::Drives,
             }),
             Location::Flat(folder) => Some(Location::Path(folder.clone())),
+            // An archive's top: the folder it is in (or the place in the archive it is in).
+            Location::Vfs(at) => Some(match (at.parent(), &at.root) {
+                (Some(up), _) => Location::Vfs(up),
+                (None, VfsRoot::Archive(Container::Disk(file))) => {
+                    file.parent().map_or(Location::Drives, |dir| Location::Path(dir.to_path_buf()))
+                }
+                (None, VfsRoot::Archive(Container::Inside(file))) => {
+                    file.parent().map_or(Location::Drives, Location::Vfs)
+                }
+                (None, VfsRoot::Device { .. }) => Location::Drives,
+            }),
         }
     }
 
@@ -50,7 +66,17 @@ impl Location {
         match self {
             Location::Path(path) | Location::Flat(path) => Some(path),
             Location::Search(spec) => spec.scope.folder(),
-            Location::Drives | Location::Trash => None,
+            // No folder on disk: what needs one (a terminal, commands, a folder search) is off.
+            Location::Drives | Location::Trash | Location::Vfs(_) => None,
+        }
+    }
+
+    /// The folder it shows, or the archive file on disk it is inside (a drive being ejected
+    /// is let go of either way).
+    pub fn on_disk(&self) -> Option<&Path> {
+        match self {
+            Location::Vfs(at) => at.disk(),
+            _ => self.folder(),
         }
     }
 
@@ -453,7 +479,7 @@ impl Tabs {
     pub fn leave(&mut self, root: &Path) -> bool {
         let mut active = false;
         for (i, history) in self.tabs.iter_mut().enumerate() {
-            if history.location().folder().is_some_and(|f| crate::ops::paths::is_within(f, root)) {
+            if history.location().on_disk().is_some_and(|f| crate::ops::paths::is_within(f, root)) {
                 history.navigate(Location::Drives);
                 active |= i == self.active;
             }
@@ -603,6 +629,8 @@ pub fn crumbs(location: &Location, max_parts: usize) -> Vec<Crumb> {
         Location::Trash => {
             Some(Crumb { label: gezik_i18n::t("", TRASH_NAME).into_owned(), location: location.clone() })
         }
+        // Each part inside is a part of its own after the archive's folder's parts.
+        Location::Vfs(at) => Some(Crumb { label: at.name(), location: location.clone() }),
         Location::Path(_) | Location::Drives => None,
     };
     if let Some(last) = last {
@@ -659,6 +687,11 @@ pub fn nearest_existing(location: &Location, exists: impl Fn(&Path) -> bool) -> 
             // A search checks itself when it loads.
             Location::Search(_) | Location::Flat(_) | Location::Trash => return current,
             Location::Path(path) if exists(path) => return current,
+            // Gone with its archive: the archive's folder, or nearer to the drive.
+            Location::Vfs(at) => match at.disk() {
+                Some(file) => current = Location::Path(file.parent().unwrap_or(file).to_path_buf()),
+                None => return Location::Drives,
+            },
             Location::Path(_) => current = current.parent().unwrap_or(Location::Drives),
         }
     }
@@ -1480,5 +1513,29 @@ mod tests {
         assert_eq!(h.view(), &ViewState::default(), "a new list: no old selection");
         assert!(h.back());
         assert_eq!(h.location(), &p("/w"), "one step back is the folder");
+    }
+
+    #[test]
+    fn inside_an_archive_up_leads_to_its_folder_and_nothing_is_a_folder() {
+        let zip = |inner: &str| {
+            Location::Vfs(VfsPath { root: VfsRoot::Archive(Container::Disk("/w/a.zip".into())), inner: inner.into() })
+        };
+        assert_eq!(zip("docs/x").parent(), Some(zip("docs")));
+        assert_eq!(zip("").parent(), Some(p("/w")), "the top: the archive's folder");
+        let VfsPath { root, .. } = match zip("old/b.tar.gz") {
+            Location::Vfs(at) => VfsPath::inside(at),
+            _ => unreachable!(),
+        };
+        let nested = Location::Vfs(VfsPath { root, inner: String::new() });
+        assert_eq!(nested.parent(), Some(zip("old")), "an inner archive's top: where it is in the outer one");
+        let phone =
+            Location::Vfs(VfsPath { root: VfsRoot::Device { id: "1".into(), name: "P".into() }, inner: "".into() });
+        assert_eq!(phone.parent(), Some(Location::Drives));
+        assert_eq!(zip("docs").folder(), None);
+        assert_eq!(zip("docs").on_disk(), Some(Path::new("/w/a.zip")));
+        let labels: Vec<String> = crumbs(&zip("docs/x"), 4).into_iter().map(|c| c.label).collect();
+        assert_eq!(labels[labels.len() - 3..], ["a.zip", "docs", "x"]);
+        assert_eq!(crumbs(&zip("docs/x"), 4).last().map(|c| c.location.clone()), Some(zip("docs/x")));
+        assert_eq!(nearest_existing(&zip("docs"), |p| p == Path::new("/")), p("/"), "the archive is gone");
     }
 }

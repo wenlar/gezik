@@ -1155,7 +1155,7 @@ fn shown_folder() -> Option<PathBuf> {
     match crate::panes::active_nav().active_location() {
         Location::Path(folder) | Location::Flat(folder) => Some(folder),
         Location::Search(spec) => spec.scope.folder().map(Path::to_path_buf),
-        Location::Drives | Location::Trash => None,
+        Location::Drives | Location::Trash | Location::Vfs(_) => None,
     }
 }
 

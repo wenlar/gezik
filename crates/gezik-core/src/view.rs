@@ -258,11 +258,13 @@ pub enum ColumnKey {
     Comment,
     /// A metadata field (spec 13 §8.1), read only for the rows on screen.
     Field(crate::fields::FieldId),
+    /// What an entry takes packed (spec 16 §5.2): shown only inside an archive.
+    Packed,
 }
 
 impl ColumnKey {
     /// A folder's columns.
-    pub const ALL: [ColumnKey; 7] = [
+    pub const ALL: [ColumnKey; 8] = [
         ColumnKey::Modified,
         ColumnKey::Created,
         ColumnKey::Type,
@@ -270,6 +272,7 @@ impl ColumnKey {
         ColumnKey::Tags,
         ColumnKey::Rating,
         ColumnKey::Comment,
+        ColumnKey::Packed,
     ];
     /// The search results' and the flat view's columns, in display order.
     pub const RESULTS: [ColumnKey; 9] = [
@@ -295,6 +298,7 @@ impl ColumnKey {
             ColumnKey::Tags => "tags",
             ColumnKey::Rating => "rating",
             ColumnKey::Comment => "comment",
+            ColumnKey::Packed => "packed",
             ColumnKey::Field(id) => id.def().key,
         }
     }
@@ -303,6 +307,7 @@ impl ColumnKey {
     pub fn parse(text: &str) -> Option<ColumnKey> {
         ColumnKey::RESULTS
             .into_iter()
+            .chain([ColumnKey::Packed])
             .find(|k| k.as_str() == text)
             .or_else(|| crate::fields::by_key(text).map(ColumnKey::Field))
     }
@@ -318,6 +323,7 @@ impl ColumnKey {
             ColumnKey::Tags => gezik_i18n::tx!("Tags"),
             ColumnKey::Rating => gezik_i18n::tx!("Rating"),
             ColumnKey::Comment => gezik_i18n::tx!("Comment"),
+            ColumnKey::Packed => gezik_i18n::tx!("Packed"),
             ColumnKey::Field(id) => id.def().label,
         }
     }
@@ -331,7 +337,7 @@ impl ColumnKey {
             ColumnKey::Size => SortKey::Size,
             ColumnKey::Folder => SortKey::Folder,
             // Never sorted by: their headers do not sort (spec 12 §8.2 for Comment).
-            ColumnKey::Match | ColumnKey::Comment => SortKey::Name,
+            ColumnKey::Match | ColumnKey::Comment | ColumnKey::Packed => SortKey::Name,
             ColumnKey::Tags => SortKey::Tags,
             ColumnKey::Rating => SortKey::Rating,
             ColumnKey::Field(id) => SortKey::Field(id),
@@ -351,6 +357,7 @@ impl ColumnKey {
             ColumnKey::Tags => 7,
             ColumnKey::Rating => 8,
             ColumnKey::Comment => 9,
+            ColumnKey::Packed => 10,
             ColumnKey::Field(id) => FIELD_INDEX + id.number(),
         }
     }
@@ -359,7 +366,7 @@ impl ColumnKey {
         match self {
             ColumnKey::Modified | ColumnKey::Created => 150,
             ColumnKey::Type => 140,
-            ColumnKey::Size => 90,
+            ColumnKey::Size | ColumnKey::Packed => 90,
             ColumnKey::Folder => 220,
             ColumnKey::Match => 320,
             ColumnKey::Tags => 160,
@@ -387,13 +394,16 @@ pub struct ColumnState {
     pub width: u32,
 }
 
-/// Modified, Type and Size shown; Created, Tags, Rating and Comment hidden.
+/// Modified, Type and Size shown; Created, Tags, Rating, Comment and Packed hidden.
 pub fn default_columns() -> Vec<ColumnState> {
     ColumnKey::ALL
         .into_iter()
         .map(|key| ColumnState {
             key,
-            visible: !matches!(key, ColumnKey::Created | ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment),
+            visible: !matches!(
+                key,
+                ColumnKey::Created | ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment | ColumnKey::Packed
+            ),
             width: key.default_width(),
         })
         .collect()

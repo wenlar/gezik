@@ -93,6 +93,13 @@ pub fn copy(view: &View, paths: &[PathBuf], kind: PathFormat) {
 /// `copy-path`: the selected items' full paths, else the folder shown's; in This PC the
 /// selected drives (none selected: nothing).
 pub fn copy_selection(view: &View) {
+    // Inside an archive: the address bar's text of each (spec 16 §4.2).
+    if view.shows_vfs() {
+        let mut items: Vec<PathBuf> =
+            view.selected_vfs_items().iter().map(|(at, _)| PathBuf::from(at.text())).collect();
+        items.extend(view.vfs_dir().filter(|_| items.is_empty()).map(|dir| PathBuf::from(dir.at.text())));
+        return copy(view, &items, PathFormat::Full);
+    }
     let mut paths = view.selected_paths();
     if paths.is_empty() {
         paths.extend(view.folder());

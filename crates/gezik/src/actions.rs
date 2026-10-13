@@ -162,6 +162,19 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::InstallTheme => crate::settings_window::open_themes(),
         Action::ExportSettings => crate::settings_window::open_backup(false),
         Action::ImportSettings => crate::settings_window::open_backup(true),
+        Action::BrowseArchive => {
+            // The selected (or focused) archive, as a folder whatever double-click does.
+            let at = view.single_selected().or_else(|| view.focus());
+            let place = match at.and_then(|i| view.vfs_item(i)) {
+                Some((inside, false)) => Location::Vfs(inside),
+                Some(_) => return false,
+                None => match at.and_then(|i| view.entry_path(i)) {
+                    Some((file, false)) => Location::Vfs(gezik_core::vfs::VfsPath::archive(file)),
+                    _ => return false,
+                },
+            };
+            nav.go(place);
+        }
         // Not theirs: `handle_key` and the menu bar run these themselves. Listed one by one so
         // that a new action is a compile error here until it is placed.
         Action::NewTab

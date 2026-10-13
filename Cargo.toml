@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik-ops", "crates/gezik-batch", "crates/gezik-search", "crates/gezik-i18n", "crates/gezik"]
+members = ["crates/gezik-core", "crates/gezik-config", "crates/gezik-platform", "crates/gezik-ops", "crates/gezik-batch", "crates/gezik-search", "crates/gezik-i18n", "crates/gezik-vfs", "crates/gezik"]
 exclude = ["vendor"]
 
 [workspace.package]
@@ -17,6 +17,7 @@ gezik-ops = { path = "crates/gezik-ops" }
 gezik-batch = { path = "crates/gezik-batch", default-features = false }
 gezik-search = { path = "crates/gezik-search" }
 gezik-i18n = { path = "crates/gezik-i18n" }
+gezik-vfs = { path = "crates/gezik-vfs" }
 
 [profile.release]
 opt-level = 3
