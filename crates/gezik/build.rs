@@ -11,6 +11,12 @@ fn main() {
         println!("cargo:rerun-if-changed={}", plist.display());
         println!("cargo:rustc-link-arg-bins=-Wl,-sectcreate,__TEXT,__info_plist,{}", plist.display());
     }
+    // The exe's icon (Explorer, the taskbar before the window opens, shortcuts); the window's own
+    // icon is set in the .slint files.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo:rerun-if-changed=icons/gezik.ico");
+        embed_resource::compile("icons/gezik.rc", embed_resource::NONE).manifest_optional().unwrap();
+    }
     // WinHTTP (downloading 7-Zip, ffmpeg, pdfium) is loaded on its first call, not at start:
     // loaded with the exe it cost ~50 KB of idle memory in every session.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
