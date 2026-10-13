@@ -41,7 +41,8 @@ component Labeled inherits HorizontalLayout {
     spacing: Theme.spacing;
     Text {
         text: root.label;
-        width: 80px;
+        // At least 80px (the column), wider for a longer translation.
+        width: max(80px, self.preferred-width);
         vertical-alignment: center;
         color: Theme.foreground-muted;
     }
@@ -95,7 +96,8 @@ export component InfoLayer inherits Rectangle {
     TouchArea { }
 
     Rectangle {
-        width: min(400px, root.width - 40px);
+        // Wider when a translation widens the permission grid (padding 3 spacings a side).
+        width: min(max(400px, perms.label-width + Theme.spacing * 8 + 3 * perms.box-width), root.width - 40px);
         height: root.height;
         x: root.width - self.width;
         background: Theme.surface-raised;
@@ -152,30 +154,39 @@ export component InfoLayer inherits Rectangle {
                 }
                 // Owner, group, everyone × read, write, execute, then macOS' Hidden and Locked: one
                 // repeated box placed by hand (each repeater or written-out Check costs exe size).
-                Rectangle {
+                perms := Rectangle {
+                    // 80 and 84 px in English, wider for a longer translation.
+                    property <length> label-width: max(80px, owner-label.preferred-width, group-label.preferred-width, everyone-label.preferred-width);
+                    property <length> box-width: max(84px, Theme.spacing * 2 + 20px + max(read-text.preferred-width, write-text.preferred-width, execute-text.preferred-width, root.view.show-flags ? max(hidden-text.preferred-width, locked-text.preferred-width) : 0px));
                     height: (root.view.show-flags ? 4 : 3) * Theme.row-height;
-                    Text {
+                    // Measures only: the boxes' texts (a Check per text would cost exe size).
+                    read-text := Text { visible: false; text: @tr("Read"); }
+                    write-text := Text { visible: false; text: @tr("Write"); }
+                    execute-text := Text { visible: false; text: @tr("Execute"); }
+                    hidden-text := Text { visible: false; text: @tr("Hidden"); }
+                    locked-text := Text { visible: false; text: @tr("Locked"); }
+                    owner-label := Text {
                         x: 0;
                         y: 0;
-                        width: 80px;
+                        width: perms.label-width;
                         height: Theme.row-height;
                         text: @tr("Owner");
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
-                    Text {
+                    group-label := Text {
                         x: 0;
                         y: 1 * Theme.row-height;
-                        width: 80px;
+                        width: perms.label-width;
                         height: Theme.row-height;
                         text: @tr("Group");
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
-                    Text {
+                    everyone-label := Text {
                         x: 0;
                         y: 2 * Theme.row-height;
-                        width: 80px;
+                        width: perms.label-width;
                         height: Theme.row-height;
                         text: @tr("Everyone");
                         vertical-alignment: center;
@@ -185,9 +196,9 @@ export component InfoLayer inherits Rectangle {
                         ? [@tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute"), @tr("Hidden"), @tr("Locked")]
                         : [@tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute"), @tr("Read"), @tr("Write"), @tr("Execute")]: Check {
                         property <int> state: i < 9 ? mod(floor(root.view.perms / pow(3, i)), 3) : i == 9 ? root.view.hidden : root.view.locked;
-                        x: 80px + Theme.spacing * 2 + mod(i, 3) * 84px - (i < 9 ? 0 : 80px + Theme.spacing * 2);
+                        x: perms.label-width + Theme.spacing * 2 + mod(i, 3) * perms.box-width - (i < 9 ? 0 : perms.label-width + Theme.spacing * 2);
                         y: floor(i / 3) * Theme.row-height;
-                        width: 84px;
+                        width: perms.box-width;
                         text: label;
                         checked: self.state == 1;
                         mixed: self.state == 2;

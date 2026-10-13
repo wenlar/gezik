@@ -276,6 +276,7 @@ msgstr[1] ""
 #: crates/gezik/src/settings_window.rs
 #: crates/gezik/src/settings_window/themes.rs
 #: crates/gezik/src/tab_sets.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
 msgid "Replace"
@@ -3579,6 +3580,7 @@ msgstr ""
 
 #: crates/gezik-core/src/ops/conflict.rs
 #: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/ui/widgets/conflict-list.slint
 msgid "Merge"
 msgstr ""
 
@@ -11482,10 +11484,6 @@ msgid "Your groups"
 msgstr ""
 
 #: crates/gezik/ui/widgets/info.slint
-msgid "Everyone"
-msgstr ""
-
-#: crates/gezik/ui/widgets/info.slint
 msgid "Read"
 msgstr ""
 
@@ -11504,6 +11502,10 @@ msgstr ""
 #: crates/gezik/ui/widgets/info.slint
 #: crates/gezik/ui/widgets/tab-bar.slint
 msgid "Locked"
+msgstr ""
+
+#: crates/gezik/ui/widgets/info.slint
+msgid "Everyone"
 msgstr ""
 
 #: crates/gezik/ui/widgets/info.slint

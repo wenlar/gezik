@@ -163,6 +163,7 @@ mod tests {
         set(Some(Arc::new(Catalog::pseudo())));
         assert_eq!(t!("Settings"), "«Ŝéţţıñĝš ···»");
         assert_eq!(t!("menu" => "Open {}", "x"), "«Öpéñ x ··»");
+        assert_eq!(t("setting:shortcuts", ""), "", "an empty description stays empty, not an empty frame");
         assert_eq!(tn!("{n} file" | "{n} files", 2usize), "«2 fıléš ··»");
         assert_eq!(number(), Number::ENGLISH, "the pseudo language writes English numbers");
         let turkish = Layer::from_map("Türkçe".into(), true, plural::Plural::default(), Default::default());

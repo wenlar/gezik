@@ -78,6 +78,15 @@ export component ConflictList inherits Rectangle {
     // Clicks outside the box go nowhere.
     TouchArea { }
 
+    // The Action column: 110 px in English, wider for a longer translation of a decision
+    // (Decision::label; the text at 4 px, the arrow in the last 14 px).
+    property <length> action-width: max(110px, 24px + max(replace-text.preferred-width, skip-text.preferred-width, keep-text.preferred-width, newer-text.preferred-width, merge-text.preferred-width));
+    replace-text := Text { visible: false; text: @tr("Replace"); }
+    skip-text := Text { visible: false; text: @tr("Skip"); }
+    keep-text := Text { visible: false; text: @tr("Keep both"); }
+    newer-text := Text { visible: false; text: @tr("If newer"); }
+    merge-text := Text { visible: false; text: @tr("Merge"); }
+
     scope := FocusScope {
         key-pressed(event) => {
             if root.key(event) {
@@ -179,7 +188,7 @@ export component ConflictList inherits Rectangle {
                 }
                 Text {
                     text: @tr("Action");
-                    width: 110px;
+                    width: root.action-width;
                     vertical-alignment: center;
                     color: Theme.foreground-muted;
                 }
@@ -239,7 +248,7 @@ export component ConflictList inherits Rectangle {
                             color: line.muted;
                         }
                         Rectangle {
-                            width: 110px;
+                            width: root.action-width;
                             border-radius: Theme.radius;
                             background: choice.has-hover && row.kind != 1 ? Theme.hover : transparent;
                             Text {

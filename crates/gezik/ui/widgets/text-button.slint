@@ -23,7 +23,7 @@ export component TextButton inherits Rectangle {
     // The lead glyph, the label and the icon, centered together.
     property <length> gap: root.text != "" && root.icon != "" ? Theme.spacing : 0px;
     property <length> lead: root.lead-icon != "" ? 16px + Theme.spacing : 0px;
-    property <length> content-width: root.lead + caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
+    out property <length> content-width: root.lead + caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
 
     height: Theme.row-height + 4px;
     min-width: root.compact ? root.content-width + Theme.spacing * 2 : max(72px, root.content-width + Theme.spacing * 4);
