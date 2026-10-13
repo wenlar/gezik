@@ -396,22 +396,31 @@ fn install_event_handler_if_necessary(proxy: EventLoopProxy<SlintEvent>) {
     }
 }
 
+/// Gezik patch: the app menu's texts (About, Services, Hide, Hide Others, Show All, Quit) in the
+/// app's language, set before the first window (`set_app_menu_texts`); `None` keeps muda's
+/// English.
+#[cfg(target_os = "macos")]
+pub(crate) static APP_MENU_TEXTS: std::sync::Mutex<Option<[String; 6]>> = std::sync::Mutex::new(None);
+
 #[cfg(target_os = "macos")]
 fn create_default_app_menu(menu_bar: &muda::Menu) -> Result<(), i_slint_core::api::PlatformError> {
     let app_menu = muda::Submenu::new("App", true);
+    // Gezik patch: the texts Gezik gave, else muda's own.
+    let texts = APP_MENU_TEXTS.lock().ok().and_then(|t| t.clone());
+    let text = |i: usize| texts.as_ref().map(|t| t[i].as_str());
     menu_bar
         .append(&app_menu)
         .and_then(|_| {
             app_menu.append_items(&[
-                &muda::PredefinedMenuItem::about(None, None),
+                &muda::PredefinedMenuItem::about(text(0), None),
                 &muda::PredefinedMenuItem::separator(),
-                &muda::PredefinedMenuItem::services(None),
+                &muda::PredefinedMenuItem::services(text(1)),
                 &muda::PredefinedMenuItem::separator(),
-                &muda::PredefinedMenuItem::hide(None),
-                &muda::PredefinedMenuItem::hide_others(None),
-                &muda::PredefinedMenuItem::show_all(None),
+                &muda::PredefinedMenuItem::hide(text(2)),
+                &muda::PredefinedMenuItem::hide_others(text(3)),
+                &muda::PredefinedMenuItem::show_all(text(4)),
                 &muda::PredefinedMenuItem::separator(),
-                &muda::PredefinedMenuItem::quit(None),
+                &muda::PredefinedMenuItem::quit(text(5)),
             ])
         })
         .map_err(|menu_bar_err| {

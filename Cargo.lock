@@ -1735,6 +1735,7 @@ dependencies = [
  "gezik-ops",
  "gezik-platform",
  "gezik-search",
+ "i-slint-backend-winit",
  "i-slint-core",
  "image",
  "notify",
@@ -1792,6 +1793,9 @@ dependencies = [
 [[package]]
 name = "gezik-core"
 version = "0.1.0"
+dependencies = [
+ "gezik-i18n",
+]
 
 [[package]]
 name = "gezik-i18n"
@@ -1821,6 +1825,7 @@ dependencies = [
  "block2 0.6.2",
  "dirs",
  "gezik-core",
+ "gezik-i18n",
  "image",
  "libc",
  "objc2 0.6.4",
