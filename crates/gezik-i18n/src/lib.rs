@@ -72,9 +72,10 @@ pub fn current() -> Option<Arc<Catalog>> {
 
 /// `id` (in `context`, `""` for none) in the language in use. `t!` comes here, and a text
 /// marked with `tx!` or read from the settings template is shown through it.
-/// English costs one atomic load: the text itself, borrowed.
+/// English costs one atomic load: the text itself, borrowed. An empty text stays empty (a
+/// label that is not set; the pseudo language would frame it).
 pub fn t<'a>(context: &str, id: &'a str) -> Cow<'a, str> {
-    if ENGLISH.load(Ordering::Acquire) {
+    if id.is_empty() || ENGLISH.load(Ordering::Acquire) {
         return Cow::Borrowed(id);
     }
     match &*CURRENT.read().unwrap_or_else(PoisonError::into_inner) {

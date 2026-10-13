@@ -222,10 +222,29 @@ fn literal(s: &str, slint: bool) -> Option<(String, &str)> {
     None
 }
 
-/// The `t!`, `tn!` and `tx!` of a Rust file, until its `#[cfg(test)]`.
+/// The `t!`, `tn!` and `tx!` of a Rust file, until its `#[cfg(test)]` test module.
 fn scan_rust(text: &str) -> Result<Vec<Found>, String> {
-    let text = text.split("\n#[cfg(test)]").next().unwrap_or_default();
-    scan(text, false, &["t!(", "tn!(", "tx!("])
+    scan(&text[..test_module(text)], false, &["t!(", "tn!(", "tx!("])
+}
+
+/// Where a file's `#[cfg(test)] mod …` starts (other attributes may come between); its length
+/// if it has none. A `#[cfg(test)]` on a single item or on `mod tests;` (a file of its own)
+/// does not end the file's texts.
+fn test_module(text: &str) -> usize {
+    let mut from = 0;
+    while let Some(found) = text[from..].find("\n#[cfg(test)]") {
+        let at = from + found;
+        let mut lines = text[at + 1..].lines().skip(1).map(str::trim_start);
+        let module = |l: &str| {
+            let l = l.strip_prefix("pub(crate) ").or_else(|| l.strip_prefix("pub ")).unwrap_or(l);
+            l.starts_with("mod ") && !l.trim_end().ends_with(';')
+        };
+        if lines.find(|l| !l.starts_with("#[")).is_some_and(module) {
+            return at;
+        }
+        from = at + 1;
+    }
+    text.len()
 }
 
 /// The `@tr(…)` of a Slint file.
@@ -277,7 +296,11 @@ fn scan(text: &str, slint: bool, marks: &[&str]) -> Result<Vec<Found>, String> {
             i += 1 + len.map_or(0, |l| l + 1);
             continue;
         }
-        if let Some(mark) = marks.iter().find(|m| rest.starts_with(**m)).filter(|_| slint || !ident_before(text, i)) {
+        // A macro's pattern (`tx!($label:literal)`) is not a use.
+        let pattern = |m: &str| !slint && rest[m.len()..].starts_with('$');
+        if let Some(mark) =
+            marks.iter().find(|m| rest.starts_with(**m)).filter(|m| slint || !(ident_before(text, i) || pattern(m)))
+        {
             let start = line(i);
             let at = &rest[mark.len()..];
             let bad = || format!("line {start}: {} needs string literals", mark.trim_end_matches('('));
@@ -427,10 +450,14 @@ mod tests {
             const F: &str = tx!(r#"Raw "quoted""#);
             let g = t!("Line \
                        joined\n\u{2026}");
-            assert!(true); print!("x"); let ok = it!("not ours");
+            assert!(true); print!("x"); let ok = it!("not ours"); macro_rules! m { (tx!($l:literal)) => {} }
         "##;
+        let test_item = "\n#[cfg(test)]\nfn helper() {}\n#[cfg(test)]\nmod tests;\n";
         assert_eq!(
-            scan_rust(&format!("{code}\n#[cfg(test)]\nmod tests {{ t!(\"test only\"); }}")).unwrap(),
+            scan_rust(&format!(
+                "{test_item}{code}\n#[cfg(test)]\n#[allow(x)]\npub(crate) mod tests {{ t!(\"test only\"); }}"
+            ))
+            .unwrap(),
             [
                 found("menu", "Open", None, Some("the File menu")),
                 found("", "Moved {} to {}", None, None),
@@ -578,6 +605,132 @@ icon: @image-url("x.svg"); t: "Plain" + @tr("{}", "arg"); u: "Page \{n}";"#,
             }
         }
         assert!(plain.is_empty(), "texts without @tr (spec 15 §6):\n{}", plain.join("\n"));
+    }
+
+    /// Whether a function or method of this name shows its text arguments to the user: status
+    /// lines, questions, notices and the window's text properties.
+    fn is_message_sink(name: &str) -> bool {
+        const ENDS: [&str; 10] =
+            ["text", "label", "title", "status", "note", "error", "message", "hint", "tip", "empty"];
+        matches!(name, "status" | "tell" | "notify" | "warn" | "note")
+            || name.starts_with("ask")
+            || name.starts_with("confirm")
+            || (name.starts_with("set_") && ENDS.iter().any(|e| name.ends_with(e)))
+    }
+
+    /// The top-level arguments of the call whose `(` is at the start of `s`.
+    fn call_args(s: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let (mut depth, mut start, mut i) = (0, 1, 0);
+        while i < s.len() {
+            let rest = &s[i..];
+            let c = rest.chars().next().unwrap_or_default();
+            if c == '"' || ((rest.starts_with("r\"") || rest.starts_with("r#\"")) && !ident_before(s, i)) {
+                i = literal(rest, false).map_or(i + 1, |(_, after)| s.len() - after.len());
+                continue;
+            }
+            if c == '\'' && rest[1..].chars().nth(1) == Some('\'') {
+                i += rest[1..].chars().next().map_or(1, char::len_utf8) + 2;
+                continue;
+            }
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        out.push(&s[start..i]);
+                        return out;
+                    }
+                }
+                ',' if depth == 1 => {
+                    out.push(&s[start..i]);
+                    start = i + 1;
+                }
+                _ => {}
+            }
+            i += c.len_utf8();
+        }
+        out
+    }
+
+    /// The plain texts given to a message sink in `text` (before its test module), with their
+    /// lines: an argument that is a string literal, a `format!`'s, or one in a `&[…]` of them.
+    fn unmarked_messages(text: &str) -> Vec<(usize, String)> {
+        let text = &text[..test_module(text)];
+        let mut out = Vec::new();
+        let line = |at: usize| text[..at].matches('\n').count() + 1;
+        let mut i = 0;
+        while i < text.len() {
+            let rest = &text[i..];
+            let c = rest.chars().next().unwrap_or_default();
+            if rest.starts_with("//") {
+                i += rest.find('\n').unwrap_or(rest.len());
+                continue;
+            }
+            if rest.starts_with("/*") {
+                i += rest.find("*/").map_or(rest.len(), |e| e + 2);
+                continue;
+            }
+            if c == '"' || ((rest.starts_with("r\"") || rest.starts_with("r#\"")) && !ident_before(text, i)) {
+                i = literal(rest, false).map_or(i + 1, |(_, after)| text.len() - after.len());
+                continue;
+            }
+            if c == '\'' && rest[1..].chars().nth(1) == Some('\'') {
+                i += rest[1..].chars().next().map_or(1, char::len_utf8) + 2;
+                continue;
+            }
+            if c == '(' {
+                let start = text[..i].rfind(|c: char| !(c.is_alphanumeric() || c == '_')).map_or(0, |p| p + 1);
+                if is_message_sink(&text[start..i]) && !text[..start].ends_with("fn ") {
+                    for arg in call_args(rest) {
+                        let arg = arg.trim_start();
+                        let items = match arg.strip_prefix('&').filter(|list| list.starts_with('[')) {
+                            Some(list) => call_args(list),
+                            None => vec![arg.strip_prefix("format!(").unwrap_or(arg)],
+                        };
+                        for item in items {
+                            if let Some((found, _)) = literal(item, false).filter(|(l, _)| !not_a_text(l)) {
+                                out.push((line(i), found));
+                            }
+                        }
+                    }
+                }
+            }
+            i += c.len_utf8();
+        }
+        out
+    }
+
+    /// Spec 15 §6 for Rust, as far as a scan can tell: a text given to a status line, a question,
+    /// a notice or a window's text goes through `t!`, `tn!` or `tx!`. A text kept as it is
+    /// (a name, a format) goes in `KEPT` as `file: text`.
+    #[test]
+    fn rust_messages_are_marked() {
+        // A key path and an inner message, nothing to translate.
+        const KEPT: &[&str] = &[
+            "crates/gezik-config/src/settings.rs: search.content-max-size: {err}",
+            "crates/gezik-config/src/tags.rs: list[{}]: {err}",
+        ];
+        let found = unmarked_messages(
+            r#"fn status(x: &str) {}
+nav.status(format!("Copied {}", n)); nav.status(t!("Fine"));
+dialogs.ask(t!("Title"), "Plain message", &["Delete", "x-id"], |_| status("Nested call"));
+window.set_cp_note("Hint".into()); window.set_mode("list".into()); "status(\"no\")";
+#[cfg(test)]
+mod tests { fn f() { status("Test only"); } }"#,
+        );
+        let want = [(2, "Copied {}"), (3, "Plain message"), (3, "Delete"), (3, "Nested call"), (4, "Hint")];
+        assert_eq!(found, want.map(|(l, s)| (l, s.to_owned())), "ids pass");
+        let root = root();
+        let mut plain = Vec::new();
+        for file in sources(&root).into_iter().filter(|f| f.ends_with(".rs")) {
+            for (line, literal) in unmarked_messages(&read(&root.join(&file)).unwrap()) {
+                if !KEPT.contains(&format!("{file}: {literal}").as_str()) {
+                    plain.push(format!("{file}:{line}: {literal:?}"));
+                }
+            }
+        }
+        assert!(plain.is_empty(), "texts without t! (spec 15 §6), or add them to KEPT:\n{}", plain.join("\n"));
     }
 
     /// The CI's tie (spec 15 §11.2): the template is the code's, and the built-in languages hold.
