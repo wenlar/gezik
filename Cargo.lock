@@ -1792,6 +1792,9 @@ dependencies = [
 [[package]]
 name = "gezik-core"
 version = "0.1.0"
+dependencies = [
+ "gezik-i18n",
+]
 
 [[package]]
 name = "gezik-i18n"
