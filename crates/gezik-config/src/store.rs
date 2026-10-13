@@ -428,7 +428,11 @@ fn read_languages(dir: &Path, warnings: &mut Vec<Warning>) -> Vec<(String, Arc<g
         }
         if report.missing > 0 {
             // TRANSLATORS: {0} texts of {n} are missing.
-            let missing = tn!("{0} of {n} text missing" | "{0} of {n} texts missing", report.total, report.missing);
+            let missing = tn!(
+                "{0} of {n} text missing" | "{0} of {n} texts missing",
+                report.total,
+                gezik_i18n::number().grouped(gezik_i18n::count(report.missing))
+            );
             warnings.push(Warning::new(file, missing));
         }
         out.extend(layer.map(|layer| (code.to_owned(), Arc::new(layer))));
@@ -777,7 +781,10 @@ mod tests {
             said,
             [
                 "lang/pl.po line 4: \"{0}\" missing in the translation".to_owned(),
-                format!("lang/pl.po: {total} of {total} texts missing"),
+                format!(
+                    "lang/pl.po: {0} of {0} texts missing",
+                    gezik_i18n::Number::ENGLISH.grouped(gezik_i18n::count(total))
+                ),
                 "lang/xx.po line 2: expected a string in double quotes".to_owned(),
             ]
         );

@@ -441,39 +441,56 @@ impl SearchSpec {
 
     /// The tab title: `Search: *.pdf`, `Search: "fatura"` (the text in files first).
     pub fn title(&self) -> String {
+        self.title_in(false)
+    }
+
+    /// `title`, in English if `english` (an exported file's heading).
+    pub fn title_in(&self, english: bool) -> String {
+        use gezik_i18n::tx;
         if let Some(name) = &self.name {
             return name.clone();
         }
         if self.duplicates {
-            return self.crumb();
+            return self.crumb_in(english);
         }
         if !self.content.is_empty() {
-            gezik_i18n::t!("Search: \"{}\"", self.content)
+            say(english, tx!("Search: \"{}\""), &[&self.content])
         } else if self.pattern.trim().is_empty() && !self.tags.is_empty() {
-            gezik_i18n::t!("Tag: {}", self.tags.join(", "))
+            say(english, tx!("Tag: {}"), &[&self.tags.join(", ")])
         } else if self.pattern.trim().is_empty() {
-            gezik_i18n::t!("Search").into_owned()
+            say(english, tx!("Search"), &[])
         } else {
-            gezik_i18n::t!("Search: {}", self.pattern.trim())
+            say(english, tx!("Search: {}"), &[&self.pattern.trim()])
         }
     }
 
     /// The last address bar part: `Search "*.pdf"`.
     pub fn crumb(&self) -> String {
+        self.crumb_in(false)
+    }
+
+    fn crumb_in(&self, english: bool) -> String {
+        use gezik_i18n::tx;
         if self.duplicates {
             return match self.pattern.trim() {
-                "" => gezik_i18n::t!("Duplicates").into_owned(),
-                pattern => gezik_i18n::t!("Duplicates: {}", pattern),
+                "" => say(english, tx!("Duplicates"), &[]),
+                pattern => say(english, tx!("Duplicates: {}"), &[&pattern]),
             };
         }
         if !self.content.is_empty() {
-            gezik_i18n::t!("Search \"{}\"", self.content)
+            say(english, tx!("Search \"{}\""), &[&self.content])
         } else if self.pattern.trim().is_empty() {
-            gezik_i18n::t!("Search").into_owned()
+            say(english, tx!("Search"), &[])
         } else {
-            gezik_i18n::t!("Search \"{}\"", self.pattern.trim())
+            say(english, tx!("Search \"{}\""), &[&self.pattern.trim()])
         }
     }
+}
+
+/// `template` translated unless `english`, its placeholders filled.
+fn say(english: bool, template: &'static str, args: &[&dyn std::fmt::Display]) -> String {
+    let text = if english { std::borrow::Cow::Borrowed(template) } else { gezik_i18n::t("", template) };
+    gezik_i18n::format(&text, args, None)
 }
 
 /// `500 MB`, `1.5 GB`, `10 kB`: B, KB, MB, GB, TB are steps of 1024 (any case), `kB` of 1000;
@@ -664,6 +681,7 @@ mod tests {
         let mut spec = SearchSpec::new(Scope::AllDrives);
         spec.pattern = " *.pdf ".into();
         assert_eq!(spec.title(), "Search: *.pdf");
+        assert_eq!(spec.title_in(true), "Search: *.pdf", "an export's heading: English in every language");
         assert_eq!(spec.crumb(), "Search \"*.pdf\"");
         spec.content = "fatura".into();
         assert_eq!(spec.title(), "Search: \"fatura\"");

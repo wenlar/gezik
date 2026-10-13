@@ -27,9 +27,11 @@ export struct PreviewTool {
     step: int,
 }
 
-// A metadata row (13d): `group` is the heading over its group's first row, else "".
+// A metadata row (13d): `group` is the heading over its group's first row, else "";
+// `key` the field's key (`aperture`), as the label is translated.
 export struct PropRow {
     group: string,
+    key: string,
     label: string,
     value: string,
 }
@@ -103,7 +105,7 @@ export global PreviewActions {
     callback key(KeyEvent) -> bool;
     // A right-click, at this window position.
     callback context-menu(length, length);
-    // A right-click on a property row (its label and value), at this window position.
+    // A right-click on a property row (its field key and value), at this window position.
     callback value-menu(string, string, length, length);
     // Bumped by Rust: the viewer says its room again (a window whose events were connected late).
     in property <int> ask;
@@ -156,6 +158,7 @@ component Track inherits TouchArea {
 // The metadata rows under their group headings, labels in one column (preview and Info).
 export component PropRows inherits VerticalLayout {
     in property <[PropRow]> rows;
+    // The row's field key and value.
     callback menu(string, string, length, length);
     spacing: Theme.spacing;
     for row in root.rows: VerticalLayout {
@@ -168,7 +171,7 @@ export component PropRows inherits VerticalLayout {
         TouchArea {
             pointer-event(event) => {
                 if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
-                    root.menu(row.label, row.value, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                    root.menu(row.key, row.value, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
                 }
             }
             // Placed by hand, not in a layout: a layout measures the wrapped value at the row's
@@ -566,8 +569,8 @@ export component PreviewPane inherits Rectangle {
 
                 PropRows {
                     rows: root.info.properties;
-                    menu(label, value, x, y) => {
-                        PreviewActions.value-menu(label, value, x, y);
+                    menu(key, value, x, y) => {
+                        PreviewActions.value-menu(key, value, x, y);
                     }
                 }
             }

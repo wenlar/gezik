@@ -2163,9 +2163,9 @@ impl Menus {
     }
 
     /// Right-click on a property row of the preview (13d): Copy Value; Show Column (13e).
-    pub fn preview_value_menu(&self, label: &str, value: String, at: Anchor) {
-        // The row shows the label translated (English: as written).
-        let field = gezik_core::fields::all().find(|id| t("", id.def().label) == label);
+    /// `key`: the row's field key (its label is translated).
+    pub fn preview_value_menu(&self, key: &str, value: String, at: Anchor) {
+        let field = gezik_core::fields::all().find(|id| id.def().key == key);
         *self.subject.borrow_mut() = Some(Subject::PreviewValue(value, field));
         let mut items = vec![(PREVIEW_COPY, t!("Copy Value").into_owned(), true)];
         if field.is_some() {

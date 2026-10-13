@@ -7,7 +7,6 @@ use gezik_core::batch::date::{DateParts, format as format_date};
 use gezik_core::batch::rules::{CleanRule, ExtensionRule, NumberAt, NumberRule, Rule, RuleEntry};
 use gezik_core::batch::template::{Piece, bare, needed, parse as parse_template, safe_part};
 use gezik_core::fields::{self as f, FieldSet, Fields, Value};
-use gezik_core::format_size;
 use gezik_core::ops::names::{NameError, NameRules, split_name, validate_name};
 
 /// One item to rename, as the layer knows it.
@@ -159,7 +158,8 @@ fn render(pieces: &[Piece], name: &str, ext: &str, cx: &Context<'_>) -> String {
                     out.push_str(&format_date(format, date));
                 }
             }
-            Piece::Size => out.push_str(&format_size(cx.item.size)),
+            // A name does not change with the interface language.
+            Piece::Size => out.push_str(&gezik_core::format_size_english(cx.item.size)),
             Piece::Field { id, arg, fallback } => match cx.item.fields.get(*id) {
                 Some(value) => out.push_str(&safe_part(&f::name_text(*id, value, arg.as_deref()))),
                 None => out.push_str(fallback.as_deref().unwrap_or_default()),

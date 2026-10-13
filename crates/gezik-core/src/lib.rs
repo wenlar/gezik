@@ -257,7 +257,21 @@ pub fn format_size_in(bytes: u64, format: view::SizeFormat) -> String {
 
 /// `format_size_in` with the separators of `number`.
 pub fn format_size_with(bytes: u64, format: view::SizeFormat, number: gezik_i18n::Number) -> String {
-    use gezik_i18n::t;
+    size_text(bytes, format, number, |unit| gezik_i18n::t("unit", unit))
+}
+
+/// `1.5 MB` the same in every language (file names, file contents).
+pub fn format_size_english(bytes: u64) -> String {
+    size_text(bytes, view::SizeFormat::Binary, gezik_i18n::Number::ENGLISH, std::borrow::Cow::Borrowed)
+}
+
+fn size_text(
+    bytes: u64,
+    format: view::SizeFormat,
+    number: gezik_i18n::Number,
+    unit_text: impl Fn(&'static str) -> std::borrow::Cow<'static, str>,
+) -> String {
+    use gezik_i18n::tx;
     use std::fmt::Write;
     let step = match format {
         view::SizeFormat::Binary => 1024.0,
@@ -266,7 +280,7 @@ pub fn format_size_with(bytes: u64, format: view::SizeFormat, number: gezik_i18n
     let mut out = String::with_capacity(16);
     if (bytes as f64) < step {
         let _ = write!(out, "{bytes} ");
-        out.push_str(&t!("unit" => "B"));
+        out.push_str(&unit_text(tx!("unit" => "B")));
         return out;
     }
     let mut value = bytes as f64;
@@ -277,13 +291,13 @@ pub fn format_size_with(bytes: u64, format: view::SizeFormat, number: gezik_i18n
     }
     number.write_decimal(&mut out, value, 1);
     out.push(' ');
-    out.push_str(&match (unit, format) {
-        (1, view::SizeFormat::Binary) => t!("unit" => "KB"),
-        (1, view::SizeFormat::Decimal) => t!("unit" => "kB"),
-        (2, _) => t!("unit" => "MB"),
-        (3, _) => t!("unit" => "GB"),
-        _ => t!("unit" => "TB"),
-    });
+    out.push_str(&unit_text(match (unit, format) {
+        (1, view::SizeFormat::Binary) => tx!("unit" => "KB"),
+        (1, view::SizeFormat::Decimal) => tx!("unit" => "kB"),
+        (2, _) => tx!("unit" => "MB"),
+        (3, _) => tx!("unit" => "GB"),
+        _ => tx!("unit" => "TB"),
+    }));
     out
 }
 
@@ -497,6 +511,12 @@ mod tests {
             assert_eq!(format_size_with(1023, Binary, number), "1023 B", "{code}: no grouping in sizes");
             assert_eq!(format_size_with(999_900, Decimal, number).len(), "999.9 kB".len(), "{code}");
         }
+    }
+
+    #[test]
+    fn english_sizes_are_the_same_in_every_language() {
+        assert_eq!(format_size_english(1536 * 1024), "1.5 MB");
+        assert_eq!(format_size_english(10), "10 B");
     }
 
     #[test]

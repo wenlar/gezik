@@ -235,13 +235,18 @@ impl Fields {
 
     /// The one display form of a field (panel, column): `4032 × 3024`, `1/250 s`, `3:25`.
     pub fn text(&self, id: FieldId) -> Option<String> {
+        self.text_in(id, gezik_i18n::number())
+    }
+
+    /// `text` with `number`'s separators (`Number::ENGLISH`: the same in every language).
+    pub fn text_in(&self, id: FieldId, number: gezik_i18n::Number) -> Option<String> {
         let value = self.get(id)?;
         if id == DIMENSIONS
             && let (Some(Value::Int(w)), Some(Value::Int(h))) = (self.get(WIDTH), self.get(HEIGHT))
         {
             return Some(format!("{w} × {h}"));
         }
-        Some(text(id, value))
+        Some(text_in(id, value, number))
     }
 }
 
@@ -255,16 +260,21 @@ pub fn group_text(id: FieldId, value: &Value) -> String {
 
 /// `value` as `id` shows it, without the other fields (dimensions show as a pixel count).
 pub fn text(id: FieldId, value: &Value) -> String {
+    text_in(id, value, gezik_i18n::number())
+}
+
+/// `text` with `number`'s separators.
+pub fn text_in(id: FieldId, value: &Value, number: gezik_i18n::Number) -> String {
     match value {
         Value::Text(text) => text.to_string(),
         Value::Int(n) => match id {
             WIDTH | HEIGHT => format!("{n} px"),
             BITRATE => format!("{n} kb/s"),
-            SAMPLE_RATE => format!("{} Hz", crate::group_digits(n.unsigned_abs())),
-            DIMENSIONS | PAGES | WORDS => crate::group_digits(n.unsigned_abs()),
+            SAMPLE_RATE => format!("{} Hz", number.grouped(n.unsigned_abs())),
+            DIMENSIONS | PAGES | WORDS => number.grouped(n.unsigned_abs()),
             _ => n.to_string(),
         },
-        Value::Real(x) => match (id, gezik_i18n::number()) {
+        Value::Real(x) => match (id, number) {
             (EXPOSURE, _) if *x > 0.0 && *x < 1.0 => format!("1/{} s", (1.0 / x).round()),
             (EXPOSURE, number) => format!("{} s", trim(*x, 1, number)),
             (APERTURE, number) => format!("f/{}", trim(*x, 1, number)),
@@ -277,7 +287,6 @@ pub fn text(id: FieldId, value: &Value) -> String {
             format!("{:04}-{:02}-{:02} {:02}:{:02}", d.year, d.month, d.day, d.hour, d.minute)
         }
         Value::Geo(lat, lon) => {
-            let number = gezik_i18n::number();
             let mut out = String::new();
             number.write_decimal(&mut out, lat.abs(), 4);
             out.push_str(if *lat < 0.0 { "° S, " } else { "° N, " });
@@ -335,7 +344,7 @@ pub fn name_text(id: FieldId, value: &Value, arg: Option<&str>) -> String {
             }
         }
         Value::Date(d) => crate::batch::date::format(arg.unwrap_or("%Y-%m-%d"), d),
-        _ => text(id, value),
+        _ => text_in(id, value, gezik_i18n::Number::ENGLISH),
     }
 }
 
@@ -609,6 +618,11 @@ mod tests {
         assert_eq!(name_text(TAKEN, &day, Some("%Y")), "2024");
         assert_eq!(name_text(TAKEN, &day, None), "2024-07-01");
         assert_eq!(name_text(ARTIST, &Value::Text("Tarkan".into()), None), "Tarkan");
+        assert_eq!(
+            name_text(GPS, &Value::Geo(41.0082, -28.9784), None),
+            "41.0082° N, 28.9784° W",
+            "English in every language"
+        );
     }
 
     #[test]

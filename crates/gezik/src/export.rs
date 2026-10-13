@@ -36,8 +36,9 @@ fn place(location: &Location, home: &Path) -> Option<(PathBuf, String, String)> 
         Location::Search(spec) => {
             let stem = spec.name.clone().unwrap_or_else(|| "Search results".to_owned());
             let (folder, title) = match spec.scope.folder() {
-                Some(folder) => (folder.to_path_buf(), format!("{} in {}", spec.title(), folder.display())),
-                None => (home.to_path_buf(), spec.title()),
+                // The file's heading: English, as its column titles.
+                Some(folder) => (folder.to_path_buf(), format!("{} in {}", spec.title_in(true), folder.display())),
+                None => (home.to_path_buf(), spec.title_in(true)),
             };
             Some((folder, export::file_stem(&stem), title))
         }
@@ -118,7 +119,8 @@ fn form_checks(selected: usize, full_paths: bool) -> Vec<(String, bool)> {
 
 /// The exported file's own note (its contents stay English, as the column titles).
 fn items_text(count: usize) -> String {
-    if count == 1 { "1 item".to_owned() } else { format!("{} items", with_commas(count)) }
+    let grouped = gezik_i18n::Number::ENGLISH.grouped(gezik_i18n::count(count));
+    if count == 1 { "1 item".to_owned() } else { format!("{grouped} items") }
 }
 
 /// Writes the view's rows as `sheet` says into `out`; returns how many.
@@ -307,6 +309,11 @@ mod tests {
 
     fn root() -> PathBuf {
         PathBuf::from(if cfg!(windows) { r"C:\Work" } else { "/Work" })
+    }
+
+    #[test]
+    fn the_file_note_is_english() {
+        assert_eq!((items_text(1), items_text(1234)), ("1 item".to_owned(), "1,234 items".to_owned()));
     }
 
     #[test]

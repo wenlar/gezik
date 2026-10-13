@@ -41,7 +41,12 @@ pub fn rows(fields: &Fields) -> Vec<PropRow> {
         let heading = if shown == Some(group) { Default::default() } else { gezik_i18n::t("", group.label()) };
         shown = Some(group);
         let label = gezik_i18n::t("", id.def().label);
-        rows.push(PropRow { group: heading.as_ref().into(), label: label.as_ref().into(), value: value.into() });
+        rows.push(PropRow {
+            group: heading.as_ref().into(),
+            key: id.def().key.into(),
+            label: label.as_ref().into(),
+            value: value.into(),
+        });
     }
     rows
 }

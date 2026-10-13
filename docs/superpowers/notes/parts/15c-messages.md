@@ -45,6 +45,24 @@ merged into this branch so the two ship as one PR.
   is an id (lower case, no space), tokens only, or in `KEPT` (two key-path joins). It cannot
   see texts built in helpers and returned; the pseudo-language walk covers those.
 
+## Language-independent data (review fixes)
+
+- **Property filters** (`aperture:2.8`) match the English text or the shown one (`f/2,8` in
+  Turkish): `fields::text_in` takes the `Number`, `field_filter::has` tries both.
+- **File names built from fields** stay English: `{size}` in rename templates uses
+  `format_size_english` (English separators, untranslated units), `name_text` writes other
+  values with `Number::ENGLISH`.
+- **Exported files** stay English: the note's count, a search's heading
+  (`SearchSpec::title_in(true)`) and a CSV's raw property values (`known_field_in`). A text or
+  HTML export's shown cells (sizes, kinds) are as the list shows them.
+- **Default new names** (`New folder`, `New file.txt`, `New document.md`, the "New folder with"
+  folder) are translated only if the translation is a valid name on every system and keeps the
+  extension (`names::default_name`), else English.
+- **Preview property menu** finds its field by the row's key (`PropRow.key`), not by its
+  translated label.
+- `{n}` is grouped since the formats half: "Scanning… 12,400 items" (was `12400`), and the
+  dropped-language notice groups both counts.
+
 ## Decisions against the task text
 
 - **English changed where it was wrong at a count of 1** (was a missing plural): "1 more
@@ -81,7 +99,8 @@ merged into this branch so the two ship as one PR.
 
 ## Size
 
-Release exe 29,800,960 B with both 15c halves and master (15b + 15d) merged. Master was not
-built here: 15b's 29,598,208 B + 15d's +5,120 B ≈ 29,603,328 B, so 15c is ≈ +197,632 B
+Release exe 29,804,544 B after the review fixes (29,800,960 B before them), with both 15c
+halves and master (15b + 15d) merged. Master was not
+built here: 15b's 29,598,208 B + 15d's +5,120 B ≈ 29,603,328 B, so 15c is ≈ +201,216 B
 (budget +262,144 B; no split needed). Before merging master: 29,798,400 B against 15b, +200,192
 B. Copy: `%TEMP%\gezik-gui-15\bin\t15c-msg.exe`.

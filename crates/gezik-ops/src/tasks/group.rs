@@ -49,7 +49,7 @@ impl Task for GroupTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
-        let folder = self.dir.join(&*gezik_i18n::t("", FOLDER_NAME));
+        let folder = self.dir.join(gezik_core::ops::names::default_name(FOLDER_NAME, true));
         // Made as it is planned (a Before item), before anything goes in. A taken name gets a
         // number, and the items' targets follow it (the engine's renames). Only the folder is
         // a result: it is selected and renamed afterwards.

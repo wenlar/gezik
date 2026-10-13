@@ -2347,7 +2347,7 @@ mod tests {
     fn other_states() {
         let scanning = progress(JobState::Scanning, (0, 12400), (0, 3 * 1024 * 1024 * 1024));
         let (_, text, bar) = describe(Some(&scanning), None, None, None);
-        assert!(text.starts_with("Scanning… 12400 items · "), "{text}");
+        assert!(text.starts_with("Scanning… 12,400 items · "), "{text}");
         assert!(bar < 0.0);
         let waiting = progress(JobState::Waiting, (0, 0), (0, 0));
         assert_eq!(describe(Some(&waiting), None, None, None).0, RowState::Waiting);

@@ -255,9 +255,34 @@ pub fn validate_name(name: &str, rules: NameRules) -> Result<(), NameError> {
     Ok(())
 }
 
+/// A new item's default name (`New folder`) in the interface language, or `english` if the
+/// translation could not be a name (on any system) or changes a file's extension.
+pub fn default_name(english: &'static str, is_dir: bool) -> String {
+    let shown = gezik_i18n::t("", english);
+    if fits(&shown, english, is_dir) { shown.into_owned() } else { english.to_owned() }
+}
+
+fn fits(shown: &str, english: &str, is_dir: bool) -> bool {
+    validate_name(shown, NameRules::Windows).is_ok()
+        && (is_dir || split_name(shown, false).1 == split_name(english, false).1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_default_name_holds_in_english() {
+        assert_eq!(default_name("New file.txt", false), "New file.txt");
+        assert_eq!(default_name("New folder", true), "New folder");
+        assert!(fits("Yeni metin.txt", "New file.txt", false) && fits("Yeni klasör", "New folder", true));
+        assert!(!fits("Yeni dosya.md", "New file.txt", false), "the extension changed");
+        assert!(
+            !fits("Yeni/klasör", "New folder", true)
+                && !fits("Neu?", "New folder", true)
+                && !fits("", "New folder", true)
+        );
+    }
 
     #[test]
     fn splits_off_the_extension() {

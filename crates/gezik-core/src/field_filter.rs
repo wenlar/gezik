@@ -142,9 +142,17 @@ pub fn matches(terms: &[FieldTerm], values: &Fields) -> bool {
     terms.iter().all(|term| match term {
         FieldTerm::Any(id) => values.get(*id).is_some(),
         FieldTerm::None(id) => values.get(*id).is_none(),
-        FieldTerm::Has(id, text) => values.text(*id).is_some_and(|shown| fold_text(&shown).contains(text.as_str())),
+        FieldTerm::Has(id, text) => has(values, *id, text, gezik_i18n::number()),
         FieldTerm::Cmp(id, op, wanted) => values.get(*id).is_some_and(|v| holds(*op, v, wanted)),
     })
+}
+
+/// Whether field `id` holds folded `text` as written in English (`aperture:2.8`) or as `shown`
+/// writes it (`2,8` in Turkish): a filter means the same in every language.
+fn has(values: &Fields, id: FieldId, text: &str, shown: gezik_i18n::Number) -> bool {
+    [gezik_i18n::Number::ENGLISH, shown]
+        .into_iter()
+        .any(|number| values.text_in(id, number).is_some_and(|t| fold_text(&t).contains(text)))
 }
 
 fn holds(op: Op, value: &Value, wanted: &Value) -> bool {
@@ -246,6 +254,16 @@ mod tests {
         assert_eq!(rest, "*.mp3  ");
         assert_eq!(terms, [FieldTerm::Has(ARTIST, "tarkan".into())]);
         assert!(error.is_some_and(|e| e.starts_with("duration>3x:")));
+    }
+
+    #[test]
+    fn a_word_matches_the_english_number_in_every_language() {
+        let values = Fields::new(vec![(fields::APERTURE, Value::Real(2.8))]);
+        let tr = gezik_i18n::Number::builtin("tr").unwrap();
+        assert_eq!(values.text_in(fields::APERTURE, tr).as_deref(), Some("f/2,8"));
+        assert!(has(&values, fields::APERTURE, "2.8", tr), "as typed in English");
+        assert!(has(&values, fields::APERTURE, "2,8", tr), "as shown in Turkish");
+        assert!(!has(&values, fields::APERTURE, "2,8", gezik_i18n::Number::ENGLISH));
     }
 
     #[test]

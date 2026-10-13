@@ -1105,6 +1105,8 @@ impl View {
                     Column::Shown(key @ (ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment)) => {
                         model::known_meta_cell(&data, i, *key)
                     }
+                    // A CSV's raw values read the same in every language (`2.8`, not `2,8`).
+                    Column::Shown(ColumnKey::Field(id)) if raw => model::known_field_in(&data, i, *id, true),
                     Column::Shown(ColumnKey::Field(id)) => model::known_field(&data, i, *id),
                 };
             }

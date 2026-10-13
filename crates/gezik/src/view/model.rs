@@ -421,7 +421,13 @@ fn field_cells(data: &ViewData, i: usize) -> ModelRc<slint::SharedString> {
 
 /// Field `id` of entry `i` as far as known (an export: nothing is read for it).
 pub fn known_field(data: &ViewData, i: usize, id: FieldId) -> String {
-    row_fields(data, i, false).and_then(|v| v.text(id)).unwrap_or_default()
+    known_field_in(data, i, id, false)
+}
+
+/// `known_field`, with English numbers if `english`.
+pub fn known_field_in(data: &ViewData, i: usize, id: FieldId, english: bool) -> String {
+    let number = if english { gezik_i18n::Number::ENGLISH } else { gezik_i18n::number() };
+    row_fields(data, i, false).and_then(|v| v.text_in(id, number)).unwrap_or_default()
 }
 
 /// Entry `i`'s field values as far as known: from the folder read whole, else from the rows'
