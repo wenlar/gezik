@@ -3,7 +3,7 @@
 ## i-slint-core 1.18.1 (patched)
 
 The published `i-slint-core` 1.18.1, unchanged except for one fix in `properties.rs`
-(`impl Drop for PropertyTracker`, marked "Gezik patch"). The root `Cargo.toml` uses it
+(`impl Drop for PropertyTracker`, marked "Gezik patch") and the text language below. The root `Cargo.toml` uses it
 through `[patch.crates-io]`.
 
 **The bug.** The software renderer keeps each `Text`'s shaped paragraphs in a cache
@@ -32,10 +32,28 @@ Gezik has no such text in a layout (the settings rows' titles had one);
 cannot be built outside the Slint repository.
 
 **Updating Slint.** When upgrading, check whether the new release fixes this (drop of a
-`PropertyTracker` with dependents). If it does, remove this folder, the
+`PropertyTracker` with dependents). If it does and the text language below is upstream too,
+remove this folder, the
 `[patch.crates-io]` section and the `exclude` entry in the root `Cargo.toml`, and the
 `i-slint-core` dev-dependency and test in `crates/gezik`. If not, copy the new release here
 and apply the same change to `properties.rs`.
+
+**The text language (spec 15 §3.4).** parley picks the fallback font of a script by the
+text's language, and Slint gives it none: Han characters then get DirectWrite's choice for no
+language, Yu Gothic UI, which lacks the Simplified-only characters (`这`, `对` drew as
+Arial's empty box).
+`textlayout/sharedparley/shaping.rs` (marked "Gezik patch") keeps a per-thread
+`Property<Option<Language>>`, set by `sharedparley::set_text_locale` (Gezik's
+`language::apply`: the interface language if Chinese, Japanese or Korean, else the system's
+first such language, else `zh-Hans`), and `ranged_builder` pushes it as
+`StyleProperty::Locale`. It is read while shaping, inside the text layout cache entry's
+tracker, so a change invalidates every cached shaping like a changed text would; no cache key
+changes. fontique (0.11) gives Simplified Chinese and no language one shared fallback slot,
+filled on the first query: the language has to be set before the first Han text is shaped.
+`fallback_families_for_tests` is a hook for `crates/gezik/tests/slint_cjk.rs`. When
+upgrading: if Slint passes a language itself, drop this part; otherwise copy the three pieces
+(the thread local and its two functions, the `push_default`, the `pub use` in
+`sharedparley.rs`).
 
 **The translator path (spec 15 §4.4).** Not a patch: Gezik turns on the crate's `tr` feature
 and hands `SlintContext::set_external_translator` its catalogue (`crates/gezik/src/translator.rs`);

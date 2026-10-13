@@ -28,9 +28,10 @@ slint = { version = "1.18", default-features = false, features = [
     "raw-window-handle-06",
 ] }
 open = "5.3"
-# Slint's external translator for `@tr` (the `tr` feature; spec 15 §4.4), and the patched
-# Slint in vendor/ its tests check (see vendor/README.md).
-i-slint-core = { version = "=1.18.1", default-features = false, features = ["std", "tr"] }
+# Slint's external translator for `@tr` (the `tr` feature; spec 15 §4.4), the text language
+# (`shared-parley`; spec 15 §3.4), and the patched Slint in vendor/ its tests check (see
+# vendor/README.md).
+i-slint-core = { version = "=1.18.1", default-features = false, features = ["std", "tr", "shared-parley"] }
 notify = "8"
 
 [features]
