@@ -32,15 +32,15 @@ artifacts (Actions ▸ the run ▸ Artifacts).
 | `gezik-<v>-windows-x64-portable.zip` | The same plus an empty `gezik-portable` file: settings go to `gezik-data\` next to `gezik.exe` (a USB stick, say). |
 | `gezik-<v>-macos-universal.dmg` | `Gezik.app` (arm64 + x86_64, ad-hoc signed), the licence files and a link to Applications. |
 | `gezik-<v>-linux-x64.tar.gz` | `gezik`, the licence files and `README-linux.txt` (what it needs). Built on Debian trixie by `scripts/linux/package.sh`, which also starts it under Xvfb. |
+| `gezik-<v>-linux-x64.AppImage` | The same binary as one file, made by `scripts/linux/appimage.sh` with pinned `appimagetool` 1.9.1 and type2 runtime 20251108 (SHA-256 checked). Needs FUSE 2 or 3 to start (`--appimage-extract-and-run` works without). |
 | `SHA256SUMS.txt` | SHA-256 of every file above. |
 
 `Gezik.app` is made by `scripts/macos/make-app.sh`, which also runs on a Mac by hand
 (`cargo build --release -p gezik && scripts/macos/make-app.sh`). Portable mode on macOS: put a
 `gezik-portable` file next to `Gezik.app` (not inside it).
 
-There is no AppImage yet. The icon `appimagetool` needs is `crates/gezik/icons/gezik.png`; the
-Linux job can add one with a pinned `appimagetool` and type2 runtime (Gezik already
-looks for `gezik-portable` next to the `.AppImage`).
+Portable mode for the AppImage: put a `gezik-portable` file next to the `.AppImage`. Its icon is
+`crates/gezik/icons/gezik-256.png`, a 256 px render of `gezik.svg`.
 
 ## What users see without signing
 

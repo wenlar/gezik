@@ -132,13 +132,13 @@ jobs:
     steps:
       - name: Install Linux packages
         # scripts/linux/Dockerfile's build libraries plus Xvfb and xdotool for package.sh's
-        # smoke run.
+        # smoke run, and desktop-file-utils for appimage.sh.
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             g++ pkg-config libfontconfig-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
             libxcb1 libxcursor1 libxi6 libxrandr2 libx11-6 libx11-xcb1 \
-            fonts-dejavu-core dbus xvfb xdotool
+            fonts-dejavu-core dbus xvfb xdotool desktop-file-utils
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
@@ -152,8 +152,8 @@ jobs:
         run: |
           ln -s "$GITHUB_WORKSPACE" /src
           SHA="$VERSION" OUT="$GITHUB_WORKSPACE/dist" bash scripts/linux/package.sh
-      # No AppImage yet: appimagetool would need a pinned type2 runtime; see docs/releasing.md.
-      # The icon it requires is crates/gezik/icons/gezik.png.
+      - name: AppImage
+        run: bash scripts/linux/appimage.sh target/release/gezik "$VERSION" dist
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: linux
