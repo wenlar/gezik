@@ -114,8 +114,15 @@ mod tests {
         let options = options(&files);
         assert!(options[0].starts_with("auto — System: "), "{options:?}");
         let pl = "pl — Polski — 0 % translated";
-        assert_eq!(options[1..], ["en — English", pl, "pseudo — Pseudo (for translators)"]);
-        assert_eq!(options.iter().map(|o| code_of(o)).collect::<Vec<_>>(), ["auto", "en", "pl", "pseudo"]);
+        // The built-in languages sit between English and pseudo; a dropped file joins them.
+        assert_eq!(options[1], "en — English");
+        assert!(options.contains(&pl.to_owned()), "{options:?}");
+        assert_eq!(options.last().unwrap(), "pseudo — Pseudo (for translators)");
+        let codes: Vec<_> = options.iter().map(|o| code_of(o)).collect();
+        assert_eq!(codes.first(), Some(&"auto"));
+        for code in ["tr", "de", "es", "fr", "zh-Hans", "pl"] {
+            assert!(codes.contains(&code), "{code}: {codes:?}");
+        }
         assert_eq!(state(false, 10, 10, 10), " — machine translated");
         assert_eq!(state(false, 10, 6, 10), " — 40 % reviewed");
         assert_eq!(state(true, 62, 0, 100), " — 62 % translated");

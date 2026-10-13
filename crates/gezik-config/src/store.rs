@@ -790,10 +790,11 @@ mod tests {
         );
         write(&store, "settings.toml", "language = \"pl\"\n");
         assert_eq!(resolve(&store.read_files(), true).warnings.len(), 3, "pl is known");
-        write(&store, "settings.toml", "language = \"de\"\n");
+        // German is built in now: an unknown code shows the warning.
+        write(&store, "settings.toml", "language = \"qq\"\n");
         let loaded = resolve(&store.read_files(), true);
         let last = loaded.warnings.last().unwrap().to_string();
-        assert_eq!(last, "settings.toml: language \"de\": no such language, using the system's");
+        assert_eq!(last, "settings.toml: language \"qq\": no such language, using the system's");
     }
 
     #[test]
