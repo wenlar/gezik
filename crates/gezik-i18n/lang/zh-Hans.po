@@ -4851,6 +4851,7 @@ msgid_plural "Extract {n} items"
 msgstr[0] "解压 {n} 个项目"
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik/src/archives.rs
 #, fuzzy
 msgid "Compress {n} item"
 msgid_plural "Compress {n} items"
@@ -6623,6 +6624,17 @@ msgstr "输入分卷大小（MB）"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
+msgid "Archive"
+msgstr "归档"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Size: {} in {n} file"
+msgid_plural "Size: {} in {n} files"
+msgstr[0] "大小：{n} 个文件，共 {}"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
 msgid "Extract to"
 msgstr "解压到"
 
@@ -6646,6 +6658,11 @@ msgstr "收到的不是 Gezik 预期的文件。重试？"
 #, fuzzy
 msgid "Try again"
 msgstr "重试"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Compress {}"
+msgstr "压缩 {}"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
