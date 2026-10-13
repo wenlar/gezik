@@ -13,3 +13,7 @@ Numbering goes on from `../linux-test.md` (it ends at 281). Results go to `../li
 ### 15b, the interface's texts
 
 283. **Menus in the pseudo language.** `language = "pseudo"`: the `≡` menu, the right-click menus (a file, the empty list, a tab, the sidebar, a column header), the drop menu after a right-drag, the palette (Ctrl+Shift+P) and the Settings window's pages, titles, descriptions and choices are framed; none cut off. The tray icon has no menu on Linux (spec 9 decision 24): nothing to check there. GNOME and KDE.
+
+### 15c, messages
+
+284. **Messages in the pseudo language.** As macOS 393 (the Trash wording, the operations panel, the tools, System Integration, a settings warning, the search status): every text framed, then plain English again with `auto`, the Filters button included. GNOME and KDE.
