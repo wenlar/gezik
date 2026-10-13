@@ -43,7 +43,7 @@ The top of `settings.toml` holds:
   language, macOS' preferred languages, `LANGUAGE`/`LC_ALL`/`LC_MESSAGES`/`LANG` on Linux), or
   a code: `"en"`, a built-in language, or a file in `lang/` (`lang/pl.po` → `"pl"`). Texts a
   language lacks show in English. `"pseudo"` shows every text framed and lengthened
-  (`⟦Ŝéţţıñĝš ···⟧`), for translators. A change applies at once, without a restart; the
+  (`«Ŝéţţıñĝš ···»`), for translators. A change applies at once, without a restart; the
   system's language is read when Gezik starts. File contents, settings keys and values,
   shortcut names in this file and the command line stay English.
 - `start-folder` — where new tabs open: `"{home}"`, `"drives"` (This PC) or any folder.

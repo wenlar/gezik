@@ -1,5 +1,9 @@
 fn main() {
-    slint_build::compile("ui/app.slint").expect("failed to compile Slint UI");
+    // `@tr` has only the contexts written in it (spec 15 §4.2), as `gezik-lang extract` reads
+    // them: by default Slint would give each one its component's name.
+    let config = slint_build::CompilerConfiguration::new()
+        .with_default_translation_context(slint_build::DefaultTranslationContext::None);
+    slint_build::compile_with_config("ui/app.slint", config).expect("failed to compile Slint UI");
     // macOS names an app without a bundle by its Info.plist when the executable carries one:
     // the menu bar then says "Gezik" (and "About/Hide/Quit Gezik"), not the file name.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
