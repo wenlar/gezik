@@ -40,9 +40,11 @@ impl Location {
                     None => share_server(path).map_or(Location::Drives, Location::Path),
                 }
             }),
-            Location::Search(spec) => Some(match spec.scope.folder() {
-                Some(folder) => Location::Path(folder.to_path_buf()),
-                None => Location::Drives,
+            Location::Search(spec) => Some(match (&spec.scope, spec.scope.folder()) {
+                (_, Some(folder)) => Location::Path(folder.to_path_buf()),
+                // Inside an archive: the place searched.
+                (crate::search::Scope::Vfs(at), None) => Location::Vfs(at.clone()),
+                _ => Location::Drives,
             }),
             Location::Flat(folder) => Some(Location::Path(folder.clone())),
             // An archive's top: the folder it is in (or the place in the archive it is in).

@@ -15,13 +15,15 @@ pub enum Scope {
     Folder(PathBuf),
     /// Every local fixed drive ("This PC").
     AllDrives,
+    /// A place inside an archive: its index, by name, size and date (spec 16 §5.5).
+    Vfs(crate::vfs::VfsPath),
 }
 
 impl Scope {
     pub fn folder(&self) -> Option<&Path> {
         match self {
             Scope::Folder(path) => Some(path),
-            Scope::AllDrives => None,
+            Scope::AllDrives | Scope::Vfs(_) => None,
         }
     }
 }

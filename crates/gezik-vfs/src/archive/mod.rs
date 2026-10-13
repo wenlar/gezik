@@ -86,6 +86,10 @@ impl Vfs for ArchiveVfs {
         self.index.list(dir)
     }
 
+    fn walk(&self, dir: &str, each: &mut dyn FnMut(&str, Entry) -> bool) {
+        self.index.walk(dir, each);
+    }
+
     fn is_file(&self, path: &str) -> bool {
         self.index.is_file(path)
     }

@@ -131,6 +131,8 @@ impl Listing {
     pub fn item_at(&self, index: usize) -> Option<(VfsPath, bool)> {
         match self {
             Listing::Vfs(dir, entries) => entries.get(index).map(|e| (dir.at.join(&e.name), e.is_dir)),
+            // A search inside an archive.
+            Listing::Results(set) => set.item_at(index).map(|at| (at, set.is_dir(index))),
             _ => None,
         }
     }

@@ -11633,6 +11633,11 @@ msgstr "La vue à plat fonctionne dans les dossiers"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
+msgid "Inside an archive only names, sizes, dates and types are searched"
+msgstr "Dans une archive, la recherche porte seulement sur le nom, la taille, la date et le type"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
 msgid "Cannot start the search"
 msgstr "Impossible de lancer la recherche"
 

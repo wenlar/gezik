@@ -114,6 +114,26 @@ impl Index {
         Some(children.iter().map(|child| self.entry(child)).collect())
     }
 
+    /// Everything under folder `path`, each with its folder under `path` (`/` between parts,
+    /// `""` for `path` itself), folders before what they hold. `each` returns false to stop.
+    pub fn walk(&self, path: &str, each: &mut dyn FnMut(&str, Entry) -> bool) {
+        let Some(top) = self.find(path) else { return };
+        let mut queue = std::collections::VecDeque::from([(top, String::new())]);
+        while let Some((at, folder)) = queue.pop_front() {
+            let node = self.nodes[at as usize];
+            for child in node.first..node.first + node.count {
+                let entry = self.entry(&self.nodes[child as usize]);
+                if entry.is_dir {
+                    let under = if folder.is_empty() { entry.name.clone() } else { format!("{folder}/{}", entry.name) };
+                    queue.push_back((child, under));
+                }
+                if !each(&folder, entry) {
+                    return;
+                }
+            }
+        }
+    }
+
     fn entry(&self, node: &Node) -> Entry {
         let is_dir = node.flags & DIR != 0;
         Entry {
@@ -313,6 +333,18 @@ mod tests {
         assert!(index.is_file("docs/2024/a.txt") && index.is_dir("docs/2024") && !index.is_file("docs"));
         assert_eq!(index.packed("docs/2024/a.txt"), Some((Some(3), false)));
         assert_eq!(index.list("docs").unwrap()[0].flags, Entry::SIZED);
+        let mut found = Vec::new();
+        index.walk("docs", &mut |folder, entry| {
+            found.push(format!("{folder}|{}", entry.name));
+            true
+        });
+        assert_eq!(found, ["|2024", "2024|a.txt", "2024|b.txt"]);
+        let mut first = 0;
+        index.walk("", &mut |_, _| {
+            first += 1;
+            false
+        });
+        assert_eq!(first, 1, "stopped at once");
     }
 
     #[test]

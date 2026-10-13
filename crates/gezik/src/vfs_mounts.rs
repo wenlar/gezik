@@ -39,6 +39,10 @@ pub fn sweep() {
         .flat_map(|pane| pane.nav.tab_locations())
         .filter_map(|location| match location {
             Location::Vfs(at) => Some(at.root),
+            Location::Search(spec) => match spec.scope {
+                gezik_core::search::Scope::Vfs(at) => Some(at.root),
+                _ => None,
+            },
             _ => None,
         })
         .collect();

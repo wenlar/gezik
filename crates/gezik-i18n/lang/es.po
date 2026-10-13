@@ -11633,6 +11633,11 @@ msgstr "La vista plana funciona en carpetas"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
+msgid "Inside an archive only names, sizes, dates and types are searched"
+msgstr "Dentro de un archivo comprimido solo se busca por nombre, tamaño, fecha y tipo"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
 msgid "Cannot start the search"
 msgstr "No se puede iniciar la búsqueda"
 

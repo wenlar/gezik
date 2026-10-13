@@ -22,6 +22,9 @@ pub trait Vfs: Send + Sync {
     fn root(&self) -> &VfsRoot;
     /// What folder `dir` holds (`""`: the top); `None` if it is no folder there.
     fn list(&self, dir: &str) -> Option<Vec<Entry>>;
+    /// Everything under folder `dir` with its folder under `dir` (a search, spec 16 §5.5);
+    /// `each` returns false to stop.
+    fn walk(&self, _dir: &str, _each: &mut dyn FnMut(&str, Entry) -> bool) {}
     fn is_file(&self, path: &str) -> bool;
     fn is_dir(&self, path: &str) -> bool;
     /// The bytes `path` takes packed (if known) and whether it is encrypted.

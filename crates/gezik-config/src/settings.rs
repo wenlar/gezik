@@ -1074,6 +1074,8 @@ pub fn search_to_toml(spec: &SearchSpec) -> toml::Table {
     let folder = match &spec.scope {
         Scope::Folder(path) => text(&path.to_string_lossy()),
         Scope::AllDrives => text("drives"),
+        // Its address: read back as a folder, the search finds its way into the archive again.
+        Scope::Vfs(at) => text(&at.text()),
     };
     table.insert("folder".into(), folder);
     if !spec.pattern.is_empty() {

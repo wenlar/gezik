@@ -58,6 +58,9 @@ pub struct ResultSet {
     sorted: Option<(SortSpec, bool, GroupBy)>,
     /// The trash's rows' labels (`ResultSet::trash`); `None` for a search.
     labels: Option<Vec<TrashLabel>>,
+    /// A search inside an archive (spec 16 §5.5): the place searched, folders under it with
+    /// `/`; its rows have no path on disk.
+    inside: Option<Box<gezik_core::vfs::VfsPath>>,
     /// A duplicates search's rows' groups (`ResultSet::duplicates`): 0 frees the most.
     dups: Option<Vec<u32>>,
 }
@@ -204,7 +207,26 @@ impl ResultSet {
             sorted: None,
             labels: None,
             dups: None,
+            inside: None,
         }
+    }
+
+    /// Empty results of a search inside an archive under `at`.
+    pub fn inside(at: gezik_core::vfs::VfsPath) -> ResultSet {
+        let root = PathBuf::from(at.text());
+        ResultSet { inside: Some(Box::new(at)), ..ResultSet::new(root, false) }
+    }
+
+    /// Row `i` inside the archive searched (none for a search on disk).
+    pub fn item_at(&self, i: usize) -> Option<gezik_core::vfs::VfsPath> {
+        let at = self.inside.as_deref()?;
+        let (folder, name) = (self.folder(i)?, self.name(i)?);
+        Some(if folder.is_empty() { at.join(name) } else { at.join(&format!("{folder}/{name}")) })
+    }
+
+    /// The archive place searched, if it is one.
+    pub fn searched_inside(&self) -> Option<&gezik_core::vfs::VfsPath> {
+        self.inside.as_deref()
     }
 
     /// Empty results of a duplicates search under `root` (spec 11 §9.3).
@@ -398,6 +420,9 @@ impl ResultSet {
     }
 
     pub fn path_at(&self, i: usize) -> Option<PathBuf> {
+        if self.inside.is_some() {
+            return None;
+        }
         let (folder, name) = (self.folder(i)?, self.name(i)?);
         Some(if folder.is_empty() { self.root.join(name) } else { self.root.join(folder).join(name) })
     }
@@ -476,6 +501,7 @@ impl ResultSet {
                 .as_ref()
                 .map(|l| rows.iter().map(|&i| l.get(i).expect("a trash row has its label").clone()).collect()),
             dups: self.dups.as_ref().map(|d| rows.iter().filter_map(|&i| d.get(i).copied()).collect()),
+            inside: self.inside.clone(),
         }
     }
 

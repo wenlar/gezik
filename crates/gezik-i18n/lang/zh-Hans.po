@@ -11479,6 +11479,11 @@ msgstr "平铺视图仅适用于文件夹"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
+msgid "Inside an archive only names, sizes, dates and types are searched"
+msgstr "在压缩包内只按名称、大小、日期和类型搜索"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
 msgid "Cannot start the search"
 msgstr "无法开始搜索"
 

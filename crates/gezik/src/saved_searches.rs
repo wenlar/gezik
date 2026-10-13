@@ -147,6 +147,7 @@ impl SavedSearches {
         let folder = match &spec.scope {
             Scope::Folder(path) => KnownDirs::system().collapse(path),
             Scope::AllDrives => "drives".to_owned(),
+            Scope::Vfs(at) => KnownDirs::system().collapse(std::path::Path::new(&at.text())),
         };
         let this = self.clone();
         let buttons = [t!("Save with this folder"), t!("Save for any folder ({here})"), t!("Cancel")];

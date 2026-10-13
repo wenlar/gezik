@@ -9474,6 +9474,10 @@ msgid "Flat view works in folders"
 msgstr ""
 
 #: crates/gezik/src/search.rs
+msgid "Inside an archive only names, sizes, dates and types are searched"
+msgstr ""
+
+#: crates/gezik/src/search.rs
 msgid "Cannot start the search"
 msgstr ""
 

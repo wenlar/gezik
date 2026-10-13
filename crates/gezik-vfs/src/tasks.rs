@@ -30,7 +30,6 @@ pub fn copy_out(items: &[VfsPath], dest: PathBuf) -> (Vec<Box<dyn Task>>, String
     let take = root.map(|root| TakeOutTask {
         root,
         items: items.iter().map(|item| item.inner.clone()).collect(),
-        dir: items.first().and_then(VfsPath::parent).map(|dir| dir.inner).unwrap_or_default(),
         dest: dest.clone(),
         stage: stage.clone(),
         title: title.clone(),
@@ -48,8 +47,6 @@ pub fn copy_out(items: &[VfsPath], dest: PathBuf) -> (Vec<Box<dyn Task>>, String
 struct TakeOutTask {
     root: VfsRoot,
     items: Vec<String>,
-    /// The folder they are in, inside the place.
-    dir: String,
     dest: PathBuf,
     /// Set to the staged folder holding them; the placing step reads it.
     stage: Arc<Mutex<Option<PathBuf>>>,
@@ -90,7 +87,20 @@ impl Task for TakeOutTask {
         let content = staging.join(CONTENT);
         std::fs::create_dir(&content)?;
         vfs.stage(&self.items, &content, &cx)?;
-        let held = self.dir.split('/').filter(|part| !part.is_empty()).fold(content, |at, part| at.join(part));
+        // Side by side for the placing step, whatever folders they were in (a search's results);
+        // the second of two with one name fails.
+        let held = staging.join("y");
+        std::fs::create_dir(&held)?;
+        for item in &self.items {
+            let from = item.split('/').filter(|part| !part.is_empty()).fold(content.clone(), |at, part| at.join(part));
+            let name = item.rsplit('/').next().unwrap_or(item);
+            let to = held.join(name);
+            if to.exists() {
+                run.fail(&from, &io::Error::from(io::ErrorKind::AlreadyExists));
+                continue;
+            }
+            std::fs::rename(&from, &to)?;
+        }
         *self.stage.lock().unwrap_or_else(PoisonError::into_inner) = Some(held);
         // What lands is reported by the placing step.
         Ok(Outcome::Nothing)

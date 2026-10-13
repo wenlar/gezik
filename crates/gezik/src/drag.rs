@@ -622,10 +622,10 @@ impl Drags {
     fn start(&self, index: usize, right: bool, keys: Keys) {
         let view = crate::panes::active_view();
         let row = view.file_row(index);
-        if let Some(dir) = view.vfs_dir() {
-            let items = view.selected_vfs_items();
+        let items = view.selected_vfs_items();
+        if let Some(vfs) = items.first().and_then(|(at, _)| gezik_vfs::mounted(&at.root)) {
             let shown: Vec<(PathBuf, bool)> =
-                items.iter().map(|(at, is_dir)| (dir.vfs.staged(&at.inner), *is_dir)).collect();
+                items.iter().map(|(at, is_dir)| (vfs.staged(&at.inner), *is_dir)).collect();
             let large = view.selected_bytes() > MAX_DRAGGED_OUT;
             let ready = Arc::new(AtomicBool::new(false));
             let items: Vec<VfsPath> = items.into_iter().map(|(at, _)| at).collect();
@@ -633,8 +633,8 @@ impl Drags {
                 // Taken out while the drag is in the window: ready for another program by the time
                 // it leaves (a small selection is).
                 let (vfs, names, done) =
-                    (dir.vfs.clone(), items.iter().map(|at| at.inner.clone()).collect::<Vec<_>>(), ready.clone());
-                let at = dir.at.clone();
+                    (vfs.clone(), items.iter().map(|at| at.inner.clone()).collect::<Vec<_>>(), ready.clone());
+                let at = items[0].clone();
                 std::thread::spawn(move || {
                     let cx = crate::vfs_mounts::UiCx::new(&at, Box::new(|| false));
                     if names.iter().all(|name| vfs.staged(name).exists())

@@ -508,8 +508,9 @@ impl View {
         };
         // Inside an archive: where it is once taken out (the preview takes it out first).
         let inside = data.listing.item_at(index);
-        let at_disk =
-            inside.as_ref().zip(data.listing.vfs()).map(|((at, is_dir), dir)| (dir.vfs.staged(&at.inner), *is_dir));
+        // The place shown holds its archive; a search's results find it open.
+        let vfs = |at: &VfsPath| data.listing.vfs().map(|dir| dir.vfs.clone()).or_else(|| gezik_vfs::mounted(&at.root));
+        let at_disk = inside.as_ref().and_then(|(at, is_dir)| Some((vfs(at)?.staged(&at.inner), *is_dir)));
         let Some((path, is_dir)) = data.listing.path_at(index).or(at_disk) else { return Target::Nothing };
         let entry = data.listing.entry(index);
         let entry = entry.as_deref();
@@ -1051,9 +1052,13 @@ impl View {
         self.0.data.borrow().listing.vfs().cloned()
     }
 
-    /// A place inside an archive is shown.
+    /// A place inside an archive, or a search inside one, is shown.
     pub fn shows_vfs(&self) -> bool {
-        matches!(self.0.data.borrow().listing, Listing::Vfs(..))
+        match &self.0.data.borrow().listing {
+            Listing::Vfs(..) => true,
+            Listing::Results(set) => set.searched_inside().is_some(),
+            _ => false,
+        }
     }
 
     /// The selected entries' paths, and whether each is a folder, in list order.

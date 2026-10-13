@@ -11633,6 +11633,11 @@ msgstr "Flache Ansicht geht in Ordnern"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
+msgid "Inside an archive only names, sizes, dates and types are searched"
+msgstr "In einem Archiv wird nur nach Name, Größe, Datum und Typ gesucht"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
 msgid "Cannot start the search"
 msgstr "Suche kann nicht gestartet werden"
 

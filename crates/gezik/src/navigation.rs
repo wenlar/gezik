@@ -110,6 +110,17 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
         },
         // A search or the flat view reads no folder here (`search::Searches` runs it).
         Location::Search(spec) => match spec.scope.folder() {
+            // A saved search's folder text that leads into an archive: searched there.
+            Some(folder)
+                if !folder.is_dir()
+                    && let Some(inside) = split_archive(folder, Path::is_file) =>
+            {
+                let scope = gezik_core::search::Scope::Vfs(inside);
+                LoadResult::Redirect(Location::Search(Box::new(gezik_core::search::SearchSpec {
+                    scope,
+                    ..(**spec).clone()
+                })))
+            }
             Some(folder) if !folder.is_dir() => LoadResult::Failed(std::io::ErrorKind::NotFound.into()),
             _ => LoadResult::Results,
         },
