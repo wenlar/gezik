@@ -122,7 +122,7 @@ pub fn parse_where(text: &str) -> Result<Vec<FieldTerm>, String> {
     let (rest, terms) = split(text)?;
     match rest.split([' ', ';']).find(|word| !word.is_empty()) {
         None => Ok(terms),
-        Some(word) => Err(format!("\"{word}\" is not a property word (artist:tarkan, duration>3m)")),
+        Some(word) => Err(gezik_i18n::t!("\"{}\" is not a property word (artist:tarkan, duration>3m)", word)),
     }
 }
 

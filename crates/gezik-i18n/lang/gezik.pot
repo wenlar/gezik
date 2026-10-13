@@ -3067,6 +3067,10 @@ msgstr ""
 msgid "Text"
 msgstr ""
 
+#: crates/gezik-core/src/field_filter.rs
+msgid "\"{}\" is not a property word (artist:tarkan, duration>3m)"
+msgstr ""
+
 #: crates/gezik-core/src/fields.rs
 msgid "Picture"
 msgstr ""
