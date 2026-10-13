@@ -221,12 +221,15 @@ component SettingLine inherits Rectangle {
                 color: root.item.kind == 7 ? Theme.danger : Theme.foreground;
                 font-weight: 600;
                 vertical-alignment: center;
-                // A long title (Portable's folder) wraps, and is cut at the end, rather than push
-                // the control past the window's edge.
+                // A long title (Portable's folder) wraps rather than push the control past the
+                // window's edge. Not `overflow: elide` too: a wrapping text that elides is measured
+                // unwrapped for its width and wrapped for its height, the two measures replace
+                // each other in Slint's text cache, and each replacement dirties the other (our
+                // vendor patch): with a row's field focused that never settled ("long changed
+                // callback chain" on every event).
                 horizontal-stretch: 1;
                 min-width: 0px;
                 wrap: word-wrap;
-                overflow: elide;
             }
             Rectangle {
                 width: 240px;
