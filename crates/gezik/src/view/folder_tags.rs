@@ -200,7 +200,7 @@ impl View {
         if spawned.is_err() {
             // Nothing reads: the next sort, filter or listing tries again.
             self.0.tag_run.borrow_mut().take();
-            self.note("Tags could not be read (no thread to read them)".to_owned());
+            self.note(gezik_i18n::t!("Tags could not be read (no thread to read them)").into_owned());
         }
     }
 
@@ -212,7 +212,7 @@ impl View {
         match arrival {
             TagArrival::Progress { done, total } => {
                 let (done, total) = (gezik_core::group_digits(done as u64), gezik_core::group_digits(total as u64));
-                *self.0.tag_progress.borrow_mut() = Some(format!("Reading tags… {done} of {total}"));
+                *self.0.tag_progress.borrow_mut() = Some(gezik_i18n::t!("Reading tags… {} of {}", done, total));
                 self.update_status();
             }
             TagArrival::Done(tags) => {

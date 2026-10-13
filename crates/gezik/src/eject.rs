@@ -12,7 +12,7 @@ use gezik_platform::eject::{self, EjectWay};
 use crate::navigation::Navigator;
 use crate::view::View;
 
-pub const NO_DRIVE: &str = "Choose a drive to eject";
+pub const NO_DRIVE: &str = gezik_i18n::tx!("Choose a drive to eject");
 /// Letting go may take this long before the system tries the drive (`removal.rs`'s grace:
 /// the watcher's thread closes its handles within moments).
 const GRACE: Duration = Duration::from_millis(150);
@@ -44,21 +44,25 @@ pub fn eject_selection(view: &View, nav: &Navigator) {
     };
     match path {
         Some(path) => eject_path(&path),
-        None => view.note(NO_DRIVE.to_owned()),
+        None => view.note(gezik_i18n::t("", NO_DRIVE).into_owned()),
     }
 }
 
 /// Ejects (or disconnects) the drive `path` is on.
 pub fn eject_path(path: &Path) {
     let drives = drives();
-    let Some(drive) = drive_for(&drives, path).cloned() else { return status(NO_DRIVE.to_owned()) };
-    let Some(way) = eject::offer(&drive) else { return status(eject::CANNOT.to_owned()) };
+    let Some(drive) = drive_for(&drives, path).cloned() else {
+        return status(gezik_i18n::t("", NO_DRIVE).into_owned());
+    };
+    let Some(way) = eject::offer(&drive) else { return status(gezik_i18n::t("", eject::CANNOT).into_owned()) };
     for p in crate::panes::everywhere() {
         p.nav.leave_drive(&drive.path);
     }
     let owner = crate::panes::with_active(|p| p.nav.owner()).unwrap_or(0);
-    let doing = if way == EjectWay::Eject { "Ejecting" } else { "Disconnecting" };
-    status(format!("{doing} {}…", drive.label));
+    status(match way {
+        EjectWay::Eject => gezik_i18n::t!("Ejecting {}…", drive.label),
+        EjectWay::Disconnect => gezik_i18n::t!("Disconnecting {}…", drive.label),
+    });
     let window_id = crate::windows::current();
     std::thread::spawn(move || {
         std::thread::sleep(GRACE);
@@ -71,8 +75,8 @@ fn finish(drive: &Drive, way: EjectWay, result: Result<(), String>) {
     match result {
         Ok(()) => {
             status(match way {
-                EjectWay::Eject => format!("{} can be removed", drive.label),
-                EjectWay::Disconnect => format!("Disconnected {}", drive.label),
+                EjectWay::Eject => gezik_i18n::t!("{} can be removed", drive.label),
+                EjectWay::Disconnect => gezik_i18n::t!("Disconnected {}", drive.label),
             });
             crate::sidebar::with_current(|sidebar| sidebar.check_drives(true));
             for p in crate::panes::all() {

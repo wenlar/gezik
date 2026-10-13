@@ -2,6 +2,8 @@
 //! `{ path, name, group }` for an alias and a group. Reading and writing them, and the changes
 //! the sidebar makes to the list. Pure: the paths are text with `{home}`-style tokens.
 
+use gezik_i18n::t;
+
 /// One pinned folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PinEntry {
@@ -31,23 +33,23 @@ pub(crate) fn parse_pin(value: &toml::Value) -> Result<PinEntry, String> {
         toml::Value::String(path) => PinEntry::plain(path.as_str()),
         toml::Value::Table(table) => {
             if let Some(key) = table.keys().find(|k| !matches!(k.as_str(), "path" | "name" | "group")) {
-                return Err(format!("unknown key \"{key}\" in {value}"));
+                return Err(t!("unknown key \"{0}\" in {1}", key, value));
             }
             let text = |key: &str| match table.get(key) {
                 None => Ok(None),
                 Some(toml::Value::String(text)) => Ok(Some(text.as_str())),
-                Some(other) => Err(format!("{key} must be text, got {other}")),
+                Some(other) => Err(t!("{0} must be text, got {1}", key, other)),
             };
             let path = text("path")?.unwrap_or_default().to_owned();
             PinEntry { path, name: trimmed(text("name")?), group: trimmed(text("group")?) }
         }
-        other => return Err(format!("expected text or {{ path, name, group }}, got {other}")),
+        other => return Err(t!("expected text or {{ path, name, group }}, got {}", other)),
     };
     if pin.path.trim().is_empty() {
-        return Err(format!("path is missing in {value}"));
+        return Err(t!("path is missing in {}", value));
     }
     if crate::paths::has_parent_segment(&pin.path) {
-        return Err(format!("\"{}\" must not contain \"..\"", pin.path));
+        return Err(t!("\"{}\" must not contain \"..\"", pin.path));
     }
     Ok(pin)
 }

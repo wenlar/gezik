@@ -7,11 +7,12 @@ use std::rc::Rc;
 
 use gezik_config::store::ConfigStore;
 use gezik_core::pattern::Pattern;
+use gezik_i18n::{t, tn};
 
 use crate::dialog::Dialogs;
 use crate::preview::with_commas;
 
-const MESSAGE: &str = "Names that match (* and ? are wildcards, ; separates patterns, ! leaves out):";
+const MESSAGE: &str = gezik_i18n::tx!("Names that match (* and ? are wildcards, ; separates patterns, ! leaves out):");
 
 thread_local! {
     /// The selection tools of this (UI) thread, for the actions.
@@ -30,9 +31,8 @@ pub fn match_note(text: &str, count: impl Fn(&Pattern) -> usize) -> (String, boo
     match Pattern::compile(text) {
         Ok(pattern) => {
             let line = match count(&pattern) {
-                0 => "No items match".to_owned(),
-                1 => "1 item matches".to_owned(),
-                n => format!("{} items match", with_commas(n)),
+                0 => t!("No items match").into_owned(),
+                n => tn!("{} item matches" | "{} items match", n, with_commas(n)),
             };
             (line, false)
         }
@@ -70,16 +70,15 @@ impl SelectTools {
 
     /// Asks for a pattern, then selects (`select`) or unselects the shown items it matches.
     pub fn ask(&self, select: bool) {
-        let (title, buttons): (&str, &[&str]) = if select {
-            ("Select by pattern", &["Select", "Cancel"])
-        } else {
-            ("Deselect by pattern", &["Deselect", "Cancel"])
-        };
+        let (title, button) =
+            if select { (t!("Select by pattern"), t!("Select")) } else { (t!("Deselect by pattern"), t!("Deselect")) };
+        let cancel = t!("Cancel");
+        let buttons = [&*button, &*cancel];
         let view = crate::panes::active_view().clone();
         let note = move |text: &str| match_note(text, |p| view.count_matching(p));
         let tools = self.clone();
         let last = self.0.last.borrow().clone();
-        self.0.dialogs.ask_text_noted(title, MESSAGE, last, buttons, note, move |text| {
+        self.0.dialogs.ask_text_noted(title, t("", MESSAGE), last, &buttons, note, move |text| {
             let Some(text) = text else { return };
             match Pattern::compile(&text) {
                 Ok(pattern) => {

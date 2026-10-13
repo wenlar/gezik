@@ -218,12 +218,13 @@ pub fn relative_date(
         return None;
     }
     if age_secs < 3600 {
-        return Some(format!("{} min ago", (age_secs / 60).max(1)));
+        return Some(gezik_i18n::tn!("{n} min ago" | "{n} min ago", (age_secs / 60).max(1)));
     }
-    let clock = format!("{:02}:{:02}", then.hour, then.minute);
+    let (hour, minute) = (then.hour, then.minute);
+    // TRANSLATORS: {} is the time, 14:05.
     match day_number(now) - day_number(then) {
-        0 => Some(format!("Today {clock}")),
-        1 => Some(format!("Yesterday {clock}")),
+        0 => Some(gezik_i18n::t!("Today {}", format_args!("{hour:02}:{minute:02}"))),
+        1 => Some(gezik_i18n::t!("Yesterday {}", format_args!("{hour:02}:{minute:02}"))),
         _ => None,
     }
 }
@@ -308,15 +309,15 @@ impl ColumnKey {
 
     pub fn title(self) -> &'static str {
         match self {
-            ColumnKey::Modified => "Modified",
-            ColumnKey::Created => "Created",
-            ColumnKey::Type => "Type",
-            ColumnKey::Size => "Size",
-            ColumnKey::Folder => "Folder",
-            ColumnKey::Match => "Match",
-            ColumnKey::Tags => "Tags",
-            ColumnKey::Rating => "Rating",
-            ColumnKey::Comment => "Comment",
+            ColumnKey::Modified => gezik_i18n::tx!("Modified"),
+            ColumnKey::Created => gezik_i18n::tx!("Created"),
+            ColumnKey::Type => gezik_i18n::tx!("Type"),
+            ColumnKey::Size => gezik_i18n::tx!("Size"),
+            ColumnKey::Folder => gezik_i18n::tx!("Folder"),
+            ColumnKey::Match => gezik_i18n::tx!("Match"),
+            ColumnKey::Tags => gezik_i18n::tx!("Tags"),
+            ColumnKey::Rating => gezik_i18n::tx!("Rating"),
+            ColumnKey::Comment => gezik_i18n::tx!("Comment"),
             ColumnKey::Field(id) => id.def().label,
         }
     }

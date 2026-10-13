@@ -89,7 +89,7 @@ pub struct Out {
 }
 
 fn no_sound() -> io::Error {
-    io::Error::other("No sound: PulseAudio or PipeWire is not available")
+    io::Error::other(gezik_i18n::t!("No sound: PulseAudio or PipeWire is not available").into_owned())
 }
 
 impl Out {
@@ -127,7 +127,7 @@ impl Out {
             (self.lib.write)(self.stream, samples.as_ptr().cast(), std::mem::size_of_val(samples), &mut error)
         };
         if status < 0 {
-            return Err(io::Error::other(format!("No sound: PulseAudio failed ({error})")));
+            return Err(io::Error::other(gezik_i18n::t!("No sound: PulseAudio failed ({})", error)));
         }
         self.written += (samples.len() / CHANNELS as usize) as u64;
         Ok(())

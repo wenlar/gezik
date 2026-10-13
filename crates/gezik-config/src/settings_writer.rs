@@ -7,6 +7,7 @@
 //! and what cannot be written (the folder is gone, the file keeps changing) is kept in memory
 //! and written at the next reload.
 
+use gezik_i18n::{t, tx};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -293,7 +294,7 @@ fn keep_pending(inner: &Inner, unsaved: &[Pending]) {
     table.insert("change".into(), toml::Value::Array(list));
     if let Ok(text) = toml::to_string(&table) {
         let _ =
-            write_atomic(&path, &format!("# Settings changes Gezik could not write yet; written when it can.\n{text}"));
+            write_atomic(&path, &t!("# Settings changes Gezik could not write yet; written when it can.\n{}", text));
     }
 }
 
@@ -311,10 +312,11 @@ pub enum Failed {
 impl Failed {
     fn warning(self, file: &str) -> Warning {
         let message = match self {
-            Failed::Read(err) => format!("cannot read: {err}"),
-            Failed::Edit(err) => format!("Fix {file} first ({})", err.lines().next().unwrap_or_default()),
-            Failed::Write(err) => format!("cannot write: {err}"),
-            Failed::Changing(_) => KEPT_CHANGING.to_owned(),
+            Failed::Read(err) => t!("cannot read: {}", err),
+            // TRANSLATORS: {0} is a file name, {1} why it does not read.
+            Failed::Edit(err) => t!("Fix {0} first ({1})", file, err.lines().next().unwrap_or_default()),
+            Failed::Write(err) => t!("cannot write: {}", err),
+            Failed::Changing(_) => t("", KEPT_CHANGING).into_owned(),
         };
         Warning::new(file, message)
     }
@@ -323,23 +325,24 @@ impl Failed {
 /// How many times an edit is made again on a file that changed under it (spec 14 §8.3).
 pub const RETRIES: usize = 3;
 /// Said for a change kept in memory while the sync folder is not there.
-pub const NOT_SAVED: &str = "the settings folder is not available: not saved yet (written when it is back)";
+pub const NOT_SAVED: &str = tx!("the settings folder is not available: not saved yet (written when it is back)");
 const KEPT_CHANGING: &str =
-    "kept changing while Gezik wrote it (a sync service?): the change is kept and written at the next reload";
-const WAITING: &str = "waits for the changes before it (written with them at the next reload)";
+    tx!("kept changing while Gezik wrote it (a sync service?): the change is kept and written at the next reload");
+const WAITING: &str = tx!("waits for the changes before it (written with them at the next reload)");
 /// Said when a key changed on another computer too: Gezik's own conflicting copy holds ours.
-pub const CONFLICTED: &str =
-    "changed on another computer too: your value is in a conflicting copy — Review it in Settings > Sync and Backup";
+pub const CONFLICTED: &str = tx!(
+    "changed on another computer too: your value is in a conflicting copy — Review it in Settings > Sync and Backup"
+);
 
 /// Whether `warning` says a change was kept to be written later (it is not lost: what shows it
 /// may keep showing it).
 pub fn kept(warning: &Warning) -> bool {
-    [NOT_SAVED, KEPT_CHANGING, WAITING].contains(&warning.message.as_str())
+    [NOT_SAVED, KEPT_CHANGING, WAITING].iter().any(|said| t("", said) == warning.message.as_str())
 }
 
 /// Whether a status line says a change was kept (to clear it once none waits).
 pub fn says_kept(text: &str) -> bool {
-    [NOT_SAVED, KEPT_CHANGING, WAITING].iter().any(|said| text.contains(said))
+    [NOT_SAVED, KEPT_CHANGING, WAITING].iter().any(|said| text.contains(t("", said).as_ref()))
 }
 
 type Stamp = Option<(u64, Option<std::time::SystemTime>)>;
@@ -468,17 +471,17 @@ fn edit_with(inner: &Inner, change: &SettingsChange, between: &dyn Fn()) -> Resu
         unsaved.push(Pending { base, ours });
         keep_pending(inner, &unsaved);
         let why = if dirs.synced && !there { NOT_SAVED } else { WAITING };
-        return Err(Warning::new("settings.toml", why));
+        return Err(Warning::new("settings.toml", t("", why)));
     }
     drop(unsaved);
     match rewrite(&path, SETTINGS_TEMPLATE, &apply, between) {
         Ok(None) => Ok(()),
-        Ok(Some(_)) => Err(Warning::new("settings.toml", CONFLICTED)),
+        Ok(Some(_)) => Err(Warning::new("settings.toml", t("", CONFLICTED))),
         Err(Failed::Changing(pending)) => {
             let mut unsaved = lock(&inner.unsaved);
             unsaved.push(pending);
             keep_pending(inner, &unsaved);
-            Err(Warning::new("settings.toml", KEPT_CHANGING))
+            Err(Warning::new("settings.toml", t("", KEPT_CHANGING)))
         }
         Err(failed) => Err(failed.warning("settings.toml")),
     }

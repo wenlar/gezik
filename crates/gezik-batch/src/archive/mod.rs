@@ -90,8 +90,8 @@ pub fn open(path: &Path) -> IoResult<Box<dyn ArchiveSource + Send>> {
     let volumes = Volumes::of(path)?;
     let mut head = Vec::with_capacity(HEAD as usize);
     MultiFileReader::open(&volumes.paths)?.take(HEAD).read_to_end(&mut head)?;
-    let format =
-        detect(&head, &volumes.name).ok_or_else(|| IoError::new(ErrorKind::InvalidData, "not a known archive"))?;
+    let format = detect(&head, &volumes.name)
+        .ok_or_else(|| IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("not a known archive")))?;
     Ok(match format {
         Format::Zip => Box::new(zip::ZipSource::new(volumes)),
         Format::SevenZ => Box::new(sevenz::SevenZSource::open(volumes)?),
@@ -155,7 +155,8 @@ pub fn read_zip_entries(
         }
         total += data.len() as u64;
         if total > max_total {
-            return Err(IoError::new(ErrorKind::FileTooLarge, format!("more than {} MB unpacked", max_total >> 20)));
+            let message = gezik_i18n::t!("more than {} MB unpacked", max_total >> 20);
+            return Err(IoError::new(ErrorKind::FileTooLarge, message));
         }
         let fits = data.len() as u64 <= max_each;
         found.push((name, fits.then_some(data)));
@@ -182,7 +183,7 @@ pub fn supported(format: &Format) -> bool {
 
 /// The error of an archive only 7-Zip reads.
 fn seven_zip_needed() -> IoError {
-    IoError::new(ErrorKind::Unsupported, "7-Zip needed")
+    IoError::new(ErrorKind::Unsupported, gezik_i18n::t!("7-Zip needed"))
 }
 
 /// The files an archive is made of, and the name it goes by (`a.7z` for `a.7z.002`).
@@ -198,7 +199,7 @@ impl Volumes {
             && let VolumeKind::Numbered { .. } = set.kind
         {
             if !path.with_file_name(&set.first).is_file() {
-                let message = format!("the first part ({}) is missing", set.first);
+                let message = gezik_i18n::t!("the first part ({}) is missing", set.first);
                 return Err(IoError::new(ErrorKind::NotFound, message));
             }
             let paths: Vec<PathBuf> = (1..)
@@ -208,7 +209,7 @@ impl Volumes {
             // A later part beside a missing one: the set has a hole.
             if last_volume(path, &set.base) > paths.len() as u64 {
                 let missing = volume_name(&set.base, set.kind, paths.len() as u32 + 1);
-                return Err(IoError::new(ErrorKind::NotFound, format!("part {missing} is missing")));
+                return Err(IoError::new(ErrorKind::NotFound, gezik_i18n::t!("part {} is missing", missing)));
             }
             return Ok(Volumes { paths, name: set.base });
         }
@@ -222,7 +223,7 @@ impl Volumes {
 
     /// Reports that the archive was skipped for want of a password.
     fn no_password(&self, cx: &dyn ExtractCx) {
-        cx.entry_skipped(&self.name, &IoError::new(ErrorKind::PermissionDenied, "no password"));
+        cx.entry_skipped(&self.name, &IoError::new(ErrorKind::PermissionDenied, gezik_i18n::t!("no password")));
     }
 }
 
@@ -271,7 +272,7 @@ pub(crate) fn cancelled() -> IoError {
 }
 
 fn unsafe_path() -> IoError {
-    IoError::new(ErrorKind::InvalidData, "unsafe path; skipped")
+    IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("unsafe path; skipped"))
 }
 
 /// The error a stream format ends with once its data is bad.
@@ -279,7 +280,7 @@ fn damaged(error: IoError) -> IoError {
     if error.kind() == ErrorKind::Interrupted {
         return error;
     }
-    IoError::new(ErrorKind::InvalidData, format!("the archive is damaged: {error}"))
+    IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("the archive is damaged: {}", error))
 }
 
 /// Writes `r` into a new file at `path` (under `dest`, its folders made first) with progress,
@@ -330,7 +331,7 @@ fn remove_earlier(dest: &Path, path: &Path) -> Result<(), Stop> {
         if !exact {
             return Err(Stop::Note(IoError::new(
                 ErrorKind::AlreadyExists,
-                "an item of the same name in other case was already written",
+                gezik_i18n::t!("an item of the same name in other case was already written"),
             )));
         }
         at = parent;
@@ -360,7 +361,7 @@ fn copy(r: &mut dyn Read, w: &mut dyn Write, declared: Option<u64>, cx: &dyn Ext
         }
         let n = match r.read(&mut buf) {
             Ok(0) if declared.is_some_and(|size| written < size) => {
-                return Err(Stop::Read(IoError::new(ErrorKind::UnexpectedEof, "cut short")));
+                return Err(Stop::Read(IoError::new(ErrorKind::UnexpectedEof, gezik_i18n::t!("cut short"))));
             }
             Ok(0) => return Ok(()),
             Ok(n) => n,
@@ -369,7 +370,8 @@ fn copy(r: &mut dyn Read, w: &mut dyn Write, declared: Option<u64>, cx: &dyn Ext
         };
         written += n as u64;
         if limit.is_some_and(|limit| written > limit) {
-            return Err(Stop::Read(IoError::new(ErrorKind::InvalidData, "larger than the archive says; stopped")));
+            let why = gezik_i18n::t!("larger than the archive says; stopped");
+            return Err(Stop::Read(IoError::new(ErrorKind::InvalidData, why)));
         }
         w.write_all(&buf[..n]).map_err(Stop::Skip)?;
         cx.add_bytes(n as u64);
@@ -452,7 +454,7 @@ impl Links {
     /// Keeps link `name` at `path` pointing to `target`; `Ok(false)` (done later) on Unix.
     fn add(&mut self, name: &str, path: PathBuf, target: String) -> Result<bool, Stop> {
         if cfg!(windows) {
-            return Err(Stop::Note(IoError::new(ErrorKind::Unsupported, "symbolic link skipped")));
+            return Err(Stop::Note(IoError::new(ErrorKind::Unsupported, gezik_i18n::t!("symbolic link skipped"))));
         }
         self.pending.push((name.to_owned(), path, target));
         Ok(false)
@@ -475,16 +477,17 @@ impl Links {
 
 /// A link's target from its header (tar).
 fn link_target_of(target: Option<String>) -> Result<String, Stop> {
-    target
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| Stop::Skip(IoError::new(ErrorKind::InvalidData, "link without a target; skipped")))
+    target.filter(|t| !t.is_empty()).ok_or_else(|| {
+        Stop::Skip(IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("link without a target; skipped")))
+    })
 }
 
 /// Reads a link's target (its entry's data).
 fn link_target(r: &mut dyn Read) -> Result<String, Stop> {
     let mut target = Vec::new();
     r.take(4096).read_to_end(&mut target).map_err(Stop::Read)?;
-    String::from_utf8(target).map_err(|_| Stop::Skip(IoError::new(ErrorKind::InvalidData, "link target is not text")))
+    String::from_utf8(target)
+        .map_err(|_| Stop::Skip(IoError::new(ErrorKind::InvalidData, gezik_i18n::t!("link target is not text"))))
 }
 
 /// Makes link `path` → `target` only when that cannot lead outside `dest` (`check_link`).
@@ -501,7 +504,7 @@ fn make_link(dest: &Path, path: &Path, target: &str) -> IoResult<()> {
 #[cfg(unix)]
 pub(crate) fn check_link(dest: &Path, path: &Path, target: &Path) -> IoResult<()> {
     use std::path::Component;
-    let skipped = || IoError::new(ErrorKind::PermissionDenied, "symbolic link skipped");
+    let skipped = || IoError::new(ErrorKind::PermissionDenied, gezik_i18n::t!("symbolic link skipped"));
     let folder = path.parent().and_then(|p| p.strip_prefix(dest).ok()).ok_or_else(skipped)?;
     let mut at = dest.to_path_buf();
     for part in folder.components() {
@@ -529,7 +532,7 @@ pub(crate) fn check_link(dest: &Path, path: &Path, target: &Path) -> IoResult<()
 
 /// A tar hard link: a copy of the file `target` names, written earlier.
 fn copy_of(dest: &Path, target: &str, path: &Path, meta: &Meta, cx: &dyn ExtractCx) -> Result<bool, Stop> {
-    let missing = || Stop::Skip(IoError::new(ErrorKind::NotFound, "the file it links to is missing"));
+    let missing = || Stop::Skip(IoError::new(ErrorKind::NotFound, gezik_i18n::t!("the file it links to is missing")));
     let source = safe_join(dest, target).ok_or_else(missing)?;
     if !source.symlink_metadata().is_ok_and(|m| m.is_file()) {
         return Err(missing());

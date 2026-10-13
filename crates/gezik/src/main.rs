@@ -125,9 +125,12 @@ fn run_saved_search(index: i32, new_tab: bool) {
 /// on the UI thread at startup, after config files change and when the system theme flips.
 fn apply_config(files: &ConfigFiles) -> Loaded {
     let dark = windows::with_focused(AppWindow::get_system_dark).unwrap_or_default();
-    let loaded = store::resolve(files, dark);
-    // The language first: what the windows are given below is in it (spec 15 §5.3).
-    language::apply(&loaded.settings.language, files);
+    let mut loaded = store::resolve(files, dark);
+    // The language first: what the windows are given below is in it (spec 15 §5.3). A new one
+    // reads the settings again so their warnings are in it too.
+    if language::apply(&loaded.settings.language, files) {
+        loaded = store::resolve(files, dark);
+    }
     // First: a pane told `[session] restore` below writes the tabs as it now says.
     windows::set_loaded(loaded.clone());
     let new = not_printed_yet(&mut PRINTED.lock().unwrap_or_else(std::sync::PoisonError::into_inner), &loaded.warnings);
@@ -278,7 +281,7 @@ fn perform(
         Action::ViewGrid => view.set_mode(gezik_core::view::ViewMode::Grid),
         Action::ViewColumns => {
             if !view.show_columns(&nav.active_location()) {
-                nav.note(view::LIST_ONLY.to_owned());
+                nav.note(gezik_i18n::t("", view::LIST_ONLY).into_owned());
             }
         }
         Action::TogglePreview => preview.toggle_pane(),
@@ -856,7 +859,8 @@ fn notice_text(warnings: &[Warning]) -> String {
     match warnings {
         [] => String::new(),
         [only] => only.to_string(),
-        [first, rest @ ..] => format!("{first} (+{} more)", rest.len()),
+        // TRANSLATORS: {0} is the first notice, {n} how many more there are.
+        [first, rest @ ..] => gezik_i18n::tn!("{0} (+{n} more)" | "{0} (+{n} more)", rest.len(), first),
     }
 }
 
@@ -1178,7 +1182,7 @@ fn main() -> Result<(), slint::PlatformError> {
         );
         if let Err(err) = watched {
             eprintln!("gezik: cannot watch {}: {err}", store.shared_dir().display());
-            let warning = Warning::new("config", format!("cannot watch the config folder for changes: {err}"));
+            let warning = Warning::new("config", gezik_i18n::t!("cannot watch the config folder for changes: {}", err));
             let mut current = files_for_warning.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             current.warnings.push(warning);
         }

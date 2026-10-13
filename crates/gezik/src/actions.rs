@@ -13,7 +13,7 @@ use crate::view::View;
 /// focused item when nothing is selected).
 pub fn run_command(index: usize, view: &View) {
     if view.shows_drives() {
-        return view.note("Commands run on files and folders".to_owned());
+        return view.note(gezik_i18n::t!("Commands run on files and folders").into_owned());
     }
     if view.shows_trash() {
         return view.note(crate::trash_view::not_here());

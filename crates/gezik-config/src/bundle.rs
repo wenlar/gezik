@@ -2,6 +2,7 @@
 //! changes in settings.toml, which settings run programs, and which backups are kept. Pure:
 //! gezik's `settings_backup.rs` reads and writes the zip and the files.
 
+use gezik_i18n::{t, tn};
 use toml::{Table, Value};
 
 /// The export's own file: `format`, the Gezik version, the OS and the date it was made on.
@@ -81,12 +82,12 @@ pub fn manifest(version: &str, os: &str, date: &str) -> String {
 
 /// The OS a manifest says the export was made on, or why the zip is not one this Gezik reads.
 pub fn read_manifest(text: Option<&str>) -> Result<String, String> {
-    let text = text.ok_or("Not a Gezik settings export (it has no gezik-export.toml)")?;
-    let table: Table = toml::from_str(text).map_err(|_| "Its gezik-export.toml does not read")?;
+    let text = text.ok_or_else(|| t!("Not a Gezik settings export (it has no gezik-export.toml)"))?;
+    let table: Table = toml::from_str(text).map_err(|_| t!("Its gezik-export.toml does not read"))?;
     match table.get("format").and_then(Value::as_integer) {
         Some(FORMAT) => Ok(table.get("os").and_then(Value::as_str).unwrap_or_default().to_owned()),
-        Some(_) => Err("Made by a newer Gezik: update Gezik to import it".to_owned()),
-        None => Err("Its gezik-export.toml has no format".to_owned()),
+        Some(_) => Err(t!("Made by a newer Gezik: update Gezik to import it").into_owned()),
+        None => Err(t!("Its gezik-export.toml has no format").into_owned()),
     }
 }
 
@@ -103,11 +104,11 @@ fn program_settings(text: &str) -> Vec<String> {
     let value = |table_name: &str, key: &str| table.get(table_name).and_then(|t| t.get(key)).filter(|v| !blank(v));
     let mut lines = Vec::new();
     if let Some(command) = value("terminal", "command") {
-        lines.push(format!("Terminal: {}", shown(command)));
+        lines.push(t!("Terminal: {}", shown(command)));
     }
     if let Some(diff) = value("tools", "diff") {
         let args = value("tools", "diff-args").map(|a| format!(" {}", shown(a))).unwrap_or_default();
-        lines.push(format!("Compare program: {}{args}", shown(diff)));
+        lines.push(t!("Compare program: {}", format!("{}{args}", shown(diff))));
     }
     for (table_name, key, title) in [("tools", "seven-zip", "7-Zip"), ("convert", "ffmpeg", "ffmpeg")] {
         if let Some(path) = value(table_name, key) {
@@ -120,11 +121,13 @@ fn program_settings(text: &str) -> Vec<String> {
     };
     let text_of = |t: &Table, key: &str| t.get(key).map(shown).unwrap_or_default();
     for command in each("commands") {
-        lines.push(format!("Command \"{}\": {}", text_of(&command, "name"), text_of(&command, "run")));
+        // TRANSLATORS: {0} is a command's name, {1} what it runs.
+        lines.push(t!("Command \"{0}\": {1}", text_of(&command, "name"), text_of(&command, "run")));
     }
     for profile in each("sync-profiles") {
-        lines.push(format!(
-            "Sync profile \"{}\": {} → {} ({})",
+        // TRANSLATORS: a profile's name, its two folders and its mode.
+        lines.push(t!(
+            "Sync profile \"{0}\": {1} → {2} ({3})",
             text_of(&profile, "name"),
             text_of(&profile, "left"),
             text_of(&profile, "right"),
@@ -194,14 +197,13 @@ pub(crate) fn short(text: &str) -> String {
 /// `changed_keys` in a sentence: "3 settings change: theme: dark → nord, …".
 pub fn summary(changes: &[String]) -> String {
     const SHOWN: usize = 4;
-    let more = match changes.len().saturating_sub(SHOWN) {
-        0 => String::new(),
-        n => format!(" and {n} more"),
-    };
+    let more = changes.len().saturating_sub(SHOWN);
+    let shown = changes[..changes.len().min(SHOWN)].join(", ");
     match changes.len() {
-        0 => "No setting changes".to_owned(),
-        1 => format!("1 setting changes: {}", changes[0]),
-        n => format!("{n} settings change: {}{more}", changes[..n.min(SHOWN)].join(", ")),
+        0 => t!("No setting changes").into_owned(),
+        n if more == 0 => tn!("{n} setting changes: {}" | "{n} settings change: {}", n, shown),
+        // TRANSLATORS: {0} is the number of changes, {1} the first four settings, {2} how many more.
+        n => t!("{0} settings change: {1} and {2} more", n, shown, more),
     }
 }
 

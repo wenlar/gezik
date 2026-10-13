@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+use gezik_i18n::{t, tn};
 use gezik_ops::{Failure, Report};
 
 /// The most records kept; the oldest goes first.
@@ -63,12 +64,12 @@ impl History {
 /// `Done`, `Done · 2 skipped`, `3 failed`, `Cancelled`; and whether it failed.
 pub fn result_text(report: &Report) -> (String, bool) {
     if report.cancelled {
-        return ("Cancelled".to_owned(), false);
+        return (t!("Cancelled").into_owned(), false);
     }
     match (report.failures.len(), report.skipped.len()) {
-        (0, 0) => ("Done".to_owned(), false),
-        (0, skipped) => (format!("Done · {skipped} skipped"), false),
-        (failed, _) => (format!("{failed} failed"), true),
+        (0, 0) => (t!("Done").into_owned(), false),
+        (0, skipped) => (tn!("Done · {n} skipped" | "Done · {n} skipped", skipped), false),
+        (failed, _) => (tn!("{n} failed" | "{n} failed", failed), true),
     }
 }
 
@@ -86,7 +87,8 @@ pub fn show_target(report: &Report) -> Option<(PathBuf, Vec<String>)> {
 /// its own heading; at most `MAX_DETAILS` lines in all (the blank lines, the headings and the
 /// "…and N more" line count); None when there are none of them.
 pub fn details_text(report: &Report) -> Option<String> {
-    let sections = [(None, &report.failures), (Some("Skipped:"), &report.skipped), (Some("Notes:"), &report.notes)];
+    let (skipped, notes) = (t!("Skipped:"), t!("Notes:"));
+    let sections = [(None, &report.failures), (Some(&*skipped), &report.skipped), (Some(&*notes), &report.notes)];
     let named = |f: &Failure| {
         format!(
             "{}: {}",
@@ -122,7 +124,7 @@ pub fn details_text(report: &Report) -> Option<String> {
         shown += n;
     }
     if items > shown {
-        lines.push(format!("…and {} more", items - shown));
+        lines.push(tn!("…and {n} more" | "…and {n} more", items - shown));
     }
     Some(lines.join("\n"))
 }

@@ -6,14 +6,15 @@ use std::path::{Path, PathBuf};
 
 pub use crate::process::Ran;
 
-pub const EMPTY: &str = r"Type a server address, like \\server\share or smb://server/share";
-pub const NEED_SHARE: &str = "Add the share: smb://server/share";
-pub const PASSWORD: &str = "Leave the password out; you are asked for it";
-pub const NOT_ADDRESS: &str = "Not a server address";
-pub const NEEDS_GIO: &str = "Connecting to servers needs gvfs (the gio command).";
-pub const WRONG_LOGIN: &str = "The user name or password was not accepted";
-pub const NOT_FOUND: &str = "The server or share was not found";
-pub const LINE_BREAK: &str = "The user name and password cannot hold a line break";
+// Marked for translation: shown with `gezik_i18n::t`.
+pub const EMPTY: &str = gezik_i18n::tx!(r"Type a server address, like \\server\share or smb://server/share");
+pub const NEED_SHARE: &str = gezik_i18n::tx!("Add the share: smb://server/share");
+pub const PASSWORD: &str = gezik_i18n::tx!("Leave the password out; you are asked for it");
+pub const NOT_ADDRESS: &str = gezik_i18n::tx!("Not a server address");
+pub const NEEDS_GIO: &str = gezik_i18n::tx!("Connecting to servers needs gvfs (the gio command).");
+pub const WRONG_LOGIN: &str = gezik_i18n::tx!("The user name or password was not accepted");
+pub const NOT_FOUND: &str = gezik_i18n::tx!("The server or share was not found");
+pub const LINE_BREAK: &str = gezik_i18n::tx!("The user name and password cannot hold a line break");
 
 /// Most shares a server's answer may list (it is the server's text, spec 9 §10.6).
 const MAX_SHARES: usize = 4096;
@@ -226,8 +227,8 @@ pub fn needs_login(code: u32) -> bool {
 pub fn windows_connect_error(code: u32) -> ConnectError {
     match code {
         1223 => ConnectError::Cancelled,
-        86 | 1326 => ConnectError::Failed(WRONG_LOGIN.into()),
-        53 | 67 => ConnectError::Failed(NOT_FOUND.into()),
+        86 | 1326 => ConnectError::Failed(gezik_i18n::t("", WRONG_LOGIN).into_owned()),
+        53 | 67 => ConnectError::Failed(gezik_i18n::t("", NOT_FOUND).into_owned()),
         _ => ConnectError::Failed(std::io::Error::from_raw_os_error(code as i32).to_string()),
     }
 }
@@ -236,7 +237,7 @@ pub fn windows_connect_error(code: u32) -> ConnectError {
 pub fn mac_connect_error(code: i32) -> ConnectError {
     match code {
         89 | -128 => ConnectError::Cancelled,
-        80 => ConnectError::Failed(WRONG_LOGIN.into()),
+        80 => ConnectError::Failed(gezik_i18n::t("", WRONG_LOGIN).into_owned()),
         1.. => ConnectError::Failed(std::io::Error::from_raw_os_error(code).to_string()),
         _ => ConnectError::Failed(format!("Could not connect (error {code})")),
     }
@@ -285,7 +286,7 @@ pub fn linux_connect(
 ) -> Result<PathBuf, ConnectError> {
     // gio reads one answer per line: a line break would answer its next question.
     if login.is_some_and(|l| [&l.user, &l.domain, &l.password].iter().any(|f| f.contains(['\n', '\r', '\0']))) {
-        return Err(ConnectError::Failed(LINE_BREAK.into()));
+        return Err(ConnectError::Failed(gezik_i18n::t("", LINE_BREAK).into_owned()));
     }
     let url = address.smb_url();
     let mut answers = login.map(gio_answers).unwrap_or_default();
@@ -293,7 +294,9 @@ pub fn linux_connect(
     wipe(&mut answers);
     let ran = match result {
         Ok(ran) => ran,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Err(ConnectError::Failed(NEEDS_GIO.into())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ConnectError::Failed(gezik_i18n::t("", NEEDS_GIO).into_owned()));
+        }
         Err(err) => return Err(ConnectError::Failed(err.to_string())),
     };
     if !ran.ok && !ran.stderr.contains("already mounted") {
@@ -307,7 +310,9 @@ pub fn linux_connect(
         .into_iter()
         .find(|name| gvfs_smb_fields(name).is_some_and(|(s, p)| same(&s, &address.server) && same(&p, &address.share)))
         .map(|name| gvfs.join(name).join(address.rest_path()))
-        .ok_or_else(|| ConnectError::Failed("Connected, but the share's folder was not found".into()))
+        .ok_or_else(|| {
+            ConnectError::Failed(gezik_i18n::t!("Connected, but the share's folder was not found").into_owned())
+        })
 }
 
 /// The window that owns the system's login prompt (Windows HWND; 0 elsewhere).
@@ -397,7 +402,7 @@ mod win {
     /// drive letter asked for, goes through Windows' own prompt (spec 9 §7.4).
     pub fn connect(address: &ServerAddress, how: &Connect) -> Result<PathBuf, ConnectError> {
         if how.letter.is_some() && address.share.is_empty() {
-            return Err(ConnectError::Failed(r"Type a share to map, like \\server\share".into()));
+            return Err(ConnectError::Failed(gezik_i18n::t!(r"Type a share to map, like \\server\share").into_owned()));
         }
         if how.letter.is_none() {
             match reachable(address) {
@@ -473,7 +478,7 @@ mod mac {
     /// (`kNAUIOptionKey` = `kNAUIOptionAllowUI`; **doğrulanacak**). Finder does not open.
     pub fn connect(address: &ServerAddress) -> Result<PathBuf, ConnectError> {
         let Some(url) = NSURL::URLWithString(&NSString::from_str(&address.smb_url())) else {
-            return Err(ConnectError::Failed(super::NOT_ADDRESS.into()));
+            return Err(ConnectError::Failed(gezik_i18n::t("", super::NOT_ADDRESS).into_owned()));
         };
         let options = NSMutableDictionary::<NSString, NSString>::new();
         options.insert(&*NSString::from_str("UIOption"), &*NSString::from_str("AllowUI"));
@@ -505,7 +510,7 @@ mod mac {
         points
             .and_then(|p| p.firstObject())
             .map(|first| PathBuf::from(first.to_string()).join(address.rest_path()))
-            .ok_or_else(|| ConnectError::Failed("The server gave no folder".into()))
+            .ok_or_else(|| ConnectError::Failed(gezik_i18n::t!("The server gave no folder").into_owned()))
     }
 }
 

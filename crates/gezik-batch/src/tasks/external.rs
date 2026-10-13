@@ -19,7 +19,7 @@ pub(super) fn extract(seven_zip: &Path, archive: &Path, dest: &Path, cx: &RunCx<
     if cfg!(unix) && dest.to_string_lossy().contains(['*', '?']) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "7-Zip cannot extract into a folder named with * or ?",
+            gezik_i18n::t!("7-Zip cannot extract into a folder named with * or ?"),
         ));
     }
     let size = std::fs::metadata(archive).map_or(0, |meta| meta.len());
@@ -72,7 +72,10 @@ pub(super) fn extract(seven_zip: &Path, archive: &Path, dest: &Path, cx: &RunCx<
                     _ if cx.stopped() => return Err(cancelled()),
                     // Skipped by the user: a note, and nothing is extracted.
                     _ => {
-                        cx.skip(archive, &io::Error::new(io::ErrorKind::PermissionDenied, "no password"));
+                        cx.skip(
+                            archive,
+                            &io::Error::new(io::ErrorKind::PermissionDenied, gezik_i18n::t!("no password")),
+                        );
                         cx.one_done(size.saturating_sub(counted.get()));
                         return Ok(());
                     }
@@ -98,7 +101,7 @@ fn remove_unsafe_links(archive: &Path, dest: &Path, cx: &RunCx<'_>) -> io::Resul
                 #[cfg(unix)]
                 let refused = crate::archive::check_link(dest, &path, &std::fs::read_link(&path)?).err();
                 #[cfg(not(unix))]
-                let refused = Some(io::Error::new(io::ErrorKind::Unsupported, "symbolic link skipped"));
+                let refused = Some(io::Error::new(io::ErrorKind::Unsupported, gezik_i18n::t!("symbolic link skipped")));
                 if let Some(err) = refused {
                     // A link to a folder is removed as a folder on Windows.
                     std::fs::remove_file(&path).or_else(|_| std::fs::remove_dir(&path))?;
@@ -139,7 +142,11 @@ fn wrong_password(errors: &str) -> bool {
 /// What 7-Zip said went wrong, in a line.
 fn message(errors: &str) -> String {
     let lines: Vec<&str> = errors.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
-    if lines.is_empty() { "7-Zip could not extract it".to_owned() } else { format!("7-Zip: {}", lines.join(" ")) }
+    if lines.is_empty() {
+        gezik_i18n::t!("7-Zip could not extract it").into_owned()
+    } else {
+        format!("7-Zip: {}", lines.join(" "))
+    }
 }
 
 #[cfg(test)]

@@ -14,21 +14,23 @@ use super::secure_unix as imp;
 #[cfg(windows)]
 use super::secure_windows as imp;
 
+// Marked for translation: the administrator helper sends them in English; they are shown with
+// `gezik_i18n::t`.
 pub const LINK_ON_THE_WAY: &str =
-    "A folder on the way is a link or leads elsewhere; Gezik does not follow it as administrator";
-pub const GUARDED: &str = "A system folder itself; Gezik does not change it as administrator";
-pub const OTHER_DRIVE: &str = "It holds another mounted drive; not gone into";
-pub const A_LINK: &str = "A link; its permissions and owner are not changed";
-pub const LINK_COPY: &str = "It holds a link; Gezik does not copy links as administrator";
-pub const SPECIAL: &str = "A device, pipe or socket; left alone";
-pub const FOLDER_THERE: &str = "A folder is there; Gezik does not replace folders";
-pub const TOO_DEEP: &str = "Folders nested too deep";
-pub const STICKY_FILE: &str = "The sticky bit is for folders";
-pub const CHANGED: &str = "It changed while Gezik was at it";
-pub const NOT_A_FOLDER: &str = "Not a folder";
-pub const SEVERAL_NAMES: &str = "It has several names; Gezik does not change it as administrator";
-pub(crate) const NOT_PLAIN: &str = "Not a plain full path";
-pub(crate) const BAD_NAME: &str = "Not a plain name";
+    gezik_i18n::tx!("A folder on the way is a link or leads elsewhere; Gezik does not follow it as administrator");
+pub const GUARDED: &str = gezik_i18n::tx!("A system folder itself; Gezik does not change it as administrator");
+pub const OTHER_DRIVE: &str = gezik_i18n::tx!("It holds another mounted drive; not gone into");
+pub const A_LINK: &str = gezik_i18n::tx!("A link; its permissions and owner are not changed");
+pub const LINK_COPY: &str = gezik_i18n::tx!("It holds a link; Gezik does not copy links as administrator");
+pub const SPECIAL: &str = gezik_i18n::tx!("A device, pipe or socket; left alone");
+pub const FOLDER_THERE: &str = gezik_i18n::tx!("A folder is there; Gezik does not replace folders");
+pub const TOO_DEEP: &str = gezik_i18n::tx!("Folders nested too deep");
+pub const STICKY_FILE: &str = gezik_i18n::tx!("The sticky bit is for folders");
+pub const CHANGED: &str = gezik_i18n::tx!("It changed while Gezik was at it");
+pub const NOT_A_FOLDER: &str = gezik_i18n::tx!("Not a folder");
+pub const SEVERAL_NAMES: &str = gezik_i18n::tx!("It has several names; Gezik does not change it as administrator");
+pub(crate) const NOT_PLAIN: &str = gezik_i18n::tx!("Not a plain full path");
+pub(crate) const BAD_NAME: &str = gezik_i18n::tx!("Not a plain name");
 /// Folders inside folders, at most (a deeper tree is refused, never half walked blindly).
 pub(crate) const MAX_DEPTH: usize = 256;
 

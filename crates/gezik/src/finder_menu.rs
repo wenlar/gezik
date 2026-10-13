@@ -92,7 +92,8 @@ fn open_now(window: &slint::Weak<crate::AppWindow>, paths: &[PathBuf], app: &std
     let failed = move |why: String| {
         crate::windows::post(window_id, move || {
             if let Some(window) = report.upgrade() {
-                window.set_status(format!("{name} could not open them: {why}").into());
+                // TRANSLATORS: {0} is an app, {1} why it failed
+                window.set_status(gezik_i18n::t!("{0} could not open them: {1}", name, why).into());
             }
         });
     };
@@ -104,7 +105,7 @@ fn open_now(window: &slint::Weak<crate::AppWindow>, paths: &[PathBuf], app: &std
 }
 
 /// Other…'s title on Linux.
-pub const OTHER_TITLE: &str = "Open With";
+pub const OTHER_TITLE: &str = gezik_i18n::tx!("Open With");
 
 type Chosen = Box<dyn FnOnce(PathBuf)>;
 
@@ -133,10 +134,10 @@ fn show_apps(apps: Vec<AppChoice>) {
     let (for_note, for_answer) = (apps.clone(), apps);
     crate::operations::with_current(move |ops| {
         ops.dialogs().ask_text_noted(
-            OTHER_TITLE,
-            "Type the app's name.",
+            gezik_i18n::t("", OTHER_TITLE),
+            gezik_i18n::t!("Type the app's name."),
             "",
-            &["Open", "Cancel"],
+            &[&gezik_i18n::t!("Open"), &gezik_i18n::t!("Cancel")],
             move |text| other_note(&for_note, text),
             move |answer| {
                 let app = answer
@@ -152,12 +153,12 @@ fn show_apps(apps: Vec<AppChoice>) {
 /// The line under Other…'s field.
 pub fn other_note(apps: &[AppChoice], text: &str) -> (String, bool) {
     if apps.is_empty() {
-        return ("No apps were found".to_owned(), true);
+        return (gezik_i18n::t!("No apps were found").into_owned(), true);
     }
     match gezik_platform::open_with::find_app(apps, text) {
-        Some(app) => (format!("Opens with {}", app.name), false),
-        None if text.trim().is_empty() => ("Type part of the app's name".to_owned(), false),
-        None => ("No app has that name".to_owned(), true),
+        Some(app) => (gezik_i18n::t!("Opens with {}", app.name), false),
+        None if text.trim().is_empty() => (gezik_i18n::t!("Type part of the app's name").into_owned(), false),
+        None => (gezik_i18n::t!("No app has that name").into_owned(), true),
     }
 }
 
@@ -166,7 +167,7 @@ pub fn share(window: &crate::AppWindow, paths: Vec<PathBuf>, at: Option<(f32, f3
     use slint::ComponentHandle;
     let at = at.map(|(x, y)| (f64::from(x), f64::from(y)));
     if let Err(why) = gezik_platform::finder::share(&window.window().window_handle(), &paths, at) {
-        window.set_status(format!("Cannot share: {why}").into());
+        window.set_status(gezik_i18n::t!("Cannot share: {}", why).into());
     }
 }
 

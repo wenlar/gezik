@@ -63,8 +63,8 @@ impl Task for LinkTask {
 
     fn title(&self) -> String {
         match self.pairs.as_slice() {
-            [_] => format!("Creating a link to {}", what(&self.sources())),
-            _ => format!("Creating links to {}", what(&self.sources())),
+            [_] => gezik_i18n::t!("Creating a link to {}", what(&self.sources())),
+            _ => gezik_i18n::t!("Creating links to {}", what(&self.sources())),
         }
     }
 
@@ -81,7 +81,7 @@ impl Task for LinkTask {
     fn plan(&self, sink: &mut dyn ScanSink) {
         let mut planned = std::collections::HashSet::new();
         for (root, (source, at)) in self.pairs.iter().enumerate() {
-            if super::refuse_root(sink, source, "link to") {
+            if super::refuse_root(sink, source, || gezik_i18n::t!("Cannot link to a drive")) {
                 continue;
             }
             // What it leads to decides a folder link (a link to a link to a folder too).
@@ -95,11 +95,11 @@ impl Task for LinkTask {
             // A junction needs a folder on a local NTFS drive, and its link on one too: asked
             // per item, for both places.
             let refused = match self.kind {
-                LinkKind::Junction if !meta.is_dir() => Some("A junction can only point to a folder"),
+                LinkKind::Junction if !meta.is_dir() => Some(gezik_i18n::t!("A junction can only point to a folder")),
                 LinkKind::Junction
                     if !(link::junctions_supported(source) && at.parent().is_some_and(link::junctions_supported)) =>
                 {
-                    Some("Junctions need a local NTFS drive")
+                    Some(gezik_i18n::t!("Junctions need a local NTFS drive"))
                 }
                 _ => None,
             };

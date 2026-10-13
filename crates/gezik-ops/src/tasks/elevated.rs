@@ -17,11 +17,12 @@ pub trait Elevator: Send + Sync {
     fn run(&self, ops: &[Op], prompt: &str, reply: &mut dyn FnMut(&str)) -> Result<(), LaunchError>;
 }
 
-pub const NOT_AVAILABLE: &str = "Administrator operations are not available here";
-pub const CANCELLED: &str = "Not done: the administrator prompt was cancelled";
-pub const NOT_SO: &str = "The administrator helper said it was done, but it is not";
+// Shown with `t`.
+pub const NOT_AVAILABLE: &str = gezik_i18n::tx!("Administrator operations are not available here");
+pub const CANCELLED: &str = gezik_i18n::tx!("Not done: the administrator prompt was cancelled");
+pub const NOT_SO: &str = gezik_i18n::tx!("The administrator helper said it was done, but it is not");
 /// The app's note for `Report::unchecked`.
-pub const UNCHECKED: &str = "Done as administrator; Gezik could not check it";
+pub const UNCHECKED: &str = gezik_i18n::tx!("Done as administrator; Gezik could not check it");
 /// Whether names that differ only in case are the same name here (Windows and macOS by default).
 const CASE_BLIND: bool = cfg!(any(windows, target_os = "macos"));
 /// Reply lines read at most (the helper writes one per operation and one more).
@@ -167,7 +168,7 @@ impl Task for ElevatedTask {
         let seen: Vec<Before> = self.ops.iter().map(before).collect();
         let count = self.ops.len();
         let answers = match cx.elevator() {
-            None => vec![Answer::NotRun(NOT_AVAILABLE.to_owned()); count],
+            None => vec![Answer::NotRun(gezik_i18n::t("", NOT_AVAILABLE).into_owned()); count],
             Some(elevator) => {
                 let mut replies = Vec::new();
                 let ran = elevator.run(&self.ops, &elevated::prompt(&self.ops), &mut |line| {
@@ -182,7 +183,9 @@ impl Task for ElevatedTask {
                     // A helper that ended badly after some replies: what it said counts (and is
                     // checked on disk); the rest stopped.
                     Err(LaunchError::Failed(_)) if !replies.is_empty() => elevated::answers(count, &replies),
-                    Err(LaunchError::Cancelled) => vec![Answer::NotRun(CANCELLED.to_owned()); count],
+                    Err(LaunchError::Cancelled) => {
+                        vec![Answer::NotRun(gezik_i18n::t("", CANCELLED).into_owned()); count]
+                    }
                     Err(LaunchError::Unavailable(why) | LaunchError::Failed(why)) => vec![Answer::NotRun(why); count],
                 }
             }
@@ -194,7 +197,7 @@ impl Task for ElevatedTask {
             match answer {
                 Answer::Done => match shows_done(op) {
                     Some(true) => undo.extend(undo_for(op, before).map(|undo| Outcome::AsAdmin { undo })),
-                    Some(false) => failed(NOT_SO),
+                    Some(false) => failed(&gezik_i18n::t("", NOT_SO)),
                     // Gezik cannot look there without rights: the helper's word stands, noted as
                     // unchecked, and no undo is built on it.
                     None => cx.unchecked(op.path()),

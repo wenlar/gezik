@@ -24,14 +24,16 @@ pub enum Purpose {
 }
 
 /// The fields `query` lets through for `purpose` (a grouping lists only the fields that group):
-/// by label, key or group, case folded.
+/// by label, key or group (shown or English), case folded.
 pub fn matching(purpose: Purpose, query: &str) -> Vec<FieldId> {
     let query = fold_text(query.trim());
     fields::all()
         .filter(|id| purpose != Purpose::Group || id.def().groupable)
         .filter(|id| {
             let def = id.def();
-            [def.label, def.key, def.group.label()].iter().any(|text| fold_text(text).contains(&query))
+            // The shown (translated) label and group, and the English ones.
+            let (label, group) = (gezik_i18n::t("", def.label), gezik_i18n::t("", def.group.label()));
+            [def.label, def.key, def.group.label(), &label, &group].iter().any(|text| fold_text(text).contains(&query))
         })
         .collect()
 }
@@ -83,7 +85,7 @@ impl FieldPicker {
             return;
         }
         if purpose != Purpose::Columns && crate::panes::active_view().shows_results() {
-            return crate::panes::active_view().note(crate::view::FIELDS_IN_FOLDERS.to_owned());
+            return crate::panes::active_view().note(gezik_i18n::t("", crate::view::FIELDS_IN_FOLDERS).into_owned());
         }
         self.0.purpose.set(purpose);
         *self.0.rows.borrow_mut() = matching(purpose, "");
@@ -187,8 +189,8 @@ impl FieldPicker {
             .map(|&id| {
                 let on = marked(id);
                 PickRow {
-                    title: id.def().label.into(),
-                    detail: id.def().group.label().into(),
+                    title: gezik_i18n::t("", id.def().label).as_ref().into(),
+                    detail: gezik_i18n::t("", id.def().group.label()).as_ref().into(),
                     tag: if on && purpose == Purpose::Columns { gezik_i18n::t!("Shown") } else { "".into() }
                         .as_ref()
                         .into(),

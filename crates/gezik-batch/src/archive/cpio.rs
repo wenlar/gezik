@@ -122,7 +122,7 @@ fn entry(
         0o100000 => write_file(data, dest, &path, Some(header.size), &meta, cx).map(|()| true),
         // The data is the target.
         0o120000 => link_target(data).and_then(|target| links.add(&header.name, path, target)),
-        _ => Err(Stop::Skip(IoError::new(ErrorKind::Unsupported, "not a file or folder; skipped"))),
+        _ => Err(Stop::Skip(IoError::new(ErrorKind::Unsupported, gezik_i18n::t!("not a file or folder; skipped")))),
     }
 }
 

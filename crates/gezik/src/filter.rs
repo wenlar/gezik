@@ -10,6 +10,7 @@ use gezik_config::Warning;
 use gezik_config::settings::{KeyboardSettings, SavedFilter, Typing};
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
+use gezik_i18n::{t, tx};
 
 use crate::AppWindow;
 use crate::context_menu::FILTER_MAX;
@@ -189,7 +190,7 @@ impl Filter {
     fn can_filter(&self) -> bool {
         match unavailable_note(self.view.shows_drives(), self.view.folder().is_some() || self.view.shows_results()) {
             Some(note) => {
-                self.view.note(note.to_owned());
+                self.view.note(t("", note).into_owned());
                 false
             }
             None => true,
@@ -242,14 +243,15 @@ impl Filter {
     pub fn ask_save(&self) {
         let Some(pattern) = self.view.filter_text().filter(|_| self.can_save()) else { return };
         let filter = self.clone();
-        self.dialogs.ask_text("Save filter", "Name for this filter:", "", &["Save", "Cancel"], move |name| {
+        let (title, message) = (t!("Save filter"), t!("Name for this filter:"));
+        self.dialogs.ask_text(title, message, "", &[&t!("Save"), &t!("Cancel")], move |name| {
             let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
             let filters = latest();
             match find_saved(&filters, &name) {
                 Some(i) => {
-                    let message = format!("A filter called \"{}\" already exists. Replace it?", filters[i].name);
+                    let message = t!("A filter called \"{}\" already exists. Replace it?", filters[i].name);
                     let again = filter.clone();
-                    filter.dialogs.ask("Save filter", message, &["Replace", "Cancel"], move |choice| {
+                    filter.dialogs.ask(t!("Save filter"), message, &[&t!("Replace"), &t!("Cancel")], move |choice| {
                         if choice == Some(0) {
                             again.save(&name, &pattern);
                         }
@@ -263,7 +265,7 @@ impl Filter {
     fn save(&self, name: &str, pattern: &str) {
         let mut filters = latest();
         if !room_for(&filters, name) {
-            return self.view.note(format!("Up to {FILTER_MAX} saved filters"));
+            return self.view.note(t!("Up to {} saved filters", FILTER_MAX));
         }
         put_saved(&mut filters, name, pattern);
         self.write(filters);
@@ -315,9 +317,9 @@ impl Filter {
 /// it is still loading). `None` in a folder.
 fn unavailable_note(shows_drives: bool, has_folder: bool) -> Option<&'static str> {
     if shows_drives {
-        Some("The filter works in folders")
+        Some(tx!("The filter works in folders"))
     } else if !has_folder {
-        Some("No folder to filter")
+        Some(tx!("No folder to filter"))
     } else {
         None
     }

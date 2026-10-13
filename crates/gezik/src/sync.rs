@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::sync_profiles::{SYNC_PROFILES_MAX, SyncProfile};
 use gezik_core::compare::{self, Act, Dir, Kind, Node, Row, Tree};
+use gezik_i18n::{t, tn};
 use gezik_ops::{Report, Seen, SyncStep};
 
 /// The job's steps and, for each, its row and whether it acts on the right side.
@@ -208,7 +209,8 @@ pub fn outcomes(planned: &Planned, report: &Report) -> HashMap<u32, Option<Strin
                 .then(|| why.get(to.as_path()).or_else(|| why.get(from.as_path())).copied()),
             SyncStep::Trash { path, .. } => {
                 if report.cancelled && !why.contains_key(path.as_path()) && path.exists() {
-                    Some(Some("Cancelled"))
+                    // Its reason, below: "Cancelled".
+                    Some(None)
                 } else {
                     why.get(path.as_path()).map(|w| Some(*w))
                 }
@@ -218,24 +220,14 @@ pub fn outcomes(planned: &Planned, report: &Report) -> HashMap<u32, Option<Strin
         if let Some(reason) = failed
             && entry.is_none()
         {
-            let reason = reason.unwrap_or(if report.cancelled { "Cancelled" } else { "Skipped" });
-            *entry = Some(reason.to_owned());
+            *entry = Some(match reason {
+                Some(reason) => reason.to_owned(),
+                None if report.cancelled => t!("Cancelled").into_owned(),
+                None => t!("Skipped").into_owned(),
+            });
         }
     }
     out
-}
-
-/// `1 file`, `12 files`.
-pub fn files_text(n: usize) -> String {
-    if n == 1 { "1 file".to_owned() } else { format!("{} files", crate::preview::with_commas(n)) }
-}
-
-fn items_text(n: usize) -> String {
-    if n == 1 { "1 item".to_owned() } else { format!("{} items", crate::preview::with_commas(n)) }
-}
-
-pub fn bin_name() -> &'static str {
-    if cfg!(windows) { "the Recycle Bin" } else { "the Trash" }
 }
 
 /// The summary question's lines for `s` (what will be done) and what a side without a trash
@@ -244,50 +236,82 @@ pub fn lines(s: &Summary, roots: [&Path; 2], bins: [bool; 2], refused: &Summary)
     let mut lines = Vec::new();
     // To the right first, as the job does.
     for side in [1, 0] {
-        if s.files[side] > 0 {
-            let mut line = format!(
-                "Copy {} ({}) to {}",
-                files_text(s.files[side]),
-                crate::view_options::size_text(s.bytes[side]),
-                roots[side].display()
-            );
-            if s.replacing[side] > 0 {
-                line.push_str(&format!(", replacing {}", crate::preview::with_commas(s.replacing[side])));
-            }
-            lines.push(line);
+        let n = s.files[side];
+        if n > 0 {
+            let (count, size) = (group(n), crate::view_options::size_text(s.bytes[side]));
+            let root = roots[side].display();
+            lines.push(match s.replacing[side] {
+                0 => tn!("Copy {} file ({}) to {}" | "Copy {} files ({}) to {}", n, count, size, root),
+                // TRANSLATORS: {0} files ({1}: their size) to folder {2}; {3} of them replace files there.
+                replacing => tn!(
+                    "Copy {0} file ({1}) to {2}, replacing {3}" | "Copy {0} files ({1}) to {2}, replacing {3}",
+                    n,
+                    count,
+                    size,
+                    root,
+                    group(replacing)
+                ),
+            });
         }
     }
     for side in [1, 0] {
-        if s.trashed[side] > 0 {
-            lines.push(format!("Move {} on {} to {}", items_text(s.trashed[side]), roots[side].display(), bin_name()));
+        let n = s.trashed[side];
+        if n > 0 {
+            let root = roots[side].display();
+            lines.push(if cfg!(windows) {
+                tn!(
+                    "Move {} item on {} to the Recycle Bin" | "Move {} items on {} to the Recycle Bin",
+                    n,
+                    group(n),
+                    root
+                )
+            } else {
+                tn!("Move {} item on {} to the Trash" | "Move {} items on {} to the Trash", n, group(n), root)
+            });
         }
     }
     for side in [1, 0] {
         if bins[side] {
             continue;
         }
-        let (drive, none) = (roots[side].display(), no_bin());
-        if refused.trashed[side] > 0 {
-            let n = refused.trashed[side];
-            let what = if n == 1 {
-                "1 deletion there is".to_owned()
+        let drive = roots[side].display();
+        let n = refused.trashed[side];
+        if n > 0 {
+            lines.push(if cfg!(windows) {
+                tn!(
+                    "{} has no Recycle Bin: {} deletion there is left out"
+                        | "{} has no Recycle Bin: {} deletions there are left out",
+                    n,
+                    drive,
+                    group(n)
+                )
             } else {
-                format!("{} deletions there are", crate::preview::with_commas(n))
-            };
-            lines.push(format!("{drive} {none}: {what} left out"));
+                tn!(
+                    "{} has no trash: {} deletion there is left out"
+                        | "{} has no trash: {} deletions there are left out",
+                    n,
+                    drive,
+                    group(n)
+                )
+            });
         }
-        if refused.replacing[side] > 0 {
-            lines.push(format!(
-                "{} on {drive} would be replaced without a way back",
-                files_text(refused.replacing[side])
+        let n = refused.replacing[side];
+        if n > 0 {
+            lines.push(tn!(
+                "{} file on {} would be replaced without a way back"
+                    | "{} files on {} would be replaced without a way back",
+                n,
+                group(n),
+                drive
             ));
         }
     }
     lines
 }
 
-fn no_bin() -> &'static str {
-    if cfg!(windows) { "has no Recycle Bin" } else { "has no trash" }
+/// `1,234`.
+fn group(n: usize) -> String {
+    crate::preview::with_commas(n)
 }
 
 // The saved profiles.
@@ -478,7 +502,8 @@ mod tests {
         let roots = [Path::new("C:/L"), Path::new("E:/R")];
         let said = lines(&s, roots, [true, false], &refused);
         assert!(said[0].starts_with("Copy 3 files (") && said[0].ends_with("to E:/R"), "{said:?}");
-        assert!(said.contains(&format!("E:/R {}: 2 deletions there are left out", no_bin())), "{said:?}");
+        let no_bin = if cfg!(windows) { "has no Recycle Bin" } else { "has no trash" };
+        assert!(said.contains(&format!("E:/R {no_bin}: 2 deletions there are left out")), "{said:?}");
         assert!(said.contains(&"1 file on E:/R would be replaced without a way back".to_owned()), "{said:?}");
         let anyway = summary(&keep_safe(planned(Mode::Mirror).0, [true, false], [false, true]));
         assert_eq!((anyway.replacing, anyway.trashed), ([0, 1], [0, 0]));

@@ -7,8 +7,9 @@ use std::path::{Component, Path, PathBuf};
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::drag::Effect;
-use gezik_core::nav::{Location, Session, TRASH_NAME};
+use gezik_core::nav::{Location, Session};
 use gezik_core::ops::paths::{is_within, same_path};
+use gezik_i18n::{t, tn, tx};
 use slint::ComponentHandle;
 
 use crate::AppWindow;
@@ -50,7 +51,7 @@ thread_local! {
 const CASE_SENSITIVE: bool = cfg!(target_os = "linux");
 
 /// The F3 hint's words (spec 10 §10.2).
-const F3_HINT: &str = "F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E";
+const F3_HINT: &str = tx!("F3 now opens a second pane; search is Ctrl+Shift+F or Ctrl+E");
 
 /// How long after the F3 hint opening the second pane with F3 says it once more.
 const F3_AGAIN_FOR: u64 = 7 * 24 * 60 * 60;
@@ -116,7 +117,7 @@ pub fn open(start: Option<usize>) {
     let scale = window.window().scale_factor();
     if start.is_none() && (window.window().size().width as f32 / scale) < MIN_WIDTH {
         window.set_view_two_panes(false);
-        return panes::active_view().note("The window is too narrow for two panes".to_owned());
+        return panes::active_view().note(t!("The window is too narrow for two panes").into_owned());
     }
     let left = panes::active();
     let session = with_dual(|d| d.borrow_mut().right.take());
@@ -298,7 +299,7 @@ pub fn cramped() {
     crate::preview::with_current(|preview| {
         if preview.is_pane_open() {
             preview.set_pane_open(false);
-            panes::active_view().note("The preview pane closed to keep room for two panes".to_owned());
+            panes::active_view().note(t!("The preview pane closed to keep room for two panes").into_owned());
         }
     });
 }
@@ -334,7 +335,7 @@ pub fn toggle_sync() {
         if let Some(window) = window() {
             window.set_view_sync(false);
         }
-        return panes::active_view().note("Sync browsing needs two panes".to_owned());
+        return panes::active_view().note(t!("Sync browsing needs two panes").into_owned());
     }
     set_sync(!is_synced());
     save();
@@ -406,15 +407,15 @@ fn sync_nav(
     names: &[String],
     case_sensitive: bool,
 ) -> Follow {
-    const APART: &str = "Sync browsing off: the panes went apart";
+    const APART: &str = tx!("Sync browsing off: the panes went apart");
     let (true, Location::Path(from), Location::Path(to), Some(other)) = (stepped, from, to, other) else {
-        return Follow::Off(APART.to_owned());
+        return Follow::Off(t("", APART).into_owned());
     };
     if let Ok(rest) = from.strip_prefix(to) {
         let mut target = other.to_path_buf();
         for _ in rest.components() {
             if !target.pop() {
-                return Follow::Off(APART.to_owned());
+                return Follow::Off(t("", APART).into_owned());
             }
         }
         return Follow::Go(target);
@@ -427,12 +428,12 @@ fn sync_nav(
             _ => None,
         }
     });
-    let Some(name) = name else { return Follow::Off(APART.to_owned()) };
+    let Some(name) = name else { return Follow::Off(t("", APART).into_owned()) };
     let same =
         |found: &&String| if case_sensitive { *found == name } else { found.to_lowercase() == name.to_lowercase() };
     match names.iter().find(same) {
         Some(found) => Follow::Go(other.join(found)),
-        None => Follow::Off(format!("Sync browsing off: no folder \"{name}\" in {}", other.display())),
+        None => Follow::Off(t!("Sync browsing off: no folder \"{}\" in {}", name, other.display())),
     }
 }
 
@@ -440,7 +441,7 @@ fn sync_nav(
 /// moves with its tab, so the keyboard stays on it.
 pub fn swap() {
     let (Some(left), Some(right)) = (panes::at(0), panes::at(1)) else {
-        return panes::active_view().note("There is no other pane".to_owned());
+        return panes::active_view().note(t!("There is no other pane").into_owned());
     };
     // Off while both panes change, then on again from where the active tab is now.
     let synced = with_dual(|d| d.borrow_mut().sync.take()).is_some();
@@ -457,7 +458,7 @@ pub fn swap() {
 /// pane's folder (a step in its history).
 pub fn same_folder() {
     let Some(other) = other_pane() else {
-        return panes::active_view().note("There is no other pane".to_owned());
+        return panes::active_view().note(t!("There is no other pane").into_owned());
     };
     let location = panes::active_nav().active_location();
     let location = match location.folder() {
@@ -474,18 +475,23 @@ pub fn same_folder() {
 pub fn to_other(moving: bool) {
     let source = panes::active_view();
     let Some(other) = panes::at(i32::from(panes::active_index() == 0)) else {
-        return source.note("There is no other pane".to_owned());
+        return source.note(t!("There is no other pane").into_owned());
     };
-    let verb = if moving { "Move" } else { "Copy" };
     let Some(base) = other.view.folder() else {
         return source.note(if moving && other.view.shows_trash() {
-            format!("Use Delete to move items to the {TRASH_NAME}")
+            if cfg!(windows) {
+                t!("Use Delete to move items to the Recycle Bin").into_owned()
+            } else {
+                t!("Use Delete to move items to the Trash").into_owned()
+            }
+        } else if moving {
+            t!("The other pane shows no folder to move into").into_owned()
         } else {
-            format!("The other pane shows no folder to {} into", verb.to_lowercase())
+            t!("The other pane shows no folder to copy into").into_owned()
         });
     };
     if source.folder().is_some_and(|folder| same_path(&folder, &base)) {
-        return source.note("Both panes show the same folder".to_owned());
+        return source.note(t!("Both panes show the same folder").into_owned());
     }
     // The trash's rows are entries in the bins, with the names they had.
     let trash = source.shows_trash().then(|| source.selected_trash());
@@ -506,7 +512,7 @@ pub fn to_other(moving: bool) {
                 ops.restore_from_trash(crate::trash_view::into_folder(&target, rows));
             }
             None if moving && crate::copy_to::nothing_to_move(&paths, &target) => {
-                panes::active_view().note("Nothing to move: same folder".to_owned());
+                panes::active_view().note(t!("Nothing to move: same folder").into_owned());
             }
             None if same_path(&target, &shown) && pick.is_empty() => {
                 ops.transfer_verifying(paths, target, if moving { Effect::Move } else { Effect::Copy }, verify);
@@ -590,7 +596,7 @@ pub fn f3_hint_at_start(applies: bool, shown: bool, shown_at: Option<u64>) {
         return with_dual(|d| d.borrow_mut().f3_at = shown_at);
     }
     let now = now_secs();
-    panes::active_view().note(F3_HINT.to_owned());
+    panes::active_view().note(t("", F3_HINT).into_owned());
     with_dual(|d| d.borrow_mut().f3_at = Some(now));
     let store = with_dual(|d| d.borrow().store.clone());
     if let Some(store) = store {
@@ -605,7 +611,7 @@ pub fn f3_pressed() {
     if !f3_again(at, now_secs()) {
         return;
     }
-    panes::active_nav().note(F3_HINT.to_owned());
+    panes::active_nav().note(t("", F3_HINT).into_owned());
     with_dual(|d| d.borrow_mut().f3_at = None);
     let store = with_dual(|d| d.borrow().store.clone());
     if let Some(store) = store {
@@ -614,10 +620,17 @@ pub fn f3_pressed() {
 }
 
 /// The F5/F6 question: `Copy "a.txt" to D:\Yedek?`, `Move 3 items to …?`.
+/// `verb` is the English "Copy" or "Move".
 pub(crate) fn question_title(verb: &str, names: &[PathBuf], base: &Path) -> String {
-    let what = crate::operations::items_text(names);
-    let what = if names.len() == 1 { format!("\"{what}\"") } else { what };
-    format!("{verb} {what} to {}?", base.display())
+    let (moving, base) = (verb == "Move", base.display());
+    match names {
+        [_] => {
+            let name = crate::operations::items_text(names);
+            if moving { t!("Move \"{}\" to {}?", name, base) } else { t!("Copy \"{}\" to {}?", name, base) }
+        }
+        _ if moving => tn!("Move {n} item to {}?" | "Move {n} items to {}?", names.len(), base),
+        _ => tn!("Copy {n} item to {}?" | "Copy {n} items to {}?", names.len(), base),
+    }
 }
 
 /// Whether the F3 hint shown at `at` says it again at `now`.

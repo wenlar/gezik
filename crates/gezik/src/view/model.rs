@@ -421,7 +421,13 @@ fn field_cells(data: &ViewData, i: usize) -> ModelRc<slint::SharedString> {
 
 /// Field `id` of entry `i` as far as known (an export: nothing is read for it).
 pub fn known_field(data: &ViewData, i: usize, id: FieldId) -> String {
-    row_fields(data, i, false).and_then(|v| v.text(id)).unwrap_or_default()
+    known_field_in(data, i, id, false)
+}
+
+/// `known_field`, with English numbers if `english`.
+pub fn known_field_in(data: &ViewData, i: usize, id: FieldId, english: bool) -> String {
+    let number = if english { gezik_i18n::Number::ENGLISH } else { gezik_i18n::number() };
+    row_fields(data, i, false).and_then(|v| v.text_in(id, number)).unwrap_or_default()
 }
 
 /// Entry `i`'s field values as far as known: from the folder read whole, else from the rows'
@@ -476,7 +482,7 @@ pub fn size_cell(e: &Entry, format: SizeFormat) -> String {
 /// known, until then `PNG File`.
 pub fn type_name_for(data: &ViewData, i: usize) -> String {
     if let Listing::Drives(_) = data.listing {
-        return "Drive".to_owned();
+        return gezik_i18n::t!("Drive").into_owned();
     }
     match data.listing.entry(i) {
         Some(e) => own_type_name(&e.name, e.is_dir)

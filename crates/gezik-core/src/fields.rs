@@ -5,6 +5,8 @@
 
 use std::cmp::Ordering;
 
+use gezik_i18n::{t, tx};
+
 use crate::batch::date::DateParts;
 
 /// A field: its index in [`FIELDS`].
@@ -40,11 +42,11 @@ pub enum Group {
 impl Group {
     pub fn label(self) -> &'static str {
         match self {
-            Group::Picture => "Picture",
-            Group::Photo => "Photo",
-            Group::Media => "Media",
-            Group::Music => "Music",
-            Group::Document => "Document",
+            Group::Picture => tx!("Picture"),
+            Group::Photo => tx!("Photo"),
+            Group::Media => tx!("Media"),
+            Group::Music => tx!("Music"),
+            Group::Document => tx!("Document"),
         }
     }
 }
@@ -64,7 +66,7 @@ pub enum ValueKind {
 pub struct FieldDef {
     /// `artist`, `duration`: settings, filter words, templates.
     pub key: &'static str,
-    /// `Artist`: column header, panel, pickers.
+    /// `Artist`: column header, panel, pickers (marked for translation: shown with `gezik_i18n::t`).
     pub label: &'static str,
     pub group: Group,
     pub kind: ValueKind,
@@ -82,7 +84,7 @@ impl FieldDef {
 }
 
 macro_rules! fields {
-    ($($id:ident $key:literal $label:literal $group:ident $kind:ident $width:literal $groupable:literal;)*) => {
+    ($($id:ident $key:literal tx!($label:literal) $group:ident $kind:ident $width:literal $groupable:literal;)*) => {
         #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         enum Index { $($id),* }
         $(pub const $id: FieldId = FieldId(Index::$id as u8);)*
@@ -99,37 +101,37 @@ macro_rules! fields {
 
 // The order is the panel's: by group, then as a reader of that kind lists them.
 fields! {
-    WIDTH "width" "Width" Picture Int 70 false;
-    HEIGHT "height" "Height" Picture Int 70 false;
-    DIMENSIONS "dimensions" "Dimensions" Picture Int 110 false;
-    TAKEN "taken" "Date Taken" Photo Date 140 true;
-    CAMERA "camera" "Camera" Photo Text 140 true;
-    LENS "lens" "Lens" Photo Text 140 true;
-    EXPOSURE "exposure" "Exposure" Photo Real 80 false;
-    APERTURE "aperture" "Aperture" Photo Real 70 false;
-    ISO "iso" "ISO" Photo Int 60 false;
-    FOCAL_LENGTH "focal-length" "Focal Length" Photo Real 90 false;
-    GPS "gps" "Location" Photo Geo 170 false;
-    DURATION "duration" "Duration" Media Duration 70 false;
-    VIDEO_CODEC "video-codec" "Video Codec" Media Text 90 true;
-    AUDIO_CODEC "audio-codec" "Audio Codec" Media Text 90 true;
-    FRAME_RATE "frame-rate" "Frame Rate" Media Real 80 false;
-    BITRATE "bitrate" "Bit Rate" Media Int 80 false;
-    SAMPLE_RATE "sample-rate" "Sample Rate" Media Int 90 false;
-    CHANNELS "channels" "Channels" Media Int 70 false;
-    TITLE "title" "Title" Music Text 180 true;
-    ARTIST "artist" "Artist" Music Text 150 true;
-    ALBUM "album" "Album" Music Text 150 true;
-    ALBUM_ARTIST "album-artist" "Album Artist" Music Text 150 true;
-    GENRE "genre" "Genre" Music Text 100 true;
-    COMPOSER "composer" "Composer" Music Text 150 true;
-    TRACK "track" "Track" Music Int 50 false;
-    DISC "disc" "Disc" Music Int 50 false;
-    YEAR "year" "Year" Music Int 60 true;
-    AUTHOR "author" "Author" Document Text 150 true;
-    SUBJECT "subject" "Subject" Document Text 150 true;
-    PAGES "pages" "Pages" Document Int 60 false;
-    WORDS "words" "Words" Document Int 70 false;
+    WIDTH "width" tx!("Width") Picture Int 70 false;
+    HEIGHT "height" tx!("Height") Picture Int 70 false;
+    DIMENSIONS "dimensions" tx!("Dimensions") Picture Int 110 false;
+    TAKEN "taken" tx!("Date Taken") Photo Date 140 true;
+    CAMERA "camera" tx!("Camera") Photo Text 140 true;
+    LENS "lens" tx!("Lens") Photo Text 140 true;
+    EXPOSURE "exposure" tx!("Exposure") Photo Real 80 false;
+    APERTURE "aperture" tx!("Aperture") Photo Real 70 false;
+    ISO "iso" tx!("ISO") Photo Int 60 false;
+    FOCAL_LENGTH "focal-length" tx!("Focal Length") Photo Real 90 false;
+    GPS "gps" tx!("Location") Photo Geo 170 false;
+    DURATION "duration" tx!("Duration") Media Duration 70 false;
+    VIDEO_CODEC "video-codec" tx!("Video Codec") Media Text 90 true;
+    AUDIO_CODEC "audio-codec" tx!("Audio Codec") Media Text 90 true;
+    FRAME_RATE "frame-rate" tx!("Frame Rate") Media Real 80 false;
+    BITRATE "bitrate" tx!("Bit Rate") Media Int 80 false;
+    SAMPLE_RATE "sample-rate" tx!("Sample Rate") Media Int 90 false;
+    CHANNELS "channels" tx!("Channels") Media Int 70 false;
+    TITLE "title" tx!("Title") Music Text 180 true;
+    ARTIST "artist" tx!("Artist") Music Text 150 true;
+    ALBUM "album" tx!("Album") Music Text 150 true;
+    ALBUM_ARTIST "album-artist" tx!("Album Artist") Music Text 150 true;
+    GENRE "genre" tx!("Genre") Music Text 100 true;
+    COMPOSER "composer" tx!("Composer") Music Text 150 true;
+    TRACK "track" tx!("Track") Music Int 50 false;
+    DISC "disc" tx!("Disc") Music Int 50 false;
+    YEAR "year" tx!("Year") Music Int 60 true;
+    AUTHOR "author" tx!("Author") Document Text 150 true;
+    SUBJECT "subject" tx!("Subject") Document Text 150 true;
+    PAGES "pages" tx!("Pages") Document Int 60 false;
+    WORDS "words" tx!("Words") Document Int 70 false;
 }
 
 /// Every field, in the registry's order.
@@ -233,13 +235,18 @@ impl Fields {
 
     /// The one display form of a field (panel, column): `4032 × 3024`, `1/250 s`, `3:25`.
     pub fn text(&self, id: FieldId) -> Option<String> {
+        self.text_in(id, gezik_i18n::number())
+    }
+
+    /// `text` with `number`'s separators (`Number::ENGLISH`: the same in every language).
+    pub fn text_in(&self, id: FieldId, number: gezik_i18n::Number) -> Option<String> {
         let value = self.get(id)?;
         if id == DIMENSIONS
             && let (Some(Value::Int(w)), Some(Value::Int(h))) = (self.get(WIDTH), self.get(HEIGHT))
         {
             return Some(format!("{w} × {h}"));
         }
-        Some(text(id, value))
+        Some(text_in(id, value, number))
     }
 }
 
@@ -253,41 +260,52 @@ pub fn group_text(id: FieldId, value: &Value) -> String {
 
 /// `value` as `id` shows it, without the other fields (dimensions show as a pixel count).
 pub fn text(id: FieldId, value: &Value) -> String {
+    text_in(id, value, gezik_i18n::number())
+}
+
+/// `text` with `number`'s separators.
+pub fn text_in(id: FieldId, value: &Value, number: gezik_i18n::Number) -> String {
     match value {
         Value::Text(text) => text.to_string(),
         Value::Int(n) => match id {
             WIDTH | HEIGHT => format!("{n} px"),
             BITRATE => format!("{n} kb/s"),
-            SAMPLE_RATE => format!("{} Hz", crate::group_digits(n.unsigned_abs())),
-            DIMENSIONS | PAGES | WORDS => crate::group_digits(n.unsigned_abs()),
+            SAMPLE_RATE => format!("{} Hz", number.grouped(n.unsigned_abs())),
+            DIMENSIONS | PAGES | WORDS => number.grouped(n.unsigned_abs()),
             _ => n.to_string(),
         },
-        Value::Real(x) => match id {
-            EXPOSURE if *x > 0.0 && *x < 1.0 => format!("1/{} s", (1.0 / x).round()),
-            EXPOSURE => format!("{} s", trim(*x, 1)),
-            APERTURE => format!("f/{}", trim(*x, 1)),
-            FOCAL_LENGTH => format!("{} mm", trim(*x, 1)),
-            FRAME_RATE => format!("{} fps", trim(*x, 2)),
-            _ => trim(*x, 2),
+        Value::Real(x) => match (id, number) {
+            (EXPOSURE, _) if *x > 0.0 && *x < 1.0 => format!("1/{} s", (1.0 / x).round()),
+            (EXPOSURE, number) => format!("{} s", trim(*x, 1, number)),
+            (APERTURE, number) => format!("f/{}", trim(*x, 1, number)),
+            (FOCAL_LENGTH, number) => format!("{} mm", trim(*x, 1, number)),
+            (FRAME_RATE, number) => format!("{} fps", trim(*x, 2, number)),
+            (_, number) => trim(*x, 2, number),
         },
         Value::Duration(ms) => duration_text(*ms),
         Value::Date(d) => {
             format!("{:04}-{:02}-{:02} {:02}:{:02}", d.year, d.month, d.day, d.hour, d.minute)
         }
-        Value::Geo(lat, lon) => format!(
-            "{:.4}° {}, {:.4}° {}",
-            lat.abs(),
-            if *lat < 0.0 { "S" } else { "N" },
-            lon.abs(),
-            if *lon < 0.0 { "W" } else { "E" }
-        ),
+        Value::Geo(lat, lon) => {
+            let mut out = String::new();
+            number.write_decimal(&mut out, lat.abs(), 4);
+            out.push_str(if *lat < 0.0 { "° S, " } else { "° N, " });
+            number.write_decimal(&mut out, lon.abs(), 4);
+            out.push_str(if *lon < 0.0 { "° W" } else { "° E" });
+            out
+        }
     }
 }
 
-/// `x` with at most `places` decimals, no trailing zeros.
-fn trim(x: f64, places: usize) -> String {
-    let text = format!("{x:.places$}");
-    if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.').to_owned() } else { text }
+/// `x` with at most `places` decimals, no trailing zeros, with `number`'s decimal separator.
+fn trim(x: f64, places: usize, number: gezik_i18n::Number) -> String {
+    let mut text = String::new();
+    number.write_decimal(&mut text, x, places);
+    if places > 0 {
+        let keep = text.trim_end_matches('0').trim_end_matches(number.decimal).len();
+        text.truncate(keep);
+    }
+    text
 }
 
 /// `3:25`, `1:02:03`.
@@ -314,7 +332,8 @@ pub fn name_text(id: FieldId, value: &Value, arg: Option<&str>) -> String {
         Value::Real(x) => match digits {
             Some(places) => format!("{x:.places$}"),
             None if id == EXPOSURE && *x > 0.0 && *x < 1.0 => format!("1-{}", (1.0 / x).round()),
-            None => trim(*x, 2),
+            // A name does not change with the interface language.
+            None => trim(*x, 2, gezik_i18n::Number::ENGLISH),
         },
         Value::Duration(ms) => {
             let s = ms / 1000;
@@ -325,7 +344,7 @@ pub fn name_text(id: FieldId, value: &Value, arg: Option<&str>) -> String {
             }
         }
         Value::Date(d) => crate::batch::date::format(arg.unwrap_or("%Y-%m-%d"), d),
-        _ => text(id, value),
+        _ => text_in(id, value, gezik_i18n::Number::ENGLISH),
     }
 }
 
@@ -356,7 +375,7 @@ fn date_key(d: &DateParts) -> (i32, u8, u8, u8, u8, u8) {
 /// `1/250`. A date's missing parts are 0 (`2024` sorts before every day of 2024).
 pub fn parse_value(kind: ValueKind, text: &str) -> Result<Value, String> {
     let text = text.trim();
-    let bad = || Err(format!("\"{text}\" is not a {}", kind_name(kind)));
+    let bad = || Err(not_a(kind, text));
     match kind {
         ValueKind::Text if text.is_empty() => bad(),
         ValueKind::Text => Ok(Value::Text(text.into())),
@@ -377,14 +396,14 @@ pub fn parse_value(kind: ValueKind, text: &str) -> Result<Value, String> {
     }
 }
 
-fn kind_name(kind: ValueKind) -> &'static str {
+/// Why `text` is no value of `kind`: `"x" is not a number`.
+fn not_a(kind: ValueKind, text: &str) -> String {
     match kind {
-        ValueKind::Text => "text",
-        ValueKind::Int => "number",
-        ValueKind::Real => "number",
-        ValueKind::Duration => "duration (3m, 1:30)",
-        ValueKind::Date => "date (2024, 2024-05, 2024-05-01)",
-        ValueKind::Geo => "location (41.0, 28.9)",
+        ValueKind::Text => t!("\"{}\" is not a text", text),
+        ValueKind::Int | ValueKind::Real => t!("\"{}\" is not a number", text),
+        ValueKind::Duration => t!("\"{}\" is not a duration (3m, 1:30)", text),
+        ValueKind::Date => t!("\"{}\" is not a date (2024, 2024-05, 2024-05-01)", text),
+        ValueKind::Geo => t!("\"{}\" is not a location (41.0, 28.9)", text),
     }
 }
 
@@ -575,6 +594,16 @@ mod tests {
     }
 
     #[test]
+    fn decimals_take_the_language_separator() {
+        let tr = gezik_i18n::Number::builtin("tr").unwrap();
+        assert_eq!(trim(2.8, 1, tr), "2,8");
+        assert_eq!(trim(3.0, 2, tr), "3");
+        assert_eq!(trim(29.97, 2, tr), "29,97");
+        assert_eq!(trim(100.0, 0, tr), "100");
+        assert_eq!(trim(29.97, 2, gezik_i18n::Number::ENGLISH), "29.97");
+    }
+
+    #[test]
     fn values_in_names_take_their_format() {
         assert_eq!(name_text(TRACK, &Value::Int(7), Some("02")), "07");
         assert_eq!(name_text(TRACK, &Value::Int(7), None), "7");
@@ -589,6 +618,11 @@ mod tests {
         assert_eq!(name_text(TAKEN, &day, Some("%Y")), "2024");
         assert_eq!(name_text(TAKEN, &day, None), "2024-07-01");
         assert_eq!(name_text(ARTIST, &Value::Text("Tarkan".into()), None), "Tarkan");
+        assert_eq!(
+            name_text(GPS, &Value::Geo(41.0082, -28.9784), None),
+            "41.0082° N, 28.9784° W",
+            "English in every language"
+        );
     }
 
     #[test]

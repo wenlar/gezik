@@ -117,7 +117,9 @@ fn put_back(aside: &[(PathBuf, PathBuf)], run: &RunCx<'_>) {
     for (old, temp) in aside.iter().rev() {
         match gezik_platform::fs::move_entry(temp, old) {
             Ok(()) => run.forget_aside(&[temp]),
-            Err(err) => run.fail(old, &io::Error::new(err.kind(), format!("{err}; it is at {}", temp.display()))),
+            Err(err) => {
+                run.fail(old, &io::Error::new(err.kind(), gezik_i18n::t!("{0}; it is at {1}", err, temp.display())))
+            }
         }
     }
 }
@@ -142,9 +144,10 @@ pub(super) fn keep_aside(old: &Path, temp: &Path, err: &io::Error, run: &RunCx<'
     let message = match gezik_platform::fs::move_entry(temp, &kept) {
         Ok(()) => {
             run.forget_aside(&[temp]);
-            format!("{err}; the old one was kept as {}", file_name(&kept))
+            // TRANSLATORS: {0} is why it could not go to the trash, {1} a name
+            gezik_i18n::t!("{0}; the old one was kept as {1}", err, file_name(&kept))
         }
-        Err(_) => format!("{err}; the old one is at {}", temp.display()),
+        Err(_) => gezik_i18n::t!("{0}; the old one is at {1}", err, temp.display()),
     };
     run.fail(old, &io::Error::new(err.kind(), message));
 }
@@ -232,7 +235,8 @@ impl Task for CompressTask {
     }
 
     fn title(&self) -> String {
-        format!("Compressing {} to {}", what(&self.sources), file_name(&self.target))
+        // TRANSLATORS: {0} is a name or "3 items", {1} an archive
+        gezik_i18n::t!("Compressing {0} to {1}", what(&self.sources), file_name(&self.target))
     }
 
     fn count(&self) -> usize {

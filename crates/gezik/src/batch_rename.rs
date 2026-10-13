@@ -18,6 +18,7 @@ use gezik_core::batch::rules::{ExtensionRule, NumberAt, Rule, RuleEntry};
 use gezik_core::fields::{self as f, FieldSet, Fields};
 use gezik_core::ops::names::NameRules;
 use gezik_core::selection::Selection;
+use gezik_i18n::{t, tn};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::{AppWindow, RenamePreviewRow, RuleOptions, RuleRow};
@@ -149,35 +150,34 @@ impl Rules {
         let count = |want: fn(&Status) -> bool| self.statuses.iter().filter(|s| want(s)).count();
         let mut parts = Vec::new();
         if self.reading {
-            parts.push("reading the folders…".to_owned());
+            parts.push(t!("reading the folders…").into_owned());
         }
         if self.waiting {
-            parts.push("reading properties…".to_owned());
+            parts.push(t!("reading properties…").into_owned());
         }
-        let plural = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
         let duplicates = count(|s| *s == Status::Duplicate);
         if duplicates > 0 {
-            parts.push(plural(duplicates, "duplicate name", "duplicate names"));
+            parts.push(tn!("{n} duplicate name" | "{n} duplicate names", duplicates));
         }
         let exists = count(|s| *s == Status::Exists);
         if exists > 0 {
-            parts.push(plural(exists, "name already in the folder", "names already in the folder"));
+            parts.push(tn!("{n} name already in the folder" | "{n} names already in the folder", exists));
         }
         let invalid = count(|s| matches!(s, Status::Invalid(_)));
         if invalid > 0 {
-            parts.push(plural(invalid, "invalid name", "invalid names"));
+            parts.push(tn!("{n} invalid name" | "{n} invalid names", invalid));
         }
         let empty =
             if self.waiting { 0 } else { (0..self.order.len()).filter(|&p| self.empty_field(p).is_some()).count() };
         if empty > 0 {
-            parts.push(plural(empty, "name with an empty field", "names with an empty field"));
+            parts.push(tn!("{n} name with an empty field" | "{n} names with an empty field", empty));
         }
         if self.rule_errors.iter().any(Option::is_some) {
-            parts.push("a rule has an error".to_owned());
+            parts.push(t!("a rule has an error").into_owned());
         }
-        parts.push(format!("{} will change", self.changed()));
+        parts.push(tn!("{n} will change" | "{n} will change", self.changed()));
         if !parts.is_empty() && self.blocked() > 0 {
-            parts.push("fix the marked rows".to_owned());
+            parts.push(t!("fix the marked rows").into_owned());
         }
         parts.join(" · ")
     }
@@ -371,14 +371,15 @@ impl Rules {
         let i = *self.order.get(position)?;
         let status = self.statuses.get(position)?;
         let empty = || match self.empty_field(position) {
-            Some(key) if !self.waiting => format!("no {key}"),
+            // TRANSLATORS: {} is a property's key in a name template (artist): the item has none.
+            Some(key) if !self.waiting => t!("no {}", key),
             _ => String::new(),
         };
         let (code, note) = match status {
             Status::Unchanged => (0, empty()),
             Status::Changed => (1, empty()),
-            Status::Duplicate => (2, "Another item gets this name".to_owned()),
-            Status::Exists => (3, "Something in the folder already has this name".to_owned()),
+            Status::Duplicate => (2, t!("Another item gets this name").into_owned()),
+            Status::Exists => (3, t!("Something in the folder already has this name").into_owned()),
             Status::Invalid(err) => (4, err.to_string()),
         };
         Some(RenamePreviewRow {
@@ -592,7 +593,7 @@ impl BatchRename {
             }
         }
         let count = self.0.rules.borrow().items.len();
-        window.set_rb_title(format!("Rename {count} items").into());
+        window.set_rb_title(tn!("Rename {n} item" | "Rename {n} items", count).into());
         window.set_rb_only_changed(false);
         self.0.only_changed.set(false);
         self.0.shown_rule.set(None);
@@ -1024,7 +1025,7 @@ impl BatchRename {
     /// Asks for a name over the layer, then saves the current rules under it.
     pub fn ask_preset_name(&self) {
         let t = self.clone();
-        self.0.ops.ask_text("Save rules as", "Name for this set of rules:", move |name| t.save_preset(name));
+        self.0.ops.ask_text(&t!("Save rules as"), &t!("Name for this set of rules:"), move |name| t.save_preset(name));
     }
 
     fn save_preset(&self, name: String) {

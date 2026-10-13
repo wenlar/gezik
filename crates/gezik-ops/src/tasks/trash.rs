@@ -57,7 +57,7 @@ pub fn trash_path(path: &Path) -> io::Result<PathBuf> {
     if !fs::can_trash_name(path) {
         return Err(no_trash());
     }
-    fs::trash(path)?.ok_or_else(|| io::Error::other("deleted for good instead of moved to the trash"))
+    fs::trash(path)?.ok_or_else(|| io::Error::other(gezik_i18n::t!("deleted for good instead of moved to the trash")))
 }
 
 fn is_empty_dir(path: &Path) -> bool {
@@ -91,8 +91,12 @@ impl Task for TrashTask {
     }
 
     fn title(&self) -> String {
-        let bin = if cfg!(windows) { "the Recycle Bin" } else { "the Trash" };
-        format!("Moving {} to {bin}", what(&self.paths()))
+        let what = what(&self.paths());
+        if cfg!(windows) {
+            gezik_i18n::t!("Moving {} to the Recycle Bin", what)
+        } else {
+            gezik_i18n::t!("Moving {} to the Trash", what)
+        }
     }
 
     fn count(&self) -> usize {
@@ -105,7 +109,7 @@ impl Task for TrashTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         for (root, (path, _)) in self.items.iter().enumerate() {
-            if super::refuse_root(sink, path, "move to the trash") {
+            if super::refuse_root(sink, path, || gezik_i18n::t!("Cannot move a drive to the trash")) {
                 continue;
             }
             match std::fs::symlink_metadata(path) {

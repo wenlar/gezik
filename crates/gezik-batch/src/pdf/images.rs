@@ -48,7 +48,7 @@ pub fn write_pdf(
     stop: &dyn Fn() -> bool,
 ) -> io::Result<PicturesPdf> {
     if pictures.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "no pictures"));
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("no pictures").into_owned()));
     }
     let file = File::options().write(true).create_new(true).open(out)?;
     // Made before the writer, so dropped after it: the file is closed by then.
@@ -135,7 +135,10 @@ fn samples(path: &Path) -> io::Result<Picture> {
     img.apply_orientation(source.orientation);
     let (w, h) = (img.width(), img.height());
     if w == 0 || h == 0 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "the picture is damaged (no pixels)"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            gezik_i18n::t!("the picture is damaged (no pixels)").into_owned(),
+        ));
     }
     let ct = img.color();
     let sixteen = ct.bytes_per_pixel() / ct.channel_count() == 2;

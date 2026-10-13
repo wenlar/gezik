@@ -131,11 +131,12 @@ impl Task for CopyTask {
         if self.new.is_some()
             && let Some((_, target)) = self.pairs.first()
         {
-            return format!("Creating {}", super::name(target));
+            return gezik_i18n::t!("Creating {}", super::name(target));
         }
         match &self.dir {
-            Some(dir) => format!("Copying {} to {}", what(&self.sources()), dir.display()),
-            None => format!("Duplicating {}", what(&self.sources())),
+            // TRANSLATORS: {0} is a name or "3 items", {1} a folder
+            Some(dir) => gezik_i18n::t!("Copying {0} to {1}", what(&self.sources()), dir.display()),
+            None => gezik_i18n::t!("Duplicating {}", what(&self.sources())),
         }
     }
 
@@ -156,7 +157,7 @@ impl Task for CopyTask {
         }
         let mut picker = self.pick.as_ref().map(Picker::new);
         for (root, ((source, target), preset)) in self.pairs.iter().zip(&self.presets).enumerate() {
-            if super::refuse_root(sink, source, "copy") {
+            if super::refuse_root(sink, source, || gezik_i18n::t!("Cannot copy a drive")) {
                 continue;
             }
             let meta = match std::fs::symlink_metadata(source) {
@@ -168,7 +169,8 @@ impl Task for CopyTask {
             };
             let facts = facts_of(&meta);
             if into_itself(source, target, facts) {
-                sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, "Cannot copy a folder into itself"));
+                let why = gezik_i18n::t!("Cannot copy a folder into itself");
+                sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, why));
                 continue;
             }
             if let Some(picker) = &mut picker {

@@ -19,6 +19,7 @@ pub mod catalog;
 pub mod check;
 pub mod format;
 pub mod lang;
+pub mod number;
 pub mod plural;
 pub mod po;
 pub mod pseudo;
@@ -29,6 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
 pub use catalog::{Builtin, Catalog, Layer};
+pub use number::{Number, number};
 
 mod embedded {
     include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
@@ -53,6 +55,7 @@ static ENGLISH: AtomicBool = AtomicBool::new(true);
 /// Makes `catalog` the language in use (`None`: English).
 pub fn set(catalog: Option<Arc<Catalog>>) {
     let mut current = CURRENT.write().unwrap_or_else(PoisonError::into_inner);
+    number::set(catalog.as_deref().map_or(Number::ENGLISH, Catalog::number));
     ENGLISH.store(catalog.is_none(), Ordering::Release);
     *current = catalog;
 }
@@ -72,9 +75,10 @@ pub fn current() -> Option<Arc<Catalog>> {
 
 /// `id` (in `context`, `""` for none) in the language in use. `t!` comes here, and a text
 /// marked with `tx!` or read from the settings template is shown through it.
-/// English costs one atomic load: the text itself, borrowed.
+/// English costs one atomic load: the text itself, borrowed. An empty text stays empty (a
+/// label that is not set; the pseudo language would frame it).
 pub fn t<'a>(context: &str, id: &'a str) -> Cow<'a, str> {
-    if ENGLISH.load(Ordering::Acquire) {
+    if id.is_empty() || ENGLISH.load(Ordering::Acquire) {
         return Cow::Borrowed(id);
     }
     match &*CURRENT.read().unwrap_or_else(PoisonError::into_inner) {
@@ -160,7 +164,13 @@ mod tests {
         assert_eq!(t!("Settings"), "«Ŝéţţıñĝš ···»");
         assert_eq!(t!("menu" => "Open {}", "x"), "«Öpéñ x ··»");
         assert_eq!(tn!("{n} file" | "{n} files", 2usize), "«2 fıléš ··»");
+        assert_eq!(number(), Number::ENGLISH, "the pseudo language writes English numbers");
+        let turkish = Layer::from_map("Türkçe".into(), true, plural::Plural::default(), Default::default());
+        set(catalog::Catalog::layered("tr", vec![Arc::new(turkish)]).map(Arc::new));
+        assert_eq!(tn!("{n} file" | "{n} files", 1234), "1.234 files", "numbers follow the language");
         set(None);
+        assert_eq!(number(), Number::ENGLISH);
+        assert_eq!(tn!("{n} file" | "{n} files", 1234), "1,234 files");
         assert_eq!(t!("Settings"), "Settings");
         assert!(keys().is_sorted());
         assert!(

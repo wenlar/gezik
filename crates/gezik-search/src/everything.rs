@@ -613,7 +613,10 @@ pub fn search(
             // Results are shown already: they stay, and the rest is a problem.
             Err(_) if reader.shown => {
                 reader.problems.count += 1;
-                reader.problems.first.push((walk.roots[0].clone(), "Everything stopped answering".to_owned()));
+                reader
+                    .problems
+                    .first
+                    .push((walk.roots[0].clone(), gezik_i18n::t!("Everything stopped answering").into_owned()));
                 break;
             }
             Err(err) => return Err(err),

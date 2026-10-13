@@ -159,13 +159,18 @@ impl Conflicts {
                 data.selection.set_focus(0);
             }
         }
-        let what = if real == 1 { "1 conflict".to_owned() } else { format!("{real} conflicts") };
-        window.set_conflict_title(format!("{what} · {title}").into());
+        // TRANSLATORS: {} is the job's title, "Copying 312 items to D:\Yedek"
+        let heading = gezik_i18n::tn!("{n} conflict · {}" | "{n} conflicts · {}", real, title);
+        window.set_conflict_title(heading.into());
         window.set_conflict_identical_count(i32::try_from(identical_count).unwrap_or(0));
         window.set_conflict_hide_identical(false);
         window.set_conflict_apply_all(false);
-        let bin = if cfg!(windows) { "Recycle Bin" } else { "Trash" };
-        window.set_conflict_footer(format!("Replaced files go to the {bin} when their drive has one.").into());
+        let footer = if cfg!(windows) {
+            gezik_i18n::t!("Replaced files go to the Recycle Bin when their drive has one.")
+        } else {
+            gezik_i18n::t!("Replaced files go to the Trash when their drive has one.")
+        };
+        window.set_conflict_footer(footer.as_ref().into());
         window.set_conflict_scroll(0.0);
         self.refresh();
         window.set_conflicts_open(true);

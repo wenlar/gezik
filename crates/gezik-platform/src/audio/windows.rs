@@ -32,7 +32,7 @@ pub struct Out {
 }
 
 fn error(err: windows::core::Error) -> io::Error {
-    io::Error::other(format!("No sound: {}", err.message()))
+    io::Error::other(gezik_i18n::t!("No sound: {}", err.message()))
 }
 
 /// The default output device's client, set up for Gezik's format.

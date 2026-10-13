@@ -2,7 +2,7 @@
 //! `[shortcuts]` table with its conflict rules.
 
 use crate::Warning;
-use gezik_i18n::tx;
+use gezik_i18n::{t, tx};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {
@@ -121,14 +121,14 @@ pub fn fixed_owner(chord: &Chord, platform: Platform) -> Option<&'static str> {
     );
     let menu_key = chord.shift && !primary && chord.key == Key::F(10);
     if plain && (moves || menu_key || (primary && !chord.shift && chord.key == Key::Space)) {
-        return Some("the file list");
+        return Some(tx!("the file list"));
     }
     let menu_bar = platform == Platform::Mac
         && primary
         && !other
         && !chord.shift
         && matches!((chord.alt, chord.key), (false, Key::Char('q' | 'h' | 'm')) | (true, Key::Char('h')));
-    menu_bar.then_some("the macOS menu bar")
+    menu_bar.then_some(tx!("the macOS menu bar"))
 }
 
 /// Parses `"mod+shift+t"`. `""` means "no shortcut" (`Ok(None)`).
@@ -148,9 +148,9 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
             let (modifiers, name) = text.rsplit_once('+').unwrap_or(("", text.as_str()));
             let name = name.trim();
             if name.is_empty() {
-                return Err("missing key after \"+\"".to_owned());
+                return Err(t!("missing key after \"+\"").into_owned());
             }
-            (modifiers, Key::parse(name).ok_or_else(|| format!("unknown key \"{name}\""))?)
+            (modifiers, Key::parse(name).ok_or_else(|| t!("unknown key \"{}\"", name))?)
         }
     };
     let mut chord = Chord { ctrl: false, alt: false, shift: false, meta: false, key };
@@ -164,7 +164,7 @@ pub fn parse_chord(text: &str, platform: Platform) -> Result<Option<Chord>, Stri
                     Platform::Mac => chord.meta = true,
                     Platform::Other => chord.ctrl = true,
                 },
-                other => return Err(format!("unknown modifier \"{other}\"")),
+                other => return Err(t!("unknown modifier \"{}\"", other)),
             }
         }
     }
@@ -190,19 +190,20 @@ pub fn chord_text(chord: &Chord, platform: Platform) -> Option<String> {
 /// a `[[commands]]` entry, if it cannot.
 pub fn refused(chord: &Chord, command: bool, platform: Platform) -> Option<String> {
     if let Some(owner) = fixed_owner(chord, platform) {
-        return Some(format!("That key belongs to {owner}"));
+        return Some(t!("That key belongs to {}", t("", owner)));
     }
     if chord_text(chord, platform).is_none() {
-        return Some("The Windows (Super) key is the system's: use Ctrl, Alt or Shift".to_owned());
+        return Some(t!("The Windows (Super) key is the system's: use Ctrl, Alt or Shift").into_owned());
     }
     let types = command || matches!(chord.key, Key::Char(_) | Key::Num(_));
     if types && !chord.leaves_typing_alone() {
-        let mods = if platform == Platform::Mac { "Ctrl, Option or Cmd" } else { "Ctrl or Alt" };
-        return Some(if command {
-            format!("A command's key needs {mods}, or an F key")
-        } else {
-            format!("That key types in the file list: add {mods}")
-        });
+        let said = match (command, platform == Platform::Mac) {
+            (true, true) => t!("A command's key needs Ctrl, Option or Cmd, or an F key"),
+            (true, false) => t!("A command's key needs Ctrl or Alt, or an F key"),
+            (false, true) => t!("That key types in the file list: add Ctrl, Option or Cmd"),
+            (false, false) => t!("That key types in the file list: add Ctrl or Alt"),
+        };
+        return Some(said.into_owned());
     }
     None
 }
@@ -223,13 +224,17 @@ pub const MENU_BAR_KEYS: [(&str, &str); 4] = [
 /// Shift (one alone is every app's Ctrl+C, Alt+F4, Alt+<menu letter>); never Ctrl+Alt (AltGr
 /// types with it); not the system's own Win+L/D/E/R or Win+<digit>. On macOS ⌘ or ⌃ with ⌥ or
 /// ⇧ (⌘ alone is every app's Quit, Copy, Close; macOS 15 refuses ⌥ or ⇧ alone).
-/// An error is a phrase that follows the quoted text: `"ctrl+alt+e" uses Ctrl+Alt, …`.
+/// An error names the text, quoted: `"ctrl+alt+e" uses Ctrl+Alt, …`.
 pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, String> {
-    let text = text.trim().to_ascii_lowercase();
+    let said = text.trim();
+    let text = said.to_ascii_lowercase();
     if text.is_empty() {
         return Ok(None);
     }
-    let not_a_key = |name: &str| format!("ends in \"{name}\": a global shortcut's key is a letter, a digit or F1-F12");
+    let not_a_key = |name: &str| {
+        // TRANSLATORS: {0} is the shortcut typed, {1} its last part.
+        t!("\"{0}\" ends in \"{1}\": a global shortcut's key is a letter, a digit or F1-F12", said, name)
+    };
     // "num+" ends in the separator, so it would read as a missing key.
     if text.ends_with("num+") {
         return Err(not_a_key("num+"));
@@ -237,7 +242,7 @@ pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, Str
     let (modifiers, name) = text.rsplit_once('+').unwrap_or(("", text.as_str()));
     let name = name.trim();
     if name.is_empty() {
-        return Err("has no key after \"+\"".to_owned());
+        return Err(t!("\"{}\" has no key after \"+\"", said));
     }
     let key = match Key::parse(name) {
         Some(Key::Char(c)) if c.is_ascii_alphanumeric() => Key::Char(c),
@@ -255,22 +260,22 @@ pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, Str
                 Platform::Mac => chord.meta = true,
                 Platform::Other => chord.ctrl = true,
             },
-            other => return Err(format!("has an unknown modifier \"{other}\"")),
+            other => return Err(t!("\"{0}\" has an unknown modifier \"{1}\"", said, other)),
         }
     }
     if platform == Platform::Mac {
         if !(chord.meta || chord.ctrl) || !(chord.alt || chord.shift) {
-            return Err("needs ⌘ (cmd) or ⌃ (ctrl) with ⌥ (alt) or ⇧ (shift) on macOS".to_owned());
+            return Err(t!("\"{}\" needs ⌘ (cmd) or ⌃ (ctrl) with ⌥ (alt) or ⇧ (shift) on macOS", said));
         }
         let screenshot = chord.meta && chord.shift && !chord.alt && matches!(chord.key, Key::Char('3' | '4' | '5'));
         let dock = chord.meta && chord.alt && !chord.ctrl && !chord.shift && chord.key == Key::Char('d');
         if screenshot || dock {
-            return Err("belongs to the system (⌘⇧3, 4 and 5 take screenshots; ⌘⌥D hides the Dock)".to_owned());
+            return Err(t!("\"{}\" belongs to the system (⌘⇧3, 4 and 5 take screenshots; ⌘⌥D hides the Dock)", said));
         }
         return Ok(Some(chord));
     }
     if chord.ctrl && chord.alt {
-        return Err("uses Ctrl+Alt, which types AltGr characters".to_owned());
+        return Err(t!("\"{}\" uses Ctrl+Alt, which types AltGr characters", said));
     }
     let alone = !chord.ctrl && !chord.alt && !chord.shift;
     let system_own = match chord.key {
@@ -278,11 +283,14 @@ pub fn parse_hotkey(text: &str, platform: Platform) -> Result<Option<Chord>, Str
         _ => false,
     };
     if chord.meta && system_own {
-        return Err("belongs to the system (Win+L locks; Win+D, E, R and Win+<digit> are Explorer's)".to_owned());
+        return Err(t!("\"{}\" belongs to the system (Win+L locks; Win+D, E, R and Win+<digit> are Explorer's)", said));
     }
     // Ctrl+Alt is refused above, so two of the three is Ctrl+Shift or Alt+Shift.
     if !chord.meta && !(chord.shift && (chord.ctrl || chord.alt)) {
-        return Err("needs two of Ctrl, Alt and Shift (Ctrl+Shift or Alt+Shift) or the Windows/Super key".to_owned());
+        return Err(t!(
+            "\"{}\" needs two of Ctrl, Alt and Shift (Ctrl+Shift or Alt+Shift) or the Windows/Super key",
+            said
+        ));
     }
     Ok(Some(chord))
 }
@@ -1084,7 +1092,7 @@ impl Shortcuts {
         let mut user: Vec<(Action, Vec<Chord>)> = Vec::new();
         for (name, value) in table.into_iter().flatten() {
             let Some(action) = Action::from_name(name) else {
-                warnings.push(Warning::new(file, format!("shortcuts.{name}: unknown action")));
+                warnings.push(Warning::new(file, t!("{0}: unknown action", format!("shortcuts.{name}"))));
                 continue;
             };
             // "text" or ["text", …].
@@ -1096,7 +1104,7 @@ impl Shortcuts {
             let Some(texts) = texts else {
                 warnings.push(Warning::new(
                     file,
-                    format!("shortcuts.{name}: expected text or a list of texts, got {value}"),
+                    t!("{0}: expected text or a list of texts, got {1}", format!("shortcuts.{name}"), value),
                 ));
                 continue;
             };
@@ -1104,7 +1112,8 @@ impl Shortcuts {
                 texts.iter().map(|text| parse_chord(text, platform)).collect();
             match parsed {
                 Ok(chords) => user.push((action, chords.into_iter().flatten().collect())),
-                Err(err) => warnings.push(Warning::new(file, format!("shortcuts.{name}: {err}; using the default"))),
+                Err(err) => warnings
+                    .push(Warning::new(file, t!("{0}: {1}; using the default", format!("shortcuts.{name}"), err))),
             }
         }
 

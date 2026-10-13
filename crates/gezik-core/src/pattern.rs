@@ -42,10 +42,10 @@ impl Pattern {
                 None => (false, part),
             };
             if body.is_empty() {
-                return Err("Type a name after \"!\"".to_owned());
+                return Err(gezik_i18n::t!("Type a name after \"!\"").into_owned());
             }
             if body.contains('/') {
-                return Err("Names can't contain \"/\"".to_owned());
+                return Err(gezik_i18n::t!("Names can't contain \"/\"").into_owned());
             }
             let tokens = tokens(body);
             if leave_out {

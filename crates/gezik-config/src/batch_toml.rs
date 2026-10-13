@@ -3,25 +3,26 @@
 
 use gezik_core::batch::case::CaseMode;
 use gezik_core::batch::rules::{CleanRule, ExtensionRule, NumberAt, NumberRule, ReplaceRule, Rule, RuleEntry};
+use gezik_i18n::t;
 
 fn text(table: &toml::Table, key: &str) -> Result<String, String> {
     match table.get(key) {
         None => Ok(String::new()),
-        Some(value) => value.as_str().map(str::to_owned).ok_or_else(|| format!("{key}: expected text, got {value}")),
+        Some(value) => value.as_str().map(str::to_owned).ok_or_else(|| t!("{0}: expected text, got {1}", key, value)),
     }
 }
 
 fn flag(table: &toml::Table, key: &str, default: bool) -> Result<bool, String> {
     match table.get(key) {
         None => Ok(default),
-        Some(value) => value.as_bool().ok_or_else(|| format!("{key}: expected true or false, got {value}")),
+        Some(value) => value.as_bool().ok_or_else(|| t!("{0}: expected true or false, got {1}", key, value)),
     }
 }
 
 fn int(table: &toml::Table, key: &str, default: i64) -> Result<i64, String> {
     match table.get(key) {
         None => Ok(default),
-        Some(value) => value.as_integer().ok_or_else(|| format!("{key}: expected a number, got {value}")),
+        Some(value) => value.as_integer().ok_or_else(|| t!("{0}: expected a number, got {1}", key, value)),
     }
 }
 
@@ -40,12 +41,15 @@ pub fn rule_from_toml(table: &toml::Table) -> Result<RuleEntry, String> {
             let at = match text(table, "at")?.as_str() {
                 "" | "end" => NumberAt::End,
                 "start" => NumberAt::Start,
-                other => return Err(format!("at: expected \"start\" or \"end\", got \"{other}\"")),
+                other => return Err(t!("{0}: expected \"start\" or \"end\", got \"{1}\"", "at", other)),
             };
             Rule::Number(NumberRule {
                 start: int(table, "start", 1)?,
                 step: int(table, "step", 1)?,
-                digits: u8::try_from(digits).ok().filter(|d| (1..=9).contains(d)).ok_or("digits: expected 1 to 9")?,
+                digits: u8::try_from(digits)
+                    .ok()
+                    .filter(|d| (1..=9).contains(d))
+                    .ok_or_else(|| t!("{}: expected 1 to 9", "digits"))?,
                 at,
                 separator: if table.contains_key("separator") { text(table, "separator")? } else { " ".to_owned() },
                 per_folder: flag(table, "per-folder", false)?,
@@ -54,7 +58,7 @@ pub fn rule_from_toml(table: &toml::Table) -> Result<RuleEntry, String> {
         "case" => {
             let mode = text(table, "mode")?;
             Rule::Case(CaseMode::parse(&mode).ok_or_else(|| {
-                format!("mode: expected \"lower\", \"upper\", \"title\" or \"sentence\", got \"{mode}\"")
+                t!("{0}: expected \"lower\", \"upper\", \"title\" or \"sentence\", got \"{1}\"", "mode", mode)
             })?)
         }
         "add-text" => Rule::AddText { prefix: text(table, "prefix")?, suffix: text(table, "suffix")? },
@@ -62,7 +66,7 @@ pub fn rule_from_toml(table: &toml::Table) -> Result<RuleEntry, String> {
             "set" => Rule::Extension(ExtensionRule::Set(text(table, "text")?)),
             "lower" => Rule::Extension(ExtensionRule::Lower),
             "upper" => Rule::Extension(ExtensionRule::Upper),
-            other => return Err(format!("mode: expected \"set\", \"lower\" or \"upper\", got \"{other}\"")),
+            other => return Err(t!("{0}: expected \"set\", \"lower\" or \"upper\", got \"{1}\"", "mode", other)),
         },
         "template" => Rule::Template(text(table, "text")?),
         "clean" => Rule::Clean(CleanRule {
@@ -71,8 +75,8 @@ pub fn rule_from_toml(table: &toml::Table) -> Result<RuleEntry, String> {
             separators_to_spaces: flag(table, "separators-to-spaces", false)?,
             spaces_to_underscores: flag(table, "spaces-to-underscores", false)?,
         }),
-        "" => return Err("kind is missing".to_owned()),
-        other => return Err(format!("kind: unknown rule \"{other}\"")),
+        "" => return Err(t!("{} is missing", "kind")),
+        other => return Err(t!("{0}: unknown rule \"{1}\"", "kind", other)),
     };
     Ok(RuleEntry { enabled: flag(table, "enabled", true)?, rule })
 }

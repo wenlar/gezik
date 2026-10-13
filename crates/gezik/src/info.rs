@@ -20,8 +20,8 @@ use slint::ComponentHandle;
 use crate::context_menu::{INFO_GROUP_FIRST, INFO_GROUP_MAX, OPEN_WITH_FIRST, OPEN_WITH_MAX, OPEN_WITH_OTHER};
 use crate::dialog::Dialogs;
 use crate::operations::{After, Operations};
-use crate::stack::count_text;
 use crate::{AppWindow, InfoView};
+use gezik_i18n::{t, tn};
 
 /// Most items one window shows (each is read when it opens).
 pub const MAX_ITEMS: usize = 1000;
@@ -190,14 +190,14 @@ impl Info {
         }
         let Some(window) = self.0.window.upgrade() else { return };
         if let Err(why) = gezik_platform::show_properties(&window.window().window_handle(), &paths) {
-            window.set_status(format!("Cannot show Properties: {why}").into());
+            window.set_status(t!("Cannot show Properties: {}", why).into());
         }
     }
 
     pub fn open(&self, paths: Vec<PathBuf>) {
         let Some(window) = self.0.window.upgrade() else { return };
         if paths.len() > MAX_ITEMS {
-            return window.set_status(format!("Get Info shows at most {MAX_ITEMS} items; select fewer").into());
+            return window.set_status(t!("Get Info shows at most {} items; select fewer", MAX_ITEMS).into());
         }
         self.read(paths, true);
     }
@@ -243,7 +243,7 @@ impl Info {
             return self.show(true);
         };
         if loaded.items.is_empty() {
-            return window.set_status("Get Info: the items could not be read".into());
+            return window.set_status(t!("Get Info: the items could not be read").as_ref().into());
         }
         *self.0.state.borrow_mut() = Some(State {
             paths,
@@ -253,7 +253,7 @@ impl Info {
             times: loaded.times,
             apps: loaded.apps,
             fields: loaded.fields,
-            size: "Size: calculating…".to_owned(),
+            size: t!("Size: calculating…").into_owned(),
             note: unreadable_note(loaded.unreadable),
             jobs: Vec::new(),
             denied: Vec::new(),
@@ -416,12 +416,12 @@ impl Info {
                     choice.default = choice.path == app;
                 }
             }
-            return self.set_note(format!("Change All… opens every file of this type with {name}"), false);
+            return self.set_note(t!("Change All… opens every file of this type with {}", name), false);
         }
         let window_id = crate::windows::current();
         let failed = move |why: String| {
             crate::windows::post(window_id, move || {
-                with_current(|info| info.set_note(format!("Cannot change the app: {why}"), true));
+                with_current(|info| info.set_note(t!("Cannot change the app: {}", why), true));
             });
         };
         match gezik_platform::open_with::set_default_for_file(&app, &file, failed) {
@@ -433,7 +433,7 @@ impl Info {
                 }
                 self.show(false);
             }
-            Err(why) => self.set_note(format!("Cannot change the app: {why}"), true),
+            Err(why) => self.set_note(t!("Cannot change the app: {}", why), true),
         }
     }
 
@@ -442,25 +442,28 @@ impl Info {
     fn ask_change_all(&self) {
         let app = self.0.state.borrow().as_ref().and_then(|s| s.apps.iter().find(|a| a.default).cloned());
         let (Some(file), Some(app)) = (self.app_file(), app) else {
-            return self.set_note("Choose an app first".to_owned(), true);
+            return self.set_note(t!("Choose an app first").into_owned(), true);
         };
         // The type is read once: the one asked about is the one changed.
         let Some(uti) = gezik_platform::open_with::type_of(&file).filter(|t| !t.is_empty() && !t.starts_with("dyn."))
         else {
-            return self.set_note("This file's type is not known to the system".to_owned(), true);
+            return self.set_note(t!("This file's type is not known to the system").into_owned(), true);
         };
         let name = crate::operations::items_text(std::slice::from_ref(&file));
         let kind = own_type_name(&name, false).unwrap_or_else(|| fallback_type_name(&name, false));
         let kind = format!("{kind} ({uti})");
         let info = self.clone();
         self.0.dialogs.ask(
-            "Change All?",
-            format!(
-                "Open every {kind} file, like \"{name}\", with {}? This changes it for all your files of \
+            t!("Change All?"),
+            // TRANSLATORS: {0} is a file type with its system id ("PDF document (com.adobe.pdf)"), {1} a file name, {2} an app.
+            t!(
+                "Open every {0} file, like \"{1}\", with {2}? This changes it for all your files of \
                  this type, in every app.",
+                kind,
+                name,
                 app.name
             ),
-            &["Change All", "Cancel"],
+            &[&t!("Change All"), &t!("Cancel")],
             move |choice| {
                 if choice == Some(0) {
                     if !gezik_platform::open_with::PER_FILE {
@@ -470,19 +473,19 @@ impl Info {
                             let result = crate::system_changes::set_mime_default(&app.path, &uti);
                             crate::windows::post(window_id, move || {
                                 with_current(|info| match result {
-                                    Ok(()) => info.set_note(format!("{kind} files open with {} now", app.name), false),
-                                    Err(why) => info.set_note(format!("Cannot change the app: {why}"), true),
+                                    Ok(()) => info.set_note(t!("{} files open with {} now", kind, app.name), false),
+                                    Err(why) => info.set_note(t!("Cannot change the app: {}", why), true),
                                 });
                             });
                         });
                         if spawned.is_err() {
-                            info.set_note("Cannot change the app now; try again".to_owned(), true);
+                            info.set_note(t!("Cannot change the app now; try again").into_owned(), true);
                         }
                         return;
                     }
                     let (note, error) = match gezik_platform::open_with::set_default_for_type(&app.path, &uti) {
-                        Ok(()) => (format!("{kind} files open with {} now", app.name), false),
-                        Err(why) => (format!("Cannot change the app: {why}"), true),
+                        Ok(()) => (t!("{} files open with {} now", kind, app.name), false),
+                        Err(why) => (t!("Cannot change the app: {}", why), true),
                     };
                     info.set_note(note, error);
                 }
@@ -535,12 +538,13 @@ impl Info {
         let name = crate::operations::items_text(std::slice::from_ref(&folder.0));
         let info = self.clone();
         self.0.dialogs.ask(
-            "Apply to enclosed items?",
-            format!(
-                "Everything inside \"{name}\" gets this folder's owner, group and permissions. Files keep \
-                 execute only where they had it; links are left as they are. Undo puts each item back."
+            t!("Apply to enclosed items?"),
+            t!(
+                "Everything inside \"{}\" gets this folder's owner, group and permissions. Files keep \
+                 execute only where they had it; links are left as they are. Undo puts each item back.",
+                name
             ),
-            &["Apply", "Cancel"],
+            &[&t!("Apply"), &t!("Cancel")],
             move |choice| {
                 if choice == Some(0) {
                     let (path, id, attrs) = folder;
@@ -614,8 +618,8 @@ impl Info {
 /// "rapor.pdf Info", or "3 items".
 fn title(items: &[(PathBuf, Entry)]) -> String {
     match items {
-        [(path, _)] => format!("{} Info", crate::operations::items_text(std::slice::from_ref(path))),
-        many => format!("{} items", many.len()),
+        [(path, _)] => t!("{} Info", crate::operations::items_text(std::slice::from_ref(path))),
+        many => tn!("{n} item" | "{n} items", many.len()),
     }
 }
 
@@ -623,24 +627,29 @@ fn title(items: &[(PathBuf, Entry)]) -> String {
 fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], size: &str) -> String {
     let mut lines = Vec::new();
     match items {
-        [(_, entry)] if entry.is_link => lines.push("Kind: Symbolic link".to_owned()),
+        [(_, entry)] if entry.is_link => lines.push(t!("Kind: Symbolic link").into_owned()),
         [(path, entry)] => {
             let name = crate::operations::items_text(std::slice::from_ref(path));
             let kind = own_type_name(&name, entry.is_dir).unwrap_or_else(|| fallback_type_name(&name, entry.is_dir));
-            lines.push(format!("Kind: {kind}"));
+            lines.push(t!("Kind: {}", kind));
         }
-        many => lines.push(format!("Kind: {} items", many.len())),
+        many => lines.push(tn!("Kind: {n} item" | "Kind: {n} items", many.len())),
     }
     lines.push(size.to_owned());
     let mut folders = items.iter().filter_map(|(path, _)| path.parent());
     match folders.next() {
-        Some(folder) if folders.all(|other| other == folder) => lines.push(format!("Where: {}", folder.display())),
-        Some(_) => lines.push("Where: several folders".to_owned()),
+        Some(folder) if folders.all(|other| other == folder) => lines.push(t!("Where: {}", folder.display())),
+        Some(_) => lines.push(t!("Where: several folders").into_owned()),
         None => {}
     }
-    for (label, time) in ["Created", "Modified", "Last opened"].into_iter().zip(times) {
+    for (i, time) in times.into_iter().enumerate() {
         if let Some(time) = time {
-            lines.push(format!("{label}: {}", crate::view_options::date_text(time)));
+            let date = crate::view_options::date_text(time);
+            lines.push(match i {
+                0 => t!("Created: {}", date),
+                1 => t!("Modified: {}", date),
+                _ => t!("Last opened: {}", date),
+            });
         }
     }
     lines.join("\n")
@@ -650,10 +659,10 @@ fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], size
 fn special_text(special: &str, acl: bool) -> String {
     let mut lines = Vec::new();
     if !special.is_empty() {
-        lines.push(format!("Special: {special} (not changed here)"));
+        lines.push(t!("Special: {} (not changed here)", special));
     }
     if acl {
-        lines.push("This item has access control entries; they are not shown or changed here".to_owned());
+        lines.push(t!("This item has access control entries; they are not shown or changed here").into_owned());
     }
     lines.join("\n")
 }
@@ -662,7 +671,7 @@ fn special_text(special: &str, acl: bool) -> String {
 /// read, write and execute could not be gone into to change (or undo) what is inside them.
 fn enclosed_refusal(mode: u32) -> Option<String> {
     (mode & 0o700 != 0o700)
-        .then(|| "Apply to enclosed items needs the owner's Read, Write and Execute on this folder".to_owned())
+        .then(|| t!("Apply to enclosed items needs the owner's Read, Write and Execute on this folder").into_owned())
 }
 
 /// The nine boxes as one int for info.slint: box `i` is base-3 digit `i`.
@@ -674,7 +683,10 @@ fn unreadable_note(count: usize) -> (String, bool) {
     if count == 0 {
         (String::new(), false)
     } else {
-        (format!("{} could not be read and are not shown", count_text(count)), true)
+        (
+            tn!("{n} item could not be read and is not shown" | "{n} items could not be read and are not shown", count),
+            true,
+        )
     }
 }
 
@@ -697,7 +709,7 @@ fn default_app(apps: &[AppChoice]) -> String {
     match apps.iter().find(|a| a.default) {
         Some(app) => app.name.clone(),
         None if apps.is_empty() => String::new(),
-        None => "Not set".to_owned(),
+        None => t!("Not set").into_owned(),
     }
 }
 
@@ -705,7 +717,13 @@ fn default_app(apps: &[AppChoice]) -> String {
 fn denied(wanted: &[Wanted], report: &Report) -> Vec<Wanted> {
     wanted
         .iter()
-        .filter(|w| report.failures.iter().any(|f| f.path == w.path && f.message == NEEDS_ADMIN))
+        // The message may have been written in the language in use.
+        .filter(|w| {
+            report
+                .failures
+                .iter()
+                .any(|f| f.path == w.path && (f.message == NEEDS_ADMIN || f.message == t("", NEEDS_ADMIN)))
+        })
         .cloned()
         .collect()
 }
@@ -714,18 +732,27 @@ fn denied(wanted: &[Wanted], report: &Report) -> Vec<Wanted> {
 fn job_note(report: &Report, denied: usize) -> (String, bool) {
     let mut parts = Vec::new();
     if denied > 0 {
-        parts.push(format!("Requires administrator: {} not changed", count_text(denied)));
+        parts.push(tn!(
+            "Requires administrator: {n} item not changed" | "Requires administrator: {n} items not changed",
+            denied
+        ));
     }
     let others = report.failures.len().saturating_sub(denied);
     if others > 0 {
-        parts.push(format!("{} could not be changed (see the operations panel)", count_text(others)));
+        parts.push(tn!(
+            "{n} item could not be changed (see the operations panel)"
+                | "{n} items could not be changed (see the operations panel)",
+            others
+        ));
     }
     if report.skipped_changed > 0 {
-        let what = if report.skipped_changed == 1 { "it is" } else { "they are" };
-        parts.push(format!("{} changed since; shown as {what} now", count_text(report.skipped_changed)));
+        parts.push(tn!(
+            "{n} item changed since; shown as it is now" | "{n} items changed since; shown as they are now",
+            report.skipped_changed
+        ));
     }
     if report.cancelled {
-        parts.push("Cancelled".to_owned());
+        parts.push(t!("Cancelled").into_owned());
     }
     let error = !parts.is_empty();
     (parts.join(" · "), error)

@@ -13,9 +13,9 @@ use crate::view::View;
 /// The status line after `count` paths were copied.
 pub fn copied_text(count: usize) -> String {
     if count == 1 {
-        "Copied the path".to_owned()
+        gezik_i18n::t!("Copied the path").into_owned()
     } else {
-        format!("Copied {} paths", crate::preview::with_commas(count))
+        gezik_i18n::tn!("Copied {} path" | "Copied {} paths", count, crate::preview::with_commas(count))
     }
 }
 
@@ -85,8 +85,8 @@ pub fn copy(view: &View, paths: &[PathBuf], kind: PathFormat) {
     let text = format_paths(&texts, kind, cfg!(windows), &cached_share);
     view.note(match clipboard::write_text(&text) {
         Ok(()) => copied_text(paths.len()),
-        Err(ClipboardError::Unsupported) => "No system clipboard here".to_owned(),
-        Err(ClipboardError::Failed(why)) => format!("Cannot use the clipboard: {why}"),
+        Err(ClipboardError::Unsupported) => gezik_i18n::t!("No system clipboard here").into_owned(),
+        Err(ClipboardError::Failed(why)) => gezik_i18n::t!("Cannot use the clipboard: {}", why),
     });
 }
 

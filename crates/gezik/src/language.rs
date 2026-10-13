@@ -31,8 +31,8 @@ thread_local! {
     static SHOWN: RefCell<(String, Option<Arc<Layer>>)> = RefCell::new(("en".to_owned(), None));
 }
 
-/// Makes the language `setting` names the one in use, if it or its file changed.
-pub fn apply(setting: &str, files: &ConfigFiles) {
+/// Makes the language `setting` names the one in use, if it or its file changed: whether it did.
+pub fn apply(setting: &str, files: &ConfigFiles) -> bool {
     let code = lang::resolve(setting, system(), &available(files));
     // Before the check below, which skips English at the start: Han characters in the language
     // the reader expects (spec 15 §3.4), set before the first one is drawn.
@@ -43,7 +43,7 @@ pub fn apply(setting: &str, files: &ConfigFiles) {
         shown.0 == code && shown.1.as_ref().map(Arc::as_ptr) == file.as_ref().map(Arc::as_ptr)
     });
     if same {
-        return;
+        return false;
     }
     SHOWN.with(|shown| *shown.borrow_mut() = (code.clone(), file.clone()));
     let catalog = Catalog::open(&code, file).map(Arc::new);
@@ -59,6 +59,7 @@ pub fn apply(setting: &str, files: &ConfigFiles) {
         [t!("About Gezik"), t!("Services"), t!("Hide Gezik"), t!("Hide Others"), t!("Show All"), t!("Quit Gezik")]
             .map(std::borrow::Cow::into_owned),
     );
+    true
 }
 
 /// The language row's choices (spec 15 §5.1): `code — name`, the first part is written.

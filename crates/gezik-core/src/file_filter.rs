@@ -43,17 +43,17 @@ impl FileFilter {
     pub fn parse(text: &str, related: bool) -> Result<FileFilter, String> {
         let (take, leave) = text.split_once('|').unwrap_or((text, ""));
         if leave.contains('|') {
-            return Err("Only one \"|\": what follows it is left out".to_owned());
+            return Err(gezik_i18n::t!("Only one \"|\": what follows it is left out").into_owned());
         }
         if leave.contains('>') {
-            return Err("Related files (>) go before \"|\"".to_owned());
+            return Err(gezik_i18n::t!("Related files (>) go before \"|\"").into_owned());
         }
         let mut filter = FileFilter::default();
         let (take, along) = match take.split_once('>') {
-            Some(_) if !related => return Err("Related files (>) work only when copying".to_owned()),
+            Some(_) if !related => return Err(gezik_i18n::t!("Related files (>) work only when copying").into_owned()),
             Some((a, b)) => {
                 if b.contains('>') {
-                    return Err("Only one \">\"".to_owned());
+                    return Err(gezik_i18n::t!("Only one \">\"").into_owned());
                 }
                 (a, Some(b))
             }
@@ -65,10 +65,10 @@ impl FileFilter {
             let mut folders = Vec::new();
             words(along, &mut filter.related, &mut folders)?;
             if !folders.is_empty() {
-                return Err("Related files (>) are files, not folders".to_owned());
+                return Err(gezik_i18n::t!("Related files (>) are files, not folders").into_owned());
             }
             if filter.files.is_empty() || filter.related.is_empty() {
-                return Err("Type a pattern on both sides of \">\": *.jpg>*.cr2".to_owned());
+                return Err(gezik_i18n::t!("Type a pattern on both sides of \">\": *.jpg>*.cr2").into_owned());
             }
         }
         Ok(filter)
@@ -138,7 +138,7 @@ fn words(text: &str, files: &mut Vec<Vec<Token>>, folders: &mut Vec<Vec<Token>>)
     for word in text.split([' ', '\t', ';']).filter(|w| !w.is_empty()) {
         let body = word.trim_end_matches(['/', '\\']);
         if body.contains(['/', '\\']) {
-            return Err(format!("\"{word}\": a folder pattern is one name, like thumbs\\"));
+            return Err(gezik_i18n::t!("\"{}\": a folder pattern is one name, like thumbs\\", word));
         }
         if body.is_empty() {
             continue;

@@ -142,7 +142,7 @@ impl AddToArchiveTask {
             // Packing what could be read would lose the rest.
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Some items of the archive could not be read; nothing was added",
+                gezik_i18n::t!("Some items of the archive could not be read; nothing was added"),
             ));
         }
         let mut children: Vec<PathBuf> =
@@ -194,7 +194,7 @@ impl AddToArchiveTask {
             let _ = std::fs::remove_file(temp);
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "Some items of the archive could not be packed again; nothing was added",
+                gezik_i18n::t!("Some items of the archive could not be packed again; nothing was added"),
             ));
         }
         if failed.len() >= added {
@@ -222,7 +222,8 @@ impl AddToArchiveTask {
             match gezik_platform::fs::move_entry(&aside, archive) {
                 Ok(()) => run.forget_aside(&[&aside]),
                 Err(back) => {
-                    let message = format!("{back}; it is at {}", aside.display());
+                    // TRANSLATORS: {0} is why it could not be put back, {1} where it is
+                    let message = gezik_i18n::t!("{0}; it is at {1}", back, aside.display());
                     run.fail(archive, &io::Error::new(back.kind(), message));
                 }
             }
@@ -247,7 +248,8 @@ impl Task for AddToArchiveTask {
     }
 
     fn title(&self) -> String {
-        format!("Adding {} to {}", what(&self.sources), file_name(&self.archive))
+        // TRANSLATORS: {0} is a name or "3 items", {1} an archive
+        gezik_i18n::t!("Adding {0} to {1}", what(&self.sources), file_name(&self.archive))
     }
 
     fn count(&self) -> usize {
@@ -274,8 +276,12 @@ impl Task for AddToArchiveTask {
     fn run(&self, _item: &PlanItem, run: &RunCx<'_>) -> io::Result<Outcome> {
         // Undo needs the old archive in the trash.
         if !run.has_trash(&self.archive) {
-            let bin = if cfg!(windows) { "a Recycle Bin" } else { "a trash" };
-            return Err(io::Error::new(io::ErrorKind::Unsupported, format!("Adding needs {bin} to undo")));
+            let why = if cfg!(windows) {
+                gezik_i18n::t!("Adding needs a Recycle Bin to undo")
+            } else {
+                gezik_i18n::t!("Adding needs a trash to undo")
+            };
+            return Err(io::Error::new(io::ErrorKind::Unsupported, why));
         }
         let kind = kind_of(&self.archive)?;
         let fresh = write::inputs(&self.sources, &mut |path, err| run.fail(path, &err));
@@ -295,7 +301,7 @@ impl Task for AddToArchiveTask {
 fn kind_of(archive: &Path) -> io::Result<Kind> {
     let name = file_name(archive);
     if volume_set(&name).is_some() {
-        return Err(io::Error::new(io::ErrorKind::Unsupported, "Cannot add to an archive in parts"));
+        return Err(io::Error::new(io::ErrorKind::Unsupported, gezik_i18n::t!("Cannot add to an archive in parts")));
     }
     let mut head = Vec::new();
     File::open(archive)?.take(0x9010).read_to_end(&mut head)?;
@@ -303,7 +309,10 @@ fn kind_of(archive: &Path) -> io::Result<Kind> {
         Some(Format::Zip) => Ok(Kind::Zip),
         Some(Format::SevenZ) => Ok(Kind::SevenZ),
         Some(Format::Tar(codec)) if codec != Codec::Zst => Ok(Kind::Tar(codec)),
-        _ => Err(io::Error::new(io::ErrorKind::Unsupported, "Only zip, 7z and tar archives can be added to")),
+        _ => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            gezik_i18n::t!("Only zip, 7z and tar archives can be added to"),
+        )),
     }
 }
 
@@ -318,7 +327,7 @@ fn opens(zip: &mut ZipArchive<BufReader<File>>, i: usize, password: &str) -> io:
 }
 
 fn no_password() -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, "no password")
+    io::Error::new(io::ErrorKind::PermissionDenied, gezik_i18n::t!("no password"))
 }
 
 /// The names an archive has, as `key`s.
@@ -355,15 +364,16 @@ fn settle(fresh: &mut Vec<Input>, names: &Names, run: &RunCx<'_>) -> io::Result<
     if clashes.is_empty() {
         return Ok(Some(Vec::new()));
     }
-    let title = match clashes.len() {
-        1 => "1 item already in the archive".to_owned(),
-        n => format!("{n} items already in the archive"),
-    };
+    let title = gezik_i18n::tn!("{n} item already in the archive" | "{n} items already in the archive", clashes.len());
     let mut message = clashes.iter().take(10).map(|(name, _)| name.clone()).collect::<Vec<_>>().join("\n");
     if clashes.len() > 10 {
-        message.push_str(&format!("\n…and {} more", clashes.len() - 10));
+        message.push('\n');
+        message.push_str(&gezik_i18n::tn!("…and {n} more" | "…and {n} more", clashes.len() - 10));
     }
-    let buttons = ["Replace", "Skip", "Keep both", "Cancel"].map(str::to_owned).to_vec();
+    let buttons =
+        [gezik_i18n::t!("Replace"), gezik_i18n::t!("Skip"), gezik_i18n::t!("Keep both"), gezik_i18n::t!("Cancel")]
+            .map(std::borrow::Cow::into_owned)
+            .to_vec();
     let roots: Vec<String> = clashes.iter().map(|(name, _)| key(name)).collect();
     match run.ask(Question::Confirm { title, message, buttons }) {
         Answer::Button(0) => Ok(Some(roots)),

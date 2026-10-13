@@ -26,28 +26,28 @@ type Staged = Arc<Mutex<Option<PathBuf>>>;
 /// `submit_chain(tasks, Some(split_label(&source)))`.
 pub fn split_chain(source: PathBuf, dir: PathBuf, size: u64) -> Vec<Box<dyn Task>> {
     let stage: Staged = Arc::default();
-    let title = format!("Splitting {}", file_name(&source));
+    let title = gezik_i18n::t!("Splitting {}", file_name(&source));
     let place = PlaceTask::outputs(dir.clone(), stage.clone(), TaskKind::Copy, title);
     vec![Box::new(SplitTask { source, dir, size, stage }), Box::new(place)]
 }
 
 /// What Undo says: "Split film.mkv".
 pub fn split_label(source: &Path) -> String {
-    format!("Split {}", file_name(source))
+    gezik_i18n::t!("Split {}", file_name(source))
 }
 
 /// The tasks of "Join Files": the set `part` (any part, or its `.crc`) belongs to, joined in
 /// `dir`. Submit them with `submit_chain(tasks, Some(join_label(&part)))`.
 pub fn join_chain(part: PathBuf, dir: PathBuf) -> Vec<Box<dyn Task>> {
     let stage: Staged = Arc::default();
-    let title = format!("Joining {}", join_name(&part));
+    let title = gezik_i18n::t!("Joining {}", join_name(&part));
     let place = PlaceTask::outputs(dir.clone(), stage.clone(), TaskKind::Copy, title);
     vec![Box::new(JoinTask { part, dir, stage, set: OnceLock::new() }), Box::new(place)]
 }
 
 /// What Undo says: "Join film.mkv".
 pub fn join_label(part: &Path) -> String {
-    format!("Join {}", join_name(part))
+    gezik_i18n::t!("Join {}", join_name(part))
 }
 
 /// The name the set of `part` was split from (`film.mkv`).
@@ -104,7 +104,7 @@ impl Task for SplitTask {
     }
 
     fn title(&self) -> String {
-        format!("Splitting {}", file_name(&self.source))
+        gezik_i18n::t!("Splitting {}", file_name(&self.source))
     }
 
     fn count(&self) -> usize {
@@ -118,14 +118,17 @@ impl Task for SplitTask {
     fn plan(&self, sink: &mut dyn ScanSink) {
         match std::fs::metadata(&self.source) {
             Ok(meta) if meta.is_file() && part_count(meta.len(), self.size) > MAX_PARTS => {
-                let message = format!("That makes more than {MAX_PARTS} parts; choose a bigger size");
+                let message = gezik_i18n::t!("That makes more than {} parts; choose a bigger size", MAX_PARTS);
                 sink.failed(&self.source, io::Error::new(io::ErrorKind::InvalidInput, message));
             }
             Ok(meta) if meta.is_file() => {
                 let facts = Facts { is_dir: false, size: meta.len(), modified: meta.modified().ok() };
                 sink.item(PlanItem::new(Stage::Parallel, facts).source(&self.source).top(0));
             }
-            Ok(_) => sink.failed(&self.source, io::Error::new(io::ErrorKind::InvalidInput, "Only a file can be split")),
+            Ok(_) => {
+                let why = gezik_i18n::t!("Only a file can be split");
+                sink.failed(&self.source, io::Error::new(io::ErrorKind::InvalidInput, why))
+            }
             Err(err) => sink.failed(&self.source, err),
         }
     }
@@ -137,17 +140,24 @@ impl Task for SplitTask {
         let (old_parts, old_crc) = set_files(&self.dir, &name).unwrap_or_default();
         let olds: Vec<PathBuf> = old_parts.into_iter().map(|(_, path, _)| path).chain(old_crc).collect();
         if !olds.is_empty() {
-            let message = format!(
-                "{} holds {} file(s) of a split {name} already. Replace that whole set? The old files go to the trash.",
+            // TRANSLATORS: {0} is a folder, {1} a file name
+            let message = gezik_i18n::tn!(
+                "{0} holds {n} file of a split {1} already. Replace that whole set? The old files go to the trash."
+                    | "{0} holds {n} files of a split {1} already. Replace that whole set? The old files go to the trash.",
+                olds.len(),
                 self.dir.display(),
-                olds.len()
+                name
             );
-            let buttons = vec!["Replace All".to_owned(), "Cancel".to_owned()];
-            match cx.ask(Question::Confirm { title: "Parts are there already".to_owned(), message, buttons }) {
+            let buttons = vec![gezik_i18n::t!("Replace All").into_owned(), gezik_i18n::t!("Cancel").into_owned()];
+            let title = gezik_i18n::t!("Parts are there already").into_owned();
+            match cx.ask(Question::Confirm { title, message, buttons }) {
                 Answer::Button(0) => {}
                 _ if cx.stopped() => return Err(cancelled()),
                 _ => {
-                    cx.skip(&self.source, &io::Error::other("Left as it was: its parts are there already"));
+                    cx.skip(
+                        &self.source,
+                        &io::Error::other(gezik_i18n::t!("Left as it was: its parts are there already")),
+                    );
                     return Ok(Outcome::Nothing);
                 }
             }
@@ -167,7 +177,7 @@ impl Task for SplitTask {
             match super::compress::out_of_the_way(old, old, cx) {
                 Ok(outcome) => outcomes.push(outcome),
                 Err(err) => {
-                    let message = format!("{err}; it could not make way, so nothing was placed");
+                    let message = gezik_i18n::t!("{}; it could not make way, so nothing was placed", err);
                     cx.fail(old, &io::Error::new(err.kind(), message));
                     return Ok(Outcome::Several(outcomes));
                 }
@@ -228,10 +238,11 @@ impl JoinTask {
     /// The set `self.part` belongs to, every part there: `Err` names the first one missing.
     fn find(&self) -> io::Result<Set> {
         let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidInput, message);
-        let base = split_base(&file_name(&self.part)).ok_or_else(|| invalid("Not a part of a split file".into()))?;
+        let base = split_base(&file_name(&self.part))
+            .ok_or_else(|| invalid(gezik_i18n::t!("Not a part of a split file").into_owned()))?;
         let folder = self.part.parent().unwrap_or(Path::new("."));
         let (parts, crc_file) = set_files(folder, &base)?;
-        let missing = |n: u32| invalid(format!("Part {} is missing", part_name(&base, n)));
+        let missing = |n: u32| invalid(gezik_i18n::t!("Part {} is missing", part_name(&base, n)));
         if let Some(gap) = first_gap(&parts.iter().map(|(n, ..)| *n).collect::<Vec<_>>()) {
             return Err(missing(gap));
         }
@@ -263,7 +274,7 @@ impl Task for JoinTask {
     }
 
     fn title(&self) -> String {
-        format!("Joining {}", join_name(&self.part))
+        gezik_i18n::t!("Joining {}", join_name(&self.part))
     }
 
     fn count(&self) -> usize {
@@ -307,11 +318,12 @@ impl Task for JoinTask {
             {
                 // Nothing is placed: the staging folder goes with the job.
                 let _ = std::fs::remove_file(&joined);
-                let message = format!("The joined file does not match {crc_file} (CRC or size); a part may be damaged");
+                let message =
+                    gezik_i18n::t!("The joined file does not match {} (CRC or size); a part may be damaged", crc_file);
                 return Err(io::Error::new(io::ErrorKind::InvalidData, message));
             }
             Some(_) => {}
-            None => cx.skip(&self.part, &io::Error::other("No .crc file: the result was not checked")),
+            None => cx.skip(&self.part, &io::Error::other(gezik_i18n::t!("No .crc file: the result was not checked"))),
         }
         *self.stage.lock().unwrap_or_else(|e| e.into_inner()) = Some(staging);
         Ok(Outcome::Nothing)

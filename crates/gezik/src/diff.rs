@@ -16,14 +16,15 @@ use gezik_config::settings::ToolsSettings;
 use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_config::store::ConfigStore;
 use gezik_core::diff::{self, Kind, Options, Row};
+use gezik_i18n::{t, tn, tx};
 use slint::{ComponentHandle, Model, ModelRc, ModelTracker};
 
 use crate::dialog::Dialogs;
 use crate::{AppWindow, DiffRow, DiffView};
 
-pub const SELECT_TWO: &str = "Select two files or two folders, or open the second pane (F3)";
-pub const NEEDS_TWO: &str = "Compare needs two files or two folders";
-pub const TOO_DIFFERENT: &str = "The files are too different to line up; [tools] diff can name a compare program";
+pub const SELECT_TWO: &str = tx!("Select two files or two folders, or open the second pane (F3)");
+pub const NEEDS_TWO: &str = tx!("Compare needs two files or two folders");
+pub const TOO_DIFFERENT: &str = tx!("The files are too different to line up; [tools] diff can name a compare program");
 
 /// Larger files are compared byte by byte (spec 11 §6.1).
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -134,7 +135,7 @@ pub fn compare() {
                 crate::compare::open(left, right, String::new());
             }
         }
-        Targets::Say(text) => view.note(text.to_owned()),
+        Targets::Say(text) => view.note(t("", text).into_owned()),
     }
 }
 
@@ -162,14 +163,15 @@ fn external_error(program: &str, err: &gezik_platform::terminal::TerminalError) 
     use gezik_platform::terminal::TerminalError;
     match err {
         TerminalError::NotFound => None,
-        TerminalError::UnsafeFolder(cmd) => Some(format!("These names can't be passed safely to {cmd}")),
-        other => Some(format!("Cannot start {program}: {other}")),
+        TerminalError::UnsafeFolder(cmd) => Some(t!("These names can't be passed safely to {}", cmd)),
+        // TRANSLATORS: {0} is a program, {1} why it did not start.
+        other => Some(t!("Cannot start {0}: {1}", program, other)),
     }
 }
 
 /// The text when the compare program is not there: Gezik's own compare opens.
 pub fn not_found_text(program: &str) -> String {
-    format!("The compare program \"{program}\" was not found; using Gezik's own")
+    t!("The compare program \"{}\" was not found; using Gezik's own", program)
 }
 
 /// A macOS app (`….app`) that is not there: `open -a` would only say so in a dialog of its own.
@@ -187,7 +189,8 @@ fn run_external(external: &External, left: &Path, right: &Path, view: &crate::vi
     let (name, args) = match command {
         Ok(command) => command,
         Err(err) => {
-            view.note(format!("[tools] diff-args: {err}"));
+            // TRANSLATORS: "[tools] diff-args" is a setting's name in settings.toml: keep it.
+            view.note(t!("[tools] diff-args: {}", err));
             return true;
         }
     };
@@ -219,7 +222,7 @@ fn run_external(external: &External, left: &Path, right: &Path, view: &crate::vi
         });
     });
     if let Err(err) = started {
-        view.note(format!("Cannot start {shown}: {err}"));
+        view.note(t!("Cannot start {0}: {1}", shown, err));
     }
     true
 }
@@ -242,7 +245,7 @@ impl Text {
 
     fn with_lines(name: String, text: String, lines: Vec<(u32, u32)>, encoding: &str) -> Text {
         let eol = eol_name(&text);
-        let info = if eol.is_empty() { encoding.to_owned() } else { format!("{encoding} · {eol}") };
+        let info = if eol.is_empty() { encoding.to_owned() } else { format!("{encoding} · {}", t("", eol)) };
         Text { name, text, lines, info }
     }
 
@@ -296,7 +299,8 @@ pub fn eol_name(text: &str) -> &'static str {
         (true, false, false) => "CRLF",
         (false, true, false) => "LF",
         (false, false, true) => "CR",
-        _ => "mixed",
+        // Line endings of more than one kind.
+        _ => tx!("mixed"),
     }
 }
 
@@ -313,7 +317,7 @@ fn open_file(path: &Path) -> io::Result<(std::fs::File, u64)> {
     let file = std::fs::File::open(path)?;
     let meta = file.metadata()?;
     if !meta.is_file() {
-        return Err(io::Error::other("It is not a file"));
+        return Err(io::Error::other(t!("It is not a file").into_owned()));
     }
     Ok((file, meta.len()))
 }
@@ -383,9 +387,10 @@ fn read_full(file: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
 /// The byte compare's answer.
 pub fn bytes_text(first: Option<u64>, size: u64) -> String {
     match first {
-        None => "The files are identical".to_owned(),
-        Some(at) => format!(
-            "The files differ from byte {} (of {})",
+        None => t!("The files are identical").into_owned(),
+        // TRANSLATORS: {0} is a byte's place, {1} the file's size.
+        Some(at) => t!(
+            "The files differ from byte {0} (of {1})",
             crate::preview::with_commas(usize::try_from(at + 1).unwrap_or(usize::MAX)),
             crate::view_options::size_text(size)
         ),
@@ -444,9 +449,10 @@ pub fn side_parts(number: u32, digits: usize, text: &str, span: Option<std::ops:
 pub fn row_label(kind: Kind, left: &str, right: &str) -> String {
     match kind {
         Kind::Same => left.to_owned(),
-        Kind::Added => format!("Added: {right}"),
-        Kind::Removed => format!("Removed: {left}"),
-        Kind::Changed => format!("Changed: {left} to {right}"),
+        Kind::Added => t!("Added: {}", right),
+        Kind::Removed => t!("Removed: {}", left),
+        // TRANSLATORS: a screen reader's text for a changed line: {0} the old line, {1} the new.
+        Kind::Changed => t!("Changed: {0} to {1}", left, right),
     }
 }
 
@@ -506,9 +512,8 @@ fn kind_index(kind: Kind) -> i32 {
 /// "3 changes".
 pub fn changes_text(count: usize) -> String {
     match count {
-        0 => "No changes".to_owned(),
-        1 => "1 change".to_owned(),
-        n => format!("{} changes", crate::preview::with_commas(n)),
+        0 => t!("No changes").into_owned(),
+        n => tn!("{} change" | "{} changes", n, crate::preview::with_commas(n)),
     }
 }
 
@@ -646,7 +651,7 @@ impl Diff {
         self.0.generation.set(generation);
         self.0.reading.set(true);
         if !reload {
-            crate::panes::active_view().note("Comparing…".to_owned());
+            crate::panes::active_view().note(t!("Comparing…").into_owned());
         }
         let options = Diff::options();
         let window_id = crate::windows::current();
@@ -657,7 +662,7 @@ impl Diff {
             });
         });
         if let Err(err) = spawned {
-            crate::panes::active_view().note(format!("Cannot compare: {err}"));
+            crate::panes::active_view().note(t!("Cannot compare: {}", err));
         }
     }
 
@@ -668,14 +673,15 @@ impl Diff {
         self.0.reading.set(false);
         let view = crate::panes::active_view();
         let told = std::mem::take(&mut *self.0.told.borrow_mut());
-        let with_told = |text: String| if told.is_empty() { text } else { format!("{told}.\n{text}") };
+        // TRANSLATORS: {0} is what was said first (the compare program was not found), {1} the answer.
+        let with_told = |text: String| if told.is_empty() { text } else { t!("{0}.\n{1}", told, text) };
         match answer {
             Answer::Failed(text) => view.note(with_told(text).replace('\n', " ")),
             Answer::Bytes(first, size) => {
                 view.clear_note();
-                let names = format!("{} and {}", file_name(&paths.0), file_name(&paths.1));
-                let message = with_told(format!("{names}\n{}", bytes_text(first, size)));
-                self.0.dialogs.ask("Compare", message, &["OK"], |_| {});
+                // TRANSLATORS: {0} and {1} are file names, {2} the answer ("The files are identical").
+                let text = t!("{0} and {1}\n{2}", file_name(&paths.0), file_name(&paths.1), bytes_text(first, size));
+                self.0.dialogs.ask(t!("Compare"), with_told(text), &[&t!("OK")], |_| {});
             }
             Answer::Lines(compared) => {
                 view.clear_note();
@@ -690,8 +696,8 @@ impl Diff {
         let changes = gezik_core::diff::changes(&compared.rows);
         let note = match (compared.aligned, told.is_empty()) {
             (true, _) => told,
-            (false, true) => TOO_DIFFERENT.to_owned(),
-            (false, false) => format!("{told}  ·  {TOO_DIFFERENT}"),
+            (false, true) => t("", TOO_DIFFERENT).into_owned(),
+            (false, false) => format!("{told}  ·  {}", t("", TOO_DIFFERENT)),
         };
         let opening = self.0.state.borrow().is_none();
         let model = Rc::new(RowsModel(compared));
@@ -718,7 +724,7 @@ impl Diff {
             info = format!("{info}  ·  {}", state.note);
         }
         window.set_df_view(DiffView {
-            title: format!("Compare  {}  ↔  {}  ·  {}", texts.0.name, texts.1.name, changes_text(state.changes.len()))
+            title: t!("Compare  {}  ↔  {}  ·  {}", texts.0.name, texts.1.name, changes_text(state.changes.len()))
                 .into(),
             info: info.into(),
             marked: texts.0.info != texts.1.info || !state.note.is_empty(),
@@ -807,7 +813,7 @@ impl Diff {
         let texts = &state.compared.0.texts;
         let text = row_text(row.left.map(|n| texts.0.line(n)), row.right.map(|n| texts.1.line(n)));
         if let Err(err) = gezik_platform::clipboard::write_text(&text) {
-            crate::panes::active_view().note(format!("Cannot copy: {err}"));
+            crate::panes::active_view().note(t!("Cannot copy: {}", err));
         }
     }
 
@@ -841,7 +847,7 @@ enum Answer {
 
 fn read_both(left: &Path, right: &Path, options: Options) -> Answer {
     let failed = |path: &Path, err: io::Error| {
-        Answer::Failed(format!("Cannot read {}: {}", file_name(path), gezik_platform::fs::describe(&err)))
+        Answer::Failed(t!("Cannot read {}: {}", file_name(path), gezik_platform::fs::describe(&err)))
     };
     let a = match load(left) {
         Ok(loaded) => loaded,
@@ -865,7 +871,7 @@ fn read_both(left: &Path, right: &Path, options: Options) -> Answer {
             let size = std::fs::metadata(left).map(|m| m.len()).unwrap_or(0);
             match first_difference(left, right) {
                 Ok(first) => Answer::Bytes(first, size),
-                Err(err) => Answer::Failed(format!("Cannot compare: {}", gezik_platform::fs::describe(&err))),
+                Err(err) => Answer::Failed(t!("Cannot compare: {}", gezik_platform::fs::describe(&err))),
             }
         }
     }

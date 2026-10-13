@@ -106,7 +106,7 @@ pub(super) fn receive(info: &ProtocolObject<dyn NSDraggingInfo>) -> Option<Virtu
                 None => unsafe { file.as_ref() }
                     .path()
                     .map(|path| PathBuf::from(path.to_string()))
-                    .ok_or_else(|| "The program gave no file".to_owned()),
+                    .ok_or_else(|| gezik_i18n::t!("The program gave no file").into_owned()),
             };
             if let Ok(mut all) = arrivals.got.lock() {
                 all.push(got);
@@ -163,11 +163,12 @@ fn open_path(path: &Path, flags: i32) -> Option<PathBuf> {
 
 /// A lock a panicking reader left poisoned (any guard type).
 fn lost<T>(_: T) -> io::Error {
-    io::Error::other("A promised file's report was lost")
+    io::Error::other(gezik_i18n::t!("A promised file's report was lost").into_owned())
 }
 
+/// `why` is marked with `tx!`: shown translated.
 fn refused(why: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, why)
+    io::Error::new(io::ErrorKind::PermissionDenied, gezik_i18n::t("", why).into_owned())
 }
 
 fn failed(name: String, why: &str) -> VirtualEntry {
@@ -181,26 +182,26 @@ impl Promised {
         let name = top.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let inside = top.parent().and_then(|p| open_path(p, libc::O_DIRECTORY)).is_some_and(|p| p == self.dir);
         if !inside {
-            entries.push(failed(name, "The program put the file outside Gezik's folder"));
+            entries.push(failed(name, &gezik_i18n::t!("The program put the file outside Gezik's folder")));
             staged.push(PathBuf::new());
             return;
         }
         let mut todo = vec![(top.to_path_buf(), name)];
         while let Some((path, name)) = todo.pop() {
             if entries.len() >= MOST {
-                entries.push(failed(name, "Too many items; the rest were left out"));
+                entries.push(failed(name, &gezik_i18n::t!("Too many items; the rest were left out")));
                 staged.push(PathBuf::new());
                 return;
             }
             let meta = match std::fs::symlink_metadata(&path) {
-                Ok(meta) if meta.file_type().is_symlink() => Err("A link; not taken"),
+                Ok(meta) if meta.file_type().is_symlink() => Err(gezik_i18n::tx!("A link; not taken")),
                 Ok(meta) => Ok(meta),
-                Err(_) => Err("It did not arrive"),
+                Err(_) => Err(gezik_i18n::tx!("It did not arrive")),
             };
             let meta = match meta {
                 Ok(meta) => meta,
                 Err(why) => {
-                    entries.push(failed(name, why));
+                    entries.push(failed(name, &gezik_i18n::t("", why)));
                     staged.push(PathBuf::new());
                     continue;
                 }
@@ -330,10 +331,10 @@ impl VirtualSource for Promised {
         let mut source = open(&from, 0)?;
         let meta = source.metadata()?;
         if !meta.is_file() {
-            return Err(refused("Not a plain file; not taken"));
+            return Err(refused(gezik_i18n::tx!("Not a plain file; not taken")));
         }
         if !real_path(&source).is_some_and(|path| path.starts_with(&self.dir)) {
-            return Err(refused("The file is outside Gezik's folder"));
+            return Err(refused(gezik_i18n::tx!("The file is outside Gezik's folder")));
         }
         copy_out(&mut source, to, meta.mode(), meta.len(), progress)?;
         // Taken: the copy in the private folder is not needed (kept until then for a retry).

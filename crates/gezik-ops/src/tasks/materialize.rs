@@ -34,10 +34,10 @@ impl MaterializeTask {
 
     /// `name` as a path under the drop folder, or why it is refused.
     fn relative(name: &str) -> io::Result<PathBuf> {
-        let relative =
-            safe_relative(name, cfg!(windows)).map_err(|why| io::Error::new(io::ErrorKind::InvalidInput, why))?;
+        let relative = safe_relative(name, cfg!(windows))
+            .map_err(|why| io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t("", why)))?;
         if relative.components().count() > MAX_PARTS {
-            let message = format!("Too many folders deep (at most {MAX_PARTS} parts)");
+            let message = gezik_i18n::t!("Too many folders deep (at most {} parts)", MAX_PARTS);
             return Err(io::Error::new(io::ErrorKind::InvalidInput, message));
         }
         Ok(relative)
@@ -51,14 +51,20 @@ impl MaterializeTask {
             rest.components().next().is_some() && rest.components().all(|part| matches!(part, Component::Normal(_)))
         });
         if !inside {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "It would leave the folder it was dropped in"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                gezik_i18n::t!("It would leave the folder it was dropped in"),
+            ));
         }
         let linked = target
             .ancestors()
             .take_while(|path| *path != self.dir)
             .any(|path| std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()));
         if linked {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "A link is on the way; it is not followed"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                gezik_i18n::t!("A link is on the way; it is not followed"),
+            ));
         }
         Ok(())
     }
@@ -92,8 +98,7 @@ impl Task for MaterializeTask {
     }
 
     fn title(&self) -> String {
-        let what = if self.count == 1 { "1 item".to_owned() } else { format!("{} items", self.count) };
-        format!("Copying {what} to {}", self.dir.display())
+        gezik_i18n::tn!("Copying {n} item to {}" | "Copying {n} items to {}", self.count, self.dir.display())
     }
 
     fn count(&self) -> usize {
@@ -267,7 +272,7 @@ mod tests {
             file.write_all(body.as_bytes())?;
             let mut done = body.len() as u64;
             if self.mode == Mode::Fails {
-                return Err(io::Error::other("The attachment could not be read"));
+                return Err(io::Error::other(gezik_i18n::t!("The attachment could not be read")));
             }
             if self.mode == Mode::Endless {
                 self.started.store(true, Ordering::SeqCst);

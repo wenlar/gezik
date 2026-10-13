@@ -183,7 +183,10 @@ pub fn write(path: &Path, meta: &Meta) -> io::Result<()> {
     use gezik_core::meta::bplist::{encode_int, encode_string, encode_strings};
     use gezik_core::meta::{TagColor, label_color, with_finder_info_color};
     if !read(path)?.writable {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "A tag record Gezik does not know; left alone"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            gezik_i18n::t!("A tag record Gezik does not know; left alone").into_owned(),
+        ));
     }
     let path = existing(path)?;
     let strings: Vec<String> = meta

@@ -115,7 +115,10 @@ pub(super) fn download(
     stop: &dyn Fn() -> bool,
 ) -> io::Result<()> {
     let Some(address) = NSURL::URLWithString(&NSString::from_str(url)) else {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "the address is not valid"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            gezik_i18n::t!("the address is not valid").into_owned(),
+        ));
     };
     // Ephemeral: no cookies or cache written to disk for this.
     let config = NSURLSessionConfiguration::ephemeralSessionConfiguration();
@@ -139,8 +142,12 @@ pub(super) fn download(
     let handler = RcBlock::new(move |location: *mut NSURL, response: *mut NSURLResponse, error: *mut NSError| {
         // Safety: the pointers are null or valid for the call.
         let result = match refused.load(Ordering::SeqCst) {
-            REFUSED_INSECURE => Err(io::Error::other("the download was redirected to an insecure address")),
-            REFUSED_TOO_MANY => Err(io::Error::other("the download was redirected too many times")),
+            REFUSED_INSECURE => {
+                Err(io::Error::other(gezik_i18n::t!("the download was redirected to an insecure address").into_owned()))
+            }
+            REFUSED_TOO_MANY => {
+                Err(io::Error::other(gezik_i18n::t!("the download was redirected too many times").into_owned()))
+            }
             _ => unsafe {
                 finish(location.as_ref(), response.as_ref(), error.as_ref(), &target, max_bytes, allow_http)
             },
@@ -157,7 +164,9 @@ pub(super) fn download(
         match receiver.recv_timeout(POLL) {
             Ok(result) => break result,
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break Err(io::Error::other("the download ended without an answer")),
+            Err(RecvTimeoutError::Disconnected) => {
+                break Err(io::Error::other(gezik_i18n::t!("the download ended without an answer").into_owned()));
+            }
         }
         let received = u64::try_from(task.countOfBytesReceived()).unwrap_or(0);
         let stopped = stop();
@@ -192,20 +201,24 @@ fn finish(
     if let Some(error) = error {
         return Err(io::Error::other(error.localizedDescription().to_string()));
     }
-    let Some(response) = response else { return Err(io::Error::other("the server gave no answer")) };
+    let Some(response) = response else {
+        return Err(io::Error::other(gezik_i18n::t!("the server gave no answer").into_owned()));
+    };
     // Where the redirects led.
     let scheme = response.URL().and_then(|url| url.scheme()).map(|scheme| scheme.to_string().to_ascii_lowercase());
     if !allow_http && scheme.as_deref() != Some("https") {
-        return Err(io::Error::other("the download was redirected to an insecure address"));
+        return Err(io::Error::other(
+            gezik_i18n::t!("the download was redirected to an insecure address").into_owned(),
+        ));
     }
     if let Some(http) = response.downcast_ref::<NSHTTPURLResponse>() {
         let status = http.statusCode();
         if status != 200 {
-            return Err(io::Error::other(format!("the server answered {status}")));
+            return Err(io::Error::other(gezik_i18n::t!("the server answered {}", status)));
         }
     }
     let Some(from) = location.and_then(|url| url.path()).map(|path| PathBuf::from(path.to_string())) else {
-        return Err(io::Error::other("the download left no file"));
+        return Err(io::Error::other(gezik_i18n::t!("the download left no file").into_owned()));
     };
     if std::fs::metadata(&from)?.len() > max_bytes {
         return Err(too_big());

@@ -101,16 +101,17 @@ pub struct SyncTask {
 }
 
 /// Why a step was left alone.
+/// `text` (one of the texts below) in the language in use.
 fn note(text: &'static str) -> io::Error {
-    io::Error::other(text)
+    io::Error::other(gezik_i18n::t("", text))
 }
 
-const CHANGED: &str = "Changed after the compare; left alone";
-const NO_BIN: &str = "This drive has no trash; left alone";
-const HELD: &str = "Not moved to the trash: a copy of this sync did not go through";
-const BROKEN: &str = "Left alone: an earlier move to the trash on this side failed";
-const NO_NAME: &str = "This name cannot go to the trash; left alone";
-const NESTED: &str = "The two folders are the same or one is inside the other";
+const CHANGED: &str = gezik_i18n::tx!("Changed after the compare; left alone");
+const NO_BIN: &str = gezik_i18n::tx!("This drive has no trash; left alone");
+const HELD: &str = gezik_i18n::tx!("Not moved to the trash: a copy of this sync did not go through");
+const BROKEN: &str = gezik_i18n::tx!("Left alone: an earlier move to the trash on this side failed");
+const NO_NAME: &str = gezik_i18n::tx!("This name cannot go to the trash; left alone");
+const NESTED: &str = gezik_i18n::tx!("The two folders are the same or one is inside the other");
 
 /// The old file of a replace to the trash (`bin`), or deleted.
 fn remove_old(path: &Path, bin: bool) -> io::Result<Outcome> {
@@ -202,7 +203,8 @@ impl SyncTask {
                             from: None,
                         });
                     }
-                    let why = format!("{}; the old file is gone, the new copy is in place", fs::describe(&err));
+                    // TRANSLATORS: {} is why the old file could not go to the trash
+                    let why = gezik_i18n::t!("{}; the old file is gone, the new copy is in place", fs::describe(&err));
                     return Err(io::Error::new(err.kind(), why));
                 }
                 let _ = fs::delete(&temp);
@@ -232,7 +234,7 @@ impl Task for SyncTask {
     }
 
     fn title(&self) -> String {
-        format!("Synchronizing {} and {}", self.left.display(), self.right.display())
+        gezik_i18n::t!("Synchronizing {0} and {1}", self.left.display(), self.right.display())
     }
 
     fn count(&self) -> usize {
@@ -245,7 +247,7 @@ impl Task for SyncTask {
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         if is_within(&self.left, &self.right) || is_within(&self.right, &self.left) {
-            return sink.failed(&self.left, io::Error::new(io::ErrorKind::InvalidInput, NESTED));
+            return sink.failed(&self.left, io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t("", NESTED)));
         }
         for (root, step) in self.steps.iter().enumerate() {
             let item = match step {
@@ -331,7 +333,7 @@ impl Task for SyncTask {
 
 /// "foto" for the label of a sync of `left` (Undo: "Synchronize foto").
 pub fn sync_label(left: &Path) -> String {
-    format!("Synchronize {}", name(left))
+    gezik_i18n::t!("Synchronize {}", name(left))
 }
 
 #[cfg(test)]

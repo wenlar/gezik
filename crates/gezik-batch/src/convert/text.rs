@@ -177,7 +177,8 @@ pub struct Unmappable {
 
 impl fmt::Display for Unmappable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "can't encode '{}' in {} (line {})", self.ch, self.encoding, self.line)
+        // TRANSLATORS: {0} is a character, {1} an encoding (Windows-1254), {2} a line number.
+        f.write_str(&gezik_i18n::t!("can't encode '{0}' in {1} (line {2})", self.ch, self.encoding, self.line))
     }
 }
 
@@ -194,7 +195,7 @@ pub struct Malformed {
 
 impl fmt::Display for Malformed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "not valid {} text (line {})", self.encoding, self.line)
+        f.write_str(&gezik_i18n::t!("not valid {0} text (line {1})", self.encoding, self.line))
     }
 }
 
@@ -206,7 +207,7 @@ pub struct LooksBinary;
 
 impl fmt::Display for LooksBinary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "looks binary")
+        f.write_str(&gezik_i18n::t!("looks binary"))
     }
 }
 
@@ -221,7 +222,7 @@ pub fn is_binary(err: &io::Error) -> bool {
 fn by_label(label: &str) -> io::Result<&'static Encoding> {
     Encoding::for_label(label.trim().as_bytes())
         .filter(|&e| e != REPLACEMENT && e != X_USER_DEFINED)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("unknown encoding '{label}'")))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("unknown encoding '{}'", label)))
 }
 
 /// Converts `input` into `output` (a temporary name the caller renames) as `options` say.

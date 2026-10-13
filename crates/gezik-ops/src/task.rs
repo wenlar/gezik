@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use gezik_core::ops::conflict::{Decision, Facts};
+use gezik_i18n::{t, tn};
 
 use crate::control::Control;
 use crate::engine::{Event, Job, Shared, lock};
@@ -104,48 +105,37 @@ pub enum TaskKind {
 }
 
 impl TaskKind {
-    fn verb(self) -> &'static str {
-        match self {
-            TaskKind::Copy => "Copy",
-            TaskKind::Move => "Move",
-            TaskKind::Rename => "Rename",
-            TaskKind::Trash => "Delete",
-            TaskKind::Delete => "Delete permanently",
-            TaskKind::Restore => "Restore",
-            TaskKind::NewFolder => "New folder",
-            TaskKind::NewFile => "New file",
-            TaskKind::Extract => "Extract",
-            TaskKind::Compress => "Compress",
-            TaskKind::AddToArchive => "Add to archive",
-            TaskKind::Download => "Download",
-            TaskKind::Convert => "Convert",
-            TaskKind::Command => "Run command on",
-            TaskKind::Pdf => "Make PDF from",
-            TaskKind::NewFolderWith => "New folder with",
-            TaskKind::Link => "Create link",
-            TaskKind::Attributes => "Change attributes of",
-            TaskKind::KeepOnDevice => "Keep on this device",
-            TaskKind::FreeUpSpace => "Free up space of",
-            // Its jobs always bring their own label; this is a fallback.
-            TaskKind::Elevated => "Do as administrator",
-            TaskKind::Checksum => "Compute checksums of",
-            TaskKind::Sync => "Synchronize",
-            TaskKind::Tags => "Change tags of",
-        }
-    }
-
     /// What the Undo item says: "Copy 3 items", "Rename".
     pub fn label(self, count: usize) -> String {
-        let verb = self.verb();
+        let n = count;
         match self {
-            TaskKind::NewFolder | TaskKind::NewFile => verb.to_owned(),
-            TaskKind::Link if count <= 1 => verb.to_owned(),
-            TaskKind::Link => format!("Create {count} links"),
-            TaskKind::Rename if count <= 1 => verb.to_owned(),
-            TaskKind::KeepOnDevice if count == 1 => "Keep 1 item on this device".to_owned(),
-            TaskKind::KeepOnDevice => format!("Keep {count} items on this device"),
-            _ if count == 1 => format!("{verb} 1 item"),
-            _ => format!("{verb} {count} items"),
+            TaskKind::Copy => tn!("Copy {n} item" | "Copy {n} items", n),
+            TaskKind::Move => tn!("Move {n} item" | "Move {n} items", n),
+            TaskKind::Rename if n <= 1 => t!("Rename").into_owned(),
+            TaskKind::Rename => tn!("Rename {n} item" | "Rename {n} items", n),
+            TaskKind::Trash => tn!("Delete {n} item" | "Delete {n} items", n),
+            TaskKind::Delete => tn!("Delete permanently {n} item" | "Delete permanently {n} items", n),
+            TaskKind::Restore => tn!("Restore {n} item" | "Restore {n} items", n),
+            TaskKind::NewFolder => t!("New folder").into_owned(),
+            TaskKind::NewFile => t!("New file").into_owned(),
+            TaskKind::Extract => tn!("Extract {n} item" | "Extract {n} items", n),
+            TaskKind::Compress => tn!("Compress {n} item" | "Compress {n} items", n),
+            TaskKind::AddToArchive => tn!("Add to archive {n} item" | "Add to archive {n} items", n),
+            TaskKind::Download => tn!("Download {n} item" | "Download {n} items", n),
+            TaskKind::Convert => tn!("Convert {n} item" | "Convert {n} items", n),
+            TaskKind::Command => tn!("Run command on {n} item" | "Run command on {n} items", n),
+            TaskKind::Pdf => tn!("Make PDF from {n} item" | "Make PDF from {n} items", n),
+            TaskKind::NewFolderWith => tn!("New folder with {n} item" | "New folder with {n} items", n),
+            TaskKind::Link if n <= 1 => t!("Create link").into_owned(),
+            TaskKind::Link => tn!("Create {n} link" | "Create {n} links", n),
+            TaskKind::Attributes => tn!("Change attributes of {n} item" | "Change attributes of {n} items", n),
+            TaskKind::KeepOnDevice => tn!("Keep {n} item on this device" | "Keep {n} items on this device", n),
+            TaskKind::FreeUpSpace => tn!("Free up space of {n} item" | "Free up space of {n} items", n),
+            // Its jobs always bring their own label; this is a fallback.
+            TaskKind::Elevated => tn!("Do as administrator {n} item" | "Do as administrator {n} items", n),
+            TaskKind::Checksum => tn!("Compute checksums of {n} item" | "Compute checksums of {n} items", n),
+            TaskKind::Sync => tn!("Synchronize {n} item" | "Synchronize {n} items", n),
+            TaskKind::Tags => tn!("Change tags of {n} item" | "Change tags of {n} items", n),
         }
     }
 }
@@ -650,7 +640,7 @@ impl RunCx<'_> {
         if let Some(meta) = self.meta()
             && let Err(err) = meta.carry(from, to)
         {
-            self.note(to, &format!("Tags could not be carried: {}", gezik_platform::fs::describe(&err)));
+            self.note(to, &t!("Tags could not be carried: {}", gezik_platform::fs::describe(&err)));
         }
     }
 
@@ -699,14 +689,15 @@ impl RunCx<'_> {
             let at = differs?.unwrap_or_default();
             let at = gezik_core::group_digits(at);
             if let Err(err) = deleted {
-                return Err(io::Error::other(Leftover(format!(
-                    "The copy differs from the original at byte {at} and could not be deleted ({}); it is at {}",
+                return Err(io::Error::other(Leftover(t!(
+                    "The copy differs from the original at byte {0} and could not be deleted ({1}); it is at {2}",
+                    at,
                     gezik_platform::fs::describe(&err),
                     to.display()
                 ))));
             }
             if again {
-                return Err(io::Error::other(format!("The copy differs from the original at byte {at}")));
+                return Err(io::Error::other(t!("The copy differs from the original at byte {}", at)));
             }
             again = true;
             // The copy is done once more: the bar counts it.
@@ -802,7 +793,7 @@ pub struct ChangedSince;
 
 impl fmt::Display for ChangedSince {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "changed since; skipped")
+        f.write_str(&t!("changed since; skipped"))
     }
 }
 
@@ -815,7 +806,7 @@ pub struct Restart;
 
 impl fmt::Display for Restart {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "paused; it starts again when resumed")
+        f.write_str(&t!("paused; it starts again when resumed"))
     }
 }
 
@@ -837,7 +828,7 @@ pub struct NoTrash;
 
 impl fmt::Display for NoTrash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if cfg!(windows) { write!(f, "This drive has no Recycle Bin") } else { write!(f, "This drive has no trash") }
+        f.write_str(&if cfg!(windows) { t!("This drive has no Recycle Bin") } else { t!("This drive has no trash") })
     }
 }
 

@@ -334,9 +334,9 @@ impl Task for DeleteTask {
 
     fn title(&self) -> String {
         if self.recovering {
-            "Finishing an earlier delete".to_owned()
+            gezik_i18n::t!("Finishing an earlier delete").into_owned()
         } else {
-            format!("Deleting {}", what(&self.roots))
+            gezik_i18n::t!("Deleting {}", what(&self.roots))
         }
     }
 
@@ -351,7 +351,10 @@ impl Task for DeleteTask {
     fn plan(&self, sink: &mut dyn ScanSink) {
         if !self.refused.is_empty() {
             for root in &self.refused {
-                sink.failed(root, io::Error::new(io::ErrorKind::InvalidInput, "Not an item in the trash"));
+                sink.failed(
+                    root,
+                    io::Error::new(io::ErrorKind::InvalidInput, gezik_i18n::t!("Not an item in the trash")),
+                );
             }
             return;
         }
@@ -359,7 +362,7 @@ impl Task for DeleteTask {
             .roots
             .iter()
             .enumerate()
-            .filter(|(_, original)| !super::refuse_root(sink, original, "delete"))
+            .filter(|(_, original)| !super::refuse_root(sink, original, || gezik_i18n::t!("Cannot delete a drive")))
             .map(|(root, original)| (root, original.as_path()))
             .collect();
         let paths = self.hide(&roots.iter().map(|&(_, original)| original).collect::<Vec<_>>());

@@ -8,6 +8,7 @@ use gezik_core::batch::pdf::{
     Margin, PageImage, PageOptions, PageSize, PdfOp, RENDER_DPIS, Split, extract_pages, is_pdf, is_pdf_picture,
     parse_ranges, split_file_count,
 };
+use gezik_i18n::{t, tn, tx};
 
 /// The PDF group's choices, kept in state.toml `[convert] pdf` (never a page range: those are
 /// for one document).
@@ -135,20 +136,19 @@ pub fn pdf_counts(items: &[(PathBuf, bool)]) -> (usize, usize) {
 
 /// The footer's "3 items skipped: not PDFs"; empty for none.
 pub fn skipped_text(count: usize, op: PdfOp) -> String {
-    let (many, one) = if op == PdfOp::ImagesToPdf {
-        ("not pictures Gezik reads itself", "not a picture Gezik reads itself")
-    } else {
-        ("not PDFs", "not a PDF")
-    };
     match count {
         0 => String::new(),
-        1 => format!("1 item skipped: {one}"),
-        n => format!("{n} items skipped: {many}"),
+        n if op == PdfOp::ImagesToPdf => tn!(
+            "{n} item skipped: not a picture Gezik reads itself" | "{n} items skipped: not pictures Gezik reads itself",
+            n
+        ),
+        n => tn!("{n} item skipped: not a PDF" | "{n} items skipped: not PDFs", n),
     }
 }
 
 /// What merging, splitting and extracting leave behind (the layer says it under them).
-pub const LOSSES: &str = "Bookmarks, forms and document info are not kept. An encrypted PDF gives an unencrypted copy.";
+pub const LOSSES: &str =
+    tx!("Bookmarks, forms and document info are not kept. An encrypted PDF gives an unencrypted copy.");
 
 /// `20000` as "20,000".
 pub fn grouped(n: usize) -> String {
@@ -163,8 +163,18 @@ pub fn grouped(n: usize) -> String {
     out
 }
 
-fn plural(n: usize, one: &str, many: &str) -> String {
-    if n == 1 { format!("1 {one}") } else { format!("{} {many}", grouped(n)) }
+/// "1 encrypted PDF", "3 encrypted PDFs".
+fn encrypted_text(n: usize) -> String {
+    tn!("{} encrypted PDF" | "{} encrypted PDFs", n, grouped(n))
+}
+
+/// `note` (a "Makes …" sentence) with ", more from 3 encrypted PDFs" when some are encrypted.
+fn more_from(note: String, encrypted: usize) -> String {
+    if encrypted == 0 {
+        return note;
+    }
+    // TRANSLATORS: {0} is a "Makes 14 files" text, {1} a count of PDFs ("3 encrypted PDFs").
+    t!("{0}, more from {1}", note, encrypted_text(encrypted))
 }
 
 /// What the layer says before a split: "Makes 14 files", "Makes 37 files, more from 1
@@ -173,7 +183,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 /// are checked even then; with the counts, every range must be in each PDF.
 pub fn files_note(split: &Split, counts: &[Option<u32>]) -> Result<String, String> {
     match split {
-        Split::Every(0) => return Err("Every 0 pages: type 1 or more".to_owned()),
+        Split::Every(0) => return Err(t!("Every 0 pages: type 1 or more").into_owned()),
         Split::Ranges(text) => _ = parse_ranges(text)?,
         _ => {}
     }
@@ -186,12 +196,8 @@ pub fn files_note(split: &Split, counts: &[Option<u32>]) -> Result<String, Strin
     if known == 0 {
         return Ok(String::new());
     }
-    let mut note = format!("Makes {}", plural(files, "file", "files"));
-    let encrypted = counts.len() - known;
-    if encrypted > 0 {
-        note.push_str(&format!(", more from {}", plural(encrypted, "encrypted PDF", "encrypted PDFs")));
-    }
-    Ok(note)
+    let note = tn!("Makes {} file" | "Makes {} files", files, grouped(files));
+    Ok(more_from(note, counts.len() - known))
 }
 
 /// What the layer says before "PDF to images": "Makes 20,000 pictures" (one per page), "…, more
@@ -202,12 +208,8 @@ pub fn pictures_note(counts: &[Option<u32>]) -> String {
         return String::new();
     }
     let pictures = known.iter().map(|&n| n as usize).fold(0usize, usize::saturating_add);
-    let mut note = format!("Makes {}", plural(pictures, "picture", "pictures"));
-    let encrypted = counts.len() - known.len();
-    if encrypted > 0 {
-        note.push_str(&format!(", more from {}", plural(encrypted, "encrypted PDF", "encrypted PDFs")));
-    }
-    note
+    let note = tn!("Makes {} picture" | "Makes {} pictures", pictures, grouped(pictures));
+    more_from(note, counts.len() - known.len())
 }
 
 /// What the layer says before an extract: "Makes 1 PDF of 11 pages"; with several PDFs "Makes
@@ -222,25 +224,37 @@ pub fn extract_note(ranges: &str, counts: &[Option<u32>]) -> Result<String, Stri
         return Ok(String::new());
     };
     let pdfs = counts.len();
-    let mut note = if pdfs == 1 {
-        format!("Makes 1 PDF of {}", plural(least, "page", "pages"))
+    // The PDFs' count is in each sentence: the plural follows the pages'.
+    let (count, pages) = (grouped(pdfs), grouped(least));
+    let note = if pdfs == 1 {
+        tn!("Makes 1 PDF of {} page" | "Makes 1 PDF of {} pages", least, pages)
     } else if least == most && sizes.len() == pdfs {
-        format!("Makes {} PDFs of {} each", grouped(pdfs), plural(least, "page", "pages"))
+        tn!("Makes {0} PDFs of {1} page each" | "Makes {0} PDFs of {1} pages each", least, count, pages)
     } else if least == most {
-        format!("Makes {} PDFs, {} each where known", grouped(pdfs), plural(least, "page", "pages"))
+        tn!(
+            "Makes {0} PDFs, {1} page each where known" | "Makes {0} PDFs, {1} pages each where known",
+            least,
+            count,
+            pages
+        )
     } else {
-        format!("Makes {} PDFs of {}-{} pages", grouped(pdfs), grouped(least), grouped(most))
+        t!("Makes {0} PDFs of {1}-{2} pages", count, pages, grouped(most))
     };
     let encrypted = pdfs - sizes.len();
     if encrypted > 0 {
-        note.push_str(&format!(" (page count unknown for {})", plural(encrypted, "encrypted PDF", "encrypted PDFs")));
+        // TRANSLATORS: {0} is a "Makes 3 PDFs of 4 pages each" text, {1} a count ("1 encrypted PDF").
+        return Ok(t!("{0} (page count unknown for {1})", note, encrypted_text(encrypted)));
     }
     Ok(note)
 }
 
 /// What the layer says when no PDF could be counted because each needs a password.
 pub fn unknown_note(counts: &[Option<u32>]) -> &'static str {
-    if !counts.is_empty() && counts.iter().all(Option::is_none) { "Page count unknown (encrypted PDF)" } else { "" }
+    if !counts.is_empty() && counts.iter().all(Option::is_none) {
+        tx!("Page count unknown (encrypted PDF)")
+    } else {
+        ""
+    }
 }
 
 /// `note` with what it leaves out said: "Makes 3 files. 1 PDF could not be read" (`unread`:
@@ -248,10 +262,10 @@ pub fn unknown_note(counts: &[Option<u32>]) -> &'static str {
 pub fn with_unread(note: &str, unread: usize) -> String {
     let unread_text = match unread {
         0 => return note.to_owned(),
-        1 => "1 PDF could not be read".to_owned(),
-        n => format!("{} PDFs could not be read", grouped(n)),
+        n => tn!("{} PDF could not be read" | "{} PDFs could not be read", n, grouped(n)),
     };
-    if note.is_empty() { unread_text } else { format!("{note}. {unread_text}") }
+    // TRANSLATORS: {0} is a "Makes 3 files" text, {1} "1 PDF could not be read".
+    if note.is_empty() { unread_text } else { t!("{0}. {1}", note, unread_text) }
 }
 
 /// What to do when pdfium fails to load in a job.
@@ -279,7 +293,8 @@ pub fn pdfium_reason(message: &str) -> String {
         .map_or(message, |(_, rest)| rest.strip_suffix(')').unwrap_or(rest));
     let reason =
         inner.split_once("desc: \"").and_then(|(_, rest)| rest.split_once('"')).map_or(inner, |(desc, _)| desc).trim();
-    let reason = if reason.is_empty() { "unknown error" } else { reason };
+    let unknown = t!("unknown error");
+    let reason = if reason.is_empty() { &*unknown } else { reason };
     if reason.chars().count() > REASON_MAX {
         format!("{}…", reason.chars().take(REASON_MAX).collect::<String>())
     } else {
@@ -289,7 +304,7 @@ pub fn pdfium_reason(message: &str) -> String {
 
 /// The plain box after a second failure: "pdfium does not load on this system: <reason>".
 pub fn pdfium_explained(message: &str) -> String {
-    format!("pdfium does not load on this system: {}", pdfium_reason(message))
+    t!("pdfium does not load on this system: {}", pdfium_reason(message))
 }
 
 /// The row dragged from `from` lands at `to` (the others shift).
@@ -311,15 +326,12 @@ pub fn says_pdfium_failed(message: &str) -> bool {
     message.starts_with(PDFIUM_FAILED_TEXT)
 }
 
-/// What the pdfium box asks when the one there could not be loaded.
-pub const PDFIUM_FAILED: &str = "Could not load pdfium. Download it again?";
-
 /// A failure's message as the panel's details show it: pdfium's own text shortened to its
 /// reason. It offers nothing: the box after the job does (once), and says why when a fresh
 /// download does not load either.
 pub fn failure_shown(message: &str) -> std::borrow::Cow<'_, str> {
     if says_pdfium_failed(message) {
-        format!("Could not load pdfium: {}", pdfium_reason(message)).into()
+        t!("Could not load pdfium: {}", pdfium_reason(message)).into()
     } else {
         message.into()
     }

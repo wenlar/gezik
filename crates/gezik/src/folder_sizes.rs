@@ -202,7 +202,7 @@ impl FolderSizes {
         let selected = self.0.view.selected_folder_names();
         let names = (!selected.is_empty()).then_some(selected.as_slice());
         if !self.0.view.mark_size_pending(names) {
-            return self.0.view.note("Folder sizes are worked out in folders".to_owned());
+            return self.0.view.note(gezik_i18n::t!("Folder sizes are worked out in folders").into_owned());
         }
         self.stop();
         self.start(true);

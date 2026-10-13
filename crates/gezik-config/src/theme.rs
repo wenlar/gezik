@@ -1,6 +1,7 @@
 //! Theme files: parsing, validation and (in `resolve_theme`) `base` inheritance.
 
 use crate::{Color, Warning};
+use gezik_i18n::t;
 use std::collections::HashMap;
 
 /// Old color names still read, for themes written before the icon colors were split.
@@ -231,7 +232,7 @@ fn lookup<'a>(
 fn label(id: &str, source: Source) -> String {
     match source {
         Source::User => format!("{id}.toml"),
-        Source::Builtin => format!("built-in theme \"{id}\""),
+        Source::Builtin => t!("built-in theme \"{}\"", id),
     }
 }
 
@@ -270,7 +271,7 @@ pub fn resolve_theme(
         let Some((source, text)) = lookup(&base, user_themes, &visited) else {
             warnings.push(Warning::new(
                 label(&current, current_source),
-                format!("base theme \"{base}\" not found or forms a cycle; using \"dark\" instead"),
+                t!("base theme \"{}\" not found or forms a cycle; using \"dark\" instead", base),
             ));
             chain.push((builtin("dark"), Source::Builtin));
             break;
@@ -337,7 +338,7 @@ pub(crate) fn parse_theme(file: &str, text: &str, warnings: &mut Vec<Warning>) -
                 Some(color) => theme.colors.push((key, color)),
                 None => warnings.push(Warning::new(
                     file,
-                    format!("colors.{key}: expected \"#rrggbb\" or \"#rrggbbaa\", got {value}"),
+                    t!("{0}: expected \"#rrggbb\" or \"#rrggbbaa\", got {1}", format!("colors.{key}"), value),
                 )),
             }
         }
@@ -350,7 +351,7 @@ pub(crate) fn parse_theme(file: &str, text: &str, warnings: &mut Vec<Warning>) -
                 Some(color) => theme.colors.push((new, color)),
                 None => warnings.push(Warning::new(
                     file,
-                    format!("colors.{old}: expected \"#rrggbb\" or \"#rrggbbaa\", got {value}"),
+                    t!("{0}: expected \"#rrggbb\" or \"#rrggbbaa\", got {1}", format!("colors.{old}"), value),
                 )),
             }
         }
@@ -360,7 +361,9 @@ pub(crate) fn parse_theme(file: &str, text: &str, warnings: &mut Vec<Warning>) -
         if let Some(value) = metrics.get("font-family") {
             match value.as_str() {
                 Some(family) => theme.font_family = Some(family.to_owned()),
-                None => warnings.push(Warning::new(file, format!("metrics.font-family: expected text, got {value}"))),
+                None => {
+                    warnings.push(Warning::new(file, t!("{0}: expected text, got {1}", "metrics.font-family", value)))
+                }
             }
         }
         for (key, min, max) in METRIC_RANGES {
@@ -370,7 +373,7 @@ pub(crate) fn parse_theme(file: &str, text: &str, warnings: &mut Vec<Warning>) -
                 Some(n) if (min..=max).contains(&n) => theme.numbers.push((key, n)),
                 _ => warnings.push(Warning::new(
                     file,
-                    format!("metrics.{key}: expected a number from {min} to {max}, got {value}"),
+                    t!("{0}: expected a number from {1} to {2}, got {3}", format!("metrics.{key}"), min, max, value),
                 )),
             }
         }

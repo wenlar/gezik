@@ -5,6 +5,7 @@
 //! lose each other's entries. A file that cannot be read is an error, never "empty": it is
 //! not written over.
 
+use gezik_i18n::t;
 use std::fmt;
 use std::fs::File;
 use std::io;
@@ -52,20 +53,21 @@ impl From<io::Error> for JournalError {
 }
 
 pub fn parse(text: &str) -> Result<Journal, String> {
-    let table: toml::Table =
-        text.parse().map_err(|err: toml::de::Error| err.to_string().lines().next().unwrap_or("not TOML").to_owned())?;
+    let table: toml::Table = text.parse().map_err(|err: toml::de::Error| {
+        err.to_string().lines().next().map_or_else(|| t!("not TOML").into_owned(), str::to_owned)
+    })?;
     match table.get("version").and_then(toml::Value::as_integer) {
         Some(VERSION) => {}
-        Some(other) => return Err(format!("version {other} is not one this Gezik knows")),
-        None => return Err("it has no version".into()),
+        Some(other) => return Err(t!("version {} is not one this Gezik knows", other)),
+        None => return Err(t!("it has no version").into()),
     }
     let exe = table.get("exe").and_then(toml::Value::as_str).unwrap_or_default().to_owned();
     let machine = table.get("machine").and_then(toml::Value::as_str).unwrap_or_default().to_owned();
     let mut changes = Vec::new();
     if let Some(list) = table.get("change") {
-        let list = list.as_array().ok_or("change is not a list")?;
+        let list = list.as_array().ok_or_else(|| t!("{} is not a list", "change"))?;
         for (i, item) in list.iter().enumerate() {
-            let entry = item.as_table().ok_or_else(|| format!("change {} is not a table", i + 1))?;
+            let entry = item.as_table().ok_or_else(|| t!("change {} is not a table", i + 1))?;
             changes.push(parse_change(entry).map_err(|why| format!("change {}: {why}", i + 1))?);
         }
     }
@@ -76,25 +78,25 @@ fn parse_change(table: &toml::Table) -> Result<Change, String> {
     let text = |key: &str| -> Result<String, String> {
         match table.get(key) {
             None => Ok(String::new()),
-            Some(v) => v.as_str().map(str::to_owned).ok_or_else(|| format!("{key} is not text")),
+            Some(v) => v.as_str().map(str::to_owned).ok_or_else(|| t!("{} is not text", key)),
         }
     };
     let feature = text("feature")?;
     if feature.is_empty() || !feature.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
-        return Err("feature is not a name".into());
+        return Err(t!("{} is not a name", "feature"));
     }
-    let kind = Kind::from_name(&text("kind")?).ok_or("unknown kind")?;
+    let kind = Kind::from_name(&text("kind")?).ok_or_else(|| t!("unknown kind"))?;
     let place = text("where")?;
     if place.is_empty() || place.contains('\0') {
-        return Err("where is empty".into());
+        return Err(t!("{} is empty", "where"));
     }
     let entry = text("entry")?;
     if kind == Kind::PathEntry && entry.is_empty() {
-        return Err("a path-entry without its entry".into());
+        return Err(t!("a path-entry without its entry").into());
     }
     let done = match table.get("done") {
         None => false,
-        Some(v) => v.as_bool().ok_or("done is not true or false")?,
+        Some(v) => v.as_bool().ok_or_else(|| t!("{} is not true or false", "done"))?,
     };
     Ok(Change {
         feature,
@@ -109,7 +111,7 @@ fn parse_change(table: &toml::Table) -> Result<Change, String> {
 }
 
 fn parse_value(value: Option<&toml::Value>) -> Result<Value, String> {
-    let table = value.and_then(toml::Value::as_table).ok_or("before or after is missing")?;
+    let table = value.and_then(toml::Value::as_table).ok_or_else(|| t!("before or after is missing"))?;
     let flag = |key: &str| table.get(key).and_then(toml::Value::as_bool) == Some(true);
     let text = |key: &str| table.get(key).and_then(toml::Value::as_str).map(str::to_owned);
     Ok(if flag("absent") {
@@ -119,13 +121,13 @@ fn parse_value(value: Option<&toml::Value>) -> Result<Value, String> {
     } else if flag("other") {
         Value::Other
     } else if let (Some(ty), Some(data)) = (text("type"), text("data")) {
-        Value::Reg { ty: RegType::from_name(&ty).ok_or("unknown registry type")?, data }
+        Value::Reg { ty: RegType::from_name(&ty).ok_or_else(|| t!("unknown registry type"))?, data }
     } else if let Some(text) = text("text") {
         Value::Text(text)
     } else if let Some(target) = text("target") {
         Value::Link(target)
     } else {
-        return Err("a value of no known shape".into());
+        return Err(t!("a value of no known shape").into());
     })
 }
 
@@ -285,8 +287,8 @@ impl JournalFile {
         let journal = match std::fs::symlink_metadata(&path) {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Journal::default(),
             Err(err) => return Err(err.into()),
-            Ok(meta) if !meta.is_file() => return Err(JournalError::Bad("it is not a plain file".into())),
-            Ok(meta) if meta.len() > MAX_BYTES => return Err(JournalError::Bad("it is larger than 1 MB".into())),
+            Ok(meta) if !meta.is_file() => return Err(JournalError::Bad(t!("it is not a plain file").into())),
+            Ok(meta) if meta.len() > MAX_BYTES => return Err(JournalError::Bad(t!("it is larger than 1 MB").into())),
             Ok(_) => {
                 let text = std::fs::read_to_string(&path).map_err(|err| JournalError::Bad(err.to_string()))?;
                 parse(&text).map_err(JournalError::Bad)?

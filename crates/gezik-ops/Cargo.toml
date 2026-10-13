@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 gezik-core.workspace = true
+gezik-i18n.workspace = true
 gezik-platform.workspace = true
 # Checksums (spec 11 §3.2): sha1, sha2 and crc32fast are linked already (zip's AES, the tool
 # downloads, flate2); md-5 is the only new code (the same RustCrypto `digest` 0.11 family).

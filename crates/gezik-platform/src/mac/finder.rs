@@ -73,7 +73,10 @@ pub fn resolve_alias(path: &Path) -> AliasTarget {
 
 pub fn make_alias(target: &Path, at: &Path) -> io::Result<()> {
     let (Some(target_text), Some(at_text)) = (target.to_str(), at.to_str()) else {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "The name is not valid UTF-8"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            gezik_i18n::t!("The name is not valid UTF-8").into_owned(),
+        ));
     };
     // The name is claimed first: the bookmark write replaces whatever is at `at`.
     std::fs::OpenOptions::new().write(true).create_new(true).open(at)?;

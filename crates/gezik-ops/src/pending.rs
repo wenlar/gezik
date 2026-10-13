@@ -70,7 +70,8 @@ impl PendingDeletes {
     /// [`Self::add`] for many at once, in one write.
     pub fn add_all(&self, paths: &[&Path]) -> io::Result<()> {
         if !paths.iter().all(|path| can_hold(path)) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "This path cannot be noted for a later delete"));
+            let why = gezik_i18n::t!("This path cannot be noted for a later delete");
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, why));
         }
         let _guard = lock(&self.guard);
         let mut list = self.read();

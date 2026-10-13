@@ -126,8 +126,8 @@ impl TagKey {
     pub fn label(&self) -> String {
         match self {
             TagKey::Listed { name, .. } | TagKey::Unlisted(name) => format!("● {name}"),
-            TagKey::Untagged => "No Tags".to_owned(),
-            TagKey::Pending => "Reading tags…".to_owned(),
+            TagKey::Untagged => gezik_i18n::t!("No Tags").into_owned(),
+            TagKey::Pending => gezik_i18n::t!("Reading tags…").into_owned(),
         }
     }
 }

@@ -49,7 +49,7 @@ use crate::task::{Outcome, PlanItem, ScanSink, Stage};
 pub(crate) fn what(paths: &[PathBuf]) -> String {
     match paths {
         [one] => name(one),
-        many => format!("{} items", many.len()),
+        many => gezik_i18n::tn!("{n} item" | "{n} items", many.len()),
     }
 }
 
@@ -74,12 +74,17 @@ pub(crate) fn is_root(path: &Path) -> bool {
     path.parent().is_none() || path.file_name().is_none()
 }
 
-/// Reports `path` as refused when it is a root (`verb`: "delete", "copy"...); true if refused.
-pub(crate) fn refuse_root(sink: &mut dyn crate::task::ScanSink, path: &Path, verb: &str) -> bool {
+/// Reports `path` as refused (`refused`: "Cannot delete a drive"...) when it is a root; true if
+/// refused.
+pub(crate) fn refuse_root(
+    sink: &mut dyn crate::task::ScanSink,
+    path: &Path,
+    refused: fn() -> std::borrow::Cow<'static, str>,
+) -> bool {
     if !is_root(path) {
         return false;
     }
-    sink.failed(path, std::io::Error::new(std::io::ErrorKind::InvalidInput, format!("Cannot {verb} a drive")));
+    sink.failed(path, std::io::Error::new(std::io::ErrorKind::InvalidInput, refused()));
     true
 }
 
@@ -159,7 +164,7 @@ pub(crate) fn shared_target(pairs: &[(PathBuf, PathBuf)]) -> bool {
 /// Reports each of `refused` (see `Relative::refused`) as failed.
 pub(crate) fn refuse_outside(sink: &mut dyn crate::task::ScanSink, refused: &[PathBuf]) {
     for source in refused {
-        let message = "Its path under the search's folder leaves the target folder";
+        let message = gezik_i18n::t!("Its path under the search's folder leaves the target folder");
         sink.failed(source, std::io::Error::new(std::io::ErrorKind::InvalidInput, message));
     }
 }

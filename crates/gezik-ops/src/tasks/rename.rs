@@ -99,14 +99,14 @@ impl Task for RenameTask {
 
     fn title(&self) -> String {
         match self.pairs.as_slice() {
-            [(from, to)] => format!("Renaming {} to {}", name(from), name(to)),
+            [(from, to)] => gezik_i18n::t!("Renaming {0} to {1}", name(from), name(to)),
             pairs => {
                 let dir = pairs
                     .first()
                     .and_then(|(from, _)| from.parent())
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
-                format!("Renaming {} items in {dir}", pairs.len())
+                gezik_i18n::tn!("Renaming {n} item in {}" | "Renaming {n} items in {}", pairs.len(), dir)
             }
         }
     }
@@ -132,7 +132,7 @@ impl Task for RenameTask {
                 Step::FromTemp(i) => (i, FROM_TEMP),
             };
             let (source, target) = &self.pairs[i];
-            if super::refuse_root(sink, source, "rename") {
+            if super::refuse_root(sink, source, || gezik_i18n::t!("Cannot rename a drive")) {
                 continue;
             }
             // The second step finds the item under its temporary name.
@@ -163,7 +163,10 @@ impl Task for RenameTask {
                 {
                     sink.failed(
                         source,
-                        io::Error::new(io::ErrorKind::AlreadyExists, "A folder with this name already exists"),
+                        io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            gezik_i18n::t!("A folder with this name already exists"),
+                        ),
                     );
                     continue;
                 }
@@ -258,7 +261,7 @@ impl Task for RenameTask {
 /// The item left its temporary name before its second step: another Gezik window starting
 /// meanwhile put it back.
 fn moved_back() -> io::Error {
-    io::Error::new(io::ErrorKind::NotFound, "It was moved back by another Gezik window")
+    io::Error::new(io::ErrorKind::NotFound, gezik_i18n::t!("It was moved back by another Gezik window"))
 }
 
 #[cfg(test)]

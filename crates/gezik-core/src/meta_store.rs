@@ -8,8 +8,9 @@ use crate::meta::{Meta, meta_from_lines, meta_lines, same_name};
 
 pub const MAX_RECORDS: usize = 200_000;
 const HEADER: &str = "# gezik tags store";
-pub const FULL: &str = "The tag store is full (200,000 files); clean it up or tag files on NTFS, APFS or ext4";
-pub const LATER: &str = "The tag store was written by a later Gezik; it is left as it is";
+pub const FULL: &str =
+    gezik_i18n::tx!("The tag store is full (200,000 files); clean it up or tag files on NTFS, APFS or ext4");
+pub const LATER: &str = gezik_i18n::tx!("The tag store was written by a later Gezik; it is left as it is");
 
 /// Paths compare as the system compares them (case-insensitive on Windows and macOS).
 const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));

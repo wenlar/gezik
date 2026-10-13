@@ -77,7 +77,7 @@ fn not_supported(why: impl Into<String>) -> io::Error {
 }
 
 pub(crate) fn too_large() -> io::Error {
-    not_supported("too large to convert")
+    not_supported(gezik_i18n::t!("too large to convert"))
 }
 
 /// The most bytes one picture buffer may take: image's default allocation limit (512 MiB).
@@ -136,8 +136,9 @@ pub fn remove_location(job: &ImageJob, stop: &dyn Fn() -> bool) -> io::Result<()
 /// location it cannot remove. On failure nothing is left at `jpeg_out`.
 pub fn strip_location(jpeg_in: &Path, jpeg_out: &Path) -> io::Result<()> {
     let bytes = read_jpeg(jpeg_in)?;
-    let clean = exifclean::jpeg_without_location(&bytes)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "not a JPEG file Gezik can edit"))?;
+    let clean = exifclean::jpeg_without_location(&bytes).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, gezik_i18n::t!("not a JPEG file Gezik can edit").into_owned())
+    })?;
     write_or_remove(jpeg_out, &clean)
 }
 
@@ -149,7 +150,7 @@ const MAX_JPEG_EDIT: u64 = 256 << 20;
 fn read_jpeg(path: &Path) -> io::Result<Vec<u8>> {
     let size = std::fs::metadata(path)?.len();
     if size > MAX_JPEG_EDIT {
-        return Err(not_supported("too large to remove location data from (over 256 MB)"));
+        return Err(not_supported(gezik_i18n::t!("too large to remove location data from (over 256 MB)")));
     }
     std::fs::read(path)
 }
@@ -329,7 +330,9 @@ fn image_error(err: ::image::ImageError) -> io::Error {
         E::IoError(err) => err,
         E::Unsupported(err) => not_supported(err.to_string()),
         E::Limits(_) => too_large(),
-        E::Decoding(err) => io::Error::new(io::ErrorKind::InvalidData, format!("the picture is damaged ({err})")),
+        E::Decoding(err) => {
+            io::Error::new(io::ErrorKind::InvalidData, gezik_i18n::t!("the picture is damaged ({})", err))
+        }
         err => io::Error::other(err.to_string()),
     }
 }
@@ -348,7 +351,7 @@ fn resize(img: &DynamicImage, w: u32, h: u32) -> io::Result<DynamicImage> {
     let options =
         ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3)).use_alpha(color.has_alpha());
     let (Some(from), Some(mut to)) = (src.image_view::<U8x4>(), dst.image_view_mut::<U8x4>()) else {
-        return Err(io::Error::other("the resizer does not take this picture"));
+        return Err(io::Error::other(gezik_i18n::t!("the resizer does not take this picture").into_owned()));
     };
     Resizer::new().resize_typed(&from, &mut to, &options).map_err(io::Error::other)?;
     drop((from, to));
@@ -399,7 +402,7 @@ fn write_jpeg(
     exif: Option<&[u8]>,
 ) -> io::Result<()> {
     let (Ok(w), Ok(h)) = (u16::try_from(img.width()), u16::try_from(img.height())) else {
-        return Err(not_supported("a JPEG is at most 65535 pixels wide and high"));
+        return Err(not_supported(gezik_i18n::t!("a JPEG is at most 65535 pixels wide and high")));
     };
     let grey = matches!(img.color(), ColorType::L8 | ColorType::L16);
     let (pixels, color) = if grey {

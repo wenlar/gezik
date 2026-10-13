@@ -84,7 +84,10 @@ impl DownloadTask {
         for program in self.build.programs {
             let path = program.split('/').fold(content.clone(), |path, part| path.join(part));
             if !path.is_file() {
-                return Err(io::Error::new(io::ErrorKind::NotFound, format!("{program} is not in the download")));
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    gezik_i18n::t!("{} is not in the download", program),
+                ));
             }
             #[cfg(unix)]
             {
@@ -121,7 +124,7 @@ impl Task for DownloadTask {
     }
 
     fn title(&self) -> String {
-        format!("Downloading {}", display_name(self.build.tool))
+        gezik_i18n::t!("Downloading {}", display_name(self.build.tool))
     }
 
     fn count(&self) -> usize {

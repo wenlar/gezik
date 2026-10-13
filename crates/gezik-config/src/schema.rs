@@ -8,7 +8,7 @@ mod table;
 
 use std::borrow::Cow;
 
-use gezik_i18n::t;
+use gezik_i18n::{t, tn};
 
 use crate::Warning;
 use crate::settings::Settings;
@@ -30,9 +30,8 @@ pub struct Described {
 /// A value as the window shows it: text bare, a list or table by its count.
 fn shown(value: &toml::Value) -> String {
     let count = |n: usize| match n {
-        0 => "none".to_owned(),
-        1 => "1 entry".to_owned(),
-        n => format!("{n} entries"),
+        0 => t!("none").into_owned(),
+        n => tn!("{n} entry" | "{n} entries", n),
     };
     match value {
         toml::Value::String(text) => text.clone(),

@@ -1,5 +1,6 @@
 //! New names (`rapor (2).pdf`) and whether a typed name is valid.
 
+use gezik_i18n::t;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 
@@ -155,7 +156,8 @@ pub fn try_mask(name: &str, mask: &str) -> Option<String> {
 pub fn mask_error(mask: &str, names: &[&str]) -> Option<String> {
     let names = if names.is_empty() { &["name.txt"][..] } else { names };
     let bad = names.iter().find(|name| try_mask(name, mask).is_none())?;
-    Some(format!("The mask {mask} makes no usable name of {bad}"))
+    // TRANSLATORS: {0} is a rename mask such as "*.bak", {1} a file name
+    Some(gezik_i18n::t!("The mask {0} makes no usable name of {1}", mask, bad))
 }
 
 /// A typed target split into its folder and a name mask: the last part is a mask if it holds
@@ -201,13 +203,13 @@ pub enum NameError {
 impl fmt::Display for NameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NameError::Empty => write!(f, "Type a name"),
-            NameError::Dots => write!(f, "\".\" and \"..\" cannot be names"),
-            NameError::Character(c) if c.is_control() => write!(f, "A name cannot contain control characters"),
-            NameError::Character(c) => write!(f, "A name cannot contain {c}"),
-            NameError::Reserved(name) => write!(f, "{name} is reserved by Windows"),
-            NameError::TrailingDotOrSpace => write!(f, "A name cannot end with a dot or a space"),
-            NameError::TooLong => write!(f, "The name is too long"),
+            NameError::Empty => f.write_str(&t!("Type a name")),
+            NameError::Dots => f.write_str(&t!("\".\" and \"..\" cannot be names")),
+            NameError::Character(c) if c.is_control() => f.write_str(&t!("A name cannot contain control characters")),
+            NameError::Character(c) => f.write_str(&t!("A name cannot contain {}", c)),
+            NameError::Reserved(name) => f.write_str(&t!("{} is reserved by Windows", name)),
+            NameError::TrailingDotOrSpace => f.write_str(&t!("A name cannot end with a dot or a space")),
+            NameError::TooLong => f.write_str(&t!("The name is too long")),
         }
     }
 }
@@ -253,9 +255,34 @@ pub fn validate_name(name: &str, rules: NameRules) -> Result<(), NameError> {
     Ok(())
 }
 
+/// A new item's default name (`New folder`) in the interface language, or `english` if the
+/// translation could not be a name (on any system) or changes a file's extension.
+pub fn default_name(english: &'static str, is_dir: bool) -> String {
+    let shown = gezik_i18n::t("", english);
+    if fits(&shown, english, is_dir) { shown.into_owned() } else { english.to_owned() }
+}
+
+fn fits(shown: &str, english: &str, is_dir: bool) -> bool {
+    validate_name(shown, NameRules::Windows).is_ok()
+        && (is_dir || split_name(shown, false).1 == split_name(english, false).1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_default_name_holds_in_english() {
+        assert_eq!(default_name("New file.txt", false), "New file.txt");
+        assert_eq!(default_name("New folder", true), "New folder");
+        assert!(fits("Yeni metin.txt", "New file.txt", false) && fits("Yeni klasör", "New folder", true));
+        assert!(!fits("Yeni dosya.md", "New file.txt", false), "the extension changed");
+        assert!(
+            !fits("Yeni/klasör", "New folder", true)
+                && !fits("Neu?", "New folder", true)
+                && !fits("", "New folder", true)
+        );
+    }
 
     #[test]
     fn splits_off_the_extension() {

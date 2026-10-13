@@ -613,7 +613,7 @@ pub fn open_for(opens: Vec<crate::cli::Open>, missing: Vec<std::path::PathBuf>, 
 pub(crate) fn say_missing(nav: &navigation::Navigator, missing: &[std::path::PathBuf]) {
     if !missing.is_empty() {
         let names: Vec<String> = missing.iter().map(|path| path.display().to_string()).collect();
-        nav.note(format!("{}: not found", names.join(", ")));
+        nav.note(gezik_i18n::t!("{}: not found", names.join(", ")));
     }
 }
 
@@ -1346,7 +1346,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     });
     window.global::<crate::PreviewActions>().on_value_menu({
         let menus = menus.clone();
-        move |label, value, x, y| menus.preview_value_menu(&label, value.into(), popup::Anchor::point(x, y))
+        move |key, value, x, y| menus.preview_value_menu(&key, value.into(), popup::Anchor::point(x, y))
     });
     // Slint passes indexes as `i32`: a negative one does nothing.
     window.on_tab_menu({

@@ -50,9 +50,10 @@ pub fn shows_state(dir: &Path) -> bool {
     })
 }
 
-pub const NOT_IN_CLOUD: &str = "Not in a cloud folder";
-pub const NOTHING_CHOSEN: &str = "Choose the items first";
-pub const NO_COMMANDS_HERE: &str = "Cloud folders on Linux have no download commands";
+// Shown with `t`.
+pub const NOT_IN_CLOUD: &str = gezik_i18n::tx!("Not in a cloud folder");
+pub const NOTHING_CHOSEN: &str = gezik_i18n::tx!("Choose the items first");
+pub const NO_COMMANDS_HERE: &str = gezik_i18n::tx!("Cloud folders on Linux have no download commands");
 
 /// Why the command cannot run for `paths`; `None`: it can.
 fn refusal(paths: &[PathBuf]) -> Option<&'static str> {
@@ -82,7 +83,7 @@ fn chosen(view: &crate::view::View) -> Vec<PathBuf> {
 /// freeing up is undone by opening the file (it downloads again).
 pub fn run(paths: Vec<PathBuf>, keep: bool, view: &crate::view::View) {
     if let Some(why) = refusal(&paths) {
-        return view.note(why.to_owned());
+        return view.note(gezik_i18n::t("", why).into_owned());
     }
     crate::operations::with_current(|ops| {
         ops.submit(Box::new(gezik_ops::CloudPinTask::new(paths, keep)), None, crate::operations::After::Nothing);

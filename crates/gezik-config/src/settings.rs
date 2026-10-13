@@ -13,6 +13,7 @@ use gezik_core::view::{
     ColumnKey, ColumnState, DateFormat, GridSize, IconMode, SizeFormat, SortDir, SortKey, ViewMode, ViewOptions,
     ViewSettings, normalize_columns,
 };
+use gezik_i18n::{t, tx};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,20 +300,24 @@ const SEARCH_KEYS: [&str; 19] = [
 /// One `[[searches]]` entry; the error is why it is left out (sapma 17: whether the folder is a
 /// full path on this computer is seen when it runs).
 pub(crate) fn parse_saved_search(value: &toml::Value) -> Result<SavedSearch, String> {
-    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
-    let name =
-        table.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|n| !n.is_empty()).ok_or("name is missing")?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table, got {}", value))?;
+    let name = table
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| t!("{} is missing", "name"))?;
     let folder = table
         .get("folder")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|f| !f.is_empty())
-        .ok_or("folder is missing")?;
+        .ok_or_else(|| t!("{} is missing", "folder"))?;
     if crate::paths::has_parent_segment(folder) {
-        return Err(format!("folder: \"{folder}\" must not contain \"..\""));
+        return Err(t!("{0}: \"{1}\" must not contain \"..\"", "folder", folder));
     }
     if let Some(key) = table.keys().find(|key| !SEARCH_KEYS.contains(&key.as_str())) {
-        return Err(format!("unknown key \"{key}\""));
+        return Err(t!("unknown key \"{}\"", key));
     }
     // The rest reads as a search tab does; "drives" stands in for the folder until it runs.
     let mut rest = table.clone();
@@ -485,7 +490,7 @@ impl Settings {
             let value = table.get(key)?;
             let text = value.as_str().map(str::to_owned);
             if text.is_none() {
-                warnings.push(Warning::new(file, format!("{path}: expected text, got {value}")));
+                warnings.push(Warning::new(file, t!("{0}: expected text, got {1}", path, value)));
             }
             text
         };
@@ -514,7 +519,7 @@ impl Settings {
                 Some("hidden") => settings.sidebar = SidebarPosition::Hidden,
                 Some(other) => warnings.push(Warning::new(
                     file,
-                    format!("layout.sidebar: expected \"left\", \"right\" or \"hidden\", got \"{other}\""),
+                    t!("{0}: expected \"left\", \"right\" or \"hidden\", got \"{1}\"", "layout.sidebar", other),
                 )),
             }
             match density.as_deref() {
@@ -523,14 +528,16 @@ impl Settings {
                 Some("comfortable") => settings.density = Density::Comfortable,
                 Some(other) => warnings.push(Warning::new(
                     file,
-                    format!("layout.density: expected \"compact\" or \"comfortable\", got \"{other}\""),
+                    t!("{0}: expected \"compact\" or \"comfortable\", got \"{1}\"", "layout.density", other),
                 )),
             }
             if let Some(value) = layout.get("reduce-motion") {
                 match value.as_bool() {
                     Some(on) => settings.reduce_motion = on,
-                    None => warnings
-                        .push(Warning::new(file, format!("layout.reduce-motion: expected true or false, got {value}"))),
+                    None => warnings.push(Warning::new(
+                        file,
+                        t!("{0}: expected true or false, got {1}", "layout.reduce-motion", value),
+                    )),
                 }
             }
         }
@@ -540,7 +547,7 @@ impl Settings {
             if gezik_i18n::lang::valid_code(&language) {
                 settings.language = language;
             } else {
-                warnings.push(Warning::new(file, format!("language: \"{language}\" is not a language code")));
+                warnings.push(Warning::new(file, t!("{0}: \"{1}\" is not a language code", "language", language)));
             }
         }
         if let Some(value) = table.get("max-fps") {
@@ -548,30 +555,34 @@ impl Settings {
                 Some(n) if n == 0 || MAX_FPS_RANGE.contains(&n) => settings.max_fps = n,
                 _ => warnings.push(Warning::new(
                     file,
-                    format!(
-                        "max-fps: expected 0 (no limit) or a number from {} to {}, got {value}",
+                    t!(
+                        "{0}: expected 0 (no limit) or a number from {1} to {2}, got {3}",
+                        "max-fps",
                         MAX_FPS_RANGE.start(),
-                        MAX_FPS_RANGE.end()
+                        MAX_FPS_RANGE.end(),
+                        value
                     ),
                 )),
             }
         }
         if let Some(start) = start_folder {
             if crate::paths::has_parent_segment(&start) {
-                warnings.push(Warning::new(file, format!("start-folder: \"{start}\" must not contain \"..\"")));
+                warnings.push(Warning::new(file, t!("{0}: \"{1}\" must not contain \"..\"", "start-folder", start)));
             } else {
                 settings.start_folder = start;
             }
         }
         if let Some(value) = table.get("pinned") {
             match value.as_array() {
-                None => warnings.push(Warning::new(file, format!("pinned: expected a list of folders, got {value}"))),
+                None => {
+                    warnings.push(Warning::new(file, t!("{0}: expected a list of folders, got {1}", "pinned", value)))
+                }
                 Some(items) => {
                     for item in items {
                         match parse_pin(item) {
                             Ok(pin) if find_pin(&settings.pinned, &pin.path).is_some() => warnings.push(Warning::new(
                                 file,
-                                format!("pinned: \"{}\" is pinned twice; the second is left out", pin.path),
+                                t!("{0}: \"{1}\" is pinned twice; the second is left out", "pinned", pin.path),
                             )),
                             Ok(pin) => settings.pinned.push(pin),
                             Err(err) => warnings.push(Warning::new(file, format!("pinned: {err}"))),
@@ -586,7 +597,7 @@ impl Settings {
                 Some(shortcuts) => {
                     settings.shortcuts = Shortcuts::from_table(Some(shortcuts), Platform::current(), file, warnings)
                 }
-                None => warnings.push(Warning::new(file, format!("shortcuts: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "shortcuts", value))),
             },
         }
         match table.get("view") {
@@ -594,42 +605,42 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(view) => {
                     settings.view = parse_view(view, file, warnings);
-                    let options = "\"off\", \"local\" or \"all\"";
+                    let options = tx!("\"off\", \"local\" or \"all\"");
                     if let Some(mode) =
                         view_choice(view, "folder-sizes", options, FolderSizeMode::parse, file, warnings)
                     {
                         settings.folder_sizes = mode;
                     }
                 }
-                None => warnings.push(Warning::new(file, format!("view: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "view", value))),
             },
         }
         match table.get("files") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(files) => settings.files = parse_files(files, file, warnings),
-                None => warnings.push(Warning::new(file, format!("files: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "files", value))),
             },
         }
         match table.get("archives") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(archives) => settings.archives = parse_archives(archives, file, warnings),
-                None => warnings.push(Warning::new(file, format!("archives: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "archives", value))),
             },
         }
         match table.get("tools") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(tools) => settings.tools = parse_tools(tools, file, warnings),
-                None => warnings.push(Warning::new(file, format!("tools: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "tools", value))),
             },
         }
         if let Some(value) = table.get("rename-presets") {
             match value.as_array() {
                 None => warnings.push(Warning::new(
                     file,
-                    format!("rename-presets: expected [[rename-presets]] tables, got {value}"),
+                    t!("{0}: expected [[rename-presets]] tables, got {1}", "rename-presets", value),
                 )),
                 Some(items) => {
                     for (i, item) in items.iter().enumerate() {
@@ -645,35 +656,35 @@ impl Settings {
             None => {}
             Some(value) => match value.as_table() {
                 Some(keyboard) => settings.keyboard = parse_keyboard(keyboard, file, warnings),
-                None => warnings.push(Warning::new(file, format!("keyboard: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "keyboard", value))),
             },
         }
         match table.get("history") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(history) => settings.history = parse_history(history, file, warnings),
-                None => warnings.push(Warning::new(file, format!("history: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "history", value))),
             },
         }
         match table.get("search") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(search) => settings.search = parse_search(search, file, warnings),
-                None => warnings.push(Warning::new(file, format!("search: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "search", value))),
             },
         }
         match table.get("session") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(session) => settings.session = parse_session(session, file, warnings),
-                None => warnings.push(Warning::new(file, format!("session: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "session", value))),
             },
         }
         match table.get("system") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(system) => settings.system = parse_system(system, file, warnings),
-                None => warnings.push(Warning::new(file, format!("system: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "system", value))),
             },
         }
         match table.get("sidebar") {
@@ -685,15 +696,17 @@ impl Settings {
                             Some(on) => settings.sidebar_cloud = on,
                             None => warnings.push(Warning::new(
                                 file,
-                                format!("sidebar.cloud: expected true or false, got {value}"),
+                                t!("{0}: expected true or false, got {1}", "sidebar.cloud", value),
                             )),
                         }
                     }
                     if let Some(value) = sidebar.get("tags") {
                         match value.as_bool() {
                             Some(on) => settings.sidebar_tags = on,
-                            None => warnings
-                                .push(Warning::new(file, format!("sidebar.tags: expected true or false, got {value}"))),
+                            None => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: expected true or false, got {1}", "sidebar.tags", value),
+                            )),
                         }
                     }
                     if let Some(value) = sidebar.get("tree-follow") {
@@ -701,12 +714,12 @@ impl Settings {
                             Some(on) => settings.sidebar_tree_follow = on,
                             None => warnings.push(Warning::new(
                                 file,
-                                format!("sidebar.tree-follow: expected true or false, got {value}"),
+                                t!("{0}: expected true or false, got {1}", "sidebar.tree-follow", value),
                             )),
                         }
                     }
                 }
-                None => warnings.push(Warning::new(file, format!("sidebar: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "sidebar", value))),
             },
         }
         match table.get("panes") {
@@ -718,12 +731,12 @@ impl Settings {
                             Some(on) => settings.panes_confirm = on,
                             None => warnings.push(Warning::new(
                                 file,
-                                format!("panes.confirm: expected true or false, got {value}"),
+                                t!("{0}: expected true or false, got {1}", "panes.confirm", value),
                             )),
                         }
                     }
                 }
-                None => warnings.push(Warning::new(file, format!("panes: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "panes", value))),
             },
         }
         match table.get("preview") {
@@ -735,31 +748,33 @@ impl Settings {
                             Some(on) => settings.preview_properties = on,
                             None => warnings.push(Warning::new(
                                 file,
-                                format!("preview.properties: expected true or false, got {value}"),
+                                t!("{0}: expected true or false, got {1}", "preview.properties", value),
                             )),
                         }
                     }
                 }
-                None => warnings.push(Warning::new(file, format!("preview: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "preview", value))),
             },
         }
         match table.get("tags") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(tags) => settings.tags = crate::tags::parse(tags, file, warnings),
-                None => warnings.push(Warning::new(file, format!("tags: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "tags", value))),
             },
         }
         match table.get("terminal") {
             None => {}
             Some(value) => match value.as_table() {
                 Some(terminal) => settings.terminal = parse_terminal(terminal, file, warnings),
-                None => warnings.push(Warning::new(file, format!("terminal: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "terminal", value))),
             },
         }
         if let Some(value) = table.get("filters") {
             match value.as_array() {
-                None => warnings.push(Warning::new(file, format!("filters: expected [[filters]] tables, got {value}"))),
+                None => {
+                    warnings.push(Warning::new(file, t!("{0}: expected [[filters]] tables, got {1}", "filters", value)))
+                }
                 Some(items) => {
                     for (i, item) in items.iter().enumerate() {
                         match parse_filter(item) {
@@ -767,9 +782,9 @@ impl Settings {
                             Ok(filter) if settings.filters.iter().any(|f| same_filter_name(&f.name, &filter.name)) => {
                                 warnings.push(Warning::new(
                                     file,
-                                    format!(
-                                        "filters[{}]: \"{}\" is already used; this one is left out",
-                                        i + 1,
+                                    t!(
+                                        "{0}: \"{1}\" is already used; this one is left out",
+                                        format!("filters[{}]", i + 1),
                                         filter.name
                                     ),
                                 ));
@@ -783,18 +798,18 @@ impl Settings {
         }
         if let Some(value) = table.get("searches") {
             match value.as_array() {
-                None => {
-                    warnings.push(Warning::new(file, format!("searches: expected [[searches]] tables, got {value}")))
-                }
+                None => warnings
+                    .push(Warning::new(file, t!("{0}: expected [[searches]] tables, got {1}", "searches", value))),
                 Some(items) => {
                     for (i, item) in items.iter().enumerate() {
                         match parse_saved_search(item) {
                             Ok(_) if settings.searches.len() == SEARCHES_MAX => {
                                 warnings.push(Warning::new(
                                     file,
-                                    format!(
-                                        "searches[{}]: at most {SEARCHES_MAX} saved searches; this one is left out",
-                                        i + 1
+                                    t!(
+                                        "{0}: at most {1} saved searches; this one is left out",
+                                        format!("searches[{}]", i + 1),
+                                        SEARCHES_MAX
                                     ),
                                 ));
                             }
@@ -802,9 +817,9 @@ impl Settings {
                             Ok(search) if settings.searches.iter().any(|s| same_filter_name(&s.name, &search.name)) => {
                                 warnings.push(Warning::new(
                                     file,
-                                    format!(
-                                        "searches[{}]: \"{}\" is already used; this one is left out",
-                                        i + 1,
+                                    t!(
+                                        "{0}: \"{1}\" is already used; this one is left out",
+                                        format!("searches[{}]", i + 1),
                                         search.name
                                     ),
                                 ));
@@ -821,9 +836,8 @@ impl Settings {
         }
         if let Some(value) = table.get("tab-sets") {
             match value.as_array() {
-                None => {
-                    warnings.push(Warning::new(file, format!("tab-sets: expected [[tab-sets]] tables, got {value}")))
-                }
+                None => warnings
+                    .push(Warning::new(file, t!("{0}: expected [[tab-sets]] tables, got {1}", "tab-sets", value))),
                 Some(items) => {
                     for (i, item) in items.iter().enumerate() {
                         match parse_tab_set(item) {
@@ -831,9 +845,9 @@ impl Settings {
                             Ok(set) if settings.tab_sets.iter().any(|s| same_filter_name(&s.name, &set.name)) => {
                                 warnings.push(Warning::new(
                                     file,
-                                    format!(
-                                        "tab-sets[{}]: \"{}\" is already used; this one is left out",
-                                        i + 1,
+                                    t!(
+                                        "{0}: \"{1}\" is already used; this one is left out",
+                                        format!("tab-sets[{}]", i + 1),
                                         set.name
                                     ),
                                 ));
@@ -849,14 +863,13 @@ impl Settings {
             None => {}
             Some(value) => match value.as_table() {
                 Some(convert) => settings.convert = parse_convert(convert, file, warnings),
-                None => warnings.push(Warning::new(file, format!("convert: expected a table, got {value}"))),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "convert", value))),
             },
         }
         if let Some(value) = table.get("commands") {
             match value.as_array() {
-                None => {
-                    warnings.push(Warning::new(file, format!("commands: expected [[commands]] tables, got {value}")))
-                }
+                None => warnings
+                    .push(Warning::new(file, t!("{0}: expected [[commands]] tables, got {1}", "commands", value))),
                 Some(items) => {
                     for (i, item) in items.iter().enumerate() {
                         match parse_command(item) {
@@ -891,29 +904,32 @@ impl Settings {
 
 fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ViewDefaults {
     let mut out = ViewDefaults::default();
-    if let Some(mode) = view_choice(table, "mode", "\"list\", \"grid\" or \"columns\"", ViewMode::parse, file, warnings)
+    if let Some(mode) =
+        view_choice(table, "mode", tx!("\"list\", \"grid\" or \"columns\""), ViewMode::parse, file, warnings)
     {
         out.view.mode = mode;
     }
-    let keys = "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)";
+    let keys = tx!(
+        "\"name\", \"modified\", \"created\", \"type\", \"size\", \"tags\", \"rating\" or a property (\"duration\", \"artist\"…)"
+    );
     // `folder` is the search results' own sort (views.toml keeps it under `<results>`).
     let folder_key = |text: &str| SortKey::parse(text).filter(|key| *key != SortKey::Folder);
     if let Some(key) = view_choice(table, "sort", keys, folder_key, file, warnings) {
         out.view.sort.key = key;
     }
-    if let Some(dir) = view_choice(table, "sort-dir", "\"asc\" or \"desc\"", SortDir::parse, file, warnings) {
+    if let Some(dir) = view_choice(table, "sort-dir", tx!("\"asc\" or \"desc\""), SortDir::parse, file, warnings) {
         out.view.sort.dir = dir;
     }
-    let sizes = "\"small\", \"medium\" or \"large\"";
+    let sizes = tx!("\"small\", \"medium\" or \"large\"");
     if let Some(size) = view_choice(table, "grid-size", sizes, GridSize::parse, file, warnings) {
         out.view.grid_size = size;
     }
     let groups =
-        "\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)";
+        tx!("\"none\", \"type\", \"date\", \"size\", \"tag\", \"rating\" or a text property (\"artist\", \"year\"…)");
     if let Some(group) = view_choice(table, "group", groups, GroupBy::parse, file, warnings) {
         out.view.group = group;
     }
-    if let Some(icons) = view_choice(table, "icons", "\"system\" or \"gezik\"", IconMode::parse, file, warnings) {
+    if let Some(icons) = view_choice(table, "icons", tx!("\"system\" or \"gezik\""), IconMode::parse, file, warnings) {
         out.icons = icons;
     }
     if let Some(on) = view_bool(table, "thumbnails", file, warnings) {
@@ -926,11 +942,11 @@ fn parse_view(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> V
     if let Some(on) = view_bool(table, "folders-first", file, warnings) {
         options.folders_first = on;
     }
-    let dates = "\"relative\", \"short\", \"iso\" or \"system\"";
+    let dates = tx!("\"relative\", \"short\", \"iso\" or \"system\"");
     if let Some(format) = view_choice(table, "date-format", dates, DateFormat::parse, file, warnings) {
         options.date_format = format;
     }
-    let sizes = "\"binary\" or \"decimal\"";
+    let sizes = tx!("\"binary\" or \"decimal\"");
     if let Some(format) = view_choice(table, "size-format", sizes, SizeFormat::parse, file, warnings) {
         options.size_format = format;
     }
@@ -951,7 +967,7 @@ fn view_bool(table: &toml::Table, key: &str, file: &str, warnings: &mut Vec<Warn
     let value = table.get(key)?;
     let on = value.as_bool();
     if on.is_none() {
-        warnings.push(Warning::new(file, format!("view.{key}: expected true or false, got {value}")));
+        warnings.push(Warning::new(file, t!("{0}: expected true or false, got {1}", format!("view.{key}"), value)));
     }
     on
 }
@@ -1011,7 +1027,7 @@ fn parse_search(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) ->
         match value.as_str() {
             Some("auto") => out.everything = true,
             Some("off") => out.everything = false,
-            _ => warn(format!("search.everything: expected \"auto\" or \"off\", got {value}")),
+            _ => warn(t!("{0}: expected \"auto\" or \"off\", got {1}", "search.everything", value)),
         }
     }
     if let Some(value) = table.get("skip") {
@@ -1019,20 +1035,20 @@ fn parse_search(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) ->
             value.as_array().and_then(|items| items.iter().map(|i| i.as_str().map(|s| s.trim().to_owned())).collect());
         match names {
             Some(names) if names.iter().all(|n| !n.is_empty() && !n.contains(['/', '\\'])) => out.skip = names,
-            _ => warn(format!("search.skip: expected a list of folder names, got {value}")),
+            _ => warn(t!("{0}: expected a list of folder names, got {1}", "search.skip", value)),
         }
     }
     if let Some(value) = table.get("max-results") {
         match value.as_integer().and_then(|n| usize::try_from(n).ok()).filter(|n| MAX_RESULTS_RANGE.contains(n)) {
             Some(n) => out.max_results = n,
-            None => warn(format!("search.max-results: expected a number from 1000 to 2000000, got {value}")),
+            None => warn(t!("{0}: expected a number from 1000 to 2000000, got {1}", "search.max-results", value)),
         }
     }
     if let Some(value) = table.get("content-max-size") {
         match value.as_str().map(parse_size) {
             Some(Ok(bytes)) => out.content_max_size = bytes,
             Some(Err(err)) => warn(format!("search.content-max-size: {err}")),
-            None => warn(format!("search.content-max-size: expected a size like \"500 MB\", got {value}")),
+            None => warn(t!("{0}: expected a size like \"500 MB\", got {1}", "search.content-max-size", value)),
         }
     }
     out
@@ -1104,22 +1120,22 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
     let text = |key: &str| -> Result<Option<&str>, String> {
         match table.get(key) {
             None => Ok(None),
-            Some(value) => value.as_str().map(Some).ok_or_else(|| format!("{key}: expected text, got {value}")),
+            Some(value) => value.as_str().map(Some).ok_or_else(|| t!("{0}: expected text, got {1}", key, value)),
         }
     };
     let flag = |key: &str| -> Result<bool, String> {
         match table.get(key) {
             None => Ok(false),
-            Some(value) => value.as_bool().ok_or_else(|| format!("{key}: expected true or false, got {value}")),
+            Some(value) => value.as_bool().ok_or_else(|| t!("{0}: expected true or false, got {1}", key, value)),
         }
     };
     let scope = match text("folder")? {
-        None => return Err("folder is missing".to_owned()),
+        None => return Err(t!("{} is missing", "folder")),
         Some("drives") => Scope::AllDrives,
         Some(path) => {
             let path = PathBuf::from(path);
             if !path.is_absolute() {
-                return Err(format!("folder: \"{}\" is not a full path", path.display()));
+                return Err(t!("{0}: \"{1}\" is not a full path", "folder", path.display()));
             }
             Scope::Folder(path)
         }
@@ -1143,10 +1159,10 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
         spec.modified = DateRange::parse(modified).map_err(|err| format!("modified: {err}"))?;
     }
     if let Some(tags) = table.get("tags") {
-        let bad = || format!("tags: expected a list of tag names, got {tags}");
+        let bad = || t!("{0}: expected a list of tag names, got {1}", "tags", tags);
         for tag in tags.as_array().ok_or_else(bad)? {
             let name = tag.as_str().ok_or_else(bad)?;
-            gezik_core::meta::check_tag_name(name).map_err(|err| format!("tags: \"{name}\": {err}"))?;
+            gezik_core::meta::check_tag_name(name).map_err(|err| format!("tags: \"{name}\": {}", t("", err)))?;
             spec.tags.push(name.to_owned());
         }
     }
@@ -1156,13 +1172,15 @@ pub fn search_from_toml(table: &toml::Table) -> Result<SearchSpec, String> {
             .as_integer()
             .and_then(|n| u8::try_from(n).ok())
             .filter(|n| *n <= 5)
-            .ok_or_else(|| format!("min-rating: expected a number from 0 to 5, got {stars}"))?;
+            .ok_or_else(|| t!("{0}: expected a number from 0 to 5, got {1}", "min-rating", stars))?;
     }
     spec.comment = text("comment")?.unwrap_or_default().to_owned();
     if let Some(kind) = text("type")? {
         spec.kind = KindFilter::parse(kind).ok_or_else(|| {
-            format!(
-                "type: expected files, folders, pictures, videos, audio, documents, archives or code, got \"{kind}\""
+            t!(
+                "{0}: expected files, folders, pictures, videos, audio, documents, archives or code, got \"{1}\"",
+                "type",
+                kind
             )
         })?;
     }
@@ -1260,14 +1278,15 @@ fn view_choice<T>(
     let value = table.get(key)?;
     let parsed = value.as_str().and_then(&parse);
     if parsed.is_none() {
-        warnings.push(Warning::new(file, format!("view.{key}: expected {options}, got {value}")));
+        warnings
+            .push(Warning::new(file, t!("{0}: expected {1}, got {2}", format!("view.{key}"), t("", options), value)));
     }
     parsed
 }
 
 fn parse_rules(value: Option<&toml::Value>) -> Result<Vec<gezik_core::batch::rules::RuleEntry>, String> {
     let Some(value) = value else { return Ok(Vec::new()) };
-    let items = value.as_array().ok_or_else(|| format!("rules: expected a list, got {value}"))?;
+    let items = value.as_array().ok_or_else(|| t!("{0}: expected a list, got {1}", "rules", value))?;
     items
         .iter()
         .enumerate()
@@ -1279,8 +1298,12 @@ fn parse_rules(value: Option<&toml::Value>) -> Result<Vec<gezik_core::batch::rul
 }
 
 pub(crate) fn parse_preset(value: &toml::Value) -> Result<RenamePreset, String> {
-    let table = value.as_table().ok_or("expected a table")?;
-    let name = table.get("name").and_then(|v| v.as_str()).filter(|n| !n.trim().is_empty()).ok_or("name is missing")?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table"))?;
+    let name = table
+        .get("name")
+        .and_then(|v| v.as_str())
+        .filter(|n| !n.trim().is_empty())
+        .ok_or_else(|| t!("{} is missing", "name"))?;
     let include_extension = table.get("include-extension").and_then(|v| v.as_bool()).unwrap_or(false);
     Ok(RenamePreset { name: name.to_owned(), include_extension, rules: parse_rules(table.get("rules"))? })
 }
@@ -1300,8 +1323,10 @@ fn parse_keyboard(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
         match value.as_str() {
             Some("jump") => out.typing = Typing::Jump,
             Some("filter") => out.typing = Typing::Filter,
-            _ => warnings
-                .push(Warning::new(file, format!("keyboard.typing: expected \"jump\" or \"filter\", got {value}"))),
+            _ => warnings.push(Warning::new(
+                file,
+                t!("{0}: expected \"jump\" or \"filter\", got {1}", "keyboard.typing", value),
+            )),
         }
     }
     out
@@ -1312,7 +1337,9 @@ fn parse_history(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
     if let Some(value) = table.get("remember") {
         match value.as_bool() {
             Some(on) => out.remember = on,
-            None => warnings.push(Warning::new(file, format!("history.remember: expected true or false, got {value}"))),
+            None => {
+                warnings.push(Warning::new(file, t!("{0}: expected true or false, got {1}", "history.remember", value)))
+            }
         }
     }
     out
@@ -1323,7 +1350,9 @@ fn parse_session(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
     if let Some(value) = table.get("restore") {
         match value.as_bool() {
             Some(on) => out.restore = on,
-            None => warnings.push(Warning::new(file, format!("session.restore: expected true or false, got {value}"))),
+            None => {
+                warnings.push(Warning::new(file, t!("{0}: expected true or false, got {1}", "session.restore", value)))
+            }
         }
     }
     out
@@ -1335,37 +1364,44 @@ fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) ->
         match value.as_bool() {
             Some(on) => out.single_instance = on,
             None => warnings
-                .push(Warning::new(file, format!("system.single-instance: expected true or false, got {value}"))),
+                .push(Warning::new(file, t!("{0}: expected true or false, got {1}", "system.single-instance", value))),
         }
     }
     if let Some(value) = table.get("quick-look") {
         match value.as_str() {
             Some("system") => out.quick_look = QuickLookMode::System,
             Some("gezik") => out.quick_look = QuickLookMode::Gezik,
-            _ => warnings
-                .push(Warning::new(file, format!("system.quick-look: expected \"system\" or \"gezik\", got {value}"))),
+            _ => warnings.push(Warning::new(
+                file,
+                t!("{0}: expected \"system\" or \"gezik\", got {1}", "system.quick-look", value),
+            )),
         }
     }
     if let Some(value) = table.get("tray") {
         match value.as_bool() {
             Some(on) => out.tray = on,
-            None => warnings.push(Warning::new(file, format!("system.tray: expected true or false, got {value}"))),
+            None => warnings.push(Warning::new(file, t!("{0}: expected true or false, got {1}", "system.tray", value))),
         }
     }
     if let Some(value) = table.get("hotkey") {
         match value.as_str() {
             Some(text) => match crate::shortcuts::parse_hotkey(text, crate::shortcuts::Platform::current()) {
                 Ok(chord) => out.hotkey = chord,
-                Err(why) => warnings.push(Warning::new(file, format!("system.hotkey: \"{text}\" {why}"))),
+                Err(why) => warnings.push(Warning::new(file, format!("system.hotkey: {why}"))),
             },
-            None => warnings
-                .push(Warning::new(file, format!("system.hotkey: expected text such as \"win+shift+e\", got {value}"))),
+            None => warnings.push(Warning::new(
+                file,
+                t!("{0}: expected text such as \"win+shift+e\", got {1}", "system.hotkey", value),
+            )),
         }
     }
     if table.contains_key("start-at-login") {
         warnings.push(Warning::new(
             file,
-            "system.start-at-login: start at login is a system change; turn it on or off in System Integration (this key is ignored)",
+            t!(
+                "{}: start at login is a system change; turn it on or off in System Integration (this key is ignored)",
+                "system.start-at-login"
+            ),
         ));
     }
     out
@@ -1376,7 +1412,7 @@ fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) ->
 fn parse_terminal(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> TerminalSettings {
     let Some(value) = table.get("command") else { return TerminalSettings::default() };
     let Ok(command) = string_list(value, "command") else {
-        warnings.push(Warning::new(file, format!("terminal.command: expected a list of text, got {value}")));
+        warnings.push(Warning::new(file, t!("{0}: expected a list of text, got {1}", "terminal.command", value)));
         return TerminalSettings::default();
     };
     if command.is_empty() {
@@ -1385,7 +1421,7 @@ fn parse_terminal(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
     match gezik_core::batch::convert::check_dir_command(&command) {
         Ok(()) => TerminalSettings { command: Some(command) },
         Err(err) => {
-            warnings.push(Warning::new(file, format!("terminal.command: {err}; Gezik finds a terminal")));
+            warnings.push(Warning::new(file, t!("{0}: {1}; Gezik finds a terminal", "terminal.command", err)));
             TerminalSettings::default()
         }
     }
@@ -1394,23 +1430,27 @@ fn parse_terminal(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
 /// One `[[tab-sets]]` entry; the error is why it is left out (a path with `..` leaves out the
 /// whole set, which Gezik then keeps in the file as it is).
 pub(crate) fn parse_tab_set(value: &toml::Value) -> Result<TabSet, String> {
-    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
-    let name =
-        table.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|n| !n.is_empty()).ok_or("name is missing")?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table, got {}", value))?;
+    let name = table
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| t!("{} is missing", "name"))?;
     let tabs = match table.get("tabs") {
-        None => return Err("tabs is missing".to_owned()),
+        None => return Err(t!("{} is missing", "tabs")),
         Some(value) => string_list(value, "tabs")?,
     };
     if tabs.is_empty() {
-        return Err("tabs is missing".to_owned());
+        return Err(t!("{} is missing", "tabs"));
     }
     let right = table.get("right").map_or(Ok(Vec::new()), |value| string_list(value, "right"))?;
     for (key, list) in [("tabs", &tabs), ("right", &right)] {
         if list.iter().any(|tab| tab.trim().is_empty()) {
-            return Err(format!("{key} has an empty path"));
+            return Err(t!("{} has an empty path", key));
         }
         if let Some(bad) = list.iter().find(|tab| crate::paths::has_parent_segment(tab)) {
-            return Err(format!("\"{bad}\" must not contain \"..\""));
+            return Err(t!("\"{}\" must not contain \"..\"", bad));
         }
     }
     Ok(TabSet { name: name.to_owned(), tabs, right })
@@ -1436,15 +1476,15 @@ fn parse_sync_profiles(
     use crate::sync_profiles::{SYNC_PROFILES_MAX, parse};
     let Some(items) = value.as_array() else {
         return warnings
-            .push(Warning::new(file, format!("sync-profiles: expected [[sync-profiles]] tables, got {value}")));
+            .push(Warning::new(file, t!("{0}: expected [[sync-profiles]] tables, got {1}", "sync-profiles", value)));
     };
     for (i, item) in items.iter().enumerate() {
         let said = match parse(item) {
             Ok(p) if into.iter().any(|q| same_filter_name(&q.name, &p.name)) => {
-                format!("\"{}\" is already used; this one is left out", p.name)
+                t!("\"{}\" is already used; this one is left out", p.name)
             }
             Ok(_) if into.len() == SYNC_PROFILES_MAX => {
-                format!("at most {SYNC_PROFILES_MAX} sync profiles; this one is left out")
+                t!("at most {} sync profiles; this one is left out", SYNC_PROFILES_MAX)
             }
             Ok(p) => {
                 into.push(p);
@@ -1462,11 +1502,18 @@ fn same_filter_name(a: &str, b: &str) -> bool {
 }
 
 pub(crate) fn parse_filter(value: &toml::Value) -> Result<SavedFilter, String> {
-    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
-    let name =
-        table.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|n| !n.is_empty()).ok_or("name is missing")?;
-    let pattern =
-        table.get("pattern").and_then(|v| v.as_str()).filter(|p| !p.trim().is_empty()).ok_or("pattern is missing")?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table, got {}", value))?;
+    let name = table
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| t!("{} is missing", "name"))?;
+    let pattern = table
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| t!("{} is missing", "pattern"))?;
     gezik_core::pattern::Pattern::compile(pattern).map_err(|err| format!("pattern: {err}"))?;
     Ok(SavedFilter { name: name.to_owned(), pattern: pattern.to_owned() })
 }
@@ -1483,9 +1530,8 @@ fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
     if let Some(value) = table.get("confirm-trash") {
         match value.as_bool() {
             Some(on) => out.confirm_trash = on,
-            None => {
-                warnings.push(Warning::new(file, format!("files.confirm-trash: expected true or false, got {value}")))
-            }
+            None => warnings
+                .push(Warning::new(file, t!("{0}: expected true or false, got {1}", "files.confirm-trash", value))),
         }
     }
     if let Some(value) = table.get("copy-threads") {
@@ -1500,10 +1546,12 @@ fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
             Some(threads) => out.copy_threads = threads,
             None => warnings.push(Warning::new(
                 file,
-                format!(
-                    "files.copy-threads: expected \"auto\" or a number from {} to {}, got {value}",
+                t!(
+                    "{0}: expected \"auto\" or a number from {1} to {2}, got {3}",
+                    "files.copy-threads",
                     COPY_THREADS_RANGE.start(),
-                    COPY_THREADS_RANGE.end()
+                    COPY_THREADS_RANGE.end(),
+                    value
                 ),
             )),
         }
@@ -1511,7 +1559,9 @@ fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
     if let Some(value) = table.get("verify") {
         match value.as_bool() {
             Some(on) => out.verify = on,
-            None => warnings.push(Warning::new(file, format!("files.verify: expected true or false, got {value}"))),
+            None => {
+                warnings.push(Warning::new(file, t!("{0}: expected true or false, got {1}", "files.verify", value)))
+            }
         }
     }
     if let Some(value) = table.get("max-speed") {
@@ -1520,7 +1570,7 @@ fn parse_files(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
             Some(text) if let Some(speed) = gezik_core::ops::rate::parse_speed(text) => out.max_speed = Some(speed),
             _ => warnings.push(Warning::new(
                 file,
-                format!("files.max-speed: expected a speed like \"20 MB/s\" or \"\", got {value}"),
+                t!("{0}: expected a speed like \"20 MB/s\" or \"\", got {1}", "files.max-speed", value),
             )),
         }
     }
@@ -1535,7 +1585,7 @@ fn parse_archives(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
             Some("extract-here") => out.double_click = DoubleClick::ExtractHere,
             _ => warnings.push(Warning::new(
                 file,
-                format!("archives.double-click: expected \"system\" or \"extract-here\", got {value}"),
+                t!("{0}: expected \"system\" or \"extract-here\", got {1}", "archives.double-click", value),
             )),
         }
     }
@@ -1547,7 +1597,9 @@ fn parse_tools(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
     if let Some(value) = table.get("download") {
         match value.as_bool() {
             Some(on) => out.download = on,
-            None => warnings.push(Warning::new(file, format!("tools.download: expected true or false, got {value}"))),
+            None => {
+                warnings.push(Warning::new(file, t!("{0}: expected true or false, got {1}", "tools.download", value)))
+            }
         }
     }
     if let Some(value) = table.get("seven-zip") {
@@ -1555,38 +1607,38 @@ fn parse_tools(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> 
             // Empty: none set.
             Some(path) if path.trim().is_empty() => {}
             // A relative path would depend on the folder Gezik was started in.
-            Some(path) if !std::path::Path::new(path).is_absolute() => warnings
-                .push(Warning::new(file, format!("tools.seven-zip: \"{path}\" must be a full path (it is ignored)"))),
+            Some(path) if !std::path::Path::new(path).is_absolute() => warnings.push(Warning::new(
+                file,
+                t!("{0}: \"{1}\" must be a full path (it is ignored)", "tools.seven-zip", path),
+            )),
             Some(path) => out.seven_zip = Some(path.to_owned()),
-            None => warnings.push(Warning::new(file, format!("tools.seven-zip: expected text, got {value}"))),
+            None => warnings.push(Warning::new(file, t!("{0}: expected text, got {1}", "tools.seven-zip", value))),
         }
     }
     if let Some(value) = table.get("diff") {
         match value.as_str() {
             Some(program) if program.trim().is_empty() => {}
             Some(program) => out.diff = Some(program.trim().to_owned()),
-            None => warnings.push(Warning::new(file, format!("tools.diff: expected text, got {value}"))),
+            None => warnings.push(Warning::new(file, t!("{0}: expected text, got {1}", "tools.diff", value))),
         }
     }
     if let Some(value) = table.get("diff-args") {
         match string_list(value, "diff-args") {
             Err(_) => {
-                warnings.push(Warning::new(file, format!("tools.diff-args: expected a list of text, got {value}")))
+                warnings.push(Warning::new(file, t!("{0}: expected a list of text, got {1}", "tools.diff-args", value)))
             }
             Ok(args) => match gezik_core::batch::convert::check_diff_args(&args) {
                 Ok(()) => out.diff_args = args,
-                Err(err) => {
-                    warnings.push(Warning::new(file, format!("tools.diff-args: {err}; {{left}} {{right}} is used")))
-                }
+                Err(err) => warnings
+                    .push(Warning::new(file, t!("{0}: {1}; {{left}} {{right}} is used", "tools.diff-args", err))),
             },
         }
     }
     if let Some(value) = table.get("folder-diff") {
         match value.as_bool() {
             Some(on) => out.folder_diff = on,
-            None => {
-                warnings.push(Warning::new(file, format!("tools.folder-diff: expected true or false, got {value}")))
-            }
+            None => warnings
+                .push(Warning::new(file, t!("{0}: expected true or false, got {1}", "tools.folder-diff", value))),
         }
     }
     out
@@ -1597,10 +1649,12 @@ fn parse_convert(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
     if let Some(value) = table.get("ffmpeg") {
         match value.as_str() {
             Some(path) if path.trim().is_empty() => {}
-            Some(path) if !std::path::Path::new(path).is_absolute() => warnings
-                .push(Warning::new(file, format!("convert.ffmpeg: \"{path}\" must be a full path (it is ignored)"))),
+            Some(path) if !std::path::Path::new(path).is_absolute() => warnings.push(Warning::new(
+                file,
+                t!("{0}: \"{1}\" must be a full path (it is ignored)", "convert.ffmpeg", path),
+            )),
             Some(path) => out.ffmpeg = Some(path.to_owned()),
-            None => warnings.push(Warning::new(file, format!("convert.ffmpeg: expected text, got {value}"))),
+            None => warnings.push(Warning::new(file, t!("{0}: expected text, got {1}", "convert.ffmpeg", value))),
         }
     }
     out
@@ -1608,36 +1662,41 @@ fn parse_convert(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
 
 /// A list of strings, or an error naming the key.
 fn string_list(value: &toml::Value, key: &str) -> Result<Vec<String>, String> {
-    let items = value.as_array().ok_or_else(|| format!("{key} must be a list of text, got {value}"))?;
+    let items = value.as_array().ok_or_else(|| t!("{0} must be a list of text, got {1}", key, value))?;
     items
         .iter()
-        .map(|item| item.as_str().map(str::to_owned).ok_or_else(|| format!("{key} must be a list of text, got {item}")))
+        .map(|item| {
+            item.as_str().map(str::to_owned).ok_or_else(|| t!("{0} must be a list of text, got {1}", key, item))
+        })
         .collect()
 }
 
 /// One `[[commands]]` entry; the error is the reason it is left out.
 fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
-    let table = value.as_table().ok_or_else(|| format!("expected a table, got {value}"))?;
+    let table = value.as_table().ok_or_else(|| t!("expected a table, got {}", value))?;
     // A misspelt key would be passed over and widen what the command runs on (`type` for
     // `types`: every file): the command is left out instead.
     const KEYS: [&str; 9] = ["name", "run", "output", "types", "folders", "parallel", "shortcut", "menu", "ask"];
     if let Some(key) = table.keys().find(|key| !KEYS.contains(&key.as_str())) {
-        return Err(format!("unknown key \"{key}\" (known: {})", KEYS.join(", ")));
+        return Err(t!("unknown key \"{0}\" (known: {1})", key, KEYS.join(", ")));
     }
     let name = match table.get("name") {
-        None => return Err("name is missing".to_owned()),
-        Some(v) => v.as_str().filter(|n| !n.trim().is_empty()).ok_or("name must be text that is not empty")?,
+        None => return Err(t!("{} is missing", "name")),
+        Some(v) => v
+            .as_str()
+            .filter(|n| !n.trim().is_empty())
+            .ok_or_else(|| t!("{} must be text that is not empty", "name"))?,
     };
     let run = match table.get("run") {
-        None => return Err("run is missing".to_owned()),
+        None => return Err(t!("{} is missing", "run")),
         Some(v) => string_list(v, "run")?,
     };
     if run.is_empty() {
-        return Err("run has no program".to_owned());
+        return Err(t!("{} has no program", "run"));
     }
     let output = match table.get("output") {
         None => None,
-        Some(v) => Some(v.as_str().ok_or_else(|| format!("output must be text, got {v}"))?.to_owned()),
+        Some(v) => Some(v.as_str().ok_or_else(|| t!("output must be text, got {}", v))?.to_owned()),
     };
     let types = match table.get("types") {
         None => Vec::new(),
@@ -1651,7 +1710,7 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
             let t = t.trim();
             let t = t.strip_prefix('.').unwrap_or(t);
             if t.is_empty() || t.contains(['*', '?', '/', '\\']) {
-                Err(format!("types: \"{t}\" is not a file ending (write \"jpg\", no * or ?)"))
+                Err(t!("{0}: \"{1}\" is not a file ending (write \"jpg\", no * or ?)", "types", t))
             } else {
                 Ok(t.to_owned())
             }
@@ -1659,7 +1718,7 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
         .collect::<Result<Vec<_>, _>>()?;
     let folders = match table.get("folders") {
         None => false,
-        Some(v) => v.as_bool().ok_or_else(|| format!("folders must be true or false, got {v}"))?,
+        Some(v) => v.as_bool().ok_or_else(|| t!("folders must be true or false, got {}", v))?,
     };
     let parallel = match table.get("parallel") {
         None => 1,
@@ -1667,22 +1726,22 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
             .as_integer()
             .and_then(|n| u8::try_from(n).ok())
             .filter(|n| (1..=16).contains(n))
-            .ok_or_else(|| format!("parallel must be 1-16, got {v}"))?,
+            .ok_or_else(|| t!("parallel must be 1-16, got {}", v))?,
     };
     let shortcut = match table.get("shortcut") {
         None => None,
-        Some(v) => Some(v.as_str().ok_or_else(|| format!("shortcut must be text, got {v}"))?.to_owned()),
+        Some(v) => Some(v.as_str().ok_or_else(|| t!("shortcut must be text, got {}", v))?.to_owned()),
     };
     let menu = match table.get("menu") {
         None => None,
         Some(v) => {
-            let menu = v.as_str().ok_or_else(|| format!("menu must be text, got {v}"))?.trim();
+            let menu = v.as_str().ok_or_else(|| t!("menu must be text, got {}", v))?.trim();
             (!menu.is_empty()).then(|| menu.to_owned())
         }
     };
     let ask = match table.get("ask") {
         None => false,
-        Some(v) => v.as_bool().ok_or_else(|| format!("ask must be true or false, got {v}"))?,
+        Some(v) => v.as_bool().ok_or_else(|| t!("ask must be true or false, got {}", v))?,
     };
     let spec = CommandSpec { name: name.to_owned(), run, output, types, folders, parallel, shortcut, menu, ask };
     check_command(&spec)?;
@@ -1698,19 +1757,26 @@ fn bind_command_key(settings: &mut Settings, spec: &CommandSpec, n: usize, file:
         Ok(Some(chord)) => chord,
         Ok(None) => return,
         Err(err) => {
-            warnings.push(Warning::new(file, format!("commands[{n}]: shortcut: {err}; the command has no key")));
+            warnings.push(Warning::new(
+                file,
+                t!("{0}: shortcut: {1}; the command has no key", format!("commands[{n}]"), err),
+            ));
             return;
         }
     };
     if !chord.leaves_typing_alone() {
         warnings.push(Warning::new(
             file,
-            format!("commands[{n}]: shortcut \"{text}\" needs Ctrl, Alt or Cmd (or an F key); the command has no key"),
+            t!(
+                "{0}: shortcut \"{1}\" needs Ctrl, Alt or Cmd (or an F key); the command has no key",
+                format!("commands[{n}]"),
+                text
+            ),
         ));
         return;
     }
     let taken = match fixed_owner(&chord, Platform::current()) {
-        Some(owner) => Err(owner.to_owned()),
+        Some(owner) => Err(t("", owner).into_owned()),
         None => settings.shortcuts.bind_command(index, chord).map_err(|owner| match owner {
             KeyOwner::Action(action) => action.name().to_owned(),
             KeyOwner::Command(other) => format!("\"{}\"", settings.commands[other].name),
@@ -1719,7 +1785,12 @@ fn bind_command_key(settings: &mut Settings, spec: &CommandSpec, n: usize, file:
     if let Err(who) = taken {
         warnings.push(Warning::new(
             file,
-            format!("commands[{n}]: shortcut \"{text}\" is already used by {who}; the command has no key"),
+            t!(
+                "{0}: shortcut \"{1}\" is already used by {2}; the command has no key",
+                format!("commands[{n}]"),
+                text,
+                who
+            ),
         ));
     }
 }

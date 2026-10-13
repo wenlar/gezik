@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use gezik_core::elevated::Op;
 use gezik_core::ops::conflict::{Decision, Facts};
+use gezik_core::ops::names::default_name;
 
 use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
 
@@ -28,16 +29,16 @@ impl NewTask {
     }
 
     pub fn folder(dir: &Path) -> NewTask {
-        NewTask::new(dir, "New folder", true)
+        NewTask::new(dir, &default_name(gezik_i18n::tx!("New folder"), true), true)
     }
 
     pub fn file(dir: &Path) -> NewTask {
-        NewTask::new(dir, "New file.txt", false)
+        NewTask::new(dir, &default_name(gezik_i18n::tx!("New file.txt"), false), false)
     }
 
     /// An empty Markdown file (spec 8.1).
     pub fn markdown(dir: &Path) -> NewTask {
-        NewTask::new(dir, "New document.md", false)
+        NewTask::new(dir, &default_name(gezik_i18n::tx!("New document.md"), false), false)
     }
 
     /// A file named `name` (a taken name gets a number) with what `contents` makes.
@@ -67,7 +68,7 @@ impl Task for NewTask {
     }
 
     fn title(&self) -> String {
-        format!("Creating {}", self.name)
+        gezik_i18n::t!("Creating {}", self.name)
     }
 
     fn count(&self) -> usize {

@@ -38,7 +38,10 @@ pub fn download(
     stop: &dyn Fn() -> bool,
 ) -> io::Result<()> {
     if !allowed(url, allow_http) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "only https addresses are downloaded"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            gezik_i18n::t!("only https addresses are downloaded").into_owned(),
+        ));
     }
     let result = imp::download(url, dest, max_bytes, allow_http, progress, stop);
     if result.is_err() {
@@ -70,7 +73,7 @@ fn interrupted() -> io::Error {
 
 /// The error for a body larger than allowed.
 fn too_big() -> io::Error {
-    io::Error::new(io::ErrorKind::FileTooLarge, "the download is larger than expected")
+    io::Error::new(io::ErrorKind::FileTooLarge, gezik_i18n::t!("the download is larger than expected").into_owned())
 }
 
 /// Passes the byte count on to `progress`, at most every `PROGRESS_EVERY` and only when it grew.

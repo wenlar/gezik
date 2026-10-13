@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use gezik_config::system_journal::{FILE, JournalFile, Locked};
 use gezik_core::system_change::{self as sc, Access, Change, Kind, Outcome, RegType, Value};
+use gezik_i18n::{t, tx};
 use gezik_platform::system::Places;
 use gezik_platform::system::text as t;
 
@@ -297,11 +298,17 @@ fn check_write(
     access: &dyn Access,
 ) -> io::Result<()> {
     if !allowed(change, places, os) {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not a place Gezik writes; left as is"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            t!("not a place Gezik writes; left as is").into_owned(),
+        ));
     }
     // The journal's values are not trusted either: only what Gezik itself would write.
     if !value_allowed(change, now, value) {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not a value Gezik writes; left as is"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            t!("not a value Gezik writes; left as is").into_owned(),
+        ));
     }
     // An empty DelegateExecute goes only beside Gezik's own Win+E command: a program that took
     // Win+E since (the Files app) needs the same value next to its command.
@@ -314,7 +321,10 @@ fn check_write(
             if registry_value_allowed(&change.place, "", &data));
         if !ours {
             // AlreadyExists: the undo reports it as left as is.
-            return Err(io::Error::new(io::ErrorKind::AlreadyExists, "Win+E's command beside it is not Gezik's"));
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                t!("Win+E's command beside it is not Gezik's").into_owned(),
+            ));
         }
     }
     Ok(())
@@ -336,7 +346,10 @@ impl SystemAccess {
         if allowed(change, &self.places, Os::HERE) {
             Ok(())
         } else {
-            Err(io::Error::new(io::ErrorKind::PermissionDenied, "not a place Gezik writes; left as is"))
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                t!("not a place Gezik writes; left as is").into_owned(),
+            ))
         }
     }
 
@@ -347,7 +360,7 @@ impl SystemAccess {
             .get(..5)
             .filter(|root| root.eq_ignore_ascii_case(r"HKCU\"))
             .and_then(|_| place.get(5..))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "only HKCU"))?;
+            .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, t!("only HKCU").into_owned()))?;
         Ok(if self.registry_root.is_empty() { rest.to_owned() } else { format!(r"{}\{rest}", self.registry_root) })
     }
 }
@@ -478,18 +491,18 @@ fn registry_set(key: &str, kind: Kind, name: &str, value: &Value) -> io::Result<
         (Kind::RegistryKey, Value::Absent) => reg::delete_empty_key(key),
         (Kind::RegistryValue | Kind::PathEntry, Value::Reg { ty, data }) => reg::write_value(key, name, *ty, data),
         (Kind::RegistryValue | Kind::PathEntry, Value::Absent) => reg::delete_value(key, name),
-        _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "Gezik does not write this")),
+        _ => Err(io::Error::new(io::ErrorKind::InvalidInput, t!("Gezik does not write this").into_owned())),
     }
 }
 
 #[cfg(not(windows))]
 fn registry_current(_: &str, _: Kind, _: &str) -> io::Result<Value> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "no registry here"))
+    Err(io::Error::new(io::ErrorKind::Unsupported, t!("no registry here").into_owned()))
 }
 
 #[cfg(not(windows))]
 fn registry_set(_: &str, _: Kind, _: &str, _: &Value) -> io::Result<()> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "no registry here"))
+    Err(io::Error::new(io::ErrorKind::Unsupported, t!("no registry here").into_owned()))
 }
 
 #[cfg(target_os = "macos")]
@@ -509,7 +522,7 @@ fn mac_set(change: &Change, value: &Value) -> io::Result<()> {
     let id = match value {
         Value::Text(id) => Some(id.as_str()),
         Value::Absent => None,
-        _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "Gezik does not write this")),
+        _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, t!("Gezik does not write this").into_owned())),
     };
     if change.kind == Kind::MacDefault {
         // No way to clear a handler: Finder is what macOS has without one (decision 15).
@@ -521,12 +534,12 @@ fn mac_set(change: &Change, value: &Value) -> io::Result<()> {
 
 #[cfg(not(target_os = "macos"))]
 fn mac_current(_: &Change) -> io::Result<Value> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "macOS only"))
+    Err(io::Error::new(io::ErrorKind::Unsupported, t!("macOS only").into_owned()))
 }
 
 #[cfg(not(target_os = "macos"))]
 fn mac_set(_: &Change, _: &Value) -> io::Result<()> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "macOS only"))
+    Err(io::Error::new(io::ErrorKind::Unsupported, t!("macOS only").into_owned()))
 }
 
 /// A key of a mimeapps.list; a link or a large file is not Gezik's to edit (decision 17).
@@ -542,7 +555,12 @@ fn mimeapps_set_file(path: &Path, key: &str, value: &Value) -> io::Result<()> {
     let text = match file_current(path, Kind::File)? {
         Value::Text(text) => text,
         Value::Absent if *value == Value::Absent => return Ok(()),
-        _ => return Err(io::Error::new(io::ErrorKind::AlreadyExists, "not a plain file Gezik can edit")),
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                t!("not a plain file Gezik can edit").into_owned(),
+            ));
+        }
     };
     let value = match value {
         Value::Text(v) => Some(v.as_str()),
@@ -556,7 +574,7 @@ fn mimeapps_set_file(path: &Path, key: &str, value: &Value) -> io::Result<()> {
 /// (decision 30). Blocking: not on the UI thread.
 pub fn set_mime_default(app: &Path, mime: &str) -> Result<(), String> {
     let places = gezik_platform::system::places();
-    let config = places.config_home.ok_or_else(|| "There is no configuration folder".to_owned())?;
+    let config = places.config_home.ok_or_else(|| t!("There is no configuration folder").into_owned())?;
     set_mime_default_in(&config, &places.desktops, app, mime)
 }
 
@@ -569,10 +587,11 @@ pub(crate) fn set_mime_default_in(
     app: &Path,
     mime: &str,
 ) -> Result<(), String> {
-    let id = gezik_platform::open_with::desktop_id_of(app).ok_or_else(|| "This app has no desktop id".to_owned())?;
+    let id =
+        gezik_platform::open_with::desktop_id_of(app).ok_or_else(|| t!("This app has no desktop id").into_owned())?;
     let value = format!("{id};");
     if !gezik_platform::open_with::is_mime_type(mime) || !t::desktop_ids(&value) {
-        return Err("This type or app cannot be written to mimeapps.list".to_owned());
+        return Err(t!("This type or app cannot be written to mimeapps.list").into_owned());
     }
     let read = |path: &Path| read_list(path).map_err(|e| gezik_platform::fs::describe(&e));
     let list = config_home.join("mimeapps.list");
@@ -606,7 +625,9 @@ fn read_list(path: &Path) -> io::Result<Option<String>> {
         Err(err) if err.kind() == io::ErrorKind::NotFound && path.symlink_metadata().is_err() => return Ok(None),
         Err(err) => return Err(err),
     };
-    let refused = || io::Error::new(io::ErrorKind::InvalidData, "mimeapps.list is not a plain file of at most 4 MB");
+    let refused = || {
+        io::Error::new(io::ErrorKind::InvalidData, t!("mimeapps.list is not a plain file of at most 4 MB").into_owned())
+    };
     if !meta.is_file() || meta.len() > MAX_LIST_BYTES {
         return Err(refused());
     }
@@ -660,11 +681,11 @@ fn file_set(change: &Change, value: &Value) -> io::Result<()> {
             let expect = match expect {
                 Value::Absent => None,
                 Value::Link(old) => Some(Path::new(old.as_str())),
-                _ => return Err(io::Error::new(io::ErrorKind::AlreadyExists, "not Gezik's link")),
+                _ => return Err(io::Error::new(io::ErrorKind::AlreadyExists, t!("not Gezik's link").into_owned())),
             };
             gezik_platform::system::replace_symlink(path, Path::new(target), expect)
         }
-        _ => Err(io::Error::new(io::ErrorKind::InvalidInput, "Gezik does not write this")),
+        _ => Err(io::Error::new(io::ErrorKind::InvalidInput, t!("Gezik does not write this").into_owned())),
     }
 }
 
@@ -703,7 +724,7 @@ fn plan_step(journal: &[Change], access: &dyn Access, target: Change) -> Result<
         Kind::Folder | Kind::RegistryKey if now != Value::Absent => return Ok(None),
         Kind::PathEntry => {
             if target.entry.is_empty() {
-                return Err("no folder to add to PATH".into());
+                return Err(t!("no folder to add to PATH").into());
             }
             let (ty, list) = match &now {
                 Value::Reg { ty, data } => (*ty, data.as_str()),
@@ -711,7 +732,7 @@ fn plan_step(journal: &[Change], access: &dyn Access, target: Change) -> Result<
             };
             let Some(list) = sc::with_entry(list, &target.entry, expand) else { return Ok(None) };
             if list.encode_utf16().count() >= MAX_PATH_VALUE {
-                return Err("PATH is too long to add Gezik's folder to".into());
+                return Err(t!("PATH is too long to add Gezik's folder to").into());
             }
             Value::Reg { ty, data: list }
         }
@@ -727,12 +748,12 @@ fn plan_step(journal: &[Change], access: &dyn Access, target: Change) -> Result<
         _ => false,
     };
     if now != Value::Absent && foreign {
-        let whose = if target.place.to_lowercase().ends_with(r"\opennewwindow\command") {
-            "another file manager answers Win+E: "
+        let what = sc::what(&target);
+        return Err(if target.place.to_lowercase().ends_with(r"\opennewwindow\command") {
+            t!("another file manager answers Win+E: {} is there and was not made by Gezik; it is left alone", what)
         } else {
-            ""
-        };
-        return Err(format!("{whose}{} is there and was not made by Gezik; it is left alone", sc::what(&target)));
+            t!("{} is there and was not made by Gezik; it is left alone", what)
+        });
     }
     Ok(Some(Change { before: now, after, ..target }))
 }
@@ -758,7 +779,7 @@ pub fn apply_all(locked: &mut Locked, access: &dyn Access, targets: Vec<Change>,
             Ok(()) => path_changed |= path,
             // Something not Gezik's took the place meanwhile: nothing was made there.
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
-                let why = format!("{what} is there and was not made by Gezik; it is left alone");
+                let why = t!("{} is there and was not made by Gezik; it is left alone", what);
                 return Err(take_back(locked, access, start, why));
             }
             Err(err) => return Err(take_back(locked, access, start, format!("{what}: {err}"))),
@@ -773,9 +794,10 @@ fn take_back(locked: &mut Locked, access: &dyn Access, start: usize, why: String
     let outcomes = sc::undo(&ours, access);
     let saved = locked.retain(|i, _| i < start || !outcomes[i - start].settled());
     if saved.is_ok() && outcomes.iter().all(Outcome::settled) {
-        format!("{why}; what this run made was taken back")
+        // TRANSLATORS: {} is why the change stopped.
+        t!("{}; what this run made was taken back", why)
     } else {
-        format!("{why}; some of what this run made could not be taken back: see Undo all")
+        t!("{}; some of what this run made could not be taken back: see Undo all", why)
     }
 }
 
@@ -829,7 +851,7 @@ pub fn undo_matching(locked: &mut Locked, access: &dyn Access, which: impl Fn(&C
         .map(|(&i, _)| i)
         .collect();
     if let Err(err) = locked.retain(|i, _| !forget.contains(&i)) {
-        undone.lines.push(format!("{FILE} could not be written: {err}"));
+        undone.lines.push(t!("{0} could not be written: {1}", FILE, err));
         undone.outcomes.push(Outcome::Failed(err.to_string()));
     }
     undone
@@ -978,7 +1000,7 @@ pub fn unregister(file: Option<&JournalFile>, access: &dyn Access, places: &Plac
     let undone = match file.map(JournalFile::lock) {
         Some(Err(err)) => {
             return Report {
-                lines: vec![format!("{err}; nothing was changed")],
+                lines: vec![t!("{}; nothing was changed", err)],
                 code: 2,
                 path_changed: false,
                 default_changed: false,
@@ -1003,9 +1025,9 @@ pub fn unregister(file: Option<&JournalFile>, access: &dyn Access, places: &Plac
 fn sweep(access: &dyn Access, places: &Places, exe: &Path, os: Os) -> Undone {
     let changes = sweep_changes(access, places, exe, os);
     let mut undone = report(&changes, sc::undo(&changes, access));
-    undone.lines.insert(0, format!("No {FILE}: taking back what has Gezik's names"));
+    undone.lines.insert(0, t!("No {}: taking back what has Gezik's names", FILE));
     if changes.is_empty() {
-        undone.lines.push("Nothing of Gezik's was found.".into());
+        undone.lines.push(t!("Nothing of Gezik's was found.").into());
     }
     undone
 }
@@ -1243,17 +1265,14 @@ fn journal_file() -> Option<JournalFile> {
 pub fn portable_note() -> Option<String> {
     let dirs = gezik_config::paths::location().dirs.as_ref().filter(|d| d.portable)?;
     let from = dirs.local.parent().unwrap_or(&dirs.local);
-    Some(format!(
-        "Gezik is running in portable mode from {}. These stop working when the drive is removed.",
-        from.display()
-    ))
+    Some(t!("Gezik is running in portable mode from {}. These stop working when the drive is removed.", from.display()))
 }
 
 fn exe_text() -> Result<String, String> {
-    let exe = gezik_platform::system::exe().map_err(|e| format!("Gezik's own path: {e}"))?;
+    let exe = gezik_platform::system::exe().map_err(|e| t!("Gezik's own path: {}", e))?;
     exe.to_str()
         .map(str::to_owned)
-        .ok_or_else(|| "Gezik's own path is not Unicode text; it cannot be written down".into())
+        .ok_or_else(|| t!("Gezik's own path is not Unicode text; it cannot be written down").into())
 }
 
 pub fn read_snapshot() -> Snapshot {
@@ -1263,10 +1282,11 @@ pub fn read_snapshot() -> Snapshot {
 
 /// Add gezik to PATH (spec 8.2).
 pub fn add_now() -> Result<(), String> {
-    let file = journal_file().ok_or("there is no config folder to keep system-changes.toml in")?;
+    let file = journal_file().ok_or_else(|| t!("there is no config folder to keep system-changes.toml in"))?;
     let access = SystemAccess::new();
     let exe = exe_text()?;
-    let targets = path_targets(&access.places, &exe, cfg!(windows)).ok_or("the user's folder is not known")?;
+    let targets =
+        path_targets(&access.places, &exe, cfg!(windows)).ok_or_else(|| t!("the user's folder is not known"))?;
     let mut locked = file.lock().map_err(|e| e.to_string())?;
     let changed = apply_all(&mut locked, &access, targets, &exe)?;
     drop(locked);
@@ -1283,7 +1303,7 @@ pub fn remove_now() -> Result<Vec<String>, String> {
 
 /// Undoes one feature's changes (the Restore button, the loop question).
 pub fn undo_feature_now(feature: &str) -> Result<Vec<String>, String> {
-    let file = journal_file().ok_or("there is no config folder")?;
+    let file = journal_file().ok_or_else(|| t!("there is no config folder"))?;
     let access = SystemAccess::new();
     let mut locked = file.lock().map_err(|e| e.to_string())?;
     let undone = undo_matching(&mut locked, &access, |c| c.feature == feature);
@@ -1298,7 +1318,7 @@ pub fn undo_feature_now(feature: &str) -> Result<Vec<String>, String> {
 pub fn repair_now() -> Result<Vec<String>, String> {
     let mut lines = remove_now()?;
     add_now()?;
-    lines.push("added again for this Gezik".into());
+    lines.push(t!("added again for this Gezik").into());
     Ok(lines)
 }
 
@@ -1306,11 +1326,11 @@ pub fn repair_now() -> Result<Vec<String>, String> {
 /// about to be made, then the targets, then the system told. `Ok(Some(note))`: done in part,
 /// as the note says (macOS 26 keeps folders for Finder; Reveal in Finder still comes to Gezik).
 pub fn make_default_now() -> Result<Option<String>, String> {
-    let file = journal_file().ok_or("there is no config folder to keep system-changes.toml in")?;
+    let file = journal_file().ok_or_else(|| t!("there is no config folder to keep system-changes.toml in"))?;
     let access = SystemAccess::new();
     let exe = exe_text()?;
-    let targets =
-        default_targets(&access.places, &exe, Os::HERE, Some(&disk_text)).ok_or("the user's folders are not known")?;
+    let targets = default_targets(&access.places, &exe, Os::HERE, Some(&disk_text))
+        .ok_or_else(|| t!("the user's folders are not known"))?;
     let mut locked = file.lock().map_err(|e| e.to_string())?;
     // A refusal here writes nothing, not even the recovery file (decision 8).
     let mut all = locked.journal().changes.clone();
@@ -1363,20 +1383,20 @@ pub fn restore_default_now() -> Result<Vec<String>, String> {
 pub fn repair_default_now() -> Result<Vec<String>, String> {
     let mut lines = restore_default_now()?;
     make_default_now()?;
-    lines.push("made again for this Gezik".into());
+    lines.push(t!("made again for this Gezik").into());
     Ok(lines)
 }
 
 /// Start at login (spec 9.3): every target read first; a foreign one refuses with nothing written.
 pub fn login_on_now() -> Result<(), String> {
-    let file = journal_file().ok_or("there is no config folder to keep system-changes.toml in")?;
+    let file = journal_file().ok_or_else(|| t!("there is no config folder to keep system-changes.toml in"))?;
     let access = SystemAccess::new();
     let exe = exe_text()?;
     let targets = login_targets(&access.places, &exe, Os::HERE).ok_or_else(|| {
         if login_steps(&access.places, "", Os::HERE).is_none() {
-            "the user's folders are not known".to_owned()
+            t!("the user's folders are not known").into_owned()
         } else {
-            format!("Gezik's own path ({exe}) cannot be written into a login entry")
+            t!("Gezik's own path ({}) cannot be written into a login entry", exe)
         }
     })?;
     let mut locked = file.lock().map_err(|e| e.to_string())?;
@@ -1387,7 +1407,7 @@ pub fn login_on_now() -> Result<(), String> {
 pub fn repair_login_now() -> Result<Vec<String>, String> {
     let mut lines = undo_feature_now(FEATURE_LOGIN)?;
     login_on_now()?;
-    lines.push("made again for this Gezik".into());
+    lines.push(t!("made again for this Gezik").into());
     Ok(lines)
 }
 
@@ -1412,11 +1432,11 @@ pub fn risky_place(exe: &Path, downloads: Option<&Path>, temp: &Path, removable:
         exe.strip_prefix(dir.trim_end_matches(['\\', '/'])).is_some_and(|rest| rest.starts_with(['\\', '/']))
     };
     if downloads.is_some_and(under) {
-        Some("Downloads")
+        Some(tx!("Downloads"))
     } else if under(temp) {
-        Some("a temporary folder")
+        Some(tx!("a temporary folder"))
     } else if removable {
-        Some("a removable drive")
+        Some(tx!("a removable drive"))
     } else {
         None
     }
@@ -1428,14 +1448,16 @@ pub fn risky_note() -> Option<String> {
     let downloads = gezik_platform::system::places().downloads;
     let removable = gezik_platform::system::is_removable(&exe);
     let place = risky_place(&exe, downloads.as_deref(), &std::env::temp_dir(), removable)?;
+    let place = gezik_i18n::t("", place);
+    // TRANSLATORS: {0} is Downloads, a temporary folder or a removable drive.
     Some(if cfg!(windows) {
-        format!(
-            "Gezik is in {place}. If it is moved or deleted, folders will not open until you repair it here or open {RESTORE_REG}."
+        t!(
+            "Gezik is in {0}. If it is moved or deleted, folders will not open until you repair it here or open {1}.",
+            place,
+            RESTORE_REG
         )
     } else {
-        format!(
-            "Gezik is in {place}. If it is moved or deleted, folders will not open in Gezik until you repair it here."
-        )
+        t!("Gezik is in {}. If it is moved or deleted, folders will not open in Gezik until you repair it here.", place)
     })
 }
 
@@ -1451,8 +1473,8 @@ pub fn idle_check() -> (Option<String>, bool) {
         || matches!(snapshot.default, DefaultState::Moved { .. })
         || matches!(snapshot.login, LoginState::Moved { .. });
     let note = moved.then(|| {
-        "System registrations still point to Gezik's old place; folders will not open in Gezik until they are repaired."
-            .to_owned()
+        t!("System registrations still point to Gezik's old place; folders will not open in Gezik until they are repaired.")
+            .into_owned()
     });
     (note, Os::HERE == Os::Linux && snapshot.default == DefaultState::On)
 }

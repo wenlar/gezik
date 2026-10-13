@@ -45,10 +45,10 @@ impl CaseMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            CaseMode::Lower => "lower case",
-            CaseMode::Upper => "UPPER CASE",
-            CaseMode::Title => "Title Case",
-            CaseMode::Sentence => "Sentence case",
+            CaseMode::Lower => gezik_i18n::tx!("case" => "lower case"),
+            CaseMode::Upper => gezik_i18n::tx!("case" => "UPPER CASE"),
+            CaseMode::Title => gezik_i18n::tx!("case" => "Title Case"),
+            CaseMode::Sentence => gezik_i18n::tx!("case" => "Sentence case"),
         }
     }
 }

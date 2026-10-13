@@ -14,7 +14,7 @@ use crate::ChildProcess;
 const POLL: Duration = Duration::from_millis(100);
 
 /// What is said when neither program is there.
-const HINT: &str = "Install curl with your package manager (sudo apt install curl)";
+const HINT: &str = gezik_i18n::tx!("Install curl with your package manager (sudo apt install curl)");
 
 /// The programs that download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub(super) fn download(
     let (program, which) = match (find("curl", &path), find("wget", &path)) {
         (Some(curl), _) => (curl, Downloader::Curl),
         (None, Some(wget)) => (wget, Downloader::Wget),
-        (None, None) => return Err(io::Error::new(io::ErrorKind::NotFound, HINT)),
+        (None, None) => return Err(io::Error::new(io::ErrorKind::NotFound, gezik_i18n::t("", HINT).into_owned())),
     };
     run(&program, which, url, dest, max_bytes, allow_http, progress, stop)
 }
@@ -44,7 +44,7 @@ pub(super) fn tool_missing_hint() -> Option<String> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     match find("curl", &path).or_else(|| find("wget", &path)) {
         Some(_) => None,
-        None => Some(HINT.to_owned()),
+        None => Some(gezik_i18n::t("", HINT).into_owned()),
     }
 }
 
@@ -95,7 +95,9 @@ pub(super) fn run(
     // from the headers it printed (`--server-response`). The request went out, but nothing
     // it brought is kept.
     if which == Downloader::Wget && !allow_http && insecure_redirect(&errors) {
-        return Err(io::Error::other("the download was redirected to an insecure address"));
+        return Err(io::Error::other(
+            gezik_i18n::t!("the download was redirected to an insecure address").into_owned(),
+        ));
     }
     if !status.success() {
         let text = match which {
@@ -173,7 +175,7 @@ pub(super) fn wget_arguments(url: &str, name: &OsStr, allow_http: bool) -> Vec<O
 /// What curl said went wrong, in a line.
 pub(super) fn curl_message(errors: &str) -> String {
     let lines: Vec<&str> = errors.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
-    if lines.is_empty() { "the download failed".to_owned() } else { lines.join(" ") }
+    if lines.is_empty() { gezik_i18n::t!("the download failed").into_owned() } else { lines.join(" ") }
 }
 
 /// Whether a `Location:` header in wget's `--server-response` output leads anywhere but
@@ -195,18 +197,18 @@ pub(super) fn wget_message(code: Option<i32>, server_response: &str) -> String {
     if code == Some(8)
         && let Some((_, status)) = answer.and_then(|line| line.split_once(' '))
     {
-        return format!("wget: the server answered {status}");
+        return gezik_i18n::t!("wget: the server answered {}", status);
     }
     let text = match code {
         // BusyBox's wget knows none of the options: its usage message ends it with 1.
-        Some(1) | Some(2) => "the download failed (if this wget is BusyBox's, install curl)",
-        Some(3) => "could not write the file",
-        Some(4) => "could not connect to the server (network failure)",
-        Some(5) => "the server's certificate could not be verified",
-        Some(6) => "the server asked for a login",
-        Some(7) => "the server's answer was not understood",
-        Some(8) => "the server answered with an error",
-        _ => "the download failed",
+        Some(1) | Some(2) => gezik_i18n::tx!("the download failed (if this wget is BusyBox's, install curl)"),
+        Some(3) => gezik_i18n::tx!("could not write the file"),
+        Some(4) => gezik_i18n::tx!("could not connect to the server (network failure)"),
+        Some(5) => gezik_i18n::tx!("the server's certificate could not be verified"),
+        Some(6) => gezik_i18n::tx!("the server asked for a login"),
+        Some(7) => gezik_i18n::tx!("the server's answer was not understood"),
+        Some(8) => gezik_i18n::tx!("the server answered with an error"),
+        _ => gezik_i18n::tx!("the download failed"),
     };
-    format!("wget: {text}")
+    format!("wget: {}", gezik_i18n::t("", text))
 }

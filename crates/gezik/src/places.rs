@@ -39,11 +39,11 @@ impl Places {
     pub fn title_for(&self, location: &Location) -> String {
         let path = match location {
             Location::Path(path) => path,
-            Location::Drives => return gezik_core::nav::DRIVES_NAME.to_owned(),
-            Location::Trash => return gezik_core::nav::TRASH_NAME.to_owned(),
+            Location::Drives => return gezik_i18n::t("", gezik_core::nav::DRIVES_NAME).into_owned(),
+            Location::Trash => return gezik_i18n::t("", gezik_core::nav::TRASH_NAME).into_owned(),
             Location::Search(spec) => return spec.title(),
             Location::Flat(folder) => {
-                return format!("{} (all files)", self.title_for(&Location::Path(folder.clone())));
+                return gezik_i18n::t!("{} (all files)", self.title_for(&Location::Path(folder.clone())));
             }
         };
         if let Some(folder) = self.known.iter().find(|f| f.path == *path) {

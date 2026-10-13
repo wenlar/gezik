@@ -103,7 +103,7 @@ pub fn serve(on_call: impl Fn(Call) + Send + 'static) -> std::io::Result<Owner> 
     if !matches!(code, 1 | 4) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            "another file manager answers Show in folder",
+            gezik_i18n::t!("another file manager answers Show in folder").into_owned(),
         ));
     }
     let owner = Owner(bus.stream.try_clone()?);

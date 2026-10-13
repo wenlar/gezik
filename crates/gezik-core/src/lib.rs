@@ -244,35 +244,61 @@ pub fn format_size(bytes: u64) -> String {
     format_size_in(bytes, view::SizeFormat::Binary)
 }
 
-/// `1234567` as `1,234,567`.
+/// `1234567` as `1,234,567`, with the interface language's separator (`1.234.567` in Turkish).
 pub fn group_digits(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
+    gezik_i18n::number().grouped(n)
 }
 
-/// A byte count as `format` writes it: `1.5 KB` (steps of 1024) or `1.5 kB` (steps of 1000).
+/// A byte count as `format` writes it: `1.5 KB` (steps of 1024) or `1.5 kB` (steps of 1000),
+/// with the interface language's decimal separator (`1,5 KB` in Turkish).
 pub fn format_size_in(bytes: u64, format: view::SizeFormat) -> String {
-    let (step, units): (f64, [&str; 5]) = match format {
-        view::SizeFormat::Binary => (1024.0, ["B", "KB", "MB", "GB", "TB"]),
-        view::SizeFormat::Decimal => (1000.0, ["B", "kB", "MB", "GB", "TB"]),
+    format_size_with(bytes, format, gezik_i18n::number())
+}
+
+/// `format_size_in` with the separators of `number`.
+pub fn format_size_with(bytes: u64, format: view::SizeFormat, number: gezik_i18n::Number) -> String {
+    size_text(bytes, format, number, |unit| gezik_i18n::t("unit", unit))
+}
+
+/// `1.5 MB` the same in every language (file names, file contents).
+pub fn format_size_english(bytes: u64) -> String {
+    size_text(bytes, view::SizeFormat::Binary, gezik_i18n::Number::ENGLISH, std::borrow::Cow::Borrowed)
+}
+
+fn size_text(
+    bytes: u64,
+    format: view::SizeFormat,
+    number: gezik_i18n::Number,
+    unit_text: impl Fn(&'static str) -> std::borrow::Cow<'static, str>,
+) -> String {
+    use gezik_i18n::tx;
+    use std::fmt::Write;
+    let step = match format {
+        view::SizeFormat::Binary => 1024.0,
+        view::SizeFormat::Decimal => 1000.0,
     };
+    let mut out = String::with_capacity(16);
     if (bytes as f64) < step {
-        return format!("{bytes} B");
+        let _ = write!(out, "{bytes} ");
+        out.push_str(&unit_text(tx!("unit" => "B")));
+        return out;
     }
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= step && unit < units.len() - 1 {
+    while value >= step && unit < 4 {
         value /= step;
         unit += 1;
     }
-    format!("{value:.1} {}", units[unit])
+    number.write_decimal(&mut out, value, 1);
+    out.push(' ');
+    out.push_str(&unit_text(match (unit, format) {
+        (1, view::SizeFormat::Binary) => tx!("unit" => "KB"),
+        (1, view::SizeFormat::Decimal) => tx!("unit" => "kB"),
+        (2, _) => tx!("unit" => "MB"),
+        (3, _) => tx!("unit" => "GB"),
+        _ => tx!("unit" => "TB"),
+    }));
+    out
 }
 
 #[cfg(test)]
@@ -469,11 +495,38 @@ mod tests {
     }
 
     #[test]
+    fn sizes_take_the_language_decimal_separator() {
+        use crate::view::SizeFormat::{Binary, Decimal};
+        use gezik_i18n::Number;
+        for (code, text) in [
+            ("en", "1.5 MB"),
+            ("zh-Hans", "1.5 MB"),
+            ("tr", "1,5 MB"),
+            ("de", "1,5 MB"),
+            ("es", "1,5 MB"),
+            ("fr", "1,5 MB"),
+        ] {
+            let number = Number::builtin(code).unwrap();
+            assert_eq!(format_size_with(1536 * 1024, Binary, number), text, "{code}");
+            assert_eq!(format_size_with(1023, Binary, number), "1023 B", "{code}: no grouping in sizes");
+            assert_eq!(format_size_with(999_900, Decimal, number).len(), "999.9 kB".len(), "{code}");
+        }
+    }
+
+    #[test]
+    fn english_sizes_are_the_same_in_every_language() {
+        assert_eq!(format_size_english(1536 * 1024), "1.5 MB");
+        assert_eq!(format_size_english(10), "10 B");
+    }
+
+    #[test]
     fn formats_sizes() {
         assert_eq!(format_size(0), "0 B");
         assert_eq!(format_size(1023), "1023 B");
         assert_eq!(format_size(1536), "1.5 KB");
         assert_eq!(format_size(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(group_digits(1_234_567), "1,234,567");
+        assert_eq!(group_digits(999), "999");
     }
 
     #[test]

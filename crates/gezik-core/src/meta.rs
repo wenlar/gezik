@@ -149,21 +149,21 @@ fn one_paragraph(text: &str) -> Box<str> {
 }
 
 /// Why `name` cannot be a tag's name, if it cannot: commas part Linux's list, a line break
-/// parts Finder's name from its colour.
+/// parts Finder's name from its colour. Marked for translation: shown with `gezik_i18n::t`.
 pub fn check_tag_name(name: &str) -> Result<(), &'static str> {
     let count = name.chars().count();
     if count == 0 {
-        Err("a tag name cannot be empty")
+        Err(gezik_i18n::tx!("a tag name cannot be empty"))
     } else if count > MAX_TAG_NAME {
-        Err("a tag name is at most 64 characters")
+        Err(gezik_i18n::tx!("a tag name is at most 64 characters"))
     } else if name.trim() != name {
-        Err("a tag name cannot start or end with a space")
+        Err(gezik_i18n::tx!("a tag name cannot start or end with a space"))
     } else if name.contains(',') {
-        Err("a tag name cannot hold a comma")
+        Err(gezik_i18n::tx!("a tag name cannot hold a comma"))
     } else if name.contains(['\n', '\r']) {
-        Err("a tag name cannot hold a line break")
+        Err(gezik_i18n::tx!("a tag name cannot hold a line break"))
     } else if name.chars().any(char::is_control) {
-        Err("a tag name cannot hold a control character")
+        Err(gezik_i18n::tx!("a tag name cannot hold a control character"))
     } else {
         Ok(())
     }

@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::attrs::{Attrs, HIDDEN, LOCKED, Wanted, flags_first};
 use crate::ops::paths::is_within;
+use gezik_i18n::{t, tn, tx};
 
 pub use quote::{applescript, osascript_source, sh_word, windows_arg, windows_command_line};
 
@@ -29,28 +30,29 @@ pub const MAX_MESSAGE: usize = 200;
 /// One name in a path, in bytes (Windows: UTF-16 units).
 pub const MAX_NAME: usize = 255;
 
-pub const TOO_MANY: &str = "Too many items for one administrator operation; select fewer.";
-pub const NOT_ELEVATED: &str = "The helper is not running as administrator";
-pub const STOPPED: &str = "The administrator helper stopped before it said how this went";
-pub const SKIPPED: &str = "The administrator helper did not do it";
-pub const NOT_UNICODE: &str = "A name that is not Unicode";
-pub const NOT_FULL: &str = "Not a full path";
-pub const NOT_PLAIN: &str = "Not a plain path (., .. or an empty part)";
-pub const DEVICE: &str = "A device path, a network path or a stream name";
-pub const RESERVED: &str = "A name Windows keeps for devices";
-pub const CONTROL: &str = "A control character in a name";
-pub const BAD_CHAR: &str = "A character Windows does not allow in names";
-pub const TOO_LONG: &str = "A path or name that is too long";
-pub const GUARDED: &str = "A drive, a system folder or a home folder itself; Gezik does not change it as administrator";
-pub const BAD_NAME: &str = "Not a single name";
-pub const MODE: &str = "Permissions Gezik does not set as administrator (setuid, setgid)";
-pub const UNIX_ONLY: &str = "Permissions and owners are changed in Windows' Properties";
-pub const MAC_ONLY: &str = "Hidden and Locked are macOS flags";
-pub const FLAGS: &str = "Only Hidden and Locked are changed";
-pub const INTO_ITSELF: &str = "A folder into itself";
-pub const NOTHING: &str = "Nothing to do";
-pub const WRONG_VERSION: &str = "A list for another version of Gezik";
-pub const MALFORMED: &str = "A list Gezik did not write";
+pub const TOO_MANY: &str = tx!("Too many items for one administrator operation; select fewer.");
+pub const NOT_ELEVATED: &str = tx!("The helper is not running as administrator");
+pub const STOPPED: &str = tx!("The administrator helper stopped before it said how this went");
+pub const SKIPPED: &str = tx!("The administrator helper did not do it");
+pub const NOT_UNICODE: &str = tx!("A name that is not Unicode");
+pub const NOT_FULL: &str = tx!("Not a full path");
+pub const NOT_PLAIN: &str = tx!("Not a plain path (., .. or an empty part)");
+pub const DEVICE: &str = tx!("A device path, a network path or a stream name");
+pub const RESERVED: &str = tx!("A name Windows keeps for devices");
+pub const CONTROL: &str = tx!("A control character in a name");
+pub const BAD_CHAR: &str = tx!("A character Windows does not allow in names");
+pub const TOO_LONG: &str = tx!("A path or name that is too long");
+pub const GUARDED: &str =
+    tx!("A drive, a system folder or a home folder itself; Gezik does not change it as administrator");
+pub const BAD_NAME: &str = tx!("Not a single name");
+pub const MODE: &str = tx!("Permissions Gezik does not set as administrator (setuid, setgid)");
+pub const UNIX_ONLY: &str = tx!("Permissions and owners are changed in Windows' Properties");
+pub const MAC_ONLY: &str = tx!("Hidden and Locked are macOS flags");
+pub const FLAGS: &str = tx!("Only Hidden and Locked are changed");
+pub const INTO_ITSELF: &str = tx!("A folder into itself");
+pub const NOTHING: &str = tx!("Nothing to do");
+pub const WRONG_VERSION: &str = tx!("A list for another version of Gezik");
+pub const MALFORMED: &str = tx!("A list Gezik did not write");
 pub const DONE: &str = "done";
 
 /// One thing the helper does (spec §10.3; `Rmdir` is the undo of `Mkdir`).
@@ -534,14 +536,22 @@ pub fn answers(count: usize, replies: &[Reply]) -> Vec<Answer> {
         _ => None,
     });
     if let Some(why) = refused {
-        return vec![Answer::NotRun(format!("Not done: {why}")); count];
+        return vec![Answer::NotRun(t!("Not done: {}", why)); count];
     }
     let mut out: Vec<Option<Answer>> = vec![None; count];
     for reply in replies {
         let (at, answer) = match reply {
             Reply::Ok(at) => (*at, Answer::Done),
             Reply::Err { index, message, .. } => {
-                (*index, Answer::Failed(if message.is_empty() { "Failed".to_owned() } else { message.clone() }))
+                (
+                    *index,
+                    Answer::Failed(if message.is_empty() {
+                        t!("Failed").into_owned()
+                    } else {
+                        // The helper's own texts come in English (`fs::secure`'s are marked).
+                        gezik_i18n::t("", message).into_owned()
+                    }),
+                )
             }
             _ => continue,
         };
@@ -552,7 +562,9 @@ pub fn answers(count: usize, replies: &[Reply]) -> Vec<Answer> {
         }
     }
     let silent = if replies.contains(&Reply::Done) { SKIPPED } else { STOPPED };
-    out.into_iter().map(|answer| answer.unwrap_or_else(|| Answer::NotRun(silent.to_owned()))).collect()
+    out.into_iter()
+        .map(|answer| answer.unwrap_or_else(|| Answer::NotRun(gezik_i18n::t("", silent).into_owned())))
+        .collect()
 }
 
 /// Why the helper did not run.
@@ -632,31 +644,35 @@ pub fn attr_ops(wanted: &[Wanted]) -> Vec<Op> {
 
 /// What the job, its Undo and the history say: `Copy 3 items as administrator`.
 pub fn label(ops: &[Op]) -> String {
-    let items = |n: usize| if n == 1 { "1 item".to_owned() } else { format!("{n} items") };
     let all = |f: fn(&Op) -> bool| !ops.is_empty() && ops.iter().all(f);
-    let what = if all(|op| matches!(op, Op::Copy { .. })) {
-        format!("Copy {}", items(ops.len()))
+    let n = ops.len();
+    if all(|op| matches!(op, Op::Copy { .. })) {
+        tn!("Copy {n} item as administrator" | "Copy {n} items as administrator", n)
     } else if all(|op| matches!(op, Op::Move { .. })) {
-        format!("Move {}", items(ops.len()))
+        tn!("Move {n} item as administrator" | "Move {n} items as administrator", n)
     } else if all(|op| matches!(op, Op::Delete(_))) {
-        format!("Delete {} permanently", items(ops.len()))
+        tn!("Delete {n} item permanently as administrator" | "Delete {n} items permanently as administrator", n)
     } else if all(|op| matches!(op, Op::Rename { .. })) {
-        if ops.len() == 1 { "Rename".to_owned() } else { format!("Rename {}", items(ops.len())) }
+        if n == 1 {
+            t!("Rename as administrator").into_owned()
+        } else {
+            tn!("Rename {n} item as administrator" | "Rename {n} items as administrator", n)
+        }
     } else if all(|op| matches!(op, Op::Mkdir(_))) {
-        "New folder".to_owned()
+        t!("New folder as administrator").into_owned()
     } else if all(|op| matches!(op, Op::Chmod { .. } | Op::Chown { .. } | Op::Chflags { .. })) {
         let mut paths: Vec<&Path> = ops.iter().map(Op::path).collect();
         paths.dedup();
-        format!("Change {}", items(paths.len()))
+        tn!("Change {n} item as administrator" | "Change {n} items as administrator", paths.len())
     } else {
-        format!("{} changes", ops.len())
-    };
-    format!("{what} as administrator")
+        tn!("{n} change as administrator" | "{n} changes as administrator", n)
+    }
 }
 
 /// The line of macOS's password prompt.
 pub fn prompt(ops: &[Op]) -> String {
-    format!("Gezik: {}.", label(ops))
+    // TRANSLATORS: {} is what is done, "Copy 3 items as administrator"
+    t!("Gezik: {}.", label(ops))
 }
 
 #[cfg(test)]

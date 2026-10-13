@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use gezik_config::bundle::{self, Group};
 use gezik_config::paths::write_atomic_bytes;
+use gezik_i18n::t;
 
 /// A file of an export: its name in the zip (`themes/nord.toml`) and contents.
 pub type File = (String, Vec<u8>);
@@ -110,7 +111,7 @@ fn read_if_there(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match std::fs::read(path) {
         Ok(data) => Ok(Some(data)),
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(format!("Cannot read {}: {}", path.display(), describe(&err))),
+        Err(err) => Err(t!("Cannot read {0}: {1}", path.display(), describe(&err))),
     }
 }
 
@@ -137,7 +138,7 @@ pub fn collect(folders: &Folders, groups: &[Group]) -> Result<Vec<File>, String>
                         .filter(|name| bundle::group_of(name) == Some(Group::Themes))
                         .collect(),
                     Err(err) if err.kind() == ErrorKind::NotFound => Vec::new(),
-                    Err(err) => return Err(format!("Cannot read the themes folder: {}", describe(&err))),
+                    Err(err) => return Err(t!("Cannot read the themes folder: {}", describe(&err))),
                 };
                 names.sort();
                 for name in names {
@@ -160,7 +161,7 @@ fn templates(folder: &Path, name: &str, files: &mut Vec<File>, total: &mut u64) 
     let entries = match std::fs::read_dir(folder) {
         Ok(entries) => entries,
         Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(format!("Cannot read {}: {}", folder.display(), describe(&err))),
+        Err(err) => return Err(t!("Cannot read {0}: {1}", folder.display(), describe(&err))),
     };
     let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
     entries.sort_by_key(std::fs::DirEntry::file_name);
@@ -171,13 +172,15 @@ fn templates(folder: &Path, name: &str, files: &mut Vec<File>, total: &mut u64) 
         if kind.is_dir() {
             templates(&entry.path(), &inner, files, total)?;
         } else if kind.is_file() && bundle::group_of(&inner) == Some(Group::Templates) {
-            let data = std::fs::read(entry.path()).map_err(|err| format!("Cannot read {inner}: {}", describe(&err)))?;
+            let data = std::fs::read(entry.path()).map_err(|err| t!("Cannot read {0}: {1}", inner, describe(&err)))?;
             *total += data.len() as u64;
             if data.len() as u64 > bundle::MAX_FILE || *total > bundle::MAX_TEMPLATES {
-                return Err("The templates are larger than 256 MB (or one is over 64 MB): leave them out".to_owned());
+                return Err(
+                    t!("The templates are larger than 256 MB (or one is over 64 MB): leave them out").into_owned()
+                );
             }
             if files.len() >= bundle::MAX_ENTRIES - 1 {
-                return Err("More than 4,096 files: leave the templates out".to_owned());
+                return Err(t!("More than 4,096 files: leave the templates out").into_owned());
             }
             files.push((inner, data));
         }
@@ -197,18 +200,18 @@ fn manifest() -> String {
 fn zip(files: &[File]) -> Result<Vec<u8>, String> {
     let all: Vec<File> =
         std::iter::once((bundle::MANIFEST.to_owned(), manifest().into_bytes())).chain(files.iter().cloned()).collect();
-    gezik_batch::archive::write_zip_entries(&all).map_err(|err| format!("Cannot make the zip: {}", describe(&err)))
+    gezik_batch::archive::write_zip_entries(&all).map_err(|err| t!("Cannot make the zip: {}", describe(&err)))
 }
 
 /// Writes the config folders' files in `groups` to the zip `out` (which must not be there yet);
 /// how many files went in.
 pub fn export(folders: &Folders, out: &Path, groups: &[Group]) -> Result<usize, String> {
     if out.symlink_metadata().is_ok() {
-        return Err(format!("{} is there already: give another name", out.display()));
+        return Err(t!("{} is there already: give another name", out.display()));
     }
     let files = collect(folders, groups)?;
     let bytes = zip(&files)?;
-    write_atomic_bytes(out, &bytes).map_err(|err| format!("Cannot write {}: {}", out.display(), describe(&err)))?;
+    write_atomic_bytes(out, &bytes).map_err(|err| t!("Cannot write {0}: {1}", out.display(), describe(&err)))?;
     Ok(files.len())
 }
 
@@ -217,10 +220,10 @@ pub fn export(folders: &Folders, out: &Path, groups: &[Group]) -> Result<usize, 
 /// from elsewhere, refused when its settings.toml or views.toml does not read; one of Gezik's
 /// own backups is not checked (it holds what was there, broken or not, byte for byte).
 pub fn read(path: &Path, check: bool) -> Result<Read, String> {
-    let cannot = |err: std::io::Error| format!("Cannot read {}: {}", path.display(), describe(&err));
+    let cannot = |err: std::io::Error| t!("Cannot read {0}: {1}", path.display(), describe(&err));
     let size = std::fs::metadata(path).map_err(cannot)?.len();
     if size > bundle::MAX_ZIP {
-        return Err(format!("{} is larger than 300 MB: not a settings export", path.display()));
+        return Err(t!("{} is larger than 300 MB: not a settings export", path.display()));
     }
     let bytes = std::fs::read(path).map_err(cannot)?;
     let offered = std::cell::RefCell::new((0usize, Vec::new()));
@@ -240,19 +243,19 @@ pub fn read(path: &Path, check: bool) -> Result<Read, String> {
         bundle::MAX_ENTRIES + 1,
         bundle::MAX_ZIP,
     )
-    .map_err(|err| format!("{} does not read as a zip: {}", path.display(), describe(&err)))?;
+    .map_err(|err| t!("{0} does not read as a zip: {1}", path.display(), describe(&err)))?;
     let (count, left_out) = offered.into_inner();
     if count > bundle::MAX_ENTRIES {
-        return Err("It has more than 4,096 files: not a settings export".to_owned());
+        return Err(t!("It has more than 4,096 files: not a settings export").into_owned());
     }
     let mut manifest = None;
     let mut files: Vec<(String, Group, Vec<u8>)> = Vec::new();
     for (name, data) in entries {
-        let data = data.ok_or_else(|| format!("{name} is larger than 64 MB"))?;
+        let data = data.ok_or_else(|| t!("{} is larger than 64 MB", name))?;
         if files.iter().any(|(n, _, _)| n.eq_ignore_ascii_case(&name))
             || (manifest.is_some() && name == bundle::MANIFEST)
         {
-            return Err(format!("{name} is in it twice"));
+            return Err(t!("{} is in it twice", name));
         }
         match bundle::group_of(&name) {
             Some(group) => files.push((name, group, data)),
@@ -261,14 +264,14 @@ pub fn read(path: &Path, check: bool) -> Result<Read, String> {
     }
     let os = bundle::read_manifest(manifest.as_deref())?;
     for (name, group, data) in files.iter().filter(|_| check) {
-        let text = || std::str::from_utf8(data).map_err(|_| format!("{name} is not text"));
+        let text = || std::str::from_utf8(data).map_err(|_| t!("{} is not text", name));
         match group {
             Group::Settings => {
-                gezik_config::schema::values(text()?).map(drop).map_err(|w| format!("Not imported: {w}"))?
+                gezik_config::schema::values(text()?).map(drop).map_err(|w| t!("Not imported: {}", w))?
             }
             Group::Views => gezik_config::views_file::parse_views(text()?)
                 .map(drop)
-                .map_err(|err| format!("Not imported: views.toml: {err}"))?,
+                .map_err(|err| t!("Not imported: views.toml: {}", err))?,
             Group::Themes => drop(text()?),
             Group::Templates => {}
         }
@@ -327,12 +330,12 @@ pub fn backup(
 ) -> Result<(PathBuf, Vec<File>), String> {
     let groups: Vec<Group> =
         Group::ALL.into_iter().filter(|g| matches!(g, Group::Settings | Group::Themes) || also.contains(g)).collect();
-    let files = collect(folders, &groups).map_err(|why| format!("Nothing changed: the backup failed: {why}"))?;
+    let files = collect(folders, &groups).map_err(|why| t!("Nothing changed: the backup failed: {}", why))?;
     let folder = folders.backups();
     let path = folder.join(name);
     std::fs::create_dir_all(&folder)
         .and_then(|()| zip(&files).map_err(std::io::Error::other).and_then(|bytes| write_atomic_bytes(&path, &bytes)))
-        .map_err(|err| format!("Nothing changed: cannot write the backup {}: {}", path.display(), describe(&err)))?;
+        .map_err(|err| t!("Nothing changed: cannot write the backup {0}: {1}", path.display(), describe(&err)))?;
     for old in bundle::backups_to_drop(names_in(&folder)) {
         discard(&folder.join(old));
     }
@@ -364,7 +367,7 @@ pub fn import(folders: &Folders, chosen: Vec<Incoming>, name: &str, discard: &dy
         let there = folders.path_of(&file.name).symlink_metadata().is_ok();
         let real = if there { real_name(folders.dir_of(&file.name), &file.name) } else { None };
         if there && real.as_ref().is_none_or(|real| !before.iter().any(|(n, _)| n == real)) {
-            return Err(format!(
+            return Err(t!(
                 "Nothing imported: {} here is a link or has a name the backup cannot hold; move it away or leave \
                  its kind of file out",
                 file.name
@@ -379,11 +382,14 @@ pub fn import(folders: &Folders, chosen: Vec<Incoming>, name: &str, discard: &dy
         let written =
             path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| write_atomic_bytes(&path, &file.data));
         if let Err(err) = written {
-            let put_back = match put_back(folders, &undo, &before) {
-                Ok(()) => "the files written before it are back as they were".to_owned(),
-                Err(why) => format!("{why}; Restore Backup has them"),
-            };
-            return Err(format!("Cannot write {}: {} — {put_back}", file.name, describe(&err)));
+            let why = describe(&err);
+            return Err(match put_back(folders, &undo, &before) {
+                Ok(()) => {
+                    t!("Cannot write {0}: {1} — the files written before it are back as they were", file.name, why)
+                }
+                // TRANSLATORS: {2} is why the files written before could not be put back.
+                Err(back) => t!("Cannot write {0}: {1} — {2}; Restore Backup has them", file.name, why, back),
+            });
         }
         if file.group == Group::Views {
             views = Some(String::from_utf8_lossy(&file.data).into_owned());
@@ -423,17 +429,17 @@ fn put_back(folders: &Folders, undo: &Undo, before: &[File]) -> Result<(), Strin
     let mut failed = None;
     for name in &undo.replaced {
         let Some((_, data)) = before.iter().find(|(n, _)| n == name) else {
-            failed = Some(format!("Cannot put back {name}: it is not in the backup"));
+            failed = Some(t!("Cannot put back {}: it is not in the backup", name));
             continue;
         };
         if let Err(err) = write_atomic_bytes(&folders.path_of(name), data) {
-            failed = Some(format!("Cannot put back {name}: {}", describe(&err)));
+            failed = Some(t!("Cannot put back {0}: {1}", name, describe(&err)));
         }
     }
     for name in &undo.created {
         match std::fs::remove_file(folders.path_of(name)) {
             Err(err) if err.kind() != ErrorKind::NotFound => {
-                failed = Some(format!("Cannot remove {name}: {}", describe(&err)));
+                failed = Some(t!("Cannot remove {0}: {1}", name, describe(&err)));
             }
             _ => {}
         }
@@ -482,14 +488,14 @@ pub enum Start {
 /// themselves are refused.
 pub fn look(folders: &Folders, folder: &Path) -> Result<Found, String> {
     if !folder.is_absolute() {
-        return Err("Type the whole path of a folder".to_owned());
+        return Err(t!("Type the whole path of a folder").into_owned());
     }
     let same =
         |a: &Path, b: &Path| a == b || std::fs::canonicalize(a).ok().is_some_and(|a| b.canonicalize().ok() == Some(a));
     if same(folder, &folders.shared) || same(folder, &folders.local) {
-        return Err("The settings are in that folder already".to_owned());
+        return Err(t!("The settings are in that folder already").into_owned());
     }
-    std::fs::create_dir_all(folder).map_err(|err| format!("Cannot make {}: {}", folder.display(), describe(&err)))?;
+    std::fs::create_dir_all(folder).map_err(|err| t!("Cannot make {0}: {1}", folder.display(), describe(&err)))?;
     Ok(if folder.join("settings.toml").is_file() { Found::Settings } else { Found::Empty })
 }
 
@@ -503,7 +509,7 @@ fn write_into(dir: &Path, files: Vec<File>) -> Result<(), String> {
         path.parent()
             .map_or(Ok(()), std::fs::create_dir_all)
             .and_then(|()| write_atomic_bytes(&path, &data))
-            .map_err(|err| format!("Cannot write {}: {}", path.display(), describe(&err)))?;
+            .map_err(|err| t!("Cannot write {0}: {1}", path.display(), describe(&err)))?;
     }
     Ok(())
 }
@@ -542,7 +548,7 @@ pub fn start_sync(
     let here = std::fs::read_to_string(&local).unwrap_or_default();
     if let Some(text) = sync_folder::local_with_system(&mine, &here) {
         write_atomic_bytes(&local, text.as_bytes())
-            .map_err(|err| format!("Cannot write {}: {}", local.display(), describe(&err)))?;
+            .map_err(|err| t!("Cannot write {0}: {1}", local.display(), describe(&err)))?;
     }
     if let Some(machine) = machine {
         let _ = sync_folder::add_machine(folder, machine);
@@ -550,7 +556,7 @@ pub fn start_sync(
     let text = sync_folder::location_text(folder, &gezik_config::paths::KnownDirs::system());
     let location = folders.local.join(LOCATION_FILE);
     write_atomic_bytes(&location, text.as_bytes())
-        .map_err(|err| format!("Cannot write {}: {}", location.display(), describe(&err)))?;
+        .map_err(|err| t!("Cannot write {0}: {1}", location.display(), describe(&err)))?;
     Ok(backup)
 }
 
@@ -565,13 +571,13 @@ pub fn stop_sync(folders: &Folders, discard: &dyn Fn(&Path)) -> Result<PathBuf, 
     let groups: &[Group] = if there { &[Group::Settings, Group::Themes, Group::Templates] } else { &Group::ALL[..2] };
     let mut files = collect(&source, groups)?;
     if !files.iter().any(|(name, _)| name == "settings.toml") {
-        return Err("The settings folder is not available and no copy of it is here: nothing changed".to_owned());
+        return Err(t!("The settings folder is not available and no copy of it is here: nothing changed").into_owned());
     }
     // This computer's own values (its [system], Only on This Computer) stay this computer's.
     if let Ok(local) = std::fs::read_to_string(folders.local.join(sync_folder::LOCAL_SETTINGS)) {
         for (_, data) in files.iter_mut().filter(|(name, _)| name == "settings.toml") {
             let layered = sync_folder::with_layer(&String::from_utf8_lossy(data), &local)
-                .map_err(|why| format!("{why}: nothing changed"))?;
+                .map_err(|why| t!("{}: nothing changed", why))?;
             *data = layered.into_bytes();
         }
     }
@@ -580,7 +586,7 @@ pub fn stop_sync(folders: &Folders, discard: &dyn Fn(&Path)) -> Result<PathBuf, 
     write_into(&folders.local, files)?;
     match std::fs::remove_file(folders.local.join(LOCATION_FILE)) {
         Err(err) if err.kind() != ErrorKind::NotFound => {
-            Err(format!("Cannot remove {LOCATION_FILE}: {}", describe(&err)))
+            Err(t!("Cannot remove {0}: {1}", LOCATION_FILE, describe(&err)))
         }
         _ => Ok(backup),
     }

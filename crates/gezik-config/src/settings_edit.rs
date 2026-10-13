@@ -2,6 +2,7 @@
 //! comments, key order and formatting stay as they were.
 
 use crate::pins::{PinEntry, parse_pin, pin_to_value};
+use gezik_i18n::t;
 
 /// Returns `text` with `pinned` set to `pinned`: plain text for a pin without alias and group,
 /// an inline table for the others. The entries already there that Gezik cannot read (an unknown
@@ -13,7 +14,7 @@ pub fn with_pinned(text: &str, pinned: &[PinEntry]) -> Result<String, String> {
     if let Some(existing) = doc.get("pinned")
         && !existing.is_array()
     {
-        return Err("pinned must be a list".to_owned());
+        return Err(t!("{} must be a list", "pinned"));
     }
     let plain = text.parse::<toml::Table>().map_err(|err| err.to_string().trim().to_owned())?;
     let unreadable: Vec<usize> = plain
@@ -32,7 +33,7 @@ pub fn with_pinned(text: &str, pinned: &[PinEntry]) -> Result<String, String> {
     if doc.get("pinned").is_none() {
         doc["pinned"] = toml_edit::value(toml_edit::Array::new());
     }
-    let Some(array) = doc["pinned"].as_array_mut() else { return Err("pinned must be a list".to_owned()) };
+    let Some(array) = doc["pinned"].as_array_mut() else { return Err(t!("{} must be a list", "pinned")) };
     array.clear();
     for value in values {
         array.push_formatted(value);
@@ -226,7 +227,7 @@ pub fn with_tag_added(
     if doc.get("tags").is_none() {
         add_table(&mut doc, "tags");
     }
-    let Some(table) = doc["tags"].as_table_like_mut() else { return Err("tags must be a table".to_owned()) };
+    let Some(table) = doc["tags"].as_table_like_mut() else { return Err(t!("{} must be a table", "tags")) };
     match table.get_mut("list").and_then(|item| item.as_value_mut()) {
         Some(toml_edit::Value::Array(array)) => {
             let toml_edit::Value::Array(one) = crate::tags::list_value(std::slice::from_ref(tag)) else {
@@ -245,7 +246,7 @@ pub fn with_tag_added(
                 array.set_trailing("\n");
             }
         }
-        Some(_) => return Err("tags.list must be a list".to_owned()),
+        Some(_) => return Err(t!("{} must be a list", "tags.list")),
         None => {
             table.insert("list", toml_edit::Item::Value(crate::tags::list_value(list)));
         }
@@ -267,10 +268,10 @@ pub fn with_tag_list_edit(
     if doc.get("tags").is_none() {
         add_table(&mut doc, "tags");
     }
-    let Some(table) = doc["tags"].as_table_like_mut() else { return Err("tags must be a table".to_owned()) };
+    let Some(table) = doc["tags"].as_table_like_mut() else { return Err(t!("{} must be a table", "tags")) };
     let array = match table.get_mut("list").and_then(|item| item.as_value_mut()) {
         Some(toml_edit::Value::Array(array)) => array,
-        Some(_) => return Err("tags.list must be a list".to_owned()),
+        Some(_) => return Err(t!("{} must be a list", "tags.list")),
         None => {
             let edited = crate::tags::edited(list, edit);
             table.insert("list", toml_edit::Item::Value(crate::tags::list_value(&edited)));
@@ -281,7 +282,7 @@ pub fn with_tag_list_edit(
         array.iter().position(|value| entry_name(value).is_some_and(|n| same_name(n, name)))
     };
     let Some(at) = find(array, edit.name()) else {
-        return Err(format!("tags.list has no tag \"{}\"", edit.name()));
+        return Err(t!("{0} has no tag \"{1}\"", "tags.list", edit.name()));
     };
     // A new value in an old one's place keeps its decor (the line and the comment before it).
     let put = |array: &mut toml_edit::Array, at: usize, mut value: toml_edit::Value| {
@@ -370,7 +371,7 @@ fn edit_table(text: &str, name: &str, entries: Vec<(&str, toml_edit::Value)>) ->
     if doc.get(name).is_none() {
         add_table(&mut doc, name);
     }
-    let Some(table) = doc[name].as_table_like_mut() else { return Err(format!("{name} must be a table")) };
+    let Some(table) = doc[name].as_table_like_mut() else { return Err(t!("{} must be a table", name)) };
     for (key, value) in entries {
         set_keeping_decor(table, key, value);
     }
@@ -396,7 +397,7 @@ pub fn with_command_shortcut(text: &str, name: &str, shortcut: &str) -> Result<S
         .get_mut("commands")
         .and_then(|item| item.as_array_of_tables_mut())
         .and_then(|commands| commands.iter_mut().find(|c| c.get("name").and_then(|n| n.as_str()) == Some(name)));
-    let Some(command) = command else { return Err(format!("settings.toml has no [[commands]] named \"{name}\"")) };
+    let Some(command) = command else { return Err(t!("settings.toml has no [[commands]] named \"{}\"", name)) };
     set_keeping_decor(command, "shortcut", shortcut.into());
     Ok(doc.to_string())
 }
@@ -509,11 +510,11 @@ fn with_tables(
                 }
                 match value {
                     toml_edit::Value::InlineTable(table) => broken.push(table.into_table()),
-                    _ => return Err(format!("{key} must be [[{key}]] tables")),
+                    _ => return Err(t!("{0} must be [[{1}]] tables", key, key)),
                 }
             }
         }
-        Some(_) => return Err(format!("{key} must be [[{key}]] tables")),
+        Some(_) => return Err(t!("{0} must be [[{1}]] tables", key, key)),
     }
     // Each table equal to an entry already there is that entry as written.
     let kept: Vec<Option<toml_edit::Table>> = tables

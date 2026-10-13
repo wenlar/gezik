@@ -11,6 +11,7 @@ use gezik_config::settings::TabSet;
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::store::ConfigStore;
 use gezik_core::nav::Location;
+use gezik_i18n::t;
 
 use crate::context_menu::{TAB_SET_DELETE_FIRST, TAB_SET_MAX, TAB_SET_OPEN_FIRST, TAB_SET_REPLACE_FIRST};
 use crate::dialog::Dialogs;
@@ -126,7 +127,7 @@ pub fn location_of(text: &str, dirs: &KnownDirs) -> Option<Location> {
 
 /// The note for set `name` when none of its tabs can be opened here (unknown tokens, `..`).
 fn no_folders_text(name: &str) -> String {
-    format!("Tab set \"{name}\" has no folders to open")
+    t!("Tab set \"{}\" has no folders to open", name)
 }
 
 /// What a tab set menu item does, by its id: open, replace the tabs with, or delete set N.
@@ -217,28 +218,34 @@ impl TabSets {
         };
         let (tabs, right) = (texts(0), texts(1));
         let this = self.clone();
-        self.dialogs.ask_text("Save tabs", "Name for these tabs:", "", &["Save", "Cancel"], move |name| {
-            let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
-            let sets = latest();
-            match find(&sets, &name) {
-                Some(i) => {
-                    let message = format!("A tab set called \"{}\" already exists. Replace it?", sets[i].name);
-                    let again = this.clone();
-                    this.dialogs.ask("Save tabs", message, &["Replace", "Cancel"], move |choice| {
-                        if choice == Some(0) {
-                            again.save(TabSet { name, tabs, right });
-                        }
-                    });
+        self.dialogs.ask_text(
+            t!("Save tabs"),
+            t!("Name for these tabs:"),
+            "",
+            &[&t!("Save"), &t!("Cancel")],
+            move |name| {
+                let Some(name) = name.map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()) else { return };
+                let sets = latest();
+                match find(&sets, &name) {
+                    Some(i) => {
+                        let message = t!("A tab set called \"{}\" already exists. Replace it?", sets[i].name);
+                        let again = this.clone();
+                        this.dialogs.ask(t!("Save tabs"), message, &[&t!("Replace"), &t!("Cancel")], move |choice| {
+                            if choice == Some(0) {
+                                again.save(TabSet { name, tabs, right });
+                            }
+                        });
+                    }
+                    None => this.save(TabSet { name, tabs, right }),
                 }
-                None => this.save(TabSet { name, tabs, right }),
-            }
-        });
+            },
+        );
     }
 
     fn save(&self, set: TabSet) {
         let mut sets = latest();
         if !room_for(&sets, &set.name) {
-            return crate::panes::active_view().note(format!("Up to {TAB_SET_MAX} tab sets"));
+            return crate::panes::active_view().note(t!("Up to {} tab sets", TAB_SET_MAX));
         }
         put(&mut sets, set);
         self.write(sets);

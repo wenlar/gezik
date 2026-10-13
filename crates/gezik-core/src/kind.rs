@@ -1,6 +1,8 @@
 //! What kind of file an entry is, from its name: picks Gezik's own icon and its color,
 //! and decides which files need a per-file icon lookup.
 
+use gezik_i18n::t;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum Kind {
@@ -136,20 +138,21 @@ pub fn icon_lookup(name: &str, is_dir: bool, mac: bool) -> IconLookup {
 pub fn fallback_type_name(name: &str, is_dir: bool) -> String {
     if cfg!(target_os = "macos") {
         if !is_dir && Kind::of(name, false) == Kind::Archive {
-            return format!("{} archive", archive_ending(name).to_uppercase());
+            return t!("{} archive", archive_ending(name).to_uppercase());
         }
-        return if is_dir { "Folder" } else { "Document" }.to_owned();
+        return if is_dir { t!("Folder") } else { t!("Document") }.into_owned();
     }
     if is_dir {
-        return "File folder".to_owned();
+        return t!("File folder").into_owned();
     }
     if let Some(own) = own_type_name(name, is_dir) {
         return own;
     }
     match extension_lowercase(name).as_str() {
-        "" => "File".to_owned(),
-        _ if Kind::of(name, false) == Kind::Archive => format!("{} archive", archive_ending(name).to_uppercase()),
-        ext => format!("{} File", ext.to_uppercase()),
+        "" => t!("File").into_owned(),
+        // TRANSLATORS: a type name; {} is the file's ending in capitals ("ZIP archive", "PNG File").
+        _ if Kind::of(name, false) == Kind::Archive => t!("{} archive", archive_ending(name).to_uppercase()),
+        ext => t!("{} File", ext.to_uppercase()),
     }
 }
 
@@ -161,8 +164,8 @@ pub fn own_type_name(name: &str, is_dir: bool) -> Option<String> {
         return None;
     }
     split_part(name).map(|ending| match ending {
-        "" => "Split archive".to_owned(),
-        ending => format!("Split {} archive", ending.to_uppercase()),
+        "" => t!("Split archive").into_owned(),
+        ending => t!("Split {} archive", ending.to_uppercase()),
     })
 }
 

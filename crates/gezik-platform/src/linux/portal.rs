@@ -49,7 +49,7 @@ pub fn bind(session: &str, trigger: &str, token: &str) -> Message {
         Value::Array(
             "{sv}".into(),
             vec![
-                entry("description", Value::Str("Show or hide Gezik".into())),
+                entry("description", Value::Str(gezik_i18n::t!("Show or hide Gezik").into_owned())),
                 entry("preferred_trigger", Value::Str(trigger.into())),
             ],
         ),

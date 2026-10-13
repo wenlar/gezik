@@ -67,7 +67,8 @@ pub struct PdfFailed {
 impl fmt::Display for PdfFailed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.why {
-            Failure::Damaged => write!(f, "the PDF is damaged ({})", self.message),
+            Failure::Damaged => f.write_str(&gezik_i18n::t!("the PDF is damaged ({})", self.message)),
+            // Kept in English: `says_pdfium_failed` looks for it.
             Failure::Library => write!(f, "pdfium could not be loaded ({})", self.message),
             _ => f.write_str(&self.message),
         }
@@ -142,7 +143,12 @@ fn signal_of(status: &std::process::ExitStatus) -> Option<i32> {
 /// error output when there is one (control characters other than line breaks become spaces).
 pub fn engine_stopped_text(how: &str, tail: &str) -> String {
     let tail = clean(tail.trim(), true);
-    if tail.is_empty() { format!("PDF engine stopped ({how})") } else { format!("PDF engine stopped ({how}): {tail}") }
+    // TRANSLATORS: {0} is how it ended ("exit code 3"), {1} the engine's own last lines.
+    if tail.is_empty() {
+        gezik_i18n::t!("PDF engine stopped ({})", how)
+    } else {
+        gezik_i18n::t!("PDF engine stopped ({0}): {1}", how, tail)
+    }
 }
 
 /// `text` with every control character, every bidirectional mark or override (which can make
@@ -223,7 +229,7 @@ pub fn run(
         // Never the request itself in the message: it holds the passwords.
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("too much to pass to the PDF engine at once ({} MB)", text.len() / (1024 * 1024)),
+            gezik_i18n::t!("too much to pass to the PDF engine at once ({} MB)", text.len() / (1024 * 1024)),
         ));
     }
     let mut child = ChildProcess::spawn_with_input(&worker.program, &worker.args, None, Some(text.into_bytes()))?;
@@ -270,7 +276,7 @@ pub fn run(
     }
     Err(io::Error::new(
         io::ErrorKind::InvalidData,
-        format!("PDF engine stopped: a reply line was too long (over {} KB)", MAX_LINE / 1024),
+        gezik_i18n::t!("PDF engine stopped: a reply line was too long (over {} KB)", MAX_LINE / 1024),
     ))
 }
 
@@ -295,7 +301,9 @@ pub fn count_pages(worker: &Worker, library: &Path, input: &Path, stop: &dyn Fn(
         stop,
     )?;
     match ended {
-        Ended::Done => pages.map(Some).ok_or_else(|| io::Error::other("the PDF engine did not say how many pages")),
+        Ended::Done => pages
+            .map(Some)
+            .ok_or_else(|| io::Error::other(gezik_i18n::t!("the PDF engine did not say how many pages").into_owned())),
         Ended::NeedsPassword(_) | Ended::WrongPassword(_) => Ok(None),
     }
 }

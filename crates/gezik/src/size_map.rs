@@ -12,6 +12,7 @@ use gezik_config::shortcuts::{Chord, Key, Platform};
 use gezik_core::nav::Location;
 use gezik_core::treemap::{self, NONE, Rect, SizeTree, Tile, What};
 use gezik_core::{format_size, kind::Kind};
+use gezik_i18n::{t, tn, tx};
 use gezik_search::size::FolderTotal;
 use slint::{Color, ComponentHandle, ModelRc, VecModel};
 
@@ -47,7 +48,7 @@ pub fn open_for(view: &View) {
         [(path, true)] => Some(path.clone()),
         _ => view.folder(),
     };
-    let Some(folder) = folder else { return view.note("Size Map works on a folder".to_owned()) };
+    let Some(folder) = folder else { return view.note(t!("Size Map works on a folder").into_owned()) };
     open(view, folder);
 }
 
@@ -128,10 +129,10 @@ pub fn menu_ids(what: What) -> &'static [u32] {
 
 fn menu_title(id: u32) -> &'static str {
     match id {
-        MAP_OPEN => "Open",
-        MAP_SHOW => "Show in Pane",
-        MAP_TRASH => "Move to Trash",
-        _ => "Copy Path",
+        MAP_OPEN => tx!("Open"),
+        MAP_SHOW => tx!("Show in Pane"),
+        MAP_TRASH => tx!("Move to Trash"),
+        _ => tx!("Copy Path"),
     }
 }
 
@@ -257,8 +258,9 @@ impl SizeMap {
         window.set_sm_current(current.map_or(-1, |i| i as i32));
         let status = match current {
             Some(i) => self.describe(i),
-            None if self.0.scanning.get() => "Scanning…".to_owned(),
-            None if self.0.stopped.get() => format!("Stopped · {}", self.describe_focus()),
+            None if self.0.scanning.get() => t!("Scanning…").into_owned(),
+            // TRANSLATORS: {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
+            None if self.0.stopped.get() => t!("Stopped · {}", self.describe_focus()),
             None => self.describe_focus(),
         };
         window.set_sm_status(status.into());
@@ -268,8 +270,13 @@ impl SizeMap {
         let tree = self.0.tree.borrow().clone();
         let tree = tree.lock().unwrap_or_else(PoisonError::into_inner);
         let node = tree.node(self.0.focus.get());
-        let more = if node.partial { " (some folders could not be read)" } else { "" };
-        format!("{} · {} files · {} folders{more}", format_size(node.bytes), node.files, node.folders)
+        let text = [
+            format_size(node.bytes),
+            tn!("{n} file" | "{n} files", node.files),
+            tn!("{n} folder" | "{n} folders", node.folders),
+        ]
+        .join(" · ");
+        if node.partial { t!("{} (some folders could not be read)", text) } else { text }
     }
 
     /// The status line for rectangle `i`: `C:\Work\video\raw · 38.2 GB · 1,204 files · 12% of C:\Work`.
@@ -279,20 +286,41 @@ impl SizeMap {
         let tree = tree.lock().unwrap_or_else(PoisonError::into_inner);
         let focus = self.0.focus.get();
         let whole = tree.node(focus).bytes.max(1);
-        let (name, files) = match tile.what {
-            What::Folder(id) => {
-                (self.path_of(&tree, id).display().to_string(), format!(" · {} files", tree.node(id).files))
-            }
-            What::File(f) => (self.0.root.join(&tree.files[f].0).display().to_string(), String::new()),
-            What::Files(id) => {
-                let node = tree.node(id);
-                (format!("{} · its files", self.path_of(&tree, id).display()), format!(" · {} files", node.own_files))
-            }
-            What::Small(_) => (name_of(&tree, tile.what), String::new()),
-        };
         let share = tile.bytes as f64 * 100.0 / whole as f64;
+        let (share, size) = (format!("{share:.0}"), format_size(tile.bytes));
         let of = self.path_of(&tree, focus).display().to_string();
-        format!("{name} · {}{files} · {share:.0}% of {of}", format_size(tile.bytes))
+        // TRANSLATORS: {0} is a folder or file, {1} its size, {n} its files, {2} its share in percent of folder {3}.
+        match tile.what {
+            What::Folder(id) => {
+                let path = self.path_of(&tree, id).display().to_string();
+                tn!(
+                    "{0} · {1} · {n} file · {2}% of {3}" | "{0} · {1} · {n} files · {2}% of {3}",
+                    tree.node(id).files,
+                    path,
+                    size,
+                    share,
+                    of
+                )
+            }
+            What::File(f) => {
+                let path = self.0.root.join(&tree.files[f].0).display().to_string();
+                t!("{0} · {1} · {2}% of {3}", path, size, share, of)
+            }
+            What::Files(id) => {
+                let path = self.path_of(&tree, id).display().to_string();
+                // TRANSLATORS: a folder's own files (not its subfolders') as one block of the size map.
+                tn!(
+                    "{0} · its files · {1} · {n} file · {2}% of {3}"
+                        | "{0} · its files · {1} · {n} files · {2}% of {3}",
+                    tree.node(id).own_files,
+                    path,
+                    size,
+                    share,
+                    of
+                )
+            }
+            What::Small(_) => t!("{0} · {1} · {2}% of {3}", name_of(&tree, tile.what), size, share, of),
+        }
     }
 
     fn target(&self, i: usize) -> Option<Target> {
@@ -390,7 +418,7 @@ impl SizeMap {
         self.0.current.set(Some(i));
         self.show_current();
         let Some(what) = self.0.tiles.borrow().get(i).map(|t| t.what) else { return Vec::new() };
-        menu_ids(what).iter().map(|&id| (id, menu_title(id).to_owned(), true)).collect()
+        menu_ids(what).iter().map(|&id| (id, t("", menu_title(id)).into_owned(), true)).collect()
     }
 
     pub fn menu_chosen(&self, id: u32) {
@@ -525,8 +553,8 @@ fn name_of(tree: &SizeTree, what: What) -> String {
     match what {
         What::Folder(id) => tree.name(id).to_owned(),
         What::File(f) => tree.files[f].0.clone(),
-        What::Files(_) => "Files".to_owned(),
-        What::Small(n) => format!("{n} small items"),
+        What::Files(_) => t!("Files").into_owned(),
+        What::Small(n) => tn!("{n} small item" | "{n} small items", n),
     }
 }
 

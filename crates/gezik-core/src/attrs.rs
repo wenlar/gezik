@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+use gezik_i18n::t;
+
 /// The read, write and execute bits of the owner, the group and everyone.
 pub const PERMS: u32 = 0o777;
 /// setuid, setgid and sticky: shown, never changed here (spec 9 §4.4).
@@ -194,11 +196,11 @@ pub fn octal_text(items: &[Attrs]) -> String {
 pub fn parse_octal(text: &str) -> Result<u32, String> {
     let text = text.trim();
     if !(3..=4).contains(&text.len()) || !text.bytes().all(|b| (b'0'..=b'7').contains(&b)) {
-        return Err("Type three digits from 0 to 7, like 755".to_owned());
+        return Err(t!("Type three digits from 0 to 7, like 755").into_owned());
     }
     let value = text.bytes().fold(0, |acc, b| acc * 8 + u32::from(b - b'0'));
     if value & SPECIAL != 0 {
-        return Err("Setuid, setgid and sticky can't be changed here".to_owned());
+        return Err(t!("Setuid, setgid and sticky can't be changed here").into_owned());
     }
     Ok(value)
 }
@@ -218,15 +220,18 @@ pub fn special_text(items: &[Attrs]) -> String {
 /// A name wins over a number, as in chown; `u32::MAX` is chown's "leave as is", never an id.
 pub fn parse_id(text: &str, known: &[(String, u32)], what: &str) -> Result<u32, String> {
     let text = text.trim();
+    let group = what == "group";
     if text.is_empty() {
-        return Err(format!("Type a {what} name or number"));
+        let why = if group { t!("Type a group name or number") } else { t!("Type a user name or number") };
+        return Err(why.into_owned());
     }
     if let Some((_, id)) = known.iter().find(|(name, _)| name == text) {
         return Ok(*id);
     }
     match text.parse::<u32>() {
         Ok(id) if id != u32::MAX && text.bytes().all(|b| b.is_ascii_digit()) => Ok(id),
-        _ => Err(format!("No {what} is named \"{text}\"")),
+        _ if group => Err(t!("No group is named \"{}\"", text)),
+        _ => Err(t!("No user is named \"{}\"", text)),
     }
 }
 

@@ -13,11 +13,7 @@ use crate::pdf::images::write_pdf;
 
 /// What Undo says: "Make PDF from 12 pictures", "Make PDF from 1 picture".
 pub fn images_pdf_label(count: usize) -> String {
-    format!("Make PDF from {}", pictures(count))
-}
-
-fn pictures(count: usize) -> String {
-    if count == 1 { "1 picture".to_owned() } else { format!("{count} pictures") }
+    gezik_i18n::tn!("Make PDF from {n} picture" | "Make PDF from {n} pictures", count)
 }
 
 pub struct ImagesToPdfTask {
@@ -38,7 +34,8 @@ impl Task for ImagesToPdfTask {
     }
 
     fn title(&self) -> String {
-        format!("Making {} from {}", file_name(&self.output), pictures(self.pictures.len()))
+        let count = self.pictures.len();
+        gezik_i18n::tn!("Making {} from {n} picture" | "Making {} from {n} pictures", count, file_name(&self.output))
     }
 
     fn count(&self) -> usize {

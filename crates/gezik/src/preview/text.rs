@@ -464,12 +464,15 @@ impl TextView {
     /// The bar's right side: the number of lines, or the size and how far down.
     pub fn status(&self, cols: usize, page: usize) -> String {
         match &self.source {
-            Source::Memory { starts, head: false, .. } => match starts.len() {
-                1 => "1 line".to_owned(),
-                n => format!("{} lines", gezik_core::group_digits(n as u64)),
-            },
+            Source::Memory { starts, head: false, .. } => {
+                let n = starts.len();
+                gezik_i18n::tn!("{} line" | "{} lines", n, gezik_core::group_digits(n as u64))
+            }
             // Only the start is read: its lines and more.
-            Source::Memory { starts, .. } => format!("{}+ lines", gezik_core::group_digits(starts.len() as u64)),
+            Source::Memory { starts, .. } => {
+                let n = starts.len();
+                gezik_i18n::tn!("{}+ line" | "{}+ lines", n, gezik_core::group_digits(n as u64))
+            }
             Source::Paged { .. } => {
                 let (at, _) = self.scroll_bar(cols, page);
                 format!("{} · {}%", crate::view_options::size_text(self.size), (at * 100.0).round())
@@ -480,7 +483,7 @@ impl TextView {
     /// Why a code file shows without colors.
     pub fn note(&self) -> &'static str {
         if self.lang.is_some() && matches!(self.source, Source::Paged { .. }) {
-            "Plain text: the file is larger than 2 MB"
+            gezik_i18n::tx!("Plain text: the file is larger than 2 MB")
         } else {
             ""
         }

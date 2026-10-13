@@ -7,9 +7,10 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
-pub const NOT_SYNCED: &str = "Not known to be synced yet; left on this device";
-pub const NOT_CLOUD: &str = "Not in a cloud folder; left as it is";
-pub const A_LINK: &str = "A link; left as it is";
+// Marked for translation: `LeftAlone` shows them with `gezik_i18n::t`.
+pub const NOT_SYNCED: &str = gezik_i18n::tx!("Not known to be synced yet; left on this device");
+pub const NOT_CLOUD: &str = gezik_i18n::tx!("Not in a cloud folder; left as it is");
+pub const A_LINK: &str = gezik_i18n::tx!("A link; left as it is");
 
 /// What may be asked of the cloud app for an item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +26,7 @@ struct LeftAlone(&'static str);
 
 impl fmt::Display for LeftAlone {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
+        f.write_str(&gezik_i18n::t("", self.0))
     }
 }
 
@@ -224,7 +225,10 @@ mod imp {
     use std::path::Path;
 
     pub(super) fn set(_path: &Path, _free_up: bool) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "Cloud folders on Linux have no download commands"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            gezik_i18n::t!("Cloud folders on Linux have no download commands").into_owned(),
+        ))
     }
 }
 

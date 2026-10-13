@@ -25,7 +25,7 @@ pub fn known_folders() -> Vec<KnownFolder> {
             continue; // e.g. Desktop == Home on some Linux setups
         }
         let name = if index == 0 {
-            "Home".to_owned()
+            gezik_i18n::t!("Home").into_owned()
         } else {
             display_name(&path)
                 .unwrap_or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())

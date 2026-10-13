@@ -12,6 +12,7 @@ use gezik_config::settings::SystemSettings;
 use gezik_config::settings_writer::{SettingsChange, SystemValue};
 use gezik_config::shortcuts::{Action, Chord, Key, Platform, hotkey_text};
 use gezik_config::store::ConfigStore;
+use gezik_i18n::{t, tx};
 use gezik_platform::hotkey::{self, Combo, ComboKey, HotkeyError};
 use gezik_platform::tray::{self, TrayError, TrayEvent};
 use slint::ComponentHandle;
@@ -103,23 +104,30 @@ pub fn example(os: Os) -> &'static str {
     }
 }
 
-/// The first close with the tray icon on (deviation 10): title, message, the quit button.
+/// The first close with the tray icon on (deviation 10): title, message, the quit button
+/// (marked with `tx!`, translated where shown).
 pub fn kept_text(os: Os) -> (&'static str, &'static str, &'static str) {
     match os {
         Os::Windows => (
-            "Gezik keeps running in the notification area",
-            "Closing the window keeps Gezik running; click its icon to show it again, or choose Quit Gezik in the icon's menu. The tray icon is turned off in System Integration.",
-            "Quit Gezik",
+            tx!("Gezik keeps running in the notification area"),
+            tx!(
+                "Closing the window keeps Gezik running; click its icon to show it again, or choose Quit Gezik in the icon's menu. The tray icon is turned off in System Integration."
+            ),
+            tx!("Quit Gezik"),
         ),
         Os::Mac => (
-            "Gezik keeps running in the menu bar",
-            "Closing the window keeps Gezik running; show it again from its menu bar icon or the Dock, or choose Quit Gezik there. The icon is turned off in System Integration.",
-            "Quit Gezik",
+            tx!("Gezik keeps running in the menu bar"),
+            tx!(
+                "Closing the window keeps Gezik running; show it again from its menu bar icon or the Dock, or choose Quit Gezik there. The icon is turned off in System Integration."
+            ),
+            tx!("Quit Gezik"),
         ),
         Os::Linux => (
-            "Gezik keeps running in the tray",
-            "Closing the window keeps Gezik running; click its icon to show it again. To quit, choose Quit Gezik here, or turn the tray icon off in System Integration and close the window.",
-            "Quit Gezik",
+            tx!("Gezik keeps running in the tray"),
+            tx!(
+                "Closing the window keeps Gezik running; click its icon to show it again. To quit, choose Quit Gezik here, or turn the tray icon off in System Integration and close the window."
+            ),
+            tx!("Quit Gezik"),
         ),
     }
 }
@@ -224,7 +232,7 @@ pub fn start() {
     if !with(|s| s.shown) {
         slint::Timer::single_shot(TRAY_WAIT, || {
             if with(|s| tray_late(s.shown, s.tray_ready)) {
-                note("The tray icon did not come up; the window is shown instead".to_owned());
+                note(t!("The tray icon did not come up; the window is shown instead").into_owned());
                 reveal();
             }
         });
@@ -330,16 +338,16 @@ fn tray_ready(number: u64, result: Result<(), TrayError>) {
             });
             drop(tray);
             let text = match why {
-                TrayError::NoTray => "No tray on this desktop (it needs a StatusNotifier host, such as KDE's panel or GNOME's AppIndicator extension).".to_owned(),
+                TrayError::NoTray => t!("No tray on this desktop (it needs a StatusNotifier host, such as KDE's panel or GNOME's AppIndicator extension).").into_owned(),
                 TrayError::Failed(why) => {
-                    let text = format!("The tray icon could not be shown: {why}");
+                    let text = t!("The tray icon could not be shown: {}", why);
                     with(|s| s.tray_problem = Some(text.clone()));
                     text
                 }
             };
             if asked {
                 write(SystemValue::Tray(false));
-                tell("Tray icon", text, &["Close"], |_| {});
+                tell(&t!("Tray icon"), text, &[&t!("Close")], |_| {});
             } else {
                 note(text);
             }
@@ -405,13 +413,13 @@ fn hotkey_ready(number: u64, chord: Chord, result: Result<(), HotkeyError>) {
         Ok(()) => {
             with(|s| s.hotkey_problem = None);
             if asked {
-                note(format!("{name} shows or hides Gezik now"));
+                note(t!("{} shows or hides Gezik now", name));
             }
             return;
         }
-        Err(HotkeyError::Taken) => format!("{name} is used by another app."),
-        Err(HotkeyError::Unsupported) => "This desktop does not support global shortcuts.".to_owned(),
-        Err(HotkeyError::Failed(why)) => format!("{name} could not be registered: {why}"),
+        Err(HotkeyError::Taken) => t!("{} is used by another app.", name),
+        Err(HotkeyError::Unsupported) => t!("This desktop does not support global shortcuts.").into_owned(),
+        Err(HotkeyError::Failed(why)) => t!("{0} could not be registered: {1}", name, why),
     };
     let held = with(|s| {
         s.hotkey_problem = Some((chord, why.clone()));
@@ -424,14 +432,15 @@ fn hotkey_ready(number: u64, chord: Chord, result: Result<(), HotkeyError>) {
         write(SystemValue::Hotkey(String::new()));
         refused(why);
     } else {
-        note(format!("Global shortcut: {why} Change it in System Integration."));
+        // TRANSLATORS: {} is why the shortcut did not work (a sentence).
+        note(t!("Global shortcut: {} Change it in System Integration.", why));
     }
 }
 
 /// The panel's shortcut could not be registered (deviation 5): Choose Another asks again,
 /// the field empty and the reason above it.
 fn refused(why: String) {
-    tell("Global shortcut", why.clone(), &["Choose Another", "Close"], move |choice| {
+    tell(&t!("Global shortcut"), why.clone(), &[&t!("Choose Another"), &t!("Close")], move |choice| {
         if choice == Some(0) {
             crate::integration::ask_hotkey(Some((String::new(), why)));
         }
@@ -521,7 +530,7 @@ pub fn close_requested() -> bool {
     }
     with(|s| s.asking = true);
     let (title, message, quit) = kept_text(Os::HERE);
-    tell(title, message.to_owned(), &["OK", quit], |choice| {
+    tell(&t("", title), t("", message).into_owned(), &[&t!("OK"), &t("", quit)], |choice| {
         with(|s| s.asking = false);
         match choice {
             Some(0) => {
@@ -579,7 +588,7 @@ fn write(value: SystemValue) {
                 let _ = slint::invoke_from_event_loop(move || note(warning.to_string()));
             }
         }),
-        None => note("No config folder: this lasts until Gezik quits".to_owned()),
+        None => note(t!("No config folder: this lasts until Gezik quits").into_owned()),
     }
 }
 
@@ -588,7 +597,7 @@ fn write(value: SystemValue) {
 pub fn turn_on_tray() {
     // On but missing or failed (Linux without a StatusNotifier host): Turn on tries again.
     if with(|s| s.system.tray && !s.tray_missing && !s.tray_failed) {
-        return note("The tray icon is on already".to_owned());
+        return note(t!("The tray icon is on already").into_owned());
     }
     with(|s| {
         s.system.tray = true;

@@ -185,7 +185,7 @@ pub struct NotRecycled;
 
 impl std::fmt::Display for NotRecycled {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "The Recycle Bin would delete it for good; it was left where it is")
+        f.write_str(&gezik_i18n::t!("The Recycle Bin would delete it for good; it was left where it is"))
     }
 }
 

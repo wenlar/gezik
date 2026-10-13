@@ -51,7 +51,7 @@ impl Format {
 
     pub fn title(self) -> &'static str {
         match self {
-            Format::Text => "Text",
+            Format::Text => gezik_i18n::tx!("Text"),
             Format::Csv => "CSV",
             Format::Html => "HTML",
         }

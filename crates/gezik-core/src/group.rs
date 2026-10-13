@@ -12,6 +12,7 @@ use crate::batch::date::DateParts;
 use crate::layout::Span;
 use crate::meta_filter::TagKey;
 use crate::sort::{SortDir, SortKey, SortSpec, natural_cmp};
+use gezik_i18n::{t, tn};
 
 /// What the list is grouped by (`views.toml` and `[view] group`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -131,36 +132,39 @@ impl GroupKey {
     pub fn label(&self) -> String {
         match self {
             GroupKey::Field(FieldGroup::Value(text)) => text.clone(),
-            GroupKey::Field(FieldGroup::Missing(id)) => format!("No {}", id.def().label),
-            GroupKey::Field(FieldGroup::Pending) => "Reading properties…".to_owned(),
+            // TRANSLATORS: the group of files without this property; {} is its name ("No Artist").
+            GroupKey::Field(FieldGroup::Missing(id)) => t!("No {}", gezik_i18n::t("", id.def().label)),
+            GroupKey::Field(FieldGroup::Pending) => t!("Reading properties…").into_owned(),
             GroupKey::Type(name) => name.clone(),
             GroupKey::Date(DateGroup::Year(year)) => year.to_string(),
             GroupKey::Date(g) => match g {
-                DateGroup::Later => "Later",
-                DateGroup::Today => "Today",
-                DateGroup::Yesterday => "Yesterday",
-                DateGroup::EarlierThisWeek => "Earlier this week",
-                DateGroup::LastWeek => "Last week",
-                DateGroup::EarlierThisMonth => "Earlier this month",
-                DateGroup::LastMonth => "Last month",
-                DateGroup::EarlierThisYear => "Earlier this year",
-                DateGroup::Year(_) | DateGroup::LongAgo => "A long time ago",
-                DateGroup::NoDate => "No date",
+                DateGroup::Later => t!("Later"),
+                DateGroup::Today => t!("Today"),
+                DateGroup::Yesterday => t!("Yesterday"),
+                DateGroup::EarlierThisWeek => t!("Earlier this week"),
+                DateGroup::LastWeek => t!("Last week"),
+                DateGroup::EarlierThisMonth => t!("Earlier this month"),
+                DateGroup::LastMonth => t!("Last month"),
+                DateGroup::EarlierThisYear => t!("Earlier this year"),
+                DateGroup::Year(_) | DateGroup::LongAgo => t!("A long time ago"),
+                DateGroup::NoDate => t!("No date"),
             }
-            .to_owned(),
+            .into_owned(),
+            // Explorer's size groups: adjectives for the files in them.
             GroupKey::Size(g) => match g {
-                SizeGroup::Gigantic => "Gigantic",
-                SizeGroup::Huge => "Huge",
-                SizeGroup::Large => "Large",
-                SizeGroup::Medium => "Medium",
-                SizeGroup::Small => "Small",
-                SizeGroup::Tiny => "Tiny",
-                SizeGroup::Empty => "Empty",
-                SizeGroup::Folders => "Folders",
+                SizeGroup::Gigantic => t!("Gigantic"),
+                SizeGroup::Huge => t!("Huge"),
+                SizeGroup::Large => t!("Large"),
+                SizeGroup::Medium => t!("Medium"),
+                SizeGroup::Small => t!("Small"),
+                SizeGroup::Tiny => t!("Tiny"),
+                // TRANSLATORS: the group of empty files (an adjective, not the verb).
+                SizeGroup::Empty => t!("group" => "Empty"),
+                SizeGroup::Folders => t!("Folders"),
             }
-            .to_owned(),
+            .into_owned(),
             GroupKey::Tag(key) => key.label(),
-            GroupKey::Rating(Some(0)) => "Not Rated".to_owned(),
+            GroupKey::Rating(Some(0)) => t!("Not Rated").into_owned(),
             GroupKey::Rating(Some(stars)) => "★".repeat(usize::from(*stars)),
             GroupKey::Rating(None) => TagKey::Pending.label(),
             GroupKey::Duplicates { size, .. } => crate::format_size(*size),
@@ -173,7 +177,13 @@ impl GroupKey {
         match self {
             GroupKey::Duplicates { size, .. } => {
                 let freed = size.saturating_mul(len.saturating_sub(1) as u64);
-                format!("{len} files × {} · {} could be freed", crate::format_size(*size), crate::format_size(freed))
+                // TRANSLATORS: a group of duplicate files: how many, each one's size, the space deleting all but one frees.
+                tn!(
+                    "{n} file × {} · {} could be freed" | "{n} files × {} · {} could be freed",
+                    len,
+                    crate::format_size(*size),
+                    crate::format_size(freed)
+                )
             }
             _ => format!("{} ({len})", self.label()),
         }
