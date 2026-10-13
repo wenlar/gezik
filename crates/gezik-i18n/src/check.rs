@@ -56,6 +56,14 @@ pub fn load(text: &str, code: &str, keys: &[u64]) -> (Option<Layer>, Report) {
         }
         None => table().unwrap_or_default(),
     };
+    let number = file.field("X-Gezik-Number").and_then(|header| {
+        let number = crate::Number::parse(header);
+        if number.is_none() {
+            let message = "X-Gezik-Number: write decimal=\",\", group=\".\"".to_owned();
+            report.errors.push(Issue { line: 1, message });
+        }
+        number
+    });
     let mut map = HashMap::new();
     for entry in &file.entries {
         let key = entry.key();
@@ -106,6 +114,7 @@ pub fn load(text: &str, code: &str, keys: &[u64]) -> (Option<Layer>, Report) {
     let name = file.field("X-Gezik-Name").or(crate::lang::endonym(code)).unwrap_or(code).to_owned();
     let mut layer = Layer::from_map(name, report.human, plural, map);
     layer.fuzzy = report.fuzzy;
+    layer.number = number;
     (Some(layer), report)
 }
 
@@ -214,5 +223,22 @@ msgstr "Zniknął"
         let (layer, report) = load("msgid \"a\"\nmsgstr \"x {y\"\n", "pl", &[]);
         assert_eq!(report.errors[0].message, "a \"{\" without \"}\" (write \"{{\" for a brace)");
         assert_eq!(layer.unwrap().translated, 0, "not used");
+    }
+
+    #[test]
+    fn a_file_names_its_number_separators() {
+        let po = |header: &str| format!("msgid \"\"\nmsgstr \"X-Gezik-Number: {header}\\n\"\n");
+        let (layer, report) = load(&po(r#"decimal=\",\", group=\" \""#), "pl", &[]);
+        assert!(report.errors.is_empty(), "{report:?}");
+        let catalog = Catalog::layered("pl", vec![Arc::new(layer.unwrap())]).unwrap();
+        assert_eq!(catalog.number().grouped(1234), "1 234");
+        let (layer, report) = load(&po("comma"), "pl", &[]);
+        assert_eq!(report.errors.len(), 1);
+        let catalog = Catalog::layered("pl", vec![Arc::new(layer.unwrap())]).unwrap();
+        assert_eq!(catalog.number(), crate::Number::ENGLISH, "none: English");
+        let (layer, _) = load("", "fr", &[]);
+        let catalog = Catalog::layered("fr", vec![Arc::new(layer.unwrap())]).unwrap();
+        assert_eq!(catalog.number(), crate::Number::builtin("fr").unwrap(), "a built-in language's table");
+        assert_eq!(Catalog::pseudo().number(), crate::Number::ENGLISH);
     }
 }

@@ -40,6 +40,8 @@ pub struct Layer {
     pub human: bool,
     pub translated: usize,
     pub fuzzy: usize,
+    /// `X-Gezik-Number`, a dropped file's.
+    pub number: Option<crate::Number>,
     plural: Plural,
     texts: Texts,
 }
@@ -47,7 +49,7 @@ pub struct Layer {
 impl Layer {
     /// A dropped file's translations (`check::load` makes it).
     pub(crate) fn from_map(name: String, human: bool, plural: Plural, map: HashMap<String, Vec<String>>) -> Layer {
-        Layer { name, human, translated: map.len(), fuzzy: 0, plural, texts: Texts::Map(map) }
+        Layer { name, human, translated: map.len(), fuzzy: 0, number: None, plural, texts: Texts::Map(map) }
     }
 
     /// A built-in language, inflated (its translations against `keys`).
@@ -69,6 +71,7 @@ impl Layer {
             human: builtin.human,
             translated: builtin.translated,
             fuzzy: builtin.fuzzy,
+            number: None,
             plural,
             texts: Texts::Packed { keys, text, starts },
         })
@@ -118,6 +121,13 @@ impl Catalog {
 
     pub(crate) fn layered(code: &str, layers: Vec<Arc<Layer>>) -> Option<Catalog> {
         (!layers.is_empty()).then(|| Catalog { code: code.to_owned(), pseudo: false, layers })
+    }
+
+    /// How this language writes numbers: a dropped file's header, else the built-in table,
+    /// else English (the pseudo language too).
+    pub fn number(&self) -> crate::Number {
+        let header = self.layers.iter().find_map(|layer| layer.number);
+        header.or_else(|| crate::Number::builtin(&self.code)).unwrap_or(crate::Number::ENGLISH)
     }
 
     /// `id` (in `context`) in this language.

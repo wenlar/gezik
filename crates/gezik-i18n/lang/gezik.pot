@@ -3447,6 +3447,37 @@ msgstr ""
 msgid "Split {} archive"
 msgstr ""
 
+#: crates/gezik-core/src/lib.rs
+msgctxt "unit"
+msgid "B"
+msgstr ""
+
+#: crates/gezik-core/src/lib.rs
+msgctxt "unit"
+msgid "KB"
+msgstr ""
+
+#: crates/gezik-core/src/lib.rs
+msgctxt "unit"
+msgid "kB"
+msgstr ""
+
+#: crates/gezik-core/src/lib.rs
+#: crates/gezik/ui/widgets/compress.slint
+msgctxt "unit"
+msgid "MB"
+msgstr ""
+
+#: crates/gezik-core/src/lib.rs
+msgctxt "unit"
+msgid "GB"
+msgstr ""
+
+#: crates/gezik-core/src/lib.rs
+msgctxt "unit"
+msgid "TB"
+msgstr ""
+
 #: crates/gezik-core/src/meta.rs
 msgid "Gray"
 msgstr ""
@@ -3832,6 +3863,21 @@ msgstr ""
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/ui/app.slint
 msgid "Decimal (1 kB = 1000 bytes)"
+msgstr ""
+
+#: crates/gezik-core/src/view.rs
+msgid "{n} min ago"
+msgid_plural "{n} min ago"
+msgstr[0] ""
+msgstr[1] ""
+
+#. {} is the time, 14:05.
+#: crates/gezik-core/src/view.rs
+msgid "Today {}"
+msgstr ""
+
+#: crates/gezik-core/src/view.rs
+msgid "Yesterday {}"
 msgstr ""
 
 #: crates/gezik-core/src/view.rs
@@ -11083,11 +11129,6 @@ msgstr ""
 
 #: crates/gezik/ui/widgets/compress.slint
 msgid "Custom…"
-msgstr ""
-
-#: crates/gezik/ui/widgets/compress.slint
-msgctxt "unit"
-msgid "MB"
 msgstr ""
 
 #: crates/gezik/ui/widgets/compress.slint

@@ -264,13 +264,13 @@ pub fn text(id: FieldId, value: &Value) -> String {
             DIMENSIONS | PAGES | WORDS => crate::group_digits(n.unsigned_abs()),
             _ => n.to_string(),
         },
-        Value::Real(x) => match id {
-            EXPOSURE if *x > 0.0 && *x < 1.0 => format!("1/{} s", (1.0 / x).round()),
-            EXPOSURE => format!("{} s", trim(*x, 1)),
-            APERTURE => format!("f/{}", trim(*x, 1)),
-            FOCAL_LENGTH => format!("{} mm", trim(*x, 1)),
-            FRAME_RATE => format!("{} fps", trim(*x, 2)),
-            _ => trim(*x, 2),
+        Value::Real(x) => match (id, gezik_i18n::number()) {
+            (EXPOSURE, _) if *x > 0.0 && *x < 1.0 => format!("1/{} s", (1.0 / x).round()),
+            (EXPOSURE, number) => format!("{} s", trim(*x, 1, number)),
+            (APERTURE, number) => format!("f/{}", trim(*x, 1, number)),
+            (FOCAL_LENGTH, number) => format!("{} mm", trim(*x, 1, number)),
+            (FRAME_RATE, number) => format!("{} fps", trim(*x, 2, number)),
+            (_, number) => trim(*x, 2, number),
         },
         Value::Duration(ms) => duration_text(*ms),
         Value::Date(d) => {
@@ -286,10 +286,15 @@ pub fn text(id: FieldId, value: &Value) -> String {
     }
 }
 
-/// `x` with at most `places` decimals, no trailing zeros.
-fn trim(x: f64, places: usize) -> String {
-    let text = format!("{x:.places$}");
-    if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.').to_owned() } else { text }
+/// `x` with at most `places` decimals, no trailing zeros, with `number`'s decimal separator.
+fn trim(x: f64, places: usize, number: gezik_i18n::Number) -> String {
+    let mut text = String::new();
+    number.write_decimal(&mut text, x, places);
+    if places > 0 {
+        let keep = text.trim_end_matches('0').trim_end_matches(number.decimal).len();
+        text.truncate(keep);
+    }
+    text
 }
 
 /// `3:25`, `1:02:03`.
@@ -316,7 +321,8 @@ pub fn name_text(id: FieldId, value: &Value, arg: Option<&str>) -> String {
         Value::Real(x) => match digits {
             Some(places) => format!("{x:.places$}"),
             None if id == EXPOSURE && *x > 0.0 && *x < 1.0 => format!("1-{}", (1.0 / x).round()),
-            None => trim(*x, 2),
+            // A name does not change with the interface language.
+            None => trim(*x, 2, gezik_i18n::Number::ENGLISH),
         },
         Value::Duration(ms) => {
             let s = ms / 1000;
@@ -574,6 +580,16 @@ mod tests {
         assert_eq!(text(EXPOSURE, &Value::Real(2.0)), "2 s");
         assert!(fields.text(ARTIST).is_none());
         assert_eq!(fields.iter().next().map(|(id, _)| id), Some(WIDTH), "sorted by field");
+    }
+
+    #[test]
+    fn decimals_take_the_language_separator() {
+        let tr = gezik_i18n::Number::builtin("tr").unwrap();
+        assert_eq!(trim(2.8, 1, tr), "2,8");
+        assert_eq!(trim(3.0, 2, tr), "3");
+        assert_eq!(trim(29.97, 2, tr), "29,97");
+        assert_eq!(trim(100.0, 0, tr), "100");
+        assert_eq!(trim(29.97, 2, gezik_i18n::Number::ENGLISH), "29.97");
     }
 
     #[test]

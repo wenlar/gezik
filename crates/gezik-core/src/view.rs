@@ -218,12 +218,13 @@ pub fn relative_date(
         return None;
     }
     if age_secs < 3600 {
-        return Some(format!("{} min ago", (age_secs / 60).max(1)));
+        return Some(gezik_i18n::tn!("{n} min ago" | "{n} min ago", (age_secs / 60).max(1)));
     }
-    let clock = format!("{:02}:{:02}", then.hour, then.minute);
+    let (hour, minute) = (then.hour, then.minute);
+    // TRANSLATORS: {} is the time, 14:05.
     match day_number(now) - day_number(then) {
-        0 => Some(format!("Today {clock}")),
-        1 => Some(format!("Yesterday {clock}")),
+        0 => Some(gezik_i18n::t!("Today {}", format_args!("{hour:02}:{minute:02}"))),
+        1 => Some(gezik_i18n::t!("Yesterday {}", format_args!("{hour:02}:{minute:02}"))),
         _ => None,
     }
 }
