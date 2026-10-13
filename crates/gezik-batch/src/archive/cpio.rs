@@ -111,6 +111,17 @@ fn entry(
     if kind == 0o040000 && is_top(&header.name) {
         return Ok(false);
     }
+    let listed = Entry {
+        name: header.name.clone(),
+        is_dir: kind == 0o040000,
+        size: Some(header.size),
+        packed: None,
+        encrypted: false,
+        modified: i64::try_from(header.mtime).ok().and_then(unix_time),
+    };
+    if !cx.wants(&listed) {
+        return Ok(false);
+    }
     let path = safe_join(dest, &header.name).ok_or_else(|| Stop::Skip(unsafe_path()))?;
     let meta = Meta {
         modified: i64::try_from(header.mtime).ok().and_then(unix_time),

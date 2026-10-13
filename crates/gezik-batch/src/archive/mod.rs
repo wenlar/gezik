@@ -37,6 +37,7 @@ pub struct Entry {
     pub size: Option<u64>,
     pub packed: Option<u64>,
     pub encrypted: bool,
+    pub modified: Option<SystemTime>,
 }
 
 /// What extraction may use: progress, cancel, the password question.
@@ -59,6 +60,11 @@ pub trait ExtractCx {
     /// What the header of the entry written at `path` says besides its data (an archive
     /// packed again keeps it; Windows itself has no place for a Unix mode or owner).
     fn entry_header(&self, _path: &Path, _header: &Header) {}
+    /// Whether to write `entry` (asked before anything is made for it): `extract_some` takes
+    /// only the chosen ones, and a stream is listed by reading it through taking none.
+    fn wants(&self, _entry: &Entry) -> bool {
+        true
+    }
 }
 
 /// An entry's Unix facts as its archive keeps them.
@@ -77,6 +83,85 @@ pub trait ArchiveSource {
     fn list(&mut self, cx: &dyn ExtractCx) -> IoResult<Option<Vec<Entry>>>;
     /// Writes every entry under `dest` (a staging folder), through `safe_join`.
     fn extract(&mut self, dest: &Path, cx: &dyn ExtractCx) -> IoResult<()>;
+    /// Writes only the entries `names` (`/` between parts) and what is under those that are
+    /// folders, each at its own place under `dest`.
+    fn extract_some(&mut self, names: &[String], dest: &Path, cx: &dyn ExtractCx) -> IoResult<()> {
+        self.extract(dest, &Only { names, cx })
+    }
+}
+
+/// Every entry of `source`: its list, or for a stream (tar.*, .gz, cpio, deb) one pass that
+/// writes nothing.
+pub fn list_all(source: &mut dyn ArchiveSource, cx: &dyn ExtractCx) -> IoResult<Vec<Entry>> {
+    if let Some(entries) = source.list(cx)? {
+        return Ok(entries);
+    }
+    let lister = Lister { cx, found: Default::default() };
+    source.extract(Path::new(""), &lister)?;
+    Ok(lister.found.into_inner())
+}
+
+/// An entry's name as `extract_some` matches it: `/` between parts, none at the end, no `./`.
+pub fn entry_key(name: &str) -> String {
+    let name = name.replace('\\', "/");
+    name.split('/').filter(|part| !part.is_empty() && *part != ".").collect::<Vec<_>>().join("/")
+}
+
+/// `cx` writing only `names` and what is under them.
+struct Only<'a> {
+    names: &'a [String],
+    cx: &'a dyn ExtractCx,
+}
+
+/// `cx` writing nothing, keeping what each entry is (its `wants` sees them as they come).
+struct Lister<'a> {
+    cx: &'a dyn ExtractCx,
+    found: std::cell::RefCell<Vec<Entry>>,
+}
+
+/// The calls both pass on to the job's own `cx`.
+macro_rules! pass_on {
+    () => {
+        fn add_bytes(&self, n: u64) {
+            self.cx.add_bytes(n);
+        }
+        fn entry_done(&self) {
+            self.cx.entry_done();
+        }
+        fn stopped(&self) -> bool {
+            self.cx.stopped()
+        }
+        fn password(&self, retry: bool) -> Option<String> {
+            self.cx.password(retry)
+        }
+        fn entry_failed(&self, name: &str, error: &IoError) {
+            self.cx.entry_failed(name, error);
+        }
+        fn entry_skipped(&self, name: &str, why: &IoError) {
+            self.cx.entry_skipped(name, why);
+        }
+    };
+}
+
+impl ExtractCx for Only<'_> {
+    pass_on!();
+    fn wants(&self, entry: &Entry) -> bool {
+        let key = entry_key(&entry.name);
+        self.names
+            .iter()
+            .any(|name| key.strip_prefix(name.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')))
+            && self.cx.wants(entry)
+    }
+}
+
+impl ExtractCx for Lister<'_> {
+    pass_on!();
+    fn wants(&self, entry: &Entry) -> bool {
+        // Shown to the job's own `cx` too, which may count them (progress); never written.
+        let _ = self.cx.wants(entry);
+        self.found.borrow_mut().push(entry.clone());
+        false
+    }
 }
 
 /// How much of the start of a file `detect` looks at.
@@ -553,7 +638,7 @@ fn unix_time(secs: i64) -> Option<SystemTime> {
 }
 
 /// A local date and time (as zip's DOS dates are) as a time.
-fn local_time(parts: DateParts) -> Option<SystemTime> {
+pub fn local_time(parts: DateParts) -> Option<SystemTime> {
     let naive = seconds(parts)?;
     // The local offset at that moment; a second round settles a daylight-saving change.
     let mut utc = naive;

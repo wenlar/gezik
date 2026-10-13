@@ -86,6 +86,7 @@ impl ArchiveSource for SevenZSource {
                     .copied()
                     .flatten()
                     .is_some_and(|b| encrypted(archive, b)),
+                modified: e.has_last_modified_date.then(|| e.last_modified_date().into()),
             })
             .collect();
         Ok(Some(entries))
@@ -126,6 +127,20 @@ impl ArchiveSource for SevenZSource {
                 if cx.stopped() {
                     stop = Some(cancelled());
                     return Err(SzError::Other("cancelled".into()));
+                }
+                // Not chosen: read past (a solid block's stream goes on), confirming nothing.
+                let listed = Entry {
+                    name: e.name().to_owned(),
+                    is_dir: e.is_directory(),
+                    size: Some(e.size()),
+                    packed: None,
+                    encrypted: false,
+                    modified: e.has_last_modified_date.then(|| e.last_modified_date().into()),
+                };
+                if !cx.wants(&listed) {
+                    drain(r, cx);
+                    done = seen;
+                    return Ok(true);
                 }
                 let result = entry(e, r, dest, &mut links, cx);
                 if !matches!(result, Err(Stop::Cancelled)) {

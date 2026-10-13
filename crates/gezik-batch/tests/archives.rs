@@ -1467,3 +1467,77 @@ fn a_huge_dictionary_is_not_allocated() {
     assert_eq!(err.to_string(), "7-Zip needed");
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// What `extract_some(names)` writes of the archive at `path`.
+fn some(path: &Path, names: &[&str]) -> Vec<(String, Vec<u8>)> {
+    let stage = dir(&format!("some-{}", path.file_name().unwrap().to_string_lossy()));
+    let names: Vec<String> = names.iter().map(|n| (*n).to_owned()).collect();
+    archive::open(path).unwrap().extract_some(&names, &stage, &Cx::new(None)).unwrap();
+    let out = tree(&stage);
+    let _ = std::fs::remove_dir_all(&stage);
+    out
+}
+
+/// The names `list_all` gives, as `entry_key` writes them, sorted.
+fn listed(path: &Path) -> Vec<String> {
+    let entries = archive::list_all(archive::open(path).unwrap().as_mut(), &Cx::new(None)).unwrap();
+    let mut names: Vec<String> = entries.iter().map(|e| archive::entry_key(&e.name)).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn only_the_chosen_entries_are_written_and_streams_list_without_writing() {
+    let d = dir("some");
+    let (a, b, c) = (b"a".to_vec(), noise(70_000, 3), b"ccc".to_vec());
+    // zip
+    let mut zip = ZipWriter::new(std::fs::File::create(d.join("x.zip")).unwrap());
+    let deflate = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (name, data) in [("docs/a.txt", &a), ("docs/sub/b.bin", &b), ("c.txt", &c)] {
+        zip.start_file(name, deflate).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    zip.finish().unwrap();
+    // 7z, solid: the chosen one is read out of the shared stream.
+    {
+        let mut w = ArchiveWriter::create(d.join("x.7z")).unwrap();
+        let content = [("docs/a.txt", &a), ("docs/sub/b.bin", &b), ("c.txt", &c)];
+        let entries = content.iter().map(|(n, _)| sz_entry(n)).collect();
+        let readers = content.iter().map(|(_, data)| SourceReader::new(data.as_slice())).collect();
+        w.push_archive_entries(entries, readers).unwrap();
+        w.finish().unwrap();
+    }
+    for name in ["x.zip", "x.7z"] {
+        let path = d.join(name);
+        assert_eq!(some(&path, &["docs/sub"]), files(&[("docs/sub/b.bin", &b)]), "{name}");
+        assert_eq!(some(&path, &["c.txt", "docs/a.txt"]), files(&[("c.txt", &c), ("docs/a.txt", &a)]), "{name}");
+        assert_eq!(some(&path, &["doc"]), [], "{name}: a name's start is no folder");
+    }
+    // tar family and a single compressed file: listed by one pass, nothing written.
+    let long = format!("docs/{}/big.bin", "x".repeat(120));
+    let tar = tar_bytes(&long, &b);
+    let mut gz =
+        flate2::write::GzEncoder::new(std::fs::File::create(d.join("t.tar.gz")).unwrap(), flate2::Compression::new(6));
+    gz.write_all(&tar).unwrap();
+    gz.finish().unwrap();
+    let path = d.join("t.tar.gz");
+    assert_eq!(listed(&path), ["../evil.tx", "docs", long.as_str(), "run.sh"], "the index refuses `..` itself");
+    assert_eq!(std::fs::read_dir(&d).unwrap().count(), 3, "x.zip, x.7z, t.tar.gz: listing wrote nothing");
+    assert_eq!(some(&path, &["run.sh"]), files(&[("run.sh", b"echo\n")]));
+    let mut gz = flate2::GzBuilder::new()
+        .filename("inner.txt")
+        .write(std::fs::File::create(d.join("one.gz")).unwrap(), flate2::Compression::new(6));
+    gz.write_all(&c).unwrap();
+    gz.finish().unwrap();
+    assert_eq!(listed(&d.join("one.gz")), ["inner.txt"]);
+    assert_eq!(some(&d.join("one.gz"), &["inner.txt"]), files(&[("inner.txt", &c)]));
+    assert_eq!(listed(&d.join("x.zip")), ["c.txt", "docs/a.txt", "docs/sub/b.bin"]);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[cfg(feature = "rar")]
+#[test]
+fn rar_writes_only_the_chosen_entries() {
+    let names = some(&data("rar/test_read_format_rar.rar"), &["testdir"]);
+    assert_eq!(names, files(&[("testdir/test.txt", b"test text document\r\n")]));
+}

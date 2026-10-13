@@ -88,6 +88,17 @@ pub fn extract_chain(
     tasks
 }
 
+/// What a job made in `stage` (the folder holding it, once known) moved into `dir` as it is:
+/// conflicts asked like any move's, undo trashes what landed.
+pub fn placing(
+    dir: PathBuf,
+    stage: Arc<Mutex<Option<PathBuf>>>,
+    kind: gezik_ops::TaskKind,
+    title: String,
+) -> Box<dyn gezik_ops::Task> {
+    Box::new(PlaceTask::outputs(dir, stage, kind, title))
+}
+
 /// What Undo says for extracting `archives`: "Extract a.zip", "Extract 3 archives".
 pub fn extract_label(archives: &[PathBuf]) -> String {
     match archives {

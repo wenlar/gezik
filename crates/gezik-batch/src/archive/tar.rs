@@ -32,12 +32,13 @@ impl ArchiveSource for TarSource {
     }
 
     fn extract(&mut self, dest: &Path, cx: &dyn ExtractCx) -> IoResult<()> {
-        extract_tar(decoder(self.codec, self.volumes.reader()?), dest, cx)
+        extract_tar(decoder(self.codec, self.volumes.reader()?), dest, "", cx)
     }
 }
 
-/// Writes the entries of tar stream `r` under `dest` (deb's inner tars come here too).
-pub(super) fn extract_tar(r: impl Read, dest: &Path, cx: &dyn ExtractCx) -> IoResult<()> {
+/// Writes the entries of tar stream `r` under `dest` (deb's inner tars come here too, their
+/// names under `prefix` in the package).
+pub(super) fn extract_tar(r: impl Read, dest: &Path, prefix: &str, cx: &dyn ExtractCx) -> IoResult<()> {
     let mut archive = Archive::new(r);
     let mut links = Links::default();
     for entry in archive.entries().map_err(damaged)? {
@@ -49,6 +50,18 @@ pub(super) fn extract_tar(r: impl Read, dest: &Path, cx: &dyn ExtractCx) -> IoRe
         let name = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
         let kind = entry.header().entry_type();
         if kind == EntryType::XGlobalHeader || (kind == EntryType::Directory && is_top(&name)) {
+            continue;
+        }
+        let header = entry.header();
+        let listed = Entry {
+            name: format!("{prefix}{name}"),
+            is_dir: kind == EntryType::Directory,
+            size: Some(entry.size()),
+            packed: None,
+            encrypted: false,
+            modified: header.mtime().ok().and_then(|secs| unix_time(i64::try_from(secs).ok()?)),
+        };
+        if !cx.wants(&listed) {
             continue;
         }
         // A skipped entry's data is read past by the next `entries()` step.

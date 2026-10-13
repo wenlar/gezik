@@ -46,6 +46,7 @@ impl ArchiveSource for IsoSource {
                 size: (!item.entry.is_directory()).then(|| item.entry.total_size()),
                 packed: None,
                 encrypted: false,
+                modified: modified(&item.entry),
                 name: item.name,
             })
             .collect();
@@ -58,6 +59,17 @@ impl ArchiveSource for IsoSource {
         for Item { name, entry } in walk(&image)? {
             if cx.stopped() {
                 return Err(cancelled());
+            }
+            let listed = Entry {
+                name: name.clone(),
+                is_dir: entry.is_directory(),
+                size: None,
+                packed: None,
+                encrypted: false,
+                modified: None,
+            };
+            if !cx.wants(&listed) {
+                continue;
             }
             let Some(path) = safe_join(dest, &name) else {
                 cx.entry_failed(&name, &unsafe_path());
