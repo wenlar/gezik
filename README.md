@@ -30,7 +30,7 @@ Windows · macOS · Linux
 
 **Files.** Copy, cut and paste through the system clipboard, drag and drop to and from other programs, conflicts asked up front, undo and redo for the whole session, and a drop stack for collecting items from several folders. → [File operations](docs/features.md#file-operations)
 
-**Batch work.** Batch rename with rules and a live preview, archives (open them as folders, extract and compress zip, 7z, tar and more), and conversion of pictures, text, audio, video and PDF, plus your own commands. → [Batch rename](docs/features.md#batch-rename) · [Archives](docs/features.md#archives) · [Inside archives](docs/features.md#inside-archives) · [Convert and PDF](docs/features.md#convert-and-pdf)
+**Batch work.** Batch rename with rules and a live preview, archives (open them as folders and change what is inside, extract and compress zip, 7z, tar and more), and conversion of pictures, text, audio, video and PDF, plus your own commands. → [Batch rename](docs/features.md#batch-rename) · [Archives](docs/features.md#archives) · [Inside archives](docs/features.md#inside-archives) · [Convert and PDF](docs/features.md#convert-and-pdf)
 
 **Preview.** A preview pane and Quick Look (Space) that show code in color with line numbers, large logs from end to end, any file as hex, PDF pages with zoom, play video and audio (with ffmpeg, downloaded on request), and a file's properties: camera and exposure, artist, album and length, pages and author, read by Gezik itself. The same properties are list columns to sort, group and filter by (`artist:tarkan duration>3m`), a search criterion, and fields of batch rename templates (`{track:02} {artist} - {title}`). Nothing is read until something asks for it. → [Preview and properties](docs/features.md#preview-and-properties)
 
@@ -106,7 +106,7 @@ cargo test
 | `crates/gezik-ops` | the file operations engine (queue, conflicts, progress, undo) |
 | `crates/gezik-batch` | batch operations (rename rules, archives, conversion, PDF) |
 | `crates/gezik-search` | searching folder trees (scanner, name and content matching, Everything) |
-| `crates/gezik-vfs` | places that are no folder on disk: inside archives (index, taking entries out, copying out) |
+| `crates/gezik-vfs` | places that are no folder on disk: inside archives (index, taking entries out, copying out, writing back) |
 | `crates/gezik-platform` | the parts that differ per OS (drives, icons, clipboard, trash, menus) |
 | `crates/gezik-i18n` | translations (`.po` catalogues, plural rules, the language in use; `gezik-lang` for translators) |
 | `crates/gezik` | the desktop app (Slint UI) |

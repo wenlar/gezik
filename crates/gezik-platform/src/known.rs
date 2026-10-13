@@ -20,6 +20,11 @@ impl KnownFolder {
     }
 }
 
+/// The user's Downloads folder, if the system names one.
+pub fn downloads() -> Option<PathBuf> {
+    dirs::download_dir()
+}
+
 /// Home, Desktop, Documents, Downloads, Pictures, Music, Videos — those that exist.
 pub fn known_folders() -> Vec<KnownFolder> {
     let candidates = [

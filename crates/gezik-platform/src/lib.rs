@@ -45,7 +45,7 @@ use std::path::PathBuf;
 pub use datetime::{civil_from_days, format_date, format_datetime, local_date_parts};
 pub use drives::{Drive, DriveKind, drive_signature, drives};
 pub use icons::{IconTarget, Rgba, folder_has_own_icon, icon, init_thread, type_name};
-pub use known::{KnownFolder, known_folders};
+pub use known::{KnownFolder, downloads, known_folders};
 /// Linux: org.freedesktop.FileManager1 (spec 6.4).
 #[cfg(all(unix, not(target_os = "macos")))]
 pub use linux::file_manager1;

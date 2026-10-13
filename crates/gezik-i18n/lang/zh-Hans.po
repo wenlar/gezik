@@ -280,22 +280,12 @@ msgstr "没有图片"
 msgid "the picture is damaged (no pixels)"
 msgstr "图片已损坏（无像素）"
 
+#. {} is an archive's name
 #: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-ops/src/tasks/attrs.rs
 #, fuzzy
-msgid "Some items of the archive could not be read; nothing was added"
-msgstr "压缩包中的部分项目无法读取；未添加任何内容"
-
-#: crates/gezik-batch/src/tasks/add.rs
-#, fuzzy
-msgid "Some items of the archive could not be packed again; nothing was added"
-msgstr "压缩包中的部分项目无法重新打包；未添加任何内容"
-
-#. {0} is why it could not be put back, {1} where it is
-#: crates/gezik-batch/src/tasks/add.rs
-#: crates/gezik-batch/src/tasks/compress.rs
-#, fuzzy
-msgid "{0}; it is at {1}"
-msgstr "{0}；它位于 {1}"
+msgid "Changing {}"
+msgstr "正在更改 {}"
 
 #. {0} is a name or "3 items", {1} an archive
 #: crates/gezik-batch/src/tasks/add.rs
@@ -305,23 +295,116 @@ msgstr "正在将 {0} 添加到 {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Adding needs a Recycle Bin to undo"
-msgstr "添加需要回收站才能撤销"
+msgid "The old archive cannot be kept for undo"
+msgstr "无法保留旧压缩包以便撤销"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Adding needs a trash to undo"
-msgstr "添加需要废纸篓才能撤销"
+msgid "This drive has no Recycle Bin. Change the archive anyway?"
+msgstr "此驱动器没有回收站。仍要更改压缩包吗？"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Cannot add to an archive in parts"
-msgstr "无法添加到分卷压缩包"
+msgid "This drive has no trash. Change the archive anyway?"
+msgstr "此驱动器没有废纸篓。仍要更改压缩包吗？"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik/src/integration.rs
+#, fuzzy
+msgid "Change"
+msgstr "更改"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/extract.rs
+#: crates/gezik-batch/src/tasks/split.rs
+#: crates/gezik/src/admin.rs
+#: crates/gezik/src/archives.rs
+#: crates/gezik/src/checksums.rs
+#: crates/gezik/src/compare.rs
+#: crates/gezik/src/connect.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/convert.rs
+#: crates/gezik/src/copy_to.rs
+#: crates/gezik/src/export.rs
+#: crates/gezik/src/filter.rs
+#: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/info.rs
+#: crates/gezik/src/integration.rs
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/preview/mod.rs
+#: crates/gezik/src/saved_searches.rs
+#: crates/gezik/src/search.rs
+#: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/src/sidebar.rs
+#: crates/gezik/src/tab_sets.rs
+#: crates/gezik/src/tags.rs
+#: crates/gezik/src/trash_view.rs
+#: crates/gezik/src/vfs_mounts.rs
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/ops-panel.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/settings.slint
+#, fuzzy
+msgid "Cancel"
+msgstr "取消"
+
+#. {0} and {1} are sizes, {2} a drive
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/extract.rs
+#, fuzzy
+msgid "{0} needed, {1} free on {2}"
+msgstr "需要 {0}，{2} 上可用 {1}"
+
+#. {0} is why it could not be put back, {1} where it is
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/compress.rs
+#, fuzzy
+msgid "{0}; it is at {1}"
+msgstr "{0}；它位于 {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Only zip, 7z and tar archives can be added to"
-msgstr "只能向 zip、7z 和 tar 压缩包添加内容"
+msgid "Some items of the archive could not be read; nothing was changed"
+msgstr "压缩包中的某些项目无法读取；未做任何更改"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items of the archive could not be packed again; nothing was changed"
+msgstr "压缩包中的某些项目无法重新打包；未做任何更改"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The new archive did not read back as written; the archive was not changed"
+msgstr "新压缩包读回的内容与写入的不一致；压缩包未更改"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Not a usable name: {}"
+msgstr "不可用的名称：{}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-ops/src/tasks/move_.rs
+#, fuzzy
+msgid "Cannot move a folder into itself"
+msgstr "无法将文件夹移入其自身"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This kind of archive can only be read"
+msgstr "此类压缩包只能读取"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "{} is not in the archive"
+msgstr "{} 不在压缩包中"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "{} is already in the archive"
+msgstr "{} 已在压缩包中"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
@@ -367,42 +450,6 @@ msgstr "跳过"
 #, fuzzy
 msgid "Keep both"
 msgstr "保留两者"
-
-#: crates/gezik-batch/src/tasks/add.rs
-#: crates/gezik-batch/src/tasks/extract.rs
-#: crates/gezik-batch/src/tasks/split.rs
-#: crates/gezik/src/admin.rs
-#: crates/gezik/src/archives.rs
-#: crates/gezik/src/checksums.rs
-#: crates/gezik/src/compare.rs
-#: crates/gezik/src/connect.rs
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/convert.rs
-#: crates/gezik/src/copy_to.rs
-#: crates/gezik/src/export.rs
-#: crates/gezik/src/filter.rs
-#: crates/gezik/src/finder_menu.rs
-#: crates/gezik/src/info.rs
-#: crates/gezik/src/integration.rs
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/preview/mod.rs
-#: crates/gezik/src/saved_searches.rs
-#: crates/gezik/src/search.rs
-#: crates/gezik/src/select_tools.rs
-#: crates/gezik/src/settings_window/backup.rs
-#: crates/gezik/src/sidebar.rs
-#: crates/gezik/src/tab_sets.rs
-#: crates/gezik/src/tags.rs
-#: crates/gezik/src/trash_view.rs
-#: crates/gezik/src/vfs_mounts.rs
-#: crates/gezik/ui/widgets/compress.slint
-#: crates/gezik/ui/widgets/convert.slint
-#: crates/gezik/ui/widgets/ops-panel.slint
-#: crates/gezik/ui/widgets/rename-batch.slint
-#: crates/gezik/ui/widgets/settings.slint
-#, fuzzy
-msgid "Cancel"
-msgstr "取消"
 
 #. the texts about [[commands]] in settings.toml keep its keys (run, output,
 #: crates/gezik-batch/src/tasks/command.rs
@@ -573,12 +620,6 @@ msgstr "7-Zip 无法解压到名称含 * 或 ? 的文件夹"
 msgid "7-Zip could not extract it"
 msgstr "7-Zip 无法解压它"
 
-#. {0} and {1} are sizes, {2} a drive
-#: crates/gezik-batch/src/tasks/extract.rs
-#, fuzzy
-msgid "{0} needed, {1} free on {2}"
-msgstr "需要 {0}，{2} 上可用 {1}"
-
 #: crates/gezik-batch/src/tasks/extract.rs
 #, fuzzy
 msgid "Not enough space"
@@ -649,6 +690,7 @@ msgstr "打开此类压缩包需要 7-Zip"
 
 #: crates/gezik-batch/src/tasks/mod.rs
 #: crates/gezik-ops/src/tasks/mod.rs
+#: crates/gezik-vfs/src/tasks.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/stack.rs
@@ -2608,6 +2650,7 @@ msgid "Copy To…"
 msgstr "复制到…"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Move To…"
@@ -4869,6 +4912,7 @@ msgstr[0] "还原 {n} 个项目"
 #: crates/gezik-ops/src/tasks/group.rs
 #: crates/gezik-ops/src/tasks/new.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "New folder"
 msgstr "新建文件夹"
@@ -5030,11 +5074,6 @@ msgstr "需要管理员权限"
 msgid "Changing the items in {}"
 msgstr "正在更改 {} 中的项目"
 
-#: crates/gezik-ops/src/tasks/attrs.rs
-#, fuzzy
-msgid "Changing {}"
-msgstr "正在更改 {}"
-
 #: crates/gezik-ops/src/tasks/cloud.rs
 #, fuzzy
 msgid "Keeping {} on this device"
@@ -5047,12 +5086,14 @@ msgstr "正在释放 {} 的空间"
 
 #: crates/gezik-ops/src/tasks/copy.rs
 #: crates/gezik-ops/src/tasks/new.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Creating {}"
 msgstr "正在创建 {}"
 
 #. {0} is a name or "3 items", {1} a folder
 #: crates/gezik-ops/src/tasks/copy.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {0} to {1}"
 msgstr "正在将 {0} 复制到 {1}"
@@ -5270,6 +5311,7 @@ msgstr "正在将 {} 移回"
 
 #. {0} is a name or "3 items", {1} a folder
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Moving {0} to {1}"
 msgstr "正在将 {0} 移动到 {1}"
@@ -5278,11 +5320,6 @@ msgstr "正在将 {0} 移动到 {1}"
 #, fuzzy
 msgid "Moving"
 msgstr "正在移动"
-
-#: crates/gezik-ops/src/tasks/move_.rs
-#, fuzzy
-msgid "Cannot move a folder into itself"
-msgstr "无法将文件夹移入其自身"
 
 #. {0} and {2} are why it failed, {1} where the item is
 #: crates/gezik-ops/src/tasks/move_.rs
@@ -5306,6 +5343,7 @@ msgid "New document.md"
 msgstr "新建文档.md"
 
 #: crates/gezik-ops/src/tasks/rename.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Renaming {0} to {1}"
 msgstr "正在将 {0} 重命名为 {1}"
@@ -6268,14 +6306,31 @@ msgstr "正在复制 {}"
 
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
+msgid "Copy {}"
+msgstr "复制 {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
 msgid "Copying {n} item"
 msgid_plural "Copying {n} items"
 msgstr[0] "正在复制 {n} 个项目"
 
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
-msgid "Copy {}"
-msgstr "复制 {}"
+msgid "Renaming {}"
+msgstr "正在重命名 {}"
+
+#. {0} is a name or "3 items", {1} an archive or a folder in one
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Deleting {0} from {1}"
+msgstr "正在从 {1} 中删除 {0}"
+
+#. {} is a file's name; it is put back into the archive it was opened from
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Updating {} in the archive"
+msgstr "正在更新压缩包中的 {}"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -9851,11 +9906,6 @@ msgstr "此桌面没有托盘（需要 StatusNotifier 宿主）"
 msgid "Closing the window quits Gezik"
 msgstr "关闭窗口会退出 Gezik"
 
-#: crates/gezik/src/integration.rs
-#, fuzzy
-msgid "Change"
-msgstr "更改"
-
 #. {} is a shortcut, such as Ctrl+Shift+G.
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10522,11 +10572,6 @@ msgstr "已存在同名文件"
 msgid "Not in search results: open a folder first"
 msgstr "不适用于搜索结果：请先打开文件夹"
 
-#: crates/gezik/src/operations.rs
-#, fuzzy
-msgid "Items in an archive can only be copied out"
-msgstr "压缩包中的项目只能复制出来"
-
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -10537,6 +10582,23 @@ msgstr "{} 适用于搜索结果"
 #, fuzzy
 msgid "can't be undone"
 msgstr "无法撤销"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the archive?"
+msgstr "要从压缩包中删除 {} 吗？"
+
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "You can undo this."
+msgstr "此操作可以撤销。"
+
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Cut {n} item"
+msgid_plural "Cut {n} items"
+msgstr[0] "已剪切 {n} 个项目"
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -13401,6 +13463,50 @@ msgid "Permanently delete {} item? This cannot be undone."
 msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "永久删除 {} 个项目？此操作无法撤销。"
 
+#. {} is a file opened from inside an archive and saved by its app
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "{} changed"
+msgstr "{} 已更改"
+
+#. {} is an archive's name
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "It was opened from {}."
+msgstr "它是从 {} 中打开的。"
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Update in Archive"
+msgstr "在压缩包中更新"
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Ignore"
+msgstr "忽略"
+
+#. {0} is a file opened from inside an archive, {1} the archive
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "{0} changed but is not in {1}"
+msgstr "{0} 已更改，但未更新到 {1}"
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Discard"
+msgstr "丢弃"
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Keep a Copy in Downloads"
+msgstr "在“下载”中保留副本"
+
+#. {} is where a file was copied to
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Kept {}"
+msgstr "已保留：{}"
+
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
 msgid "Extracting {}…"
@@ -15273,6 +15379,27 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "命令"
 
+#~ #, fuzzy
+#~ msgid "Some items of the archive could not be read; nothing was added"
+#~ msgstr "压缩包中的部分项目无法读取；未添加任何内容"
+#~ #, fuzzy
+#~ msgid "Some items of the archive could not be packed again; nothing was added"
+#~ msgstr "压缩包中的部分项目无法重新打包；未添加任何内容"
+#~ #, fuzzy
+#~ msgid "Adding needs a Recycle Bin to undo"
+#~ msgstr "添加需要回收站才能撤销"
+#~ #, fuzzy
+#~ msgid "Adding needs a trash to undo"
+#~ msgstr "添加需要废纸篓才能撤销"
+#~ #, fuzzy
+#~ msgid "Cannot add to an archive in parts"
+#~ msgstr "无法添加到分卷压缩包"
+#~ #, fuzzy
+#~ msgid "Only zip, 7z and tar archives can be added to"
+#~ msgstr "只能向 zip、7z 和 tar 压缩包添加内容"
+#~ #, fuzzy
+#~ msgid "Items in an archive can only be copied out"
+#~ msgstr "压缩包中的项目只能复制出来"
 #~ #, fuzzy
 #~ msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
 #~ msgstr "{0}：应为 \"system\" 或 \"extract-here\"，实际为 {1}"

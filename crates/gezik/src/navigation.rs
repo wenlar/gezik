@@ -1100,7 +1100,16 @@ impl Navigator {
             crate::trash_view::changed();
             return false;
         }
-        let Location::Path(current) = self.active_location() else { return false };
+        // Inside an archive: when its folder changed (the archive was written).
+        let location = self.active_location();
+        let current = match &location {
+            Location::Path(current) => current.clone(),
+            Location::Vfs(_) => match archive_folder(&location) {
+                Some(folder) => folder,
+                None => return false,
+            },
+            _ => return false,
+        };
         {
             let inner = self.0.borrow();
             let user_loading = inner.user_load == Some(inner.generation.load(Ordering::SeqCst));
@@ -1117,7 +1126,7 @@ impl Navigator {
             view.focus = select.first().cloned();
             inner.tabs.active_mut().set_view(view);
         }
-        self.load_with(Location::Path(current), Mode::Show, note, false);
+        self.load_with(location, Mode::Show, note, false);
         true
     }
 

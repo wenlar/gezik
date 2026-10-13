@@ -128,7 +128,23 @@ rules on the left and a live preview on the right:
 - If the archive changes on disk its contents are read again; if it is deleted, the tab goes to
   its folder. Nothing is kept once no tab shows an archive (its index, password and
   temporary files go).
-- Archives are read-only for now: new files, deletes and renames inside them come later.
+- **Changing an archive** (zip, 7z, tar, tar.gz, tar.bz2, tar.xz): drop or paste files and
+  folders into it (from disk or from another archive), **Delete** (asked, and undoable),
+  **Rename** (F2), **New folder** (Ctrl+Shift+N), **Cut** and paste, **Move To…**, and Shift
+  while dragging moves. Each job writes the archive anew once, next to it, reads the new one
+  back and checks it, and only then puts it in place: the old archive goes to the trash, so
+  Ctrl+Z brings it back. If anything fails or you cancel, the archive stays exactly as it was.
+  Dates, Unix permissions and the password are kept (new entries get the archive's password).
+  Archives inside archives are written back through each level. rar, iso, cab, deb, single
+  `.gz` files, archives in parts, tar.zst and what only 7-Zip reads stay read-only (the status
+  bar says so). On a drive with no trash Gezik asks first, since the old archive cannot be
+  kept.
+- **Update in Archive**: a file opened from inside an archive and saved by its app is noticed;
+  Gezik asks whether to put it back. Leaving the archive with a change not put back asks
+  again (Update in Archive, Discard, or Keep a Copy in Downloads); quitting Gezik keeps such a
+  change in Downloads.
+- A small change to a solid 7z or a tar.gz packs the whole archive again, and every change
+  leaves the old archive in the trash (a large archive fills it).
 
 ```toml
 [archives]

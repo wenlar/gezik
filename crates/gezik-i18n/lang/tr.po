@@ -229,19 +229,11 @@ msgstr "resim yok"
 msgid "the picture is damaged (no pixels)"
 msgstr "resim bozuk (piksel yok)"
 
+#. {} is an archive's name
 #: crates/gezik-batch/src/tasks/add.rs
-msgid "Some items of the archive could not be read; nothing was added"
-msgstr "Arşivin bazı öğeleri okunamadı; hiçbir şey eklenmedi"
-
-#: crates/gezik-batch/src/tasks/add.rs
-msgid "Some items of the archive could not be packed again; nothing was added"
-msgstr "Arşivin bazı öğeleri yeniden paketlenemedi; hiçbir şey eklenmedi"
-
-#. {0} is why it could not be put back, {1} where it is
-#: crates/gezik-batch/src/tasks/add.rs
-#: crates/gezik-batch/src/tasks/compress.rs
-msgid "{0}; it is at {1}"
-msgstr "{0}; konumu: {1}"
+#: crates/gezik-ops/src/tasks/attrs.rs
+msgid "Changing {}"
+msgstr "Değiştiriliyor: {}"
 
 #. {0} is a name or "3 items", {1} an archive
 #: crates/gezik-batch/src/tasks/add.rs
@@ -249,20 +241,102 @@ msgid "Adding {0} to {1}"
 msgstr "Ekleniyor: {0} → {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
-msgid "Adding needs a Recycle Bin to undo"
-msgstr "Eklemenin geri alınabilmesi için Geri Dönüşüm Kutusu gerekir"
+msgid "The old archive cannot be kept for undo"
+msgstr "Eski arşiv geri alma için saklanamıyor"
 
 #: crates/gezik-batch/src/tasks/add.rs
-msgid "Adding needs a trash to undo"
-msgstr "Eklemenin geri alınabilmesi için Çöp Sepeti gerekir"
+msgid "This drive has no Recycle Bin. Change the archive anyway?"
+msgstr "Bu sürücüde Geri Dönüşüm Kutusu yok. Arşiv yine de değiştirilsin mi?"
 
 #: crates/gezik-batch/src/tasks/add.rs
-msgid "Cannot add to an archive in parts"
-msgstr "Parçalı arşive eklenemez"
+msgid "This drive has no trash. Change the archive anyway?"
+msgstr "Bu sürücüde Çöp Sepeti yok. Arşiv yine de değiştirilsin mi?"
 
 #: crates/gezik-batch/src/tasks/add.rs
-msgid "Only zip, 7z and tar archives can be added to"
-msgstr "Yalnız zip, 7z ve tar arşivlerine eklenebilir"
+#: crates/gezik/src/integration.rs
+msgid "Change"
+msgstr "Değiştir"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/extract.rs
+#: crates/gezik-batch/src/tasks/split.rs
+#: crates/gezik/src/admin.rs
+#: crates/gezik/src/archives.rs
+#: crates/gezik/src/checksums.rs
+#: crates/gezik/src/compare.rs
+#: crates/gezik/src/connect.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/convert.rs
+#: crates/gezik/src/copy_to.rs
+#: crates/gezik/src/export.rs
+#: crates/gezik/src/filter.rs
+#: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/info.rs
+#: crates/gezik/src/integration.rs
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/preview/mod.rs
+#: crates/gezik/src/saved_searches.rs
+#: crates/gezik/src/search.rs
+#: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/src/sidebar.rs
+#: crates/gezik/src/tab_sets.rs
+#: crates/gezik/src/tags.rs
+#: crates/gezik/src/trash_view.rs
+#: crates/gezik/src/vfs_mounts.rs
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/ops-panel.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Cancel"
+msgstr "İptal"
+
+#. {0} and {1} are sizes, {2} a drive
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/extract.rs
+msgid "{0} needed, {1} free on {2}"
+msgstr "{0} gerekli, {2} üzerinde {1} boş"
+
+#. {0} is why it could not be put back, {1} where it is
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/compress.rs
+msgid "{0}; it is at {1}"
+msgstr "{0}; konumu: {1}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "Some items of the archive could not be read; nothing was changed"
+msgstr "Arşivin bazı öğeleri okunamadı; hiçbir şey değiştirilmedi"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "Some items of the archive could not be packed again; nothing was changed"
+msgstr "Arşivin bazı öğeleri yeniden paketlenemedi; hiçbir şey değiştirilmedi"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "The new archive did not read back as written; the archive was not changed"
+msgstr "Yeni arşiv yazıldığı gibi geri okunamadı; arşiv değiştirilmedi"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "Not a usable name: {}"
+msgstr "Kullanılamayan ad: {}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-ops/src/tasks/move_.rs
+msgid "Cannot move a folder into itself"
+msgstr "Bir klasör kendi içine taşınamaz"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik/src/operations.rs
+msgid "This kind of archive can only be read"
+msgstr "Bu tür arşiv yalnızca okunabilir"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "{} is not in the archive"
+msgstr "{} arşivde yok"
+
+#: crates/gezik-batch/src/tasks/add.rs
+msgid "{} is already in the archive"
+msgstr "{} zaten arşivde var"
 
 #: crates/gezik-batch/src/tasks/add.rs
 msgid "{n} item already in the archive"
@@ -303,41 +377,6 @@ msgstr "Atla"
 #: crates/gezik/ui/widgets/conflict-list.slint
 msgid "Keep both"
 msgstr "İkisini de tut"
-
-#: crates/gezik-batch/src/tasks/add.rs
-#: crates/gezik-batch/src/tasks/extract.rs
-#: crates/gezik-batch/src/tasks/split.rs
-#: crates/gezik/src/admin.rs
-#: crates/gezik/src/archives.rs
-#: crates/gezik/src/checksums.rs
-#: crates/gezik/src/compare.rs
-#: crates/gezik/src/connect.rs
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/convert.rs
-#: crates/gezik/src/copy_to.rs
-#: crates/gezik/src/export.rs
-#: crates/gezik/src/filter.rs
-#: crates/gezik/src/finder_menu.rs
-#: crates/gezik/src/info.rs
-#: crates/gezik/src/integration.rs
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/preview/mod.rs
-#: crates/gezik/src/saved_searches.rs
-#: crates/gezik/src/search.rs
-#: crates/gezik/src/select_tools.rs
-#: crates/gezik/src/settings_window/backup.rs
-#: crates/gezik/src/sidebar.rs
-#: crates/gezik/src/tab_sets.rs
-#: crates/gezik/src/tags.rs
-#: crates/gezik/src/trash_view.rs
-#: crates/gezik/src/vfs_mounts.rs
-#: crates/gezik/ui/widgets/compress.slint
-#: crates/gezik/ui/widgets/convert.slint
-#: crates/gezik/ui/widgets/ops-panel.slint
-#: crates/gezik/ui/widgets/rename-batch.slint
-#: crates/gezik/ui/widgets/settings.slint
-msgid "Cancel"
-msgstr "İptal"
 
 #. the texts about [[commands]] in settings.toml keep its keys (run, output,
 #: crates/gezik-batch/src/tasks/command.rs
@@ -476,11 +515,6 @@ msgstr "7-Zip, adında * ya da ? olan bir klasöre ayıklayamaz"
 msgid "7-Zip could not extract it"
 msgstr "7-Zip bunu ayıklayamadı"
 
-#. {0} and {1} are sizes, {2} a drive
-#: crates/gezik-batch/src/tasks/extract.rs
-msgid "{0} needed, {1} free on {2}"
-msgstr "{0} gerekli, {2} üzerinde {1} boş"
-
 #: crates/gezik-batch/src/tasks/extract.rs
 msgid "Not enough space"
 msgstr "Yeterli yer yok"
@@ -539,6 +573,7 @@ msgstr "Bu tür arşivi açmak için 7-Zip gerekli"
 
 #: crates/gezik-batch/src/tasks/mod.rs
 #: crates/gezik-ops/src/tasks/mod.rs
+#: crates/gezik-vfs/src/tasks.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/stack.rs
@@ -2160,6 +2195,7 @@ msgid "Copy To…"
 msgstr "Şuraya kopyala…"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Move To…"
 msgstr "Şuraya taşı…"
@@ -3998,6 +4034,7 @@ msgstr[0] "{n} öğeyi geri yükle"
 #: crates/gezik-ops/src/tasks/group.rs
 #: crates/gezik-ops/src/tasks/new.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/operations.rs
 msgid "New folder"
 msgstr "Yeni klasör"
 
@@ -4131,10 +4168,6 @@ msgstr "Yönetici gerektirir"
 msgid "Changing the items in {}"
 msgstr "{} içindeki öğeler değiştiriliyor"
 
-#: crates/gezik-ops/src/tasks/attrs.rs
-msgid "Changing {}"
-msgstr "Değiştiriliyor: {}"
-
 #: crates/gezik-ops/src/tasks/cloud.rs
 msgid "Keeping {} on this device"
 msgstr "Bu cihazda tutuluyor: {}"
@@ -4145,11 +4178,13 @@ msgstr "Yer açılıyor: {}"
 
 #: crates/gezik-ops/src/tasks/copy.rs
 #: crates/gezik-ops/src/tasks/new.rs
+#: crates/gezik-vfs/src/tasks.rs
 msgid "Creating {}"
 msgstr "Oluşturuluyor: {}"
 
 #. {0} is a name or "3 items", {1} a folder
 #: crates/gezik-ops/src/tasks/copy.rs
+#: crates/gezik-vfs/src/tasks.rs
 msgid "Copying {0} to {1}"
 msgstr "Kopyalanıyor: {0} → {1}"
 
@@ -4327,16 +4362,13 @@ msgstr "Geri taşınıyor: {}"
 
 #. {0} is a name or "3 items", {1} a folder
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik-vfs/src/tasks.rs
 msgid "Moving {0} to {1}"
 msgstr "{0}, {1} konumuna taşınıyor"
 
 #: crates/gezik-ops/src/tasks/move_.rs
 msgid "Moving"
 msgstr "Taşınıyor"
-
-#: crates/gezik-ops/src/tasks/move_.rs
-msgid "Cannot move a folder into itself"
-msgstr "Bir klasör kendi içine taşınamaz"
 
 #. {0} and {2} are why it failed, {1} where the item is
 #: crates/gezik-ops/src/tasks/move_.rs
@@ -4356,6 +4388,7 @@ msgid "New document.md"
 msgstr "Yeni belge.md"
 
 #: crates/gezik-ops/src/tasks/rename.rs
+#: crates/gezik-vfs/src/tasks.rs
 msgid "Renaming {0} to {1}"
 msgstr "{0} yeniden adlandırılıyor: {1}"
 
@@ -5129,13 +5162,27 @@ msgid "Copying {}"
 msgstr "Kopyalanıyor: {}"
 
 #: crates/gezik-vfs/src/tasks.rs
+msgid "Copy {}"
+msgstr "Kopyala: {}"
+
+#: crates/gezik-vfs/src/tasks.rs
 msgid "Copying {n} item"
 msgid_plural "Copying {n} items"
 msgstr[0] "{n} öğe kopyalanıyor"
 
 #: crates/gezik-vfs/src/tasks.rs
-msgid "Copy {}"
-msgstr "Kopyala: {}"
+msgid "Renaming {}"
+msgstr "Yeniden adlandırılıyor: {}"
+
+#. {0} is a name or "3 items", {1} an archive or a folder in one
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Deleting {0} from {1}"
+msgstr "Siliniyor: {0} ({1})"
+
+#. {} is a file's name; it is put back into the archive it was opened from
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Updating {} in the archive"
+msgstr "Arşivde güncelleniyor: {}"
 
 #: crates/gezik/src/actions.rs
 msgid "Commands run on files and folders"
@@ -8040,10 +8087,6 @@ msgstr "Bu masaüstünde bildirim alanı yok (StatusNotifier sunucusu gerekir)"
 msgid "Closing the window quits Gezik"
 msgstr "Pencereyi kapatmak Gezik'ten çıkar"
 
-#: crates/gezik/src/integration.rs
-msgid "Change"
-msgstr "Değiştir"
-
 #. {} is a shortcut, such as Ctrl+Shift+G.
 #: crates/gezik/src/integration.rs
 msgid "{} shows or hides Gezik from any app"
@@ -8597,10 +8640,6 @@ msgstr "Bu adda bir dosya zaten var"
 msgid "Not in search results: open a folder first"
 msgstr "Arama sonuçlarında olmaz: önce bir klasör açın"
 
-#: crates/gezik/src/operations.rs
-msgid "Items in an archive can only be copied out"
-msgstr "Arşivdeki öğeler yalnız dışarı kopyalanabilir"
-
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 msgid "{} works in search results"
@@ -8609,6 +8648,20 @@ msgstr "{} arama sonuçlarında çalışır"
 #: crates/gezik/src/operations.rs
 msgid "can't be undone"
 msgstr "geri alınamaz"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+msgid "Delete {} from the archive?"
+msgstr "{} arşivden silinsin mi?"
+
+#: crates/gezik/src/operations.rs
+msgid "You can undo this."
+msgstr "Bunu geri alabilirsiniz."
+
+#: crates/gezik/src/operations.rs
+msgid "Cut {n} item"
+msgid_plural "Cut {n} items"
+msgstr[0] "{n} öğe kesildi"
 
 #: crates/gezik/src/operations.rs
 msgid "Copied {n} item"
@@ -10928,6 +10981,42 @@ msgid "Permanently delete {} item? This cannot be undone."
 msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "{} öğe kalıcı olarak silinsin mi? Bu geri alınamaz."
 
+#. {} is a file opened from inside an archive and saved by its app
+#: crates/gezik/src/vfs_mounts.rs
+msgid "{} changed"
+msgstr "{} değişti"
+
+#. {} is an archive's name
+#: crates/gezik/src/vfs_mounts.rs
+msgid "It was opened from {}."
+msgstr "Şu arşivden açılmıştı: {}."
+
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Update in Archive"
+msgstr "Arşivde güncelle"
+
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Ignore"
+msgstr "Yoksay"
+
+#. {0} is a file opened from inside an archive, {1} the archive
+#: crates/gezik/src/vfs_mounts.rs
+msgid "{0} changed but is not in {1}"
+msgstr "{0} değişti ama {1} içinde güncellenmedi"
+
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Discard"
+msgstr "Değişikliği at"
+
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Keep a Copy in Downloads"
+msgstr "İndirilenler'de bir kopya tut"
+
+#. {} is where a file was copied to
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Kept {}"
+msgstr "Saklandı: {}"
+
 #: crates/gezik/src/vfs_mounts.rs
 msgid "Extracting {}…"
 msgstr "Ayıklanıyor: {}…"
@@ -12456,6 +12545,20 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Komutlar"
 
+#~ msgid "Some items of the archive could not be read; nothing was added"
+#~ msgstr "Arşivin bazı öğeleri okunamadı; hiçbir şey eklenmedi"
+#~ msgid "Some items of the archive could not be packed again; nothing was added"
+#~ msgstr "Arşivin bazı öğeleri yeniden paketlenemedi; hiçbir şey eklenmedi"
+#~ msgid "Adding needs a Recycle Bin to undo"
+#~ msgstr "Eklemenin geri alınabilmesi için Geri Dönüşüm Kutusu gerekir"
+#~ msgid "Adding needs a trash to undo"
+#~ msgstr "Eklemenin geri alınabilmesi için Çöp Sepeti gerekir"
+#~ msgid "Cannot add to an archive in parts"
+#~ msgstr "Parçalı arşive eklenemez"
+#~ msgid "Only zip, 7z and tar archives can be added to"
+#~ msgstr "Yalnız zip, 7z ve tar arşivlerine eklenebilir"
+#~ msgid "Items in an archive can only be copied out"
+#~ msgstr "Arşivdeki öğeler yalnız dışarı kopyalanabilir"
 #~ msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
 #~ msgstr "{0}: \"system\" ya da \"extract-here\" bekleniyordu, gelen: {1}"
 #~ msgctxt "setting:archives.double-click"

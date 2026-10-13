@@ -1,12 +1,13 @@
 //! Places inside archives in the app (spec 16 §4.4, §4.5): which open ones the tabs hold (the
 //! last tab that leaves lets one go), asking for a password from a worker thread, and opening
-//! a file inside an archive with its app (taken out to the temporary area first).
+//! a file inside an archive with its app (taken out to the temporary area first), watched
+//! so a change can be put back (spec 16 §6.4, "Update in Archive").
 
 use std::cell::{Cell, RefCell};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use gezik_core::nav::Location;
 use gezik_core::vfs::{VfsPath, VfsRoot};
@@ -16,6 +17,31 @@ use gezik_vfs::{Cx, Vfs};
 thread_local! {
     /// The open places some tab shows (in any pane or window).
     static HELD: RefCell<Vec<Arc<dyn Vfs>>> = const { RefCell::new(Vec::new()) };
+    /// Files inside archives opened with their apps, while their archive is shown.
+    static OPENED: RefCell<Vec<Opened>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A file's size and change time: what tells that it was saved.
+type Facts = (u64, Option<SystemTime>);
+
+fn facts(file: &Path) -> Option<Facts> {
+    std::fs::metadata(file).ok().map(|meta| (meta.len(), meta.modified().ok()))
+}
+
+/// A file inside an archive opened with its app (spec 16 §6.4).
+struct Opened {
+    at: VfsPath,
+    /// Where it was taken out to (the app has it open there).
+    file: PathBuf,
+    /// Keeps its archive open, and so the temporary folder the file is in.
+    _vfs: Arc<dyn Vfs>,
+    /// Its facts when last looked at (opened, put back, or a change ignored).
+    seen: Facts,
+    /// Its facts when the archive last had it (opened, or put back).
+    stored: Facts,
+    /// Its folder, watched: a save asks whether to put it back.
+    watch: crate::folder_watch::FolderWatch,
+    asking: bool,
 }
 
 /// A tab now shows `vfs`: kept while one does.
@@ -58,6 +84,148 @@ pub fn sweep() {
     if !gone.is_empty() {
         std::thread::spawn(move || drop(gone));
     }
+    // Opened files of archives no longer shown: a change not put back is asked about.
+    let left: Vec<Opened> = OPENED.with(|opened| {
+        let (keep, left) = std::mem::take(&mut *opened.borrow_mut())
+            .into_iter()
+            .partition(|o| o.asking || shown.iter().any(|root| gezik_vfs::same_root(root, &o.at.root)));
+        *opened.borrow_mut() = keep;
+        left
+    });
+    for opened in left {
+        if facts(&opened.file).is_some_and(|now| now != opened.stored) {
+            ask_on_leaving(opened);
+        } else {
+            std::thread::spawn(move || drop(opened));
+        }
+    }
+}
+
+/// Watches `file` (taken out as `at` and opened with its app) for saves.
+fn watch_opened(at: VfsPath, file: PathBuf, vfs: Arc<dyn Vfs>) {
+    let Some(now) = facts(&file) else { return };
+    if OPENED.with(|opened| opened.borrow().iter().any(|o| o.file == file)) {
+        return;
+    }
+    let window = crate::windows::current();
+    let changed = file.clone();
+    let watch = crate::folder_watch::FolderWatch::new(move || {
+        let changed = changed.clone();
+        crate::windows::post(window, move || saved(&changed));
+    });
+    watch.watch(file.parent());
+    OPENED.with(|opened| {
+        opened.borrow_mut().push(Opened { at, file, _vfs: vfs, seen: now, stored: now, watch, asking: false });
+    });
+}
+
+/// Editors write a save in steps: asked once it is quiet for this long.
+const SETTLE: Duration = Duration::from_millis(400);
+
+/// The folder of an opened file changed: if the file was saved, asks (once quiet) whether to
+/// put it back.
+fn saved(file: &Path) {
+    let due = OPENED.with(|opened| {
+        let mut opened = opened.borrow_mut();
+        let o = opened.iter_mut().find(|o| o.file == file)?;
+        o.watch.take_change();
+        let now = facts(&o.file)?;
+        if now == o.seen || o.asking {
+            return None;
+        }
+        o.asking = true;
+        Some(o.file.clone())
+    });
+    if let Some(file) = due {
+        slint::Timer::single_shot(SETTLE, move || ask_update(file));
+    }
+}
+
+/// "report.docx changed": Update in Archive puts it back, Ignore leaves the archive as it is
+/// (asked again at the next save).
+fn ask_update(file: PathBuf) {
+    let Some(at) = OPENED.with(|opened| opened.borrow().iter().find(|o| o.file == file).map(|o| o.at.clone())) else {
+        return;
+    };
+    crate::operations::with_current(|ops| {
+        let submit = ops.clone();
+        // TRANSLATORS: {} is a file opened from inside an archive and saved by its app
+        let title = t!("{} changed", at.name());
+        // TRANSLATORS: {} is an archive's name
+        let detail = t!("It was opened from {}.", at.root.name());
+        ops.dialogs().ask(title, detail, &[&t!("Update in Archive"), &t!("Ignore")], move |choice| {
+            let update = choice == Some(0);
+            OPENED.with(|opened| {
+                if let Some(o) = opened.borrow_mut().iter_mut().find(|o| o.file == file) {
+                    o.asking = false;
+                    if let Some(now) = facts(&o.file) {
+                        o.seen = now;
+                        if update {
+                            o.stored = now;
+                        }
+                    }
+                }
+            });
+            if update {
+                let task = gezik_vfs::tasks::VfsEditTask::update(&at, file);
+                submit.submit(Box::new(task), None, crate::operations::After::Nothing);
+            }
+        });
+    });
+}
+
+/// The archive of a changed file is no longer shown (its temporary folder goes with it): put
+/// it back, drop it, or keep a copy in Downloads (also when the question is closed).
+fn ask_on_leaving(opened: Opened) {
+    crate::operations::with_current(|ops| {
+        let submit = ops.clone();
+        // TRANSLATORS: {0} is a file opened from inside an archive, {1} the archive
+        let title = t!("{0} changed but is not in {1}", opened.at.name(), opened.at.root.name());
+        let (update, discard, keep) = (t!("Update in Archive"), t!("Discard"), t!("Keep a Copy in Downloads"));
+        ops.dialogs().ask_escape(title, "", &[&update, &discard, &keep], 2, move |choice| {
+            match choice {
+                Some(0) => {
+                    // Its folder goes with the archive: what is put back is a copy of its own.
+                    let copy = gezik_vfs::stage::new_folder()
+                        .map(|folder| folder.join(opened.file.file_name().unwrap_or_default()))
+                        .and_then(|copy| std::fs::copy(&opened.file, &copy).map(|_| copy));
+                    match copy {
+                        Ok(copy) => {
+                            let task = gezik_vfs::tasks::VfsEditTask::update(&opened.at, copy);
+                            submit.submit(Box::new(task), None, crate::operations::After::Nothing);
+                        }
+                        Err(_) => keep_copy(&opened),
+                    }
+                }
+                Some(1) => {}
+                _ => keep_copy(&opened),
+            }
+            std::thread::spawn(move || drop(opened));
+        });
+    });
+}
+
+/// Copies an opened file's changes to Downloads under a free name, saying where.
+fn keep_copy(opened: &Opened) {
+    let Some(folder) = gezik_platform::downloads().filter(|dir| dir.is_dir()) else { return };
+    let name = opened.at.name();
+    let free = gezik_core::ops::names::next_free(&name, false, |candidate| folder.join(candidate).exists());
+    let to = folder.join(free);
+    if std::fs::copy(&opened.file, &to).is_ok() {
+        // TRANSLATORS: {} is where a file was copied to
+        crate::panes::active_view().note(t!("Kept {}", to.display()));
+    }
+}
+
+/// Gezik quits: changes to opened files not put back are kept in Downloads (the temporary
+/// area goes next).
+pub fn rescue() {
+    let opened = OPENED.with(|opened| std::mem::take(&mut *opened.borrow_mut()));
+    for o in &opened {
+        if facts(&o.file).is_some_and(|now| now != o.stored) {
+            keep_copy(o);
+        }
+    }
 }
 
 /// A file inside an archive opened with its app: taken out to the temporary area (on a
@@ -76,7 +244,14 @@ pub fn open_file(at: VfsPath) {
         crate::windows::post(window, move || {
             let view = crate::panes::active_view();
             match result.and_then(|path| open::that_detached(&path).map(|()| path)) {
-                Ok(_) => view.clear_note(),
+                Ok(path) => {
+                    view.clear_note();
+                    // Watched for saves where Gezik can put it back.
+                    let open = gezik_vfs::mounted(&at.root);
+                    if let Some(vfs) = open.filter(|vfs| vfs.caps().has(gezik_core::vfs::Caps::WRITE)) {
+                        watch_opened(at, path, vfs);
+                    }
+                }
                 Err(err) => view.note(t!("Cannot open {}: {}", at.name(), gezik_platform::fs::describe(&err))),
             }
         });
