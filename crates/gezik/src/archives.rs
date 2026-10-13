@@ -24,7 +24,7 @@ use gezik_core::batch::archive::{Format, archive_stem, detect, looks_like_archiv
 use gezik_core::batch::tools::{Platform, Tool, ToolBuild, build_for};
 use gezik_core::format_size;
 use gezik_core::ops::names::{NameRules, validate_name};
-use gezik_i18n::{t, tx};
+use gezik_i18n::{t, tn, tx};
 use gezik_ops::{JobId, Report};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
@@ -491,13 +491,12 @@ fn name_of(path: &Path) -> String {
 fn stem_of(archive: &Path) -> String {
     let name = name_of(archive);
     let stem = archive_stem(&name);
-    if stem.is_empty() { "Archive".to_owned() } else { stem.to_owned() }
+    if stem.is_empty() { t!("Archive").into_owned() } else { stem.to_owned() }
 }
 
 /// "Size: 340 MB in 12 files".
 pub(crate) fn size_text(files: u64, bytes: u64) -> String {
-    let files = if files == 1 { "1 file".to_owned() } else { format!("{files} files") };
-    format!("Size: {} in {files}", crate::view_options::size_text(bytes))
+    tn!("Size: {} in {n} file" | "Size: {} in {n} files", files, crate::view_options::size_text(bytes))
 }
 
 /// The files under `paths` and their size; stops early once `stop` says so.
@@ -953,8 +952,8 @@ impl Archives {
         let formats = formats_for(&items);
         let opening = layer_opening(&items, (self.last_format(), self.last_level()));
         let title = match items.as_slice() {
-            [(one, _)] => format!("Compress {}", name_of(one)),
-            many => format!("Compress {} items", many.len()),
+            [(one, _)] => t!("Compress {}", name_of(one)),
+            many => tn!("Compress {n} item" | "Compress {n} items", many.len()),
         };
         window.set_cp_title(title.into());
         window.set_cp_name(opening.name.as_str().into());

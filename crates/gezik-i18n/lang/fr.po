@@ -4886,6 +4886,7 @@ msgstr[0] "Extraire {n} élément"
 msgstr[1] "Extraire {n} éléments"
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik/src/archives.rs
 #, fuzzy
 msgid "Compress {n} item"
 msgid_plural "Compress {n} items"
@@ -6678,6 +6679,18 @@ msgstr "Saisissez la taille d'une partie en Mo"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
+msgid "Archive"
+msgstr "Archive"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Size: {} in {n} file"
+msgid_plural "Size: {} in {n} files"
+msgstr[0] "Taille : {} dans {n} fichier"
+msgstr[1] "Taille : {} dans {n} fichiers"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
 msgid "Extract to"
 msgstr "Extraire vers"
 
@@ -6701,6 +6714,11 @@ msgstr "Le fichier reçu n'est pas celui attendu par Gezik. Réessayer ?"
 #, fuzzy
 msgid "Try again"
 msgstr "Réessayer"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Compress {}"
+msgstr "Compresser {}"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy

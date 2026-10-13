@@ -422,11 +422,11 @@ msgstr "geri almak için Çöp Sepeti gerekir"
 #. {0} is why it failed, {1} a name, {2} why it could not be put back
 #: crates/gezik-batch/src/tasks/convert.rs
 msgid "{0}; the original is in the Recycle Bin as {1} ({2})"
-msgstr "{0}; özgün dosya Geri Dönüşüm Kutusunda, adı: {1} ({2})"
+msgstr "{0}; özgün dosya Geri Dönüşüm Kutusu'nda, adı: {1} ({2})"
 
 #: crates/gezik-batch/src/tasks/convert.rs
 msgid "{0}; the original is in the Trash as {1} ({2})"
-msgstr "{0}; özgün dosya Çöp Sepetinde, adı: {1} ({2})"
+msgstr "{0}; özgün dosya Çöp Sepeti'nde, adı: {1} ({2})"
 
 #: crates/gezik-batch/src/tasks/convert.rs
 msgid "Removing location data from {}"
@@ -621,7 +621,7 @@ msgstr "Yalnız bir dosya bölünebilir"
 #: crates/gezik-batch/src/tasks/split.rs
 msgid "{0} holds {n} file of a split {1} already. Replace that whole set? The old files go to the trash."
 msgid_plural "{0} holds {n} files of a split {1} already. Replace that whole set? The old files go to the trash."
-msgstr[0] "{0} klasöründe bölünmüş {1} dosyasının {n} parçası zaten var. Bu kümenin tamamı değiştirilsin mi? Eski dosyalar Çöp Sepetine gider."
+msgstr[0] "{0} klasöründe bölünmüş {1} dosyasının {n} parçası zaten var. Bu kümenin tamamı değiştirilsin mi? Eski dosyalar Çöp Sepeti'ne gider."
 
 #: crates/gezik-batch/src/tasks/split.rs
 msgid "Replace All"
@@ -1665,7 +1665,7 @@ msgstr "Öğeyi buraya taşı"
 #: crates/gezik/src/size_map.rs
 #: crates/gezik/ui/app.slint
 msgid "Move to Trash"
-msgstr "Çöp Sepetine taşı"
+msgstr "Çöp Sepeti'ne taşı"
 
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/ui/app.slint
@@ -1962,7 +1962,7 @@ msgstr "Paylaş…"
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/ui/app.slint
 msgid "Show Trash"
-msgstr "Çöp Sepetini göster"
+msgstr "Çöp Sepeti'ni göster"
 
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/src/context_menu.rs
@@ -1975,7 +1975,7 @@ msgstr "Geri koy"
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Empty Trash…"
-msgstr "Çöp Sepetini boşalt…"
+msgstr "Çöp Sepeti'ni boşalt…"
 
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/src/context_menu.rs
@@ -3771,7 +3771,7 @@ msgstr "Yinelenenler: {}"
 
 #: crates/gezik-core/src/search.rs
 msgid "Search \"{}\""
-msgstr "Ara: \"{}\""
+msgstr "Arama: \"{}\""
 
 #: crates/gezik-core/src/search.rs
 msgid "expected a size like \"500 MB\", got \"{}\""
@@ -3982,6 +3982,7 @@ msgid_plural "Extract {n} items"
 msgstr[0] "{n} öğeyi ayıkla"
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik/src/archives.rs
 msgid "Compress {n} item"
 msgid_plural "Compress {n} items"
 msgstr[0] "{n} öğeyi sıkıştır"
@@ -4145,7 +4146,7 @@ msgstr "Siliniyor: {}"
 
 #: crates/gezik-ops/src/tasks/delete.rs
 msgid "Not an item in the trash"
-msgstr "Çöp Sepetindeki bir öğe değil"
+msgstr "Çöp Sepeti'ndeki bir öğe değil"
 
 #: crates/gezik-ops/src/tasks/delete.rs
 #: crates/gezik/src/operations.rs
@@ -4408,11 +4409,11 @@ msgstr "çöpe taşınmak yerine kalıcı olarak silindi"
 
 #: crates/gezik-ops/src/tasks/trash.rs
 msgid "Moving {} to the Recycle Bin"
-msgstr "Geri Dönüşüm Kutusuna taşınıyor: {}"
+msgstr "Geri Dönüşüm Kutusu'na taşınıyor: {}"
 
 #: crates/gezik-ops/src/tasks/trash.rs
 msgid "Moving {} to the Trash"
-msgstr "Çöp Sepetine taşınıyor: {}"
+msgstr "Çöp Sepeti'ne taşınıyor: {}"
 
 #: crates/gezik-ops/src/tasks/trash.rs
 msgid "Cannot move a drive to the trash"
@@ -4785,7 +4786,7 @@ msgstr "Düz bir ad değil"
 
 #: crates/gezik-platform/src/fs/windows.rs
 msgid "names ending in a dot or space cannot go to the Recycle Bin"
-msgstr "nokta ya da boşlukla biten adlar Geri Dönüşüm Kutusuna gidemez"
+msgstr "nokta ya da boşlukla biten adlar Geri Dönüşüm Kutusu'na gidemez"
 
 #: crates/gezik-platform/src/fs/windows.rs
 msgid "the Recycle Bin did not take the item"
@@ -5418,6 +5419,15 @@ msgid "Type the size of a part in MB"
 msgstr "Bir parçanın boyutunu MB olarak yazın"
 
 #: crates/gezik/src/archives.rs
+msgid "Archive"
+msgstr "Arşiv"
+
+#: crates/gezik/src/archives.rs
+msgid "Size: {} in {n} file"
+msgid_plural "Size: {} in {n} files"
+msgstr[0] "Boyut: {n} dosyada {}"
+
+#: crates/gezik/src/archives.rs
 msgid "Extract to"
 msgstr "Şuraya ayıkla"
 
@@ -5437,6 +5447,10 @@ msgstr "Gelen dosya Gezik'in beklediği dosya değil. Yeniden denensin mi?"
 #: crates/gezik/src/archives.rs
 msgid "Try again"
 msgstr "Yeniden dene"
+
+#: crates/gezik/src/archives.rs
+msgid "Compress {}"
+msgstr "{} sıkıştır"
 
 #: crates/gezik/src/archives.rs
 msgid "Calculating…"
@@ -5965,12 +5979,12 @@ msgstr[0] "Okunamayan {} klasör dışarıda bırakıldı"
 #: crates/gezik/src/compare.rs
 msgid "{} folder to move to the Recycle Bin goes file by file: the compare did not see all of it (a filter, or hidden items)"
 msgid_plural "{} folders to move to the Recycle Bin go file by file: the compare did not see all of them (a filter, or hidden items)"
-msgstr[0] "Geri Dönüşüm Kutusuna taşınacak {} klasör dosya dosya gider: karşılaştırma tümünü görmedi (bir filtre ya da gizli öğeler)"
+msgstr[0] "Geri Dönüşüm Kutusu'na taşınacak {} klasör dosya dosya gider: karşılaştırma tümünü görmedi (bir filtre ya da gizli öğeler)"
 
 #: crates/gezik/src/compare.rs
 msgid "{} folder to move to the Trash goes file by file: the compare did not see all of it (a filter, or hidden items)"
 msgid_plural "{} folders to move to the Trash go file by file: the compare did not see all of them (a filter, or hidden items)"
-msgstr[0] "Çöp Sepetine taşınacak {} klasör dosya dosya gider: karşılaştırma tümünü görmedi (bir filtre ya da gizli öğeler)"
+msgstr[0] "Çöp Sepeti'ne taşınacak {} klasör dosya dosya gider: karşılaştırma tümünü görmedi (bir filtre ya da gizli öğeler)"
 
 #. {} is the list of what a sync leaves out, joined with " · ".
 #: crates/gezik/src/compare.rs
@@ -5989,19 +6003,19 @@ msgstr "Yine de değiştir: {}"
 
 #: crates/gezik/src/compare.rs
 msgid "{0} is empty: everything synchronized on {1} goes to the Recycle Bin"
-msgstr "{0} boş: {1} tarafında eşitlenen her şey Geri Dönüşüm Kutusuna gider"
+msgstr "{0} boş: {1} tarafında eşitlenen her şey Geri Dönüşüm Kutusu'na gider"
 
 #: crates/gezik/src/compare.rs
 msgid "{0} is empty: everything synchronized on {1} goes to the Trash"
-msgstr "{0} boş: {1} tarafında eşitlenen her şey Çöp Sepetine gider"
+msgstr "{0} boş: {1} tarafında eşitlenen her şey Çöp Sepeti'ne gider"
 
 #: crates/gezik/src/compare.rs
 msgid "Yes, move everything on {} to the Recycle Bin"
-msgstr "Evet, {} tarafındaki her şeyi Geri Dönüşüm Kutusuna taşı"
+msgstr "Evet, {} tarafındaki her şeyi Geri Dönüşüm Kutusu'na taşı"
 
 #: crates/gezik/src/compare.rs
 msgid "Yes, move everything on {} to the Trash"
-msgstr "Evet, {} tarafındaki her şeyi Çöp Sepetine taşı"
+msgstr "Evet, {} tarafındaki her şeyi Çöp Sepeti'ne taşı"
 
 #. {0} and {1} are the two folders, {2} the lines saying what will be done.
 #: crates/gezik/src/compare.rs
@@ -6106,11 +6120,11 @@ msgstr[0] "{n} çakışma · {}"
 
 #: crates/gezik/src/conflicts.rs
 msgid "Replaced files go to the Recycle Bin when their drive has one."
-msgstr "Yerine yazılan dosyalar, sürücülerinde varsa Geri Dönüşüm Kutusuna gider."
+msgstr "Yerine yazılan dosyalar, sürücülerinde varsa Geri Dönüşüm Kutusu'na gider."
 
 #: crates/gezik/src/conflicts.rs
 msgid "Replaced files go to the Trash when their drive has one."
-msgstr "Yerine yazılan dosyalar, sürücülerinde varsa Çöp Sepetine gider."
+msgstr "Yerine yazılan dosyalar, sürücülerinde varsa Çöp Sepeti'ne gider."
 
 #: crates/gezik/src/connect.rs
 msgid "Connect to Server"
@@ -6500,7 +6514,7 @@ msgstr "Kalıcı olarak sil…"
 
 #: crates/gezik/src/context_menu.rs
 msgid "Empty Recycle Bin…"
-msgstr "Geri Dönüşüm Kutusunu boşalt…"
+msgstr "Geri Dönüşüm Kutusu'nu boşalt…"
 
 #: crates/gezik/src/context_menu.rs
 msgid "No limit"
@@ -7129,11 +7143,11 @@ msgstr "¹ pdfium gerekir"
 
 #: crates/gezik/src/convert.rs
 msgid "Originals go to the Recycle Bin"
-msgstr "Özgün dosyalar Geri Dönüşüm Kutusuna gider"
+msgstr "Özgün dosyalar Geri Dönüşüm Kutusu'na gider"
 
 #: crates/gezik/src/convert.rs
 msgid "Originals go to the trash"
-msgstr "Özgün dosyalar Çöp Sepetine gider"
+msgstr "Özgün dosyalar Çöp Sepeti'ne gider"
 
 #: crates/gezik/src/convert.rs
 msgid "Convert {}"
@@ -7425,11 +7439,11 @@ msgstr "Başka bölme yok"
 
 #: crates/gezik/src/dual.rs
 msgid "Use Delete to move items to the Recycle Bin"
-msgstr "Öğeleri Geri Dönüşüm Kutusuna taşımak için Delete tuşunu kullanın"
+msgstr "Öğeleri Geri Dönüşüm Kutusu'na taşımak için Delete tuşunu kullanın"
 
 #: crates/gezik/src/dual.rs
 msgid "Use Delete to move items to the Trash"
-msgstr "Öğeleri Çöp Sepetine taşımak için Delete tuşunu kullanın"
+msgstr "Öğeleri Çöp Sepeti'ne taşımak için Delete tuşunu kullanın"
 
 #: crates/gezik/src/dual.rs
 msgid "The other pane shows no folder to move into"
@@ -8520,11 +8534,11 @@ msgstr "Sürücü çöpe atılamaz"
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
 msgid "Move {} to the Recycle Bin?"
-msgstr "{} Geri Dönüşüm Kutusuna taşınsın mı?"
+msgstr "{} Geri Dönüşüm Kutusu'na taşınsın mı?"
 
 #: crates/gezik/src/operations.rs
 msgid "Move {} to the Trash?"
-msgstr "{} Çöp Sepetine taşınsın mı?"
+msgstr "{} Çöp Sepeti'ne taşınsın mı?"
 
 #: crates/gezik/src/operations.rs
 msgid "This deletes every copy of {n} file"
@@ -8617,7 +8631,7 @@ msgstr[0] "{n} öğe o zamandan beri değişti; atlandı"
 
 #: crates/gezik/src/operations.rs
 msgid "{} cannot go to the Recycle Bin"
-msgstr "{} Geri Dönüşüm Kutusuna gidemez"
+msgstr "{} Geri Dönüşüm Kutusu'na gidemez"
 
 #: crates/gezik/src/operations.rs
 msgid "{} cannot go to the trash"
@@ -8626,7 +8640,7 @@ msgstr "{} çöpe gidemez"
 #: crates/gezik/src/operations.rs
 msgid "{n} item cannot go to the Recycle Bin"
 msgid_plural "{n} items cannot go to the Recycle Bin"
-msgstr[0] "{n} öğe Geri Dönüşüm Kutusuna gidemez"
+msgstr[0] "{n} öğe Geri Dönüşüm Kutusu'na gidemez"
 
 #: crates/gezik/src/operations.rs
 msgid "{n} item cannot go to the trash"
@@ -8659,7 +8673,7 @@ msgstr "İptal et ve çık"
 #: crates/gezik/src/operations.rs
 msgid "{n} duplicate was not deleted: {} Duplicates only go to the Recycle Bin."
 msgid_plural "{n} duplicates were not deleted: {} Duplicates only go to the Recycle Bin."
-msgstr[0] "{n} yinelenen silinmedi: {} Yinelenenler yalnız Geri Dönüşüm Kutusuna gider."
+msgstr[0] "{n} yinelenen silinmedi: {} Yinelenenler yalnız Geri Dönüşüm Kutusu'na gider."
 
 #: crates/gezik/src/operations.rs
 msgid "{n} duplicate was not deleted: {} Duplicates only go to the trash."
@@ -10298,12 +10312,12 @@ msgstr[0] "{0} dosyayı ({1}) şuraya kopyala: {2}; {3} dosyanın yerine yazıl�
 #: crates/gezik/src/sync.rs
 msgid "Move {} item on {} to the Recycle Bin"
 msgid_plural "Move {} items on {} to the Recycle Bin"
-msgstr[0] "{1} üzerindeki {0} öğeyi Geri Dönüşüm Kutusuna taşı"
+msgstr[0] "{1} üzerindeki {0} öğeyi Geri Dönüşüm Kutusu'na taşı"
 
 #: crates/gezik/src/sync.rs
 msgid "Move {} item on {} to the Trash"
 msgid_plural "Move {} items on {} to the Trash"
-msgstr[0] "{1} üzerindeki {0} öğeyi Çöp Sepetine taşı"
+msgstr[0] "{1} üzerindeki {0} öğeyi Çöp Sepeti'ne taşı"
 
 #: crates/gezik/src/sync.rs
 msgid "{} has no Recycle Bin: {} deletion there is left out"
@@ -10699,15 +10713,15 @@ msgstr "Terminal açılamıyor: {}"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Gezik needs Full Disk Access to show the Trash"
-msgstr "Çöp Sepetini göstermek için Gezik'e Tam Disk Erişimi gerekir"
+msgstr "Çöp Sepeti'ni göstermek için Gezik'e Tam Disk Erişimi gerekir"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Gezik needs Full Disk Access to show the Trash."
-msgstr "Çöp Sepetini göstermek için Gezik'e Tam Disk Erişimi gerekir."
+msgstr "Çöp Sepeti'ni göstermek için Gezik'e Tam Disk Erişimi gerekir."
 
 #: crates/gezik/src/trash_view.rs
 msgid "Allow it in System Settings ▸ Privacy & Security ▸ Full Disk Access, then open the Trash again."
-msgstr "Sistem Ayarları ▸ Gizlilik ve Güvenlik ▸ Tam Disk Erişimi bölümünde izin verin, sonra Çöp Sepetini yeniden açın."
+msgstr "Sistem Ayarları ▸ Gizlilik ve Güvenlik ▸ Tam Disk Erişimi bölümünde izin verin, sonra Çöp Sepeti'ni yeniden açın."
 
 #: crates/gezik/src/trash_view.rs
 msgid "Open Privacy Settings"
@@ -10719,27 +10733,27 @@ msgstr "Şimdi değil"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Not available in the Recycle Bin"
-msgstr "Geri Dönüşüm Kutusunda kullanılamaz"
+msgstr "Geri Dönüşüm Kutusu'nda kullanılamaz"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Not available in the Trash"
-msgstr "Çöp Sepetinde kullanılamaz"
+msgstr "Çöp Sepeti'nde kullanılamaz"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Put it back to open it: nothing in the Recycle Bin is opened"
-msgstr "Açmak için geri koyun: Geri Dönüşüm Kutusunda hiçbir şey açılmaz"
+msgstr "Açmak için geri koyun: Geri Dönüşüm Kutusu'nda hiçbir şey açılmaz"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Put it back to open it: nothing in the Trash is opened"
-msgstr "Açmak için geri koyun: Çöp Sepetinde hiçbir şey açılmaz"
+msgstr "Açmak için geri koyun: Çöp Sepeti'nde hiçbir şey açılmaz"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Put Back works in the Recycle Bin"
-msgstr "Geri koy, Geri Dönüşüm Kutusunda çalışır"
+msgstr "Geri koy, Geri Dönüşüm Kutusu'nda çalışır"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Put Back works in the Trash"
-msgstr "Geri koy, Çöp Sepetinde çalışır"
+msgstr "Geri koy, Çöp Sepeti'nde çalışır"
 
 #: crates/gezik/src/trash_view.rs
 msgid "Where \"{}\" came from is not known. Put it into this folder:"
@@ -11599,7 +11613,7 @@ msgstr "{}, yeni ad: {}"
 
 #: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Reset to rules"
-msgstr "Kurallara sıfırla"
+msgstr "Kurallara dön"
 
 #: crates/gezik/ui/widgets/settings.slint
 msgid "this computer"
@@ -11755,7 +11769,7 @@ msgstr "Çöpe atmayı onayla"
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:files.confirm-trash"
 msgid "Ask before moving to the trash (Delete)."
-msgstr "Çöp Sepetine taşımadan önce sor (Delete)."
+msgstr "Çöp Sepeti'ne taşımadan önce sor (Delete)."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:files.copy-threads"

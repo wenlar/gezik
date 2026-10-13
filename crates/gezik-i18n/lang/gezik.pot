@@ -4009,6 +4009,7 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: crates/gezik-ops/src/task.rs
+#: crates/gezik/src/archives.rs
 msgid "Compress {n} item"
 msgid_plural "Compress {n} items"
 msgstr[0] ""
@@ -5465,6 +5466,16 @@ msgid "Type the size of a part in MB"
 msgstr ""
 
 #: crates/gezik/src/archives.rs
+msgid "Archive"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Size: {} in {n} file"
+msgid_plural "Size: {} in {n} files"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/archives.rs
 msgid "Extract to"
 msgstr ""
 
@@ -5483,6 +5494,10 @@ msgstr ""
 
 #: crates/gezik/src/archives.rs
 msgid "Try again"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Compress {}"
 msgstr ""
 
 #: crates/gezik/src/archives.rs
