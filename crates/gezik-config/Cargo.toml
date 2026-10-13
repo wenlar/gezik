@@ -9,4 +9,5 @@ license.workspace = true
 gezik-core.workspace = true
 toml = { version = "1", features = ["preserve_order"] }
 toml_edit = "0.25"
+gezik-i18n.workspace = true
 dirs = "7"

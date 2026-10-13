@@ -1,0 +1,31 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Gezik\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: crates/gezik/src/language.rs
+msgid "System: {}"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "Pseudo (for translators)"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "machine translated"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "{} % reviewed"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "{} % translated"
+msgstr ""
+
+#: crates/gezik/ui/widgets/settings.slint
+msgid "Settings — Gezik"
+msgstr ""

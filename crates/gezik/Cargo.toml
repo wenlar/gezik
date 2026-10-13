@@ -12,6 +12,7 @@ gezik-platform.workspace = true
 gezik-ops.workspace = true
 gezik-batch.workspace = true
 gezik-search.workspace = true
+gezik-i18n.workspace = true
 # Software renderer only: no GPU or OpenGL driver needed, and it measured far lower
 # memory than FemtoVG (5 MB vs 35 MB idle) at the same scrolling CPU cost.
 # unstable-winit-030: monitor list, to keep restored windows on screen.
@@ -27,6 +28,9 @@ slint = { version = "1.18", default-features = false, features = [
     "raw-window-handle-06",
 ] }
 open = "5.3"
+# Slint's external translator for `@tr` (the `tr` feature; spec 15 §4.4), and the patched
+# Slint in vendor/ its tests check (see vendor/README.md).
+i-slint-core = { version = "=1.18.1", default-features = false, features = ["std", "tr"] }
 notify = "8"
 
 [features]
@@ -39,8 +43,6 @@ rar = ["gezik-batch/rar"]
 slint-build = "1.18"
 
 [dev-dependencies]
-# Tests the patched Slint in vendor/ (see vendor/README.md).
-i-slint-core = { version = "=1.18.1", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 toml = "1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }

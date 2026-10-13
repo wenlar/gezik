@@ -52,6 +52,8 @@ struct Shown {
     unknown: usize,
     /// The themes folder's ids.
     themes: Vec<String>,
+    /// The language row's choices (`language::options`).
+    languages: Vec<String>,
     page: usize,
     query: String,
     /// The fields of the rows, in order.
@@ -101,6 +103,7 @@ impl Shown {
             files.themes.keys().filter(|id| !BUILTIN_THEMES.contains(&id.as_str())).cloned().collect();
         themes.sort();
         self.themes = themes;
+        self.languages = crate::language::options(files);
         self.got.read(&files.themes);
     }
 
@@ -208,12 +211,13 @@ impl Shown {
                     .map(Into::into)
                     .collect()
             }
+            Kind::Language => self.languages.iter().map(SharedString::from).collect(),
             _ => Vec::new(),
         };
         SettingItem {
             kind: match field.kind {
                 Kind::Bool => 0,
-                Kind::Choice(_) | Kind::Theme => 1,
+                Kind::Choice(_) | Kind::Theme | Kind::Language => 1,
                 Kind::Int | Kind::Text | Kind::Path => 2,
                 Kind::List => 3,
                 Kind::Integration => 4,
@@ -262,6 +266,8 @@ impl Shown {
             return Err(why.to_owned());
         }
         let field = &FIELDS[i];
+        // A language's choice says its name after the code.
+        let input = if field.kind == Kind::Language { crate::language::code_of(input) } else { input };
         let shown = self.value(i).unwrap_or(&self.described[i].default);
         if input.trim() == shown && self.value(i).is_some() {
             return Ok(None);
@@ -1481,7 +1487,7 @@ mod tests {
     fn a_page_shows_its_fields_and_a_search_every_page() {
         let mut s = shown("");
         let general: Vec<String> = s.rows.iter().map(|&i| FIELDS[i].path()).collect();
-        assert_eq!(general[..2], ["start-folder", "max-fps"]);
+        assert_eq!(general[..3], ["language", "start-folder", "max-fps"]);
         s.page = 1;
         s.pick_rows();
         assert!(s.rows.iter().all(|&i| FIELDS[i].page == Page::Appearance));

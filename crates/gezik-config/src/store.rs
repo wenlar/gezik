@@ -35,6 +35,8 @@ pub struct ConfigFiles {
     pub local_settings: Option<String>,
     /// The sync folder could not be read: these are its last copy (spec 14 §8.4).
     pub offline: bool,
+    /// The lang folder's languages (spec 15 §11.1): code (`pl` for `lang/pl.po`) and texts.
+    pub languages: Vec<(String, Arc<gezik_i18n::Layer>)>,
     /// The sync services' conflicting copies in the sync folder (`settings (1).toml`,
     /// `themes/nord (1).toml`), as named there.
     pub conflicts: Vec<String>,
@@ -321,7 +323,10 @@ impl ConfigStore {
         match parts.as_slice() {
             [name] if dirs.synced => name.ends_with(".toml") && !name.starts_with('.'),
             [name] => name == "settings.toml",
-            [dir, name] => dir == "themes" && name.ends_with(".toml") && !name.starts_with('.'),
+            [dir, name] => {
+                let kind = (dir == "themes" && name.ends_with(".toml")) || (dir == "lang" && name.ends_with(".po"));
+                kind && !name.starts_with('.')
+            }
             _ => false,
         }
     }
@@ -354,6 +359,7 @@ fn read_folder(dir: &Path, machines: Option<&[String]>) -> ConfigFiles {
         }
     }
 
+    files.languages = read_languages(&dir.join("lang"), &mut files.warnings);
     let Ok(entries) = std::fs::read_dir(dir.join("themes")) else { return note_conflicts(files) };
     let names: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
     let stems: Vec<String> =
@@ -385,6 +391,48 @@ fn read_folder(dir: &Path, machines: Option<&[String]>) -> ConfigFiles {
     note_conflicts(files)
 }
 
+/// At most this many problems of one lang folder file are listed.
+const LANGUAGE_WARNINGS: usize = 10;
+
+/// The lang folder's `<code>.po` files read into layers (here, off the UI thread), with their
+/// problems as warnings: syntax and placeholder errors by line, and how many texts are missing.
+fn read_languages(dir: &Path, warnings: &mut Vec<Warning>) -> Vec<(String, Arc<gezik_i18n::Layer>)> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut paths: Vec<PathBuf> =
+        entries.filter_map(Result::ok).map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "po")).collect();
+    paths.sort();
+    let mut out = Vec::new();
+    for path in paths {
+        let Some(code) = path.file_stem().and_then(|s| s.to_str()).filter(|c| gezik_i18n::lang::valid_code(c)) else {
+            continue;
+        };
+        let file = format!("lang/{code}.po");
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > gezik_i18n::po::MAX_BYTES as u64) {
+            warnings.push(Warning::new(file, "larger than 4 MB; not read"));
+            continue;
+        }
+        let text = match read_text(&path) {
+            Ok(text) => text,
+            Err(err) => {
+                warnings.push(Warning::new(file, format!("cannot read: {err}")));
+                continue;
+            }
+        };
+        let (layer, report) = gezik_i18n::check::load(&text, code, gezik_i18n::keys());
+        for issue in report.errors.iter().take(LANGUAGE_WARNINGS) {
+            warnings.push(Warning { file: file.clone(), line: Some(issue.line), message: issue.message.clone() });
+        }
+        if let Some(more) = report.errors.len().checked_sub(LANGUAGE_WARNINGS).filter(|&n| n > 0) {
+            warnings.push(Warning::new(file.clone(), format!("{more} more problems")));
+        }
+        if report.missing > 0 {
+            warnings.push(Warning::new(file, format!("{} of {} texts missing", report.missing, report.total)));
+        }
+        out.extend(layer.map(|layer| (code.to_owned(), Arc::new(layer))));
+    }
+    out
+}
+
 /// Each conflicting copy said in the status bar (spec 14 §8.3).
 fn note_conflicts(mut files: ConfigFiles) -> ConfigFiles {
     files.conflicts.sort();
@@ -400,6 +448,8 @@ fn note_conflicts(mut files: ConfigFiles) -> ConfigFiles {
 
 /// Keeps the sync folder's settings.toml and themes in `cache` (spec 14 §8.4): only files that
 /// changed are written. A failure is not said (the folder itself was read).
+// shortcut: the lang folder is not kept, so while the sync folder is away a dropped language
+// shows English; copy `lang/*.po` here too if someone misses it.
 fn keep_copy(cache: &Path, files: &ConfigFiles) {
     let keep = |path: &Path, text: &str| {
         if read_text(path).ok().as_deref() != Some(text) {
@@ -456,6 +506,16 @@ pub fn resolve(files: &ConfigFiles, system_dark: bool) -> Loaded {
         .as_deref()
         .map(|text| Settings::parse_layered("settings.toml", text, local, &mut warnings))
         .unwrap_or_default();
+
+    let codes: Vec<&str> = gezik_i18n::builtins()
+        .iter()
+        .map(|b| b.code)
+        .chain(files.languages.iter().map(|(code, _)| code.as_str()))
+        .collect();
+    if !gezik_i18n::lang::known(&settings.language, &codes) {
+        let message = format!("language \"{}\": no such language, using the system's", settings.language);
+        warnings.push(Warning::new("settings.toml", message));
+    }
 
     let id = settings.active_theme(system_dark).to_owned();
     let theme = match resolve_theme(&id, &files.themes, &mut warnings) {
@@ -678,6 +738,38 @@ mod tests {
         assert!(!store.is_config_file(&root.join("themes").join("nord.toml~")));
         assert!(!store.is_config_file(&root.join("themes").join("old").join("nord.toml")));
         assert!(!store.is_config_file(Path::new("/elsewhere/settings.toml")));
+        assert!(store.is_config_file(&root.join("lang").join("pl.po")));
+        assert!(!store.is_config_file(&root.join("lang").join(".pl.po.swp")));
+        assert!(!store.is_config_file(&root.join("lang").join("pl.toml")));
+    }
+
+    #[test]
+    fn languages_are_read_with_their_problems() {
+        let store = store("lang");
+        // A text of the template (the language row's), translated without its placeholder.
+        let pl = "msgid \"\"\nmsgstr \"X-Gezik-Name: Polski\\n\"\n\nmsgid \"{} % translated\"\nmsgstr \"procent\"\n";
+        write(&store, "lang/pl.po", pl);
+        write(&store, "lang/xx.po", "msgid \"a\"\nmsgstr b\n");
+        write(&store, "lang/notes.txt", "");
+        let files = store.read_files();
+        let codes: Vec<_> = files.languages.iter().map(|(code, layer)| (code.as_str(), layer.name.as_str())).collect();
+        assert_eq!(codes, [("pl", "Polski")], "a file that does not read is left out");
+        let said: Vec<String> = files.warnings.iter().map(ToString::to_string).collect();
+        let total = gezik_i18n::keys().len();
+        assert_eq!(
+            said,
+            [
+                "lang/pl.po line 4: \"{0}\" missing in the translation".to_owned(),
+                format!("lang/pl.po: {total} of {total} texts missing"),
+                "lang/xx.po line 2: expected a string in double quotes".to_owned(),
+            ]
+        );
+        write(&store, "settings.toml", "language = \"pl\"\n");
+        assert_eq!(resolve(&store.read_files(), true).warnings.len(), 3, "pl is known");
+        write(&store, "settings.toml", "language = \"de\"\n");
+        let loaded = resolve(&store.read_files(), true);
+        let last = loaded.warnings.last().unwrap().to_string();
+        assert_eq!(last, "settings.toml: language \"de\": no such language, using the system's");
     }
 
     #[test]
