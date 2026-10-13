@@ -606,9 +606,11 @@ Denetim listesi aralıkları: macOS 397'den, Linux 286'dan başlar.
 24. **Menü kimlikleri 3200–3599; `Action` 132 → 144; denetim listeleri macOS 397–412, Linux 286–296.** *Gerekçe:* 15 3199'da, 396/285'te bitiyor; aralıklar önceden ayrılınca parçalar çakışmaz.
 25. **Bütçe: parça başına ≤ +262.144 B, boşta 0 (Linux ≤ +0,05 MB), açılış ±0.** *Gerekçe:* önceki adımların kuralı; her özellik istekle.
 
-## 19. Açık sorular (bakımcıya)
+## 19. Bakımcının yanıtları (2026-10-13)
 
-1. **Arşivde çift tık:** varsayılan `"browse"` (Explorer gibi, arşive girer) mi, bugünkü `"system"` mı kalsın? Spec `"browse"` diyor (karar 22).
-2. **Git işaretleri varsayılan açık mı?** Spec açık diyor (karar 23): maliyet yalnız depo içinde. "Varsayılanlar isteğe bağlı" ilkesine göre kapalı da olabilir; o zaman ilk depoda bir kez "Show Git status here?" önerisi.
-3. **Windows'ta `>` komutunun varsayılan kabuğu:** `cmd` (hızlı, her yerde) mi, PowerShell (bugünün Windows terminali, ≈ 300 ms başlangıç) mi? Spec `cmd` diyor (karar 16).
-4. **macOS libmtp paketi:** libmtp + libusb'yi bir Mac'te kendimiz derleyip `wenlar/gezik-tools`'ta yayımlamak (LGPL, kaynak bağlantısıyla) uygun mu? Değilse macOS'ta yalnız Homebrew (`brew install libmtp`) ve not.
+Dört soru da spec'in seçimiyle yanıtlandı:
+
+1. **Arşivde çift tık:** `"browse"`, arşivin içi açılır (karar 22).
+2. **Git işaretleri:** varsayılan açık, yalnız depolarda (karar 23).
+3. **Windows'ta `>` kabuğu:** `cmd`; ayardan PowerShell seçilebilir (karar 16).
+4. **macOS libmtp:** libmtp ve libusb'yi biz derleyip `wenlar/gezik-tools`'ta yayımlarız (LGPL, kaynak bağlantısıyla); Homebrew'daki kurulu sürüm önce denenir.
