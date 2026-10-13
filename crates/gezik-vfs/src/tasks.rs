@@ -417,6 +417,7 @@ impl Task for VfsEditTask {
                         .filter(|(staged, _)| done.sources.contains(staged))
                         .map(|(_, name)| Edit::Delete(name.clone()))
                         .collect();
+                    run.touched(disk_of(from));
                     if !gone.is_empty()
                         && let Some((outcome, _)) = self.write_at(from, gone, source_trash, run)?
                     {
@@ -424,6 +425,8 @@ impl Task for VfsEditTask {
                     }
                 }
                 _ => {
+                    // The folders they leave change: panes showing them are read again.
+                    run.touched(done.sources.iter().map(PathBuf::as_path));
                     for source in done.sources {
                         match gezik_ops::trash_path(&source) {
                             Ok(trashed) => outcomes.push(Outcome::Trashed { original: source, trashed }),

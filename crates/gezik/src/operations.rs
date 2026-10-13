@@ -177,6 +177,11 @@ pub const NOT_HERE: &str = tx!("Not in search results: open a folder first");
 /// A change inside an archive Gezik only reads (spec 16 §6.1); shown with `t`.
 pub const READ_ONLY: &str = tx!("This kind of archive can only be read");
 
+/// `name` if no entry has it, else the next free `name (2)`, `name (3)`…
+fn free_folder_name(name: String, taken: impl Fn(&str) -> bool) -> String {
+    if taken(&name) { gezik_core::ops::names::next_free(&name, true, taken) } else { name }
+}
+
 /// Whether Gezik can change the open place `root` (an archive it writes).
 pub fn writable(root: &gezik_core::vfs::VfsRoot) -> bool {
     gezik_vfs::mounted(root).is_some_and(|vfs| vfs.caps().has(Caps::WRITE))
@@ -973,7 +978,7 @@ impl Operations {
         let Some(dir) = self.vfs_target() else { return };
         let view = crate::panes::active_view();
         let name = gezik_core::ops::names::default_name(tx!("New folder"), true);
-        let name = gezik_core::ops::names::next_free(&name, true, |n| view.has_other_named(n, usize::MAX));
+        let name = free_folder_name(name, |n| view.has_other_named(n, usize::MAX));
         let at = dir.join(&name);
         let task = VfsEditTask::new(dir.root.clone(), vec![Edit::MakeDir(at.inner.clone())]);
         let id = self.edit_inside(task, vec![name], After::Rename);
@@ -2401,6 +2406,12 @@ fn history_row(record: &crate::op_history::Record) -> OpRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_folder_takes_the_plain_name_when_it_is_free() {
+        assert_eq!(free_folder_name("New folder".into(), |_| false), "New folder");
+        assert_eq!(free_folder_name("New folder".into(), |n| n == "New folder"), "New folder (2)");
+    }
     use gezik_ops::{Failure, TaskKind};
 
     #[test]

@@ -5452,6 +5452,11 @@ msgstr "Restauration de {}"
 msgid "no longer in the trash"
 msgstr "n'est plus dans la corbeille"
 
+#: crates/gezik-ops/src/tasks/restore.rs
+#, fuzzy
+msgid "The older version is no longer in the trash; this one was kept"
+msgstr "L'ancienne version n'est plus dans la corbeille ; celle-ci a été conservée"
+
 #: crates/gezik-ops/src/tasks/sync.rs
 #, fuzzy
 msgid "Changed after the compare; left alone"

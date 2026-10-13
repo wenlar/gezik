@@ -5399,6 +5399,11 @@ msgstr "正在还原 {}"
 msgid "no longer in the trash"
 msgstr "已不在回收站中"
 
+#: crates/gezik-ops/src/tasks/restore.rs
+#, fuzzy
+msgid "The older version is no longer in the trash; this one was kept"
+msgstr "旧版本已不在回收站中；已保留此版本"
+
 #: crates/gezik-ops/src/tasks/sync.rs
 #, fuzzy
 msgid "Changed after the compare; left alone"

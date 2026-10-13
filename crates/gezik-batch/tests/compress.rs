@@ -1046,6 +1046,7 @@ fn without_a_trash_the_change_is_asked_for() {
             true
         });
         assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(report.cancelled, button == 1, "Cancel ends the job as cancelled");
         if button == 1 {
             assert_eq!(std::fs::read(&archive).unwrap(), before, "Cancel: unchanged");
         }
@@ -1208,5 +1209,70 @@ fn nothing_is_unpacked_next_to_the_archive() {
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     seen.retain(|name| name.to_string_lossy().starts_with(".gezik-"));
     assert!(seen.is_empty(), "unpacked next to the archive: {seen:?}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn cancel_at_the_clash_question_cancels_the_job() {
+    let d = dir("edit-clash-cancel");
+    let src = d.join("src");
+    make(&src, &[("a.txt", b"a")]);
+    let archive = d.join("c.zip");
+    write::write(&inputs(&children(&src)), &archive, &options(OutFormat::Zip, Level::Normal), 1, &W::default())
+        .unwrap();
+    let before = std::fs::read(&archive).unwrap();
+    let engine = engine(&d);
+    let (report, _) = add(&engine, &archive, vec![src.join("a.txt")], None, |engine, job, event| {
+        let Event::Question { id, .. } = event else { return false };
+        engine.answer(job, *id, Answer::Button(3));
+        true
+    });
+    assert!(report.cancelled, "Cancel shows as cancelled, not done");
+    assert_eq!(std::fs::read(&archive).unwrap(), before);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn adding_to_a_zipcrypto_zip_keeps_its_entries_encrypted() {
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
+    for fixture in ["zipcrypto-store.zip", "zipcrypto-deflate.zip"] {
+        let d = dir(&format!("edit-{fixture}"));
+        let archive = d.join("pw.zip");
+        std::fs::copy(data.join(fixture), &archive).unwrap();
+        let before = unpacked(&archive, &d, "before", Some("Passw0rd"));
+        let more = d.join("more");
+        make(&more, &[("new.txt", b"added")]);
+        let engine = engine(&d);
+        let (report, _) = add(&engine, &archive, children(&more), Some("Passw0rd"), nothing);
+        assert!(report.failures.is_empty(), "{fixture}: {:?}", report.failures);
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive).unwrap()).unwrap();
+        for i in 0..zip.len() {
+            let entry = zip.by_index_raw(i).unwrap();
+            assert!(entry.is_dir() || entry.encrypted(), "{fixture}: {} stays encrypted", entry.name());
+        }
+        drop(zip);
+        let mut want = before;
+        want.push(("new.txt".to_owned(), b"added".to_vec()));
+        want.sort();
+        assert_eq!(unpacked(&archive, &d, "after", Some("Passw0rd")), want, "{fixture}");
+        seven_zip_tests(&archive, Some("Passw0rd"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[test]
+fn the_old_archive_is_in_the_trash_under_its_own_name() {
+    let d = dir("edit-bin-name");
+    let src = d.join("src");
+    make(&src, &[("a.txt", b"a")]);
+    let archive = d.join("named.zip");
+    write::write(&inputs(&children(&src)), &archive, &options(OutFormat::Zip, Level::Normal), 1, &W::default())
+        .unwrap();
+    let engine = engine(&d);
+    let (report, _) = edit(&engine, &archive, vec![Edit::MakeDir("new".into())], None, None, nothing);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let in_bin =
+        gezik_platform::trash::list().items.into_iter().any(|item| item.original.as_deref() == Some(archive.as_path()));
+    assert!(in_bin, "Put Back brings it to its own place");
     let _ = std::fs::remove_dir_all(&d);
 }

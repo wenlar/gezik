@@ -137,8 +137,25 @@ fn left_by_dead_test(original: &Path, temp: &Path, alive: impl Fn(u32) -> bool) 
         return false;
     }
     let top = gezik_core::ops::paths::path_key(original).swap_remove(gezik_core::ops::paths::path_key(temp).len());
-    let pid = top.rsplit('-').next().and_then(|pid| pid.parse::<u32>().ok());
-    pid.is_some_and(|pid| pid != std::process::id() && !alive(pid))
+    test_folder_pid(&top).is_some_and(|pid| pid != std::process::id() && !alive(pid))
+}
+
+/// The kinds of test folders that trash items (each test helper calling `purge_at_thread_end`).
+const TEST_KINDS: [&str; 11] =
+    ["compress", "convert", "download", "extract", "fs", "ops", "pdf", "split", "sync", "trash", "vfs"];
+
+/// The process id a test folder's name (`gezik-<kind>-<test name>-<pid>`, as the tests make
+/// them; compared lower case) ends in. Strict: a known kind, a test name with a letter in it
+/// (never just numbers, as Gezik's own `gezik-vfs-<pid>-<n>` areas), and a pid of digits only.
+/// Anything else (`gezik-gui-16`, a user's folder) is no test's.
+fn test_folder_pid(name: &str) -> Option<u32> {
+    let parts: Vec<&str> = name.split('-').collect();
+    let [first, kind, test @ .., pid] = parts.as_slice() else { return None };
+    let named = !test.is_empty()
+        && test.iter().all(|part| !part.is_empty())
+        && test.iter().any(|part| part.chars().any(|c| c.is_ascii_alphabetic()));
+    let digits = !pid.is_empty() && pid.len() <= 10 && pid.bytes().all(|b| b.is_ascii_digit());
+    (*first == "gezik" && TEST_KINDS.contains(kind) && named && digits).then(|| pid.parse().ok()).flatten()
 }
 
 /// Deletes for good each item of this user's bins whose original place is `wanted`. How many.
@@ -425,6 +442,11 @@ mod tests {
         assert!(dead("gezik-pdf-tasks-8"));
         assert!(!dead("gezik-ops-copy-redo-7"), "still running");
         assert!(!dead(&format!("gezik-ops-x-{}", std::process::id())), "this process");
+        // Screen-test and other folders that are no test's: never taken.
+        for no in ["gezik-gui-16", "gezik-vfs-8", "gezik-vfs-8-2", "gezik-ops-8", "gezik-x-copy-8", "gezik-ops--8"] {
+            assert!(!dead(no), "{no}");
+        }
+        assert!(dead("gezik-vfs-edit-move-out-8"));
         for no in ["gezik-refusing", "gezik", "other-8", "gezik-x-8x"] {
             assert!(!dead(no), "{no}");
         }

@@ -9,7 +9,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
@@ -236,7 +236,10 @@ pub fn confirm_no_trash(run: &RunCx<'_>) -> io::Result<bool> {
     match run.ask(Question::Confirm { title, message, buttons }) {
         Answer::Button(0) => Ok(true),
         _ if run.stopped() => Err(cancelled()),
-        _ => Ok(false),
+        _ => {
+            run.cancel_job();
+            Ok(false)
+        }
     }
 }
 
@@ -307,10 +310,9 @@ pub fn rewrite(
     result
 }
 
-/// Step 4: the new archive (at `temp`) in the old one's place, as compressing replaces: the
-/// old one first steps aside under a noted name (if Gezik stops meanwhile, the next start puts
-/// it back), the new one takes its name, then the old one goes to the trash (`trash`: the
-/// drive has one; else it is deleted). If the new one cannot land, the old one comes back.
+/// Step 4: the new archive (at `temp`) in the old one's place: the old one goes to the trash
+/// (`trash`: the drive has one) and the new one takes its name; else the old one steps aside
+/// and is deleted once the new one is in. If the new one cannot land, the old one comes back.
 pub fn replace(
     archive: &Path,
     temp: &Path,
@@ -334,42 +336,63 @@ pub fn replace(
         return Err(err);
     }
     let tags = run.meta().and_then(|store| store.read(archive).ok()).filter(|tags| !tags.is_empty());
-    let aside = run.aside_name(archive);
-    run.note_aside(&[(aside.clone(), archive.to_path_buf())]);
-    if let Err(err) = gezik_platform::fs::move_entry(archive, &aside) {
-        run.forget_aside(&[&aside]);
-        let _ = std::fs::remove_file(temp);
-        return Err(err);
-    }
-    let landed = if fault == Some(Fault::Replace) {
-        Err(io::Error::other("injected"))
-    } else {
-        gezik_platform::fs::move_entry(temp, archive)
+    let landing = |temp: &Path| {
+        if fault == Some(Fault::Replace) {
+            Err(io::Error::other("injected"))
+        } else {
+            gezik_platform::fs::move_entry(temp, archive)
+        }
     };
-    if let Err(err) = landed {
-        let _ = std::fs::remove_file(temp);
-        match gezik_platform::fs::move_entry(&aside, archive) {
-            Ok(()) => run.forget_aside(&[&aside]),
-            Err(back) => {
+    let mut outcomes = Vec::new();
+    if trash {
+        // Trashed from its own place under its own name, so the bin shows it as it was and Put
+        // Back returns it there; if the new one cannot land, it comes back from the trash.
+        let trashed = match gezik_ops::trash_path(archive) {
+            Ok(trashed) => trashed,
+            Err(err) => {
+                let _ = std::fs::remove_file(temp);
+                return Err(err);
+            }
+        };
+        if let Err(err) = landing(temp) {
+            let _ = std::fs::remove_file(temp);
+            if let Err(back) = gezik_platform::fs::restore(&trashed, archive) {
                 // TRANSLATORS: {0} is why it could not be put back, {1} where it is
-                let message = gezik_i18n::t!("{0}; it is at {1}", back, aside.display());
+                let message = gezik_i18n::t!("{0}; it is at {1}", back, trashed.display());
                 run.fail(archive, &io::Error::new(back.kind(), message));
             }
+            return Err(err);
         }
-        return Err(err);
-    }
-    let mut outcomes = Vec::new();
-    let gone = if trash {
-        gezik_ops::trash_path(&aside).map(|trashed| Outcome::Trashed { original: archive.to_path_buf(), trashed })
+        outcomes.push(Outcome::Trashed { original: archive.to_path_buf(), trashed });
     } else {
-        gezik_platform::fs::delete(&aside).map(|()| Outcome::Deleted { path: archive.to_path_buf() })
-    };
-    match gone {
-        Ok(outcome) => {
-            outcomes.push(outcome);
+        // No trash: the old one steps aside under a noted name (if Gezik stops meanwhile, the
+        // next start puts it back) and is deleted once the new one is in its place.
+        let aside = run.aside_name(archive);
+        run.note_aside(&[(aside.clone(), archive.to_path_buf())]);
+        if let Err(err) = gezik_platform::fs::move_entry(archive, &aside) {
             run.forget_aside(&[&aside]);
+            let _ = std::fs::remove_file(temp);
+            return Err(err);
         }
-        Err(err) => keep_aside(archive, &aside, &err, run),
+        if let Err(err) = landing(temp) {
+            let _ = std::fs::remove_file(temp);
+            match gezik_platform::fs::move_entry(&aside, archive) {
+                Ok(()) => run.forget_aside(&[&aside]),
+                Err(back) => {
+                    // TRANSLATORS: {0} is why it could not be put back, {1} where it is
+                    let message = gezik_i18n::t!("{0}; it is at {1}", back, aside.display());
+                    run.fail(archive, &io::Error::new(back.kind(), message));
+                }
+            }
+            return Err(err);
+        }
+        match gezik_platform::fs::delete(&aside) {
+            Ok(()) => {
+                outcomes.push(Outcome::Deleted { path: archive.to_path_buf() });
+                run.forget_aside(&[&aside]);
+            }
+            Err(err) => keep_aside(archive, &aside, &err, run),
+        }
     }
     if let (Some(store), Some(tags)) = (run.meta(), tags)
         && store.read(archive).ok().as_ref() != Some(&tags)
@@ -493,6 +516,7 @@ impl Rewrite<'_, '_> {
         let cx = Writing::new(self.run);
         self.fault(Fault::Write)?;
         write::rewrite_zip(&mut zip, &keep, &fresh, self.out, password.as_deref(), workers(), &cx)?;
+        restore_flags(self.archive, &mut zip, &keep, self.out)?;
         let mut failed = cx.failed.into_inner();
         self.guard(&failed, &replaced)?;
         if changes.none() && failed.len() >= putting.len() {
@@ -512,6 +536,10 @@ impl Rewrite<'_, '_> {
         let checked: Vec<&Input> =
             written.into_iter().filter(|input| matches!(input.kind, InputKind::File { .. })).collect();
         self.spoil()?;
+        // Entries copied as they are must be as they were: checksum, method, encryption, sizes.
+        if !kept_as_they_were(&mut zip, &keep, self.out)? {
+            return Err(not_read_back());
+        }
         verify(self.out, self.archive, expected, &checked, password, self.run)?;
         failed.extend_from_slice(unread);
         Ok(Some(whole(self.edits, &putting, &failed)))
@@ -761,6 +789,100 @@ fn verify(
         Err(_) => Err(bad()),
         ok => ok,
     }
+}
+
+/// The error when the new archive does not read back as written.
+fn not_read_back() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        gezik_i18n::t!("The new archive did not read back as written; the archive was not changed"),
+    )
+}
+
+/// zip's writer rebuilds the headers of the entries it copies raw, without ZipCrypto's
+/// encryption flag (bit 0) or the data-descriptor flag (bit 3) its password check reads: both
+/// go back into the local and the central header of each copied entry, as the old archive had
+/// them. (AES entries keep theirs through the writer.)
+fn restore_flags<R: Read + Seek>(
+    archive: &Path,
+    zip: &mut ZipArchive<R>,
+    keep: &dyn Fn(&str) -> Option<String>,
+    out: &Path,
+) -> io::Result<()> {
+    let mut source = File::open(archive)?;
+    let mut wanted: HashMap<String, u16> = HashMap::new();
+    for i in 0..zip.len() {
+        let entry = zip.by_index_raw(i)?;
+        let Some(name) = keep(entry.name()) else { continue };
+        let flags = u16_at(&mut source, entry.central_header_start() + 8)?;
+        if flags & 1 != 0 {
+            wanted.insert(name, flags & 0x0009);
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let mut places = Vec::new();
+    {
+        let mut new = ZipArchive::new(BufReader::new(File::open(out)?))?;
+        for i in 0..new.len() {
+            let entry = new.by_index_raw(i)?;
+            if let Some(bits) = wanted.get(entry.name()) {
+                places.push((entry.header_start() + 6, *bits));
+                places.push((entry.central_header_start() + 8, *bits));
+            }
+        }
+    }
+    let mut file = std::fs::OpenOptions::new().read(true).write(true).open(out)?;
+    for (at, bits) in places {
+        let flags = u16_at(&mut file, at)?;
+        file.seek(SeekFrom::Start(at))?;
+        file.write_all(&(flags | bits).to_le_bytes())?;
+    }
+    file.flush()
+}
+
+fn u16_at(file: &mut File, at: u64) -> io::Result<u16> {
+    let mut bytes = [0u8; 2];
+    file.seek(SeekFrom::Start(at))?;
+    file.read_exact(&mut bytes)?;
+    Ok(u16::from_le_bytes(bytes))
+}
+
+/// Whether each entry of `zip` that `keep` names is in the zip at `out` as it was: its
+/// checksum, method, encryption and sizes (entries of one name twice are not compared).
+fn kept_as_they_were<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    keep: &dyn Fn(&str) -> Option<String>,
+    out: &Path,
+) -> io::Result<bool> {
+    let Ok(mut new) = ZipArchive::new(BufReader::new(File::open(out)?)) else { return Ok(false) };
+    let mut seen = HashMap::new();
+    for i in 0..zip.len() {
+        if let Some(name) = keep(zip.by_index_raw(i)?.name()) {
+            *seen.entry(name).or_insert(0) += 1;
+        }
+    }
+    for i in 0..zip.len() {
+        let old = zip.by_index_raw(i)?;
+        let Some(name) = keep(old.name()) else { continue };
+        if seen.get(&name) != Some(&1) {
+            continue;
+        }
+        let Some(at) = new.index_for_name(&name) else { return Ok(false) };
+        let was = entry_facts(&old);
+        drop(old);
+        let now = entry_facts(&new.by_index_raw(at)?);
+        if was != now {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// What `kept_as_they_were` compares.
+fn entry_facts<R: Read>(e: &zip::read::ZipFile<'_, R>) -> (u32, zip::CompressionMethod, bool, u64, u64, bool) {
+    (e.crc32(), e.compression(), e.encrypted(), e.compressed_size(), e.size(), e.is_dir())
 }
 
 /// Whether the files `a` and `b` hold the same bytes.
@@ -1107,7 +1229,11 @@ fn settle(fresh: &mut Vec<Input>, names: &Names, run: &RunCx<'_>) -> io::Result<
             Ok(Some(Vec::new()))
         }
         _ if run.stopped() => Err(cancelled()),
-        _ => Ok(None),
+        // Cancel: the job ends as cancelled, not as done.
+        _ => {
+            run.cancel_job();
+            Ok(None)
+        }
     }
 }
 

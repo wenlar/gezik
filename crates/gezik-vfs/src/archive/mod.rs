@@ -64,7 +64,11 @@ impl ArchiveVfs {
         // an archive only if that one is written too.
         let writes = seven_zip.is_none()
             && gezik_batch::tasks::writable(&file)
-            && outer.as_ref().is_none_or(|outer| outer.caps().has(Caps::WRITE));
+            && match &outer {
+                Some(outer) => outer.caps().has(Caps::WRITE),
+                // On disk: not read-only, no second name (a drop is refused as it hovers).
+                None => gezik_batch::tasks::real_archive(&file).is_ok(),
+            };
         Ok(ArchiveVfs {
             root,
             file,

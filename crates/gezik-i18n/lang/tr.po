@@ -4433,6 +4433,10 @@ msgstr "Geri yükleniyor: {}"
 msgid "no longer in the trash"
 msgstr "artık çöpte değil"
 
+#: crates/gezik-ops/src/tasks/restore.rs
+msgid "The older version is no longer in the trash; this one was kept"
+msgstr "Eski sürüm artık çöpte değil; bu sürüm tutuldu"
+
 #: crates/gezik-ops/src/tasks/sync.rs
 msgid "Changed after the compare; left alone"
 msgstr "Karşılaştırmadan sonra değişti; dokunulmadı"

@@ -443,6 +443,11 @@ impl RunCx<'_> {
         self.control.stopped()
     }
 
+    /// The user said Cancel to this item's question: the whole job ends as cancelled.
+    pub fn cancel_job(&self) {
+        self.control.cancel();
+    }
+
     /// Whether the job is cancelled; does not wait.
     pub fn cancelled(&self) -> bool {
         self.control.cancelled()
@@ -503,7 +508,7 @@ impl RunCx<'_> {
 
     /// The folders holding `paths` changed (an item that works in many places: the
     /// administrator's list).
-    pub(crate) fn touched<'p>(&self, paths: impl IntoIterator<Item = &'p Path>) {
+    pub fn touched<'p>(&self, paths: impl IntoIterator<Item = &'p Path>) {
         if let Some((_, job)) = self.job {
             job.touch(paths, true);
         }

@@ -5452,6 +5452,11 @@ msgstr "{} wird wiederhergestellt"
 msgid "no longer in the trash"
 msgstr "nicht mehr im Papierkorb"
 
+#: crates/gezik-ops/src/tasks/restore.rs
+#, fuzzy
+msgid "The older version is no longer in the trash; this one was kept"
+msgstr "Die ältere Version ist nicht mehr im Papierkorb; diese wurde behalten"
+
 #: crates/gezik-ops/src/tasks/sync.rs
 #, fuzzy
 msgid "Changed after the compare; left alone"

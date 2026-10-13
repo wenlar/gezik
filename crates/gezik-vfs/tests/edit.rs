@@ -302,5 +302,71 @@ fn a_folder_moved_in_goes_in_with_every_file_before_it_is_trashed() {
     assert_eq!(entry(&now, "notes/.gezik-mine.txt"), b"mine");
     assert_eq!(entry(&now, "notes/a.txt"), b"a");
     assert!(!folder.exists(), "trashed once all of it is in");
+    assert!(report.changed_dirs.contains(&d), "the folder it left is read again: {:?}", report.changed_dirs);
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// A zip of `files` dated 2001-02-03 04:05:06.
+fn old_zip(path: &Path, files: &[(&str, &[u8])]) {
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+    let date = zip::DateTime::from_date_and_time(2001, 2, 3, 4, 5, 6).unwrap();
+    for (name, data) in files {
+        zip.start_file(*name, zip::write::SimpleFileOptions::default().last_modified_time(date)).unwrap();
+        zip.write_all(data).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+#[test]
+fn moved_and_copied_out_entries_keep_their_dates() {
+    let d = dir("move-dates");
+    let archive = d.join("a.zip");
+    old_zip(&archive, &[("m.txt", b"m"), ("c.txt", b"c")]);
+    // A downloaded archive: what leaves it gets its Mark of the Web, which must not touch dates.
+    #[cfg(windows)]
+    {
+        let mut mark = archive.as_os_str().to_owned();
+        mark.push(":Zone.Identifier");
+        std::fs::write(
+            &mark,
+            b"[ZoneTransfer]
+ZoneId=3
+",
+        )
+        .unwrap();
+    }
+    let out = d.join("out");
+    std::fs::create_dir(&out).unwrap();
+    let top = VfsPath::archive(archive.clone());
+    let (tasks, _) = gezik_vfs::tasks::copy_out(&[top.join("c.txt")], out.clone());
+    let (report, _) = run(&engine(&d), tasks);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let (tasks, _) = move_out(&[top.join("m.txt")], out.clone());
+    let (report, _) = run(&engine(&d), tasks);
+    assert!(report.failures.is_empty(), "{:?}", report.failures);
+    let year = |name: &str| {
+        let modified = std::fs::metadata(out.join(name)).unwrap().modified().unwrap();
+        let secs = modified.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        1970 + secs / 31_557_600
+    };
+    assert_eq!(year("c.txt"), 2001, "copied out");
+    assert_eq!(year("m.txt"), 2001, "moved out");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_read_only_archive_file_is_not_offered_for_changes() {
+    let d = dir("read-only-file");
+    let archive = d.join("r.zip");
+    zip(&archive, &[("a.txt", b"a")]);
+    let mut perms = std::fs::metadata(&archive).unwrap().permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&archive, perms.clone()).unwrap();
+    let vfs = gezik_vfs::mount(&VfsPath::archive(archive.clone()).root, &Quiet).unwrap();
+    assert!(!vfs.caps().has(gezik_core::vfs::Caps::WRITE), "refused while dragging over, not when run");
+    drop(vfs);
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    std::fs::set_permissions(&archive, perms).unwrap();
     let _ = std::fs::remove_dir_all(&d);
 }

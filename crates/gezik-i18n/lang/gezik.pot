@@ -4478,6 +4478,10 @@ msgstr ""
 msgid "no longer in the trash"
 msgstr ""
 
+#: crates/gezik-ops/src/tasks/restore.rs
+msgid "The older version is no longer in the trash; this one was kept"
+msgstr ""
+
 #: crates/gezik-ops/src/tasks/sync.rs
 msgid "Changed after the compare; left alone"
 msgstr ""
