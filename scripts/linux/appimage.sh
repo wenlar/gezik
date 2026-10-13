@@ -38,7 +38,7 @@ MimeType=inode/directory;
 EOF
 if command -v desktop-file-validate >/dev/null; then desktop-file-validate "$app/gezik.desktop"; fi
 
-mkdir -p "$OUT"
+mkdir -p "$OUT" && OUT=$(cd "$OUT" && pwd)
 image=$OUT/gezik-$VERSION-linux-x64.AppImage
 ARCH=x86_64 "$work/appimagetool" --appimage-extract-and-run --no-appstream \
     --runtime-file "$work/runtime" "$app" "$image"
