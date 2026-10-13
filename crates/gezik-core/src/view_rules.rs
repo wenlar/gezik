@@ -723,8 +723,9 @@ mod tests {
 
     #[test]
     fn twenty_rules_on_a_hundred_thousand_entries_are_quick() {
-        // Debug builds are many times slower; scripts/perf/rules.ps1 checks the release numbers.
-        let slow: u32 = if cfg!(debug_assertions) { 25 } else { 1 };
+        // Debug builds on shared CI runners vary too much to time; the bounds hold in release
+        // (`cargo test --release`), and scripts/perf/rules.ps1 checks the real numbers.
+        let timed = !cfg!(debug_assertions);
         let mut specs = Vec::new();
         for i in 0..10 {
             specs.push(rule(specs.len() + 1, Some(&format!("/u/Folder {i}/**")), None, None));
@@ -752,12 +753,12 @@ mod tests {
             })
             .min_by_key(|(_, took)| *took)
             .unwrap();
-        assert!(counting < Duration::from_millis(2) * slow, "count: {counting:?}");
+        assert!(!timed || counting < Duration::from_millis(2), "count: {counting:?}");
         let started = Instant::now();
         for _ in 0..1000 {
             assert_eq!(rules.pick_by(&place, &mut || Some(counts)), None);
         }
         let each = started.elapsed() / 1000;
-        assert!(each < Duration::from_micros(50) * slow, "evaluation: {each:?}");
+        assert!(!timed || each < Duration::from_micros(50), "evaluation: {each:?}");
     }
 }
