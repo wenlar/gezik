@@ -216,7 +216,7 @@ mod tests {
         assert_eq!(pseudo.get("", "Open {}"), crate::pseudo::pseudo("Open {}"));
         assert_eq!(pseudo.nget("", "{n} file", "{n} files", 2), crate::pseudo::pseudo("{n} files"));
         assert!(Catalog::open("en", None).is_none(), "English loads nothing");
-        assert!(Catalog::open("tr", None).is_none(), "no built-in languages yet");
+        assert_eq!(Catalog::open("tr", None).unwrap().get("", "Open"), "Aç", "Turkish is built in");
         let file = Arc::new(Layer::from_map("Polski".into(), true, Plural::default(), HashMap::new()));
         assert_eq!(Catalog::open("pl", Some(file)).unwrap().code, "pl");
         assert_eq!(Catalog::open("pseudo", None).unwrap().code, "pseudo");
