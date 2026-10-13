@@ -56,3 +56,9 @@ and `test_read_format_rar_encryption.c` there state them, checked with 7-Zip 25.
 
 The volume test uses `test_rar_multivolume_single_file`; `test_read_format_rar_multivolume`
 (first entry 241 MB) serves only the cancel test, which stops after 1 MiB.
+
+## ZipCrypto archives (spec 16 §6, review of 16b)
+
+`zipcrypto-store.zip` (`s1.txt`, `s2.txt`, `d/s3.txt`, stored) and `zipcrypto-deflate.zip`
+(`big.txt` deflated, `s1.txt` stored): made with 7-Zip 25 (`7z a -tzip -pPassw0rd -mx0` and
+`-mm=Deflate`), password `Passw0rd`. Adding to them must keep the old entries encrypted.

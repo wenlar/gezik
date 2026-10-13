@@ -1421,7 +1421,9 @@ fn main() -> Result<(), slint::PlatformError> {
     drop(window);
     let ran = slint::run_event_loop_until_quit();
     resident::shutdown();
-    // What was taken out of archives for a preview or an app (spec 16 §4.5).
+    // Changes to files opened from archives and not put back are kept (spec 16 §6.4), then
+    // what was taken out of archives for a preview or an app goes (spec 16 §4.5).
+    vfs_mounts::rescue();
     gezik_vfs::stage::remove_area();
     ran
 }

@@ -43,12 +43,15 @@ struct Target {
     action: Option<Action>,
     /// The zip, 7z or tar file it would be added to (`Action::AddToArchive`).
     archive: Option<PathBuf>,
+    /// The folder inside an archive it would go into (spec 16 §6.1); `dir` is its address then,
+    /// for the label only.
+    into: Option<VfsPath>,
 }
 
 impl Target {
     /// Nothing can be dropped there.
     fn none(hit: Hit) -> Target {
-        Target { hit, dir: None, action: None, archive: None }
+        Target { hit, dir: None, action: None, archive: None, into: None }
     }
 }
 
@@ -919,6 +922,9 @@ impl Drags {
         if d.inside.is_some() && !virtual_allows(hit) {
             return Target::none(hit);
         }
+        if let Some(target) = self.resolve_inside(hit, d) {
+            return target;
+        }
         let pane = hit.pane().and_then(|place| crate::panes::at(index(place)));
         let (hit, dir) = match (hit, &pane) {
             // Nothing goes into the bins but by a delete.
@@ -929,7 +935,7 @@ impl Drags {
                 Some((path, false)) if d.virtual_count == 0 && d.inside.is_none() && self.can_add_to(d, &path) => {
                     let folder = path.parent().map(Path::to_path_buf);
                     let action = folder.as_deref().is_some_and(|f| self.writable(f)).then_some(Action::AddToArchive);
-                    return Target { hit, dir: folder, action, archive: Some(path) };
+                    return Target { hit, dir: folder, action, archive: Some(path), into: None };
                 }
                 // A file: into the folder it is in.
                 _ => (Hit::Background(p), pane.view.folder()),
@@ -961,7 +967,52 @@ impl Drags {
             _ => (hit, None),
         };
         let action = dir.as_deref().and_then(|dir| self.effect(d, dir)).map(Action::Transfer);
-        Target { hit, dir, action, archive: None }
+        Target { hit, dir, action, archive: None, into: None }
+    }
+
+    /// Dropping `d` at `hit` in a pane that shows a place inside an archive: into the folder
+    /// shown, or a folder in it (spec 16 §6.1). `None`: not such a pane.
+    fn resolve_inside(&self, hit: Hit, d: &Dragging) -> Option<Target> {
+        let pane = hit.pane().and_then(|place| crate::panes::at(index(place)))?;
+        if !pane.view.shows_vfs() {
+            return None;
+        }
+        let shown = pane.view.vfs_dir().map(|dir| dir.at.clone());
+        let (hit, into) = match hit {
+            Hit::Entry(p, i) => match pane.view.vfs_item(i) {
+                Some((at, true)) => (hit, Some(at)),
+                _ => (Hit::Background(p), shown),
+            },
+            Hit::Background(_) => (hit, shown),
+            _ => return None,
+        };
+        // Search results inside an archive have no folder to drop into.
+        let Some(into) = into else { return Some(Target::none(hit)) };
+        let action = (d.virtual_count == 0 && crate::operations::writable(&into.root))
+            .then(|| self.effect_inside(d, &into))
+            .flatten()
+            .map(Action::Transfer);
+        Some(Target { hit, dir: Some(PathBuf::from(into.text())), action, archive: None, into: Some(into) })
+    }
+
+    /// The effect of dropping `d` into the archive folder `into`: a copy, or a move (Shift,
+    /// or entries of the same archive); never a link, never into itself.
+    fn effect_inside(&self, d: &Dragging, into: &VfsPath) -> Option<Effect> {
+        let items = d.inside.as_ref().map(|inside| inside.items.as_slice()).unwrap_or_default();
+        let same = items.first().is_some_and(|item| gezik_vfs::same_root(&item.root, &into.root));
+        let effect = drag::choose(d.keys, same, d.allowed).filter(|effect| *effect != Effect::Link)?;
+        if same {
+            let inside =
+                |item: &VfsPath| item.inner == into.inner || into.inner.starts_with(&format!("{}/", item.inner));
+            let here = |item: &VfsPath| item.parent().is_some_and(|up| up.inner == into.inner);
+            if items.iter().any(inside) || (effect == Effect::Move && items.iter().all(here)) {
+                return None;
+            }
+        }
+        if effect == Effect::Move && items.first().is_some_and(|item| !crate::operations::writable(&item.root)) {
+            return None;
+        }
+        Some(effect)
     }
 
     /// Whether `d` can be added to the file `path`: an archive by its name, not one of the
@@ -976,9 +1027,15 @@ impl Drags {
         if !self.writable(dir) {
             return None;
         }
-        if d.virtual_count > 0 || d.inside.is_some() {
+        if d.virtual_count > 0 {
             // Nothing to move or link: what has no file behind it is copied.
             return Some(Effect::Copy);
+        }
+        if let Some(inside) = &d.inside {
+            // Out of an archive: copied, or moved (Shift) when Gezik writes the archive.
+            let effect = drag::choose(d.keys, false, d.allowed).filter(|effect| *effect != Effect::Link)?;
+            let writes = inside.items.first().is_some_and(|item| crate::operations::writable(&item.root));
+            return (effect == Effect::Copy || writes).then_some(effect);
         }
         let roots: Vec<PathBuf> =
             crate::panes::active_nav().places().drives.into_iter().map(|drive| drive.path).collect();
@@ -1223,6 +1280,21 @@ impl Drags {
             // To a source program: nothing is moved, so it deletes nothing.
             return Some(Effect::Copy);
         }
+        if let Some(into) = target.into {
+            let Some(Action::Transfer(effect)) = target.action else {
+                if !crate::operations::writable(&into.root) {
+                    crate::panes::active_view().note(gezik_i18n::t("", crate::operations::READ_ONLY).into_owned());
+                }
+                return None;
+            };
+            let moving = effect == Effect::Move;
+            match d.inside {
+                Some(inside) => self.0.ops.copy_in(inside.items, into, moving),
+                None => self.0.ops.put_in(d.sources, into, moving),
+            }
+            // Nothing for a source program to delete: a move trashes what went in by itself.
+            return Some(Effect::Copy);
+        }
         let Some(dir) = target.dir else {
             // Search results have no folder to drop into (spec 4.6).
             if matches!(target.hit, Hit::Background(_)) && crate::panes::active_view().shows_results() {
@@ -1231,11 +1303,12 @@ impl Drags {
             return None;
         };
         if let Some(inside) = d.inside {
-            // Copied out of the archive by a job (spec 16 §4.6); no menu: a copy is all it can be.
-            if target.action != Some(Action::Transfer(Effect::Copy)) {
-                return None;
+            // Copied (or moved) out of the archive by a job (spec 16 §4.6); no menu.
+            match target.action {
+                Some(Action::Transfer(Effect::Copy)) => self.0.ops.copy_out(inside.items, dir),
+                Some(Action::Transfer(Effect::Move)) => self.0.ops.move_out(inside.items, dir),
+                _ => return None,
             }
-            self.0.ops.copy_out(inside.items, dir);
             return Some(Effect::Copy);
         }
         if d.virtual_count > 0 {

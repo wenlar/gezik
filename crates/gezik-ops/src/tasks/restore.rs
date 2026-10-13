@@ -3,11 +3,14 @@
 use std::io;
 use std::path::PathBuf;
 
+use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::path_key;
 use gezik_platform::fs;
 
 use super::what;
-use crate::task::{Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, facts_after};
+use crate::task::{
+    Outcome, PlanItem, Resources, RunCx, ScanSink, Stage, Task, TaskKind, Work, changed_since, facts_after, unchanged,
+};
 use crate::walk::facts_of;
 
 pub struct RestoreTask {
@@ -86,11 +89,122 @@ impl Task for RestoreTask {
     }
 }
 
+/// Undoes a file replaced in place by a newer one (an archive written anew, spec 16 §6.2): the
+/// older one, in the trash, comes back next to the newer one first; only then does the newer
+/// one go to the trash and the older one take its name. If the older one is no longer in the
+/// trash, or the newer one changed since, the newer one stays where it is.
+pub struct SwapBackTask {
+    /// (where the older one is in the trash, its place, what the newer one there should be).
+    pairs: Vec<(PathBuf, PathBuf, Option<Facts>)>,
+}
+
+impl SwapBackTask {
+    pub fn new(pairs: Vec<(PathBuf, PathBuf, Option<Facts>)>) -> SwapBackTask {
+        SwapBackTask { pairs }
+    }
+}
+
+impl Task for SwapBackTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Restore
+    }
+
+    fn title(&self) -> String {
+        let originals: Vec<PathBuf> = self.pairs.iter().map(|(_, original, _)| original.clone()).collect();
+        gezik_i18n::t!("Restoring {}", what(&originals))
+    }
+
+    fn count(&self) -> usize {
+        self.pairs.len()
+    }
+
+    fn resources(&self) -> Resources {
+        let mut paths: Vec<PathBuf> = self.pairs.iter().map(|(trashed, _, _)| trashed.clone()).collect();
+        paths.extend(self.pairs.iter().map(|(_, original, _)| original.clone()));
+        Resources { paths, work: Work::Disk }
+    }
+
+    fn plan(&self, sink: &mut dyn ScanSink) {
+        for (i, (trashed, original, _)) in self.pairs.iter().enumerate() {
+            match std::fs::symlink_metadata(trashed) {
+                Ok(meta) => {
+                    if !sink.item(PlanItem::new(Stage::Parallel, facts_of(&meta)).source(trashed).top(i)) {
+                        return;
+                    }
+                }
+                Err(_) => sink.failed(
+                    original,
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        gezik_i18n::t!("The older version is no longer in the trash; this one was kept"),
+                    ),
+                ),
+            }
+        }
+    }
+
+    fn run(&self, item: &PlanItem, run: &RunCx<'_>) -> io::Result<Outcome> {
+        let Some((trashed, original, expected)) = self.pairs.get(item.root) else { return Ok(Outcome::Nothing) };
+        let original: PathBuf = original.clone();
+        if !unchanged(&original, *expected) {
+            return Err(changed_since());
+        }
+        // The older one out of the trash first, next to the newer one: if that fails, nothing
+        // changed.
+        let aside = run.aside_name(&original);
+        fs::restore(trashed, &aside)?;
+        run.note_aside(&[(aside.clone(), original.clone())]);
+        let newer = match crate::trash_path(&original) {
+            Ok(newer) => newer,
+            Err(err) => {
+                // The newer one stays; the older one goes back where it was.
+                if crate::trash_path(&aside).is_ok() {
+                    run.forget_aside(&[&aside]);
+                }
+                return Err(err);
+            }
+        };
+        fs::move_entry(&aside, &original)?;
+        run.forget_aside(&[&aside]);
+        Ok(Outcome::Several(vec![
+            Outcome::Trashed { original: original.clone(), trashed: newer },
+            Outcome::Restored { facts: facts_after(&original, false), original },
+        ]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Decision;
     use crate::testing::{engine, finish, read, test_dir, write};
+
+    #[test]
+    fn a_replaced_file_comes_back_only_while_its_older_version_is_in_the_trash() {
+        let dir = test_dir("swap-back");
+        let file = dir.join("a.zip");
+        write(&file, "old");
+        let trashed = fs::trash(&file).unwrap().unwrap();
+        write(&file, "new");
+        let engine = engine();
+        // The older one was emptied from the trash: the newer one stays.
+        let gone = dir.join("gone-from-the-bin");
+        let job = engine.submit(Box::new(SwapBackTask::new(vec![(gone, file.clone(), None)])));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Skip; c.len()]);
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(read(&file), "new");
+        // Still there: they swap.
+        let job = engine.submit(Box::new(SwapBackTask::new(vec![(trashed, file.clone(), None)])));
+        let (report, _) = finish(&engine, job, |c| vec![Decision::Skip; c.len()]);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert_eq!(read(&file), "old");
+        let in_bin = gezik_platform::trash::list()
+            .items
+            .into_iter()
+            .any(|item| item.original.as_deref() == Some(file.as_path()));
+        assert!(in_bin, "the newer one is in the trash under its own name");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn restoring_onto_a_taken_name_asks() {

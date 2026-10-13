@@ -15,7 +15,7 @@ use gezik_core::drag::Effect;
 use gezik_core::ops::paths::same_path;
 use gezik_core::ops::rate::{Rate, format_eta, format_rate};
 use gezik_core::templates::{LinkKind, PasteKind, Template, pasted_name};
-use gezik_core::vfs::VfsPath;
+use gezik_core::vfs::{Caps, Edit, VfsPath};
 use gezik_i18n::{t, tn, tx};
 use gezik_ops::{
     Answer, CopyTask, DeleteTask, Engine, Event, GroupTask, JobId, JobState, LinkTask, MaterializeTask, MoveTask,
@@ -24,6 +24,7 @@ use gezik_ops::{
 use gezik_platform::clipboard::{self, ClipboardError, ClipboardFiles};
 use gezik_platform::dnd::VirtualFiles;
 use gezik_platform::taskbar::{Taskbar, TaskbarState};
+use gezik_vfs::tasks::VfsEditTask;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::dialog::Dialogs;
@@ -173,8 +174,18 @@ pub fn result_names(results: &[PathBuf], folder: &Path) -> Vec<String> {
 /// The status bar when a job needs a folder and search results show (spec 4.6); shown with `t`.
 pub const NOT_HERE: &str = tx!("Not in search results: open a folder first");
 
-/// Cut, Move To… or a move drag inside an archive (spec 16: only copies come out of one in 16a).
-pub const ONLY_COPIED: &str = tx!("Items in an archive can only be copied out");
+/// A change inside an archive Gezik only reads (spec 16 §6.1); shown with `t`.
+pub const READ_ONLY: &str = tx!("This kind of archive can only be read");
+
+/// `name` if no entry has it, else the next free `name (2)`, `name (3)`…
+fn free_folder_name(name: String, taken: impl Fn(&str) -> bool) -> String {
+    if taken(&name) { gezik_core::ops::names::next_free(&name, true, taken) } else { name }
+}
+
+/// Whether Gezik can change the open place `root` (an archive it writes).
+pub fn writable(root: &gezik_core::vfs::VfsRoot) -> bool {
+    gezik_vfs::mounted(root).is_some_and(|vfs| vfs.caps().has(Caps::WRITE))
+}
 
 /// Whether "Copy/Cut with folders" still owns the clipboard: the change number it got (`saved`)
 /// is the clipboard's now, or, where there are none (0), the clipboard holds its paths.
@@ -340,6 +351,10 @@ struct JobView {
     /// A duplicates delete's paths: while it runs, another delete does not count them as the
     /// copy that stays.
     deleting: Vec<PathBuf>,
+    /// Inside an archive: the names to select once it is read again, and the new folder to
+    /// rename (its address).
+    vfs_select: Vec<String>,
+    vfs_rename: Option<PathBuf>,
 }
 
 /// The note of a `{files}` run in the panel (spec 7); shown with `t`.
@@ -385,6 +400,8 @@ impl JobView {
             bins: false,
             trash_only: false,
             deleting: Vec::new(),
+            vfs_select: Vec::new(),
+            vfs_rename: None,
         }
     }
 
@@ -458,8 +475,9 @@ struct Inner {
     clip_sequence: Cell<u64>,
     /// The last "Copy/Cut with folders", while it may own the clipboard.
     with_folders: RefCell<Option<WithFolders>>,
-    /// Entries copied inside an archive, and the clipboard's change number then (spec 16 §4.6).
-    vfs_clip: RefCell<Option<(Vec<VfsPath>, u64)>>,
+    /// Entries copied (or cut) inside an archive, and the clipboard's change number then
+    /// (spec 16 §4.6).
+    vfs_clip: RefCell<Option<(Vec<VfsPath>, u64, bool)>>,
     /// Where state.toml is (none: nothing is saved).
     store: Option<ConfigStore>,
     /// The batch rename layer's last rules.
@@ -681,7 +699,11 @@ impl Operations {
     fn folder_shown(&self) {
         let Some(part) = self.part() else { return };
         let Some(path) = part.rename_when_shown.borrow().clone() else { return };
-        let Some(folder) = crate::panes::active_view().folder() else { return };
+        // Inside an archive: by its address.
+        let view = crate::panes::active_view();
+        let Some(folder) = view.folder().or_else(|| view.vfs_dir().map(|dir| PathBuf::from(dir.at.text()))) else {
+            return;
+        };
         if !path.parent().is_some_and(|parent| same_path(parent, &folder)) {
             // Another folder is on screen: the wait is over.
             part.rename_when_shown.borrow_mut().take();
@@ -711,6 +733,15 @@ impl Operations {
             return;
         }
         let view = &crate::panes::active_view();
+        if view.shows_vfs() {
+            // Inside an archive: one entry at a time, in a folder (not in search results).
+            let Some(dir) = self.vfs_target() else { return };
+            let index = view.single_selected().or_else(|| view.focus());
+            if let Some(index) = index.filter(|i| view.vfs_item(*i).is_some_and(|(at, _)| at.root == dir.root)) {
+                view.begin_rename(index);
+            }
+            return;
+        }
         if view.selection_count() >= 2 {
             self.batch_rename();
             return;
@@ -825,6 +856,7 @@ impl Operations {
             }
             Ok(Some(name)) => {
                 let path = view.entry_path(index).map(|(path, _)| path);
+                let inside = view.vfs_item(index).map(|(at, _)| at);
                 if how == Commit::Tab {
                     view.end_rename_for_next()
                 } else {
@@ -835,6 +867,11 @@ impl Operations {
                     // Going on to another entry: its refresh must not pull the selection away.
                     let after = if select { After::Select } else { After::Nothing };
                     self.submit(Box::new(gezik_ops::RenameTask::one(path, &name)), None, after);
+                } else if let Some(at) = inside {
+                    let to = at.parent().map_or_else(|| name.clone(), |up| up.join(&name).inner);
+                    let rename = Edit::Rename { from: at.inner.clone(), to };
+                    let after = if select { After::Select } else { After::Nothing };
+                    self.edit_inside(VfsEditTask::new(at.root.clone(), vec![rename]), vec![name], after);
                 }
                 Some(index)
             }
@@ -924,12 +961,92 @@ impl Operations {
 
     /// A new folder in `dir` (else the folder shown), renamed right away.
     pub fn new_folder(&self, dir: Option<PathBuf>) {
+        let dir = dir.filter(|dir| !dir.as_os_str().is_empty());
+        if dir.is_none() && crate::panes::active_view().shows_vfs() {
+            return self.new_folder_inside();
+        }
         match dir.or_else(|| crate::panes::active_view().folder()) {
             Some(dir) => {
                 self.submit(Box::new(NewTask::folder(&dir)), None, After::Rename);
             }
             None => self.not_here(),
         }
+    }
+
+    /// A new folder in the archive folder shown, renamed once it shows (spec 16 §6.1).
+    fn new_folder_inside(&self) {
+        let Some(dir) = self.vfs_target() else { return };
+        let view = crate::panes::active_view();
+        let name = gezik_core::ops::names::default_name(tx!("New folder"), true);
+        let name = free_folder_name(name, |n| view.has_other_named(n, usize::MAX));
+        let at = dir.join(&name);
+        let task = VfsEditTask::new(dir.root.clone(), vec![Edit::MakeDir(at.inner.clone())]);
+        let id = self.edit_inside(task, vec![name], After::Rename);
+        self.with_job(id, |job| job.vfs_rename = Some(PathBuf::from(at.text())));
+    }
+
+    /// The archive folder shown, if Gezik can change it; else says why not (search results,
+    /// an archive it only reads) and gives `None`.
+    fn vfs_target(&self) -> Option<VfsPath> {
+        let view = crate::panes::active_view();
+        let Some(dir) = view.vfs_dir() else {
+            view.note(gezik_i18n::t("", NOT_HERE).into_owned());
+            return None;
+        };
+        if !dir.vfs.caps().has(Caps::WRITE) {
+            view.note(t("", READ_ONLY).into_owned());
+            return None;
+        }
+        Some(dir.at.clone())
+    }
+
+    /// Runs a change inside an archive; `select`: the names to select once it shows again.
+    fn edit_inside(&self, task: VfsEditTask, select: Vec<String>, after: After) -> JobId {
+        let id = self.submit(Box::new(task), None, after);
+        self.with_job(id, |job| job.vfs_select = select);
+        id
+    }
+
+    /// Files on disk dropped or pasted into the archive folder `dir` (moved: trashed once in).
+    pub fn put_in(&self, paths: Vec<PathBuf>, dir: VfsPath, moving: bool) {
+        if !writable(&dir.root) {
+            return crate::panes::active_view().note(t("", READ_ONLY).into_owned());
+        }
+        let names = crate::copy_to::item_names(&paths);
+        self.edit_inside(VfsEditTask::put(&dir, paths, moving), names, After::Select);
+    }
+
+    /// Entries of an archive dropped or pasted into the archive folder `dir`.
+    pub fn copy_in(&self, items: Vec<VfsPath>, dir: VfsPath, moving: bool) {
+        if !writable(&dir.root) || (moving && items.first().is_some_and(|item| !writable(&item.root))) {
+            return crate::panes::active_view().note(t("", READ_ONLY).into_owned());
+        }
+        let names = items.iter().map(VfsPath::name).collect();
+        self.edit_inside(VfsEditTask::copy_in(&items, &dir, moving), names, After::Select);
+    }
+
+    /// Delete inside an archive: asked first (no trash there; the old archive goes to it).
+    fn delete_inside(&self) {
+        let view = crate::panes::active_view();
+        let items: Vec<VfsPath> = view.selected_vfs_items().into_iter().map(|(at, _)| at).collect();
+        let Some(first) = items.first() else { return };
+        if !writable(&first.root) {
+            return view.note(t("", READ_ONLY).into_owned());
+        }
+        let what = match items.as_slice() {
+            [one] => one.name(),
+            many => tn!("{n} item" | "{n} items", many.len()),
+        };
+        let root = first.root.clone();
+        let edits = items.iter().map(|item| Edit::Delete(item.inner.clone())).collect();
+        let ops = self.clone();
+        // TRANSLATORS: {} is a name or "3 items"
+        let title = t!("Delete {} from the archive?", what);
+        self.dialogs().ask(title, t!("You can undo this."), &[&t!("Delete"), &t!("Cancel")], move |choice| {
+            if choice == Some(0) {
+                ops.edit_inside(VfsEditTask::new(root, edits), Vec::new(), After::Nothing);
+            }
+        });
     }
 
     /// Ctrl+C / Ctrl+X on the selection.
@@ -952,12 +1069,10 @@ impl Operations {
     /// copies them out), the system's clipboard gets their addresses as text.
     fn copy_inside(&self, cut: bool) {
         let view = crate::panes::active_view();
-        if cut {
-            return view.note(t("", ONLY_COPIED).into_owned());
-        }
         let items: Vec<VfsPath> = view.selected_vfs_items().into_iter().map(|(at, _)| at).collect();
-        if items.is_empty() {
-            return;
+        let Some(first) = items.first() else { return };
+        if cut && !writable(&first.root) {
+            return view.note(t("", READ_ONLY).into_owned());
         }
         let text: Vec<String> = items.iter().map(VfsPath::text).collect();
         if let Err(ClipboardError::Failed(why)) = clipboard::write_text(&text.join("\n")) {
@@ -968,23 +1083,39 @@ impl Operations {
         self.0.cut.borrow_mut().clear();
         self.update_cut();
         let count = items.len();
-        *self.0.vfs_clip.borrow_mut() = Some((items, clipboard::sequence()));
-        view.note(tn!("Copied {n} item" | "Copied {n} items", count));
+        *self.0.vfs_clip.borrow_mut() = Some((items, clipboard::sequence(), cut));
+        view.note(if cut {
+            tn!("Cut {n} item" | "Cut {n} items", count)
+        } else {
+            tn!("Copied {n} item" | "Copied {n} items", count)
+        });
     }
 
-    /// The entries copied inside an archive, while the clipboard still holds them.
-    fn vfs_to_paste(&self) -> Option<Vec<VfsPath>> {
+    /// The entries copied (or cut: true) inside an archive, while the clipboard still holds them.
+    fn vfs_to_paste(&self) -> Option<(Vec<VfsPath>, bool)> {
         let saved = self.0.vfs_clip.borrow();
-        let (items, sequence) = saved.as_ref()?;
+        let (items, sequence, cut) = saved.as_ref()?;
         // No change numbers here (0): only while the clipboard holds no files of another program.
         let current = if *sequence == 0 { self.clipboard().is_none() } else { *sequence == clipboard::sequence() };
-        current.then(|| items.clone())
+        current.then(|| (items.clone(), *cut))
     }
 
     /// Copies `items` (entries of one folder inside an archive) into folder `dir`, as one job
     /// with one undo (spec 16 §4.6).
     pub fn copy_out(&self, items: Vec<VfsPath>, dir: PathBuf) {
         let (tasks, label) = gezik_vfs::tasks::copy_out(&items, dir);
+        if !tasks.is_empty() {
+            self.submit_chain(tasks, Some(label), None, After::Select);
+        }
+    }
+
+    /// Moves `items` (entries inside an archive) into folder `dir`: copied out, then those
+    /// placed are deleted inside (spec 16 §4.6), one job and one undo.
+    pub fn move_out(&self, items: Vec<VfsPath>, dir: PathBuf) {
+        if items.first().is_some_and(|item| !writable(&item.root)) {
+            return crate::panes::active_view().note(t("", READ_ONLY).into_owned());
+        }
+        let (tasks, label) = gezik_vfs::tasks::move_out(&items, dir);
         if !tasks.is_empty() {
             self.submit_chain(tasks, Some(label), None, After::Select);
         }
@@ -1057,9 +1188,17 @@ impl Operations {
     /// Ctrl+V: into `into` (a folder's menu) or the folder shown. Cut items move; `force_move`
     /// moves copied ones too (macOS Cmd+Option+V).
     pub fn paste(&self, into: Option<PathBuf>, force_move: bool) {
+        let into = into.filter(|dir| !dir.as_os_str().is_empty());
+        if into.is_none() && crate::panes::active_view().shows_vfs() {
+            return self.paste_inside(force_move);
+        }
         let Some(dir) = into.or_else(|| crate::panes::active_view().folder()) else { return self.not_here() };
-        // Entries copied inside an archive come out here.
-        if let Some(items) = self.vfs_to_paste() {
+        // Entries copied inside an archive come out here; cut ones leave it.
+        if let Some((items, cut)) = self.vfs_to_paste() {
+            if cut || force_move {
+                self.0.vfs_clip.borrow_mut().take();
+                return self.move_out(items, dir);
+            }
             return self.copy_out(items, dir);
         }
         // A copy with folders keeps them (spec 4.6).
@@ -1090,6 +1229,27 @@ impl Operations {
         self.transfer(paths, dir, if cut || force_move { Effect::Move } else { Effect::Copy });
         if cut {
             // Pasted: cut items are no longer waiting anywhere (also Explorer's own).
+            let _ = clipboard::clear();
+            self.0.clip.borrow_mut().take();
+            self.0.cut.borrow_mut().clear();
+            self.0.clip_sequence.set(clipboard::sequence());
+            self.update_cut();
+        }
+    }
+
+    /// Ctrl+V in an archive folder: entries copied or cut in an archive, else files on the
+    /// clipboard go in (spec 16 §6.1).
+    fn paste_inside(&self, force_move: bool) {
+        let Some(dir) = self.vfs_target() else { return };
+        if let Some((items, cut)) = self.vfs_to_paste() {
+            if cut {
+                self.0.vfs_clip.borrow_mut().take();
+            }
+            return self.copy_in(items, dir, cut || force_move);
+        }
+        let Some(ClipboardFiles { paths, cut }) = self.clipboard() else { return };
+        self.put_in(paths, dir, cut || force_move);
+        if cut {
             let _ = clipboard::clear();
             self.0.clip.borrow_mut().take();
             self.0.cut.borrow_mut().clear();
@@ -1198,6 +1358,9 @@ impl Operations {
         }
         if crate::panes::active_view().shows_trash() {
             return crate::trash_view::delete_selection(&crate::panes::active_view());
+        }
+        if crate::panes::active_view().shows_vfs() {
+            return self.delete_inside();
         }
         self.trash_paths(crate::panes::active_view().selected_paths(), permanent);
     }
@@ -1714,7 +1877,11 @@ impl Operations {
         let mut title = String::new();
         let mut bins = false;
         let mut trash_only = false;
+        let mut vfs_select = Vec::new();
+        let mut vfs_rename = None;
         self.with_job(id, |job| {
+            vfs_select = std::mem::take(&mut job.vfs_select);
+            vfs_rename = job.vfs_rename.take();
             if !report.unchecked.is_empty() {
                 job.note = Some(gezik_ops::UNCHECKED);
             }
@@ -1751,7 +1918,9 @@ impl Operations {
             && pane.as_ref().is_some_and(|p| crate::panes::is_active(p.id))
             && let Some(part) = self.part()
         {
-            *part.rename_when_shown.borrow_mut() = report.results.first().cloned();
+            let made = report.failures.is_empty() && !report.cancelled;
+            *part.rename_when_shown.borrow_mut() =
+                vfs_rename.filter(|_| made).or_else(|| report.results.first().cloned());
         }
         // A rename is open (Tab went on): the selection stays with it.
         let after = if after == After::Select && pane.as_ref().is_some_and(|p| p.view.renaming().is_some()) {
@@ -1760,7 +1929,9 @@ impl Operations {
             after
         };
         let select = match (after, pane.as_ref().and_then(|p| p.view.folder())) {
-            (After::Nothing, _) | (_, None) => Vec::new(),
+            (After::Nothing, _) => Vec::new(),
+            // Inside an archive: the names the job gave.
+            (_, None) => vfs_select,
             (_, Some(folder)) => first_level_names(&report.results, &folder),
         };
         // Rows hidden for this job come back if it changed nothing (failed, cancelled, no trash).
@@ -2235,6 +2406,12 @@ fn history_row(record: &crate::op_history::Record) -> OpRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_folder_takes_the_plain_name_when_it_is_free() {
+        assert_eq!(free_folder_name("New folder".into(), |_| false), "New folder");
+        assert_eq!(free_folder_name("New folder".into(), |n| n == "New folder"), "New folder (2)");
+    }
     use gezik_ops::{Failure, TaskKind};
 
     #[test]

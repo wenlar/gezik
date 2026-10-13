@@ -191,7 +191,15 @@ const BUF: usize = 64 * 1024;
 
 /// The archive at `path` (any volume of a set opens the first), by its first bytes and name.
 pub fn open(path: &Path) -> IoResult<Box<dyn ArchiveSource + Send>> {
-    let volumes = Volumes::of(path)?;
+    open_volumes(Volumes::of(path)?)
+}
+
+/// The archive in the single file `path` as if it were called `name` (a temporary file).
+pub fn open_as(path: &Path, name: &str) -> IoResult<Box<dyn ArchiveSource + Send>> {
+    open_volumes(Volumes { paths: vec![path.to_path_buf()], name: name.to_owned() })
+}
+
+fn open_volumes(volumes: Volumes) -> IoResult<Box<dyn ArchiveSource + Send>> {
     let mut head = Vec::with_capacity(HEAD as usize);
     MultiFileReader::open(&volumes.paths)?.take(HEAD).read_to_end(&mut head)?;
     let format = detect(&head, &volumes.name)

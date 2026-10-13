@@ -443,6 +443,11 @@ impl RunCx<'_> {
         self.control.stopped()
     }
 
+    /// The user said Cancel to this item's question: the whole job ends as cancelled.
+    pub fn cancel_job(&self) {
+        self.control.cancel();
+    }
+
     /// Whether the job is cancelled; does not wait.
     pub fn cancelled(&self) -> bool {
         self.control.cancelled()
@@ -503,7 +508,7 @@ impl RunCx<'_> {
 
     /// The folders holding `paths` changed (an item that works in many places: the
     /// administrator's list).
-    pub(crate) fn touched<'p>(&self, paths: impl IntoIterator<Item = &'p Path>) {
+    pub fn touched<'p>(&self, paths: impl IntoIterator<Item = &'p Path>) {
         if let Some((_, job)) = self.job {
             job.touch(paths, true);
         }
@@ -554,7 +559,12 @@ impl RunCx<'_> {
             if let Some(pending) = self.pending().filter(|_| crate::pending::can_hold(&path)) {
                 pending.add(&path)?;
             }
-            match std::fs::create_dir(&path) {
+            // Private to the user on Unix: an archive may be unpacked here (decrypted).
+            #[cfg_attr(not(unix), allow(unused_mut))]
+            let mut builder = std::fs::DirBuilder::new();
+            #[cfg(unix)]
+            std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+            match builder.create(&path) {
                 Ok(()) => {
                     let _ = gezik_platform::fs::set_hidden(&path);
                     if let Some((_, job)) = self.job {

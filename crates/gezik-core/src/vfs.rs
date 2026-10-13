@@ -29,6 +29,41 @@ pub enum Container {
     Inside(Box<VfsPath>),
 }
 
+/// A change to a place (spec 16 §4.3); names are inner paths (`a/b.txt`). An archive applies a
+/// list of them as one rewrite.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Edit {
+    /// The file or folder `from` (with what it holds) as `to`.
+    Put {
+        from: PathBuf,
+        to: String,
+    },
+    MakeDir(String),
+    /// The entry, a folder with what it holds.
+    Delete(String),
+    Rename {
+        from: String,
+        to: String,
+    },
+}
+
+/// What a place can do besides being read (spec 16 §4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Caps(u8);
+
+impl Caps {
+    pub const WRITE: Caps = Caps(1);
+    pub const RENAME: Caps = Caps(2);
+    pub const MKDIR: Caps = Caps(4);
+    pub const DELETE: Caps = Caps(8);
+    /// Everything an archive Gezik writes can do.
+    pub const EDIT: Caps = Caps(1 | 2 | 4 | 8);
+
+    pub fn has(self, other: Caps) -> bool {
+        self.0 & other.0 == other.0
+    }
+}
+
 impl VfsPath {
     /// The top of the archive at `file`.
     pub fn archive(file: PathBuf) -> VfsPath {

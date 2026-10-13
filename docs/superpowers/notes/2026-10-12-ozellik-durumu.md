@@ -10,12 +10,12 @@ Rakip kısaltmaları rakip özetindeki gibi: OC, Fi, DO, FP, Far, FL, PF, TC.
 
 | Durum | §1 tablosu (66 satır) | Önerilmeyenler (13 madde) |
 |---|---|---|
-| ✅ Var | 52 | 0 |
+| ✅ Var | 53 | 0 |
 | 🟡 Kısmen | 7 | 0 |
-| 🔜 Planlı | 6 | 0 |
+| 🔜 Planlı | 5 | 0 |
 | ❌ Yok / bilerek kapsam dışı | 1 | 13 |
 
-Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65); 15. adım satır 9'u.
+Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65); 15. adım satır 9'u; 16. adım (16a, 16b) satır 12'yi.
 
 ## Ana tablo
 
@@ -34,7 +34,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 9 | Arayüz çevirisi (önce Türkçe) | 7/8 | Yok | ✅ Var | 15 (#120, #123, #125–#128): İngilizce, Türkçe; Almanca, İspanyolca, Fransızca, Çince makine çevirisi; `.po` dosyasıyla yeni dil |
 | 10 | Yol tamamlama, son klasörler, geçmiş, ortam değişkeni | 7/8 | Kısmen (Ctrl+L) | ✅ Var | 6b (#14): tamamlama, Recent/Frequent, `~`, `%AD%` |
 | 11 | Görünüm seçenekleri (gizli/sistem, uzantı, klasörler önce, biçimler) | 7/8 | Kısmen | ✅ Var | 7b (#19): `[view]` ve View menüsü |
-| 12 | Arşivin içinde klasör gibi gezinme | 7/8 | Planlı | 🔜 Planlı | 16 Gelişmiş (VFS) |
+| 12 | Arşivin içinde klasör gibi gezinme | 7/8 | Planlı | ✅ Var | 16a (#139): zip, 7z, tar, rar, iso ve 7-Zip'in okuduğu her biçimde gezinme, önizleme, arama, iç içe arşiv; 16b: içine bırakma, yapıştırma, silme, yeniden adlandırma, yeni klasör, taşıma, iç içe yazma, "Update in Archive", geri alma |
 | 13 | Zengin önizleme (video/ses, çok sayfalı PDF, renklendirme, yakınlaştırma, hex) | 7/8 | Kısmen | ✅ Var | 13a (#92) renkli kod, büyük metin, hex; 13b (#98) PDF sayfaları (pdfium, istekle) ve resim yakınlaştırma; 13c (#99) ffmpeg ile video/ses |
 | 14 | Varsayılan dosya yöneticisi (Win+E, `NSFileViewer`) | 6/8 | Yok | ✅ Var | 9b4 (#42), geri alınabilir. Windows'ta başka programların "Klasörde göster"i yönlendirilemiyor (9b11 düştü) |
 | 15 | Kısayol / symlink / hardlink / junction oluşturma | 7/8 | Yok | 🟡 Kısmen | 7c (#20): `.lnk`, junction, symlink; macOS takma ad 9a1 (#34). Hardlink bilerek kapsam dışı (7 spec) |

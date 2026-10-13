@@ -876,14 +876,28 @@ pub const INSIDE_NEW_TAB: u32 = 3230;
 pub const INSIDE_COPY_TO: u32 = 3231;
 /// Rows inside an archive (else the place shown): their address as text.
 pub const INSIDE_COPY_PATH: u32 = 3232;
+/// Rows inside an archive Gezik writes: Move To… (spec 16 §6).
+pub const INSIDE_MOVE_TO: u32 = 3233;
 
-/// A row inside an archive (spec 16 §4.7): what works there, nothing else shown.
-pub fn inside_row_items(folder: bool) -> Vec<(u32, &'static str)> {
+/// A row inside an archive (spec 16 §4.7): what works there, nothing else shown. `writable`:
+/// Gezik writes this archive (spec 16 §6.1); `one`: a single entry in a folder (renamed in place).
+pub fn inside_row_items(folder: bool, one: bool, writable: bool) -> Vec<(u32, &'static str)> {
     let mut out = vec![(OPEN, tx!("Open"))];
     if folder {
         out.push((INSIDE_NEW_TAB, tx!("Open in new tab")));
     }
-    out.extend([(COPY, tx!("Copy")), (INSIDE_COPY_TO, tx!("Copy To…")), (INSIDE_COPY_PATH, tx!("Copy Path"))]);
+    if writable {
+        out.push((CUT, tx!("Cut")));
+    }
+    out.extend([(COPY, tx!("Copy")), (INSIDE_COPY_TO, tx!("Copy To…"))]);
+    if writable {
+        out.push((INSIDE_MOVE_TO, tx!("Move To…")));
+        if one {
+            out.push((RENAME, tx!("Rename")));
+        }
+        out.push((TRASH, tx!("Delete")));
+    }
+    out.push((INSIDE_COPY_PATH, tx!("Copy Path")));
     out
 }
 #[cfg(windows)]
@@ -1547,8 +1561,11 @@ impl Menus {
             let one = crate::panes::active_view().selection_count() <= 1;
             // An archive in it opens as a folder too.
             let is_dir = is_dir || crate::archives::browses(std::path::Path::new(&at.name()));
+            let writable = crate::operations::writable(&at.root);
+            let in_folder = one && crate::panes::active_view().vfs_dir().is_some();
             *self.subject.borrow_mut() = Some(Subject::Inside);
-            return self.open_row_menu(translated(&inside_row_items(one && is_dir)), Vec::new(), Anchor::point(x, y));
+            let items = inside_row_items(one && is_dir, in_folder, writable);
+            return self.open_row_menu(translated(&items), Vec::new(), Anchor::point(x, y));
         }
         let at = at_position.then_some((x, y));
         let native = cfg!(windows);
@@ -1792,14 +1809,23 @@ impl Menus {
             let items = drives_background_items(&crate::connect::recent());
             return self.open_slint_entries(&items, Vec::new(), Anchor::point(x, y));
         }
-        // Inside an archive: nothing is made or pasted there (spec 16 §4.7).
+        // Inside an archive: pasted or made there only if Gezik writes it (spec 16 §6.1).
         if crate::panes::active_view().shows_vfs() {
             let (undo, redo) = (self.ops.undo_label(), self.ops.redo_label());
+            let writable = crate::panes::active_view()
+                .vfs_dir()
+                .is_some_and(|dir| dir.vfs.caps().has(gezik_core::vfs::Caps::WRITE));
+            self.ops.clipboard_check();
+            let can_paste = writable && self.ops.can_paste();
             let mut list: Vec<(u32, String, bool)> =
-                background_items(undo.as_deref(), redo.as_deref(), false, None, false)
+                background_items(undo.as_deref(), redo.as_deref(), can_paste, None, false)
                     .into_iter()
                     .map(|(id, title)| (id, title, true))
                     .collect();
+            if writable {
+                let at = list.iter().position(|(id, _, _)| *id == REFRESH).unwrap_or(list.len());
+                list.insert(at, (NEW_FOLDER, t!("New folder").into_owned(), true));
+            }
             list.push((INSIDE_COPY_PATH, t!("Copy Path").into_owned(), true));
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&list, Vec::new(), Anchor::point(x, y));
@@ -2560,8 +2586,12 @@ impl Menus {
                     crate::panes::active_nav().open_tab(Location::Vfs(at), false);
                 }
             }
-            (COPY, Subject::Inside) => self.ops.copy(false),
-            (INSIDE_COPY_TO, Subject::Inside) => crate::copy_to::copy_to(&crate::panes::active_view(), false),
+            (CUT | COPY, Subject::Inside) => self.ops.copy(id == CUT),
+            (INSIDE_COPY_TO | INSIDE_MOVE_TO, Subject::Inside) => {
+                crate::copy_to::copy_to(&crate::panes::active_view(), id == INSIDE_MOVE_TO);
+            }
+            (RENAME, Subject::Inside) => self.ops.rename_start(),
+            (TRASH, Subject::Inside) => self.ops.trash(false),
             (INSIDE_COPY_PATH, _) => crate::copy_path::copy_selection(&crate::panes::active_view()),
             (PIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.pin(path),
             (UNPIN, Subject::Row(path) | Subject::SidebarEntry(path)) => self.sidebar.unpin_path(&path),
@@ -3085,11 +3115,20 @@ mod tests {
 
     #[test]
     fn rows_inside_an_archive_offer_only_what_works_there() {
-        // Spec 16 §4.7: no tags, links, tools, terminal, Explorer menu, rename or delete.
-        let ids = |folder| inside_row_items(folder).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
-        assert_eq!(ids(false), [OPEN, COPY, INSIDE_COPY_TO, INSIDE_COPY_PATH]);
-        assert_eq!(ids(true), [OPEN, INSIDE_NEW_TAB, COPY, INSIDE_COPY_TO, INSIDE_COPY_PATH]);
-        for id in [BROWSE_ARCHIVE, OPEN_SYSTEM_APP, PACKED_COLUMN, INSIDE_NEW_TAB, INSIDE_COPY_TO, INSIDE_COPY_PATH] {
+        // Spec 16 §4.7: no tags, links, tools, terminal or Explorer menu; changes (§6) only in
+        // an archive Gezik writes, rename for one entry in a folder.
+        let ids = |folder, one, writable| {
+            inside_row_items(folder, one, writable).into_iter().map(|(id, _)| id).collect::<Vec<_>>()
+        };
+        assert_eq!(ids(false, true, false), [OPEN, COPY, INSIDE_COPY_TO, INSIDE_COPY_PATH]);
+        assert_eq!(ids(true, true, false), [OPEN, INSIDE_NEW_TAB, COPY, INSIDE_COPY_TO, INSIDE_COPY_PATH]);
+        assert_eq!(
+            ids(false, true, true),
+            [OPEN, CUT, COPY, INSIDE_COPY_TO, INSIDE_MOVE_TO, RENAME, TRASH, INSIDE_COPY_PATH]
+        );
+        assert!(!ids(false, false, true).contains(&RENAME), "several: no rename in place");
+        let ids = [BROWSE_ARCHIVE, OPEN_SYSTEM_APP, PACKED_COLUMN, INSIDE_NEW_TAB, INSIDE_COPY_TO, INSIDE_COPY_PATH];
+        for id in ids.into_iter().chain([INSIDE_MOVE_TO]) {
             assert!((3200..3600).contains(&id) && id < GEZIK_IDS_END, "{id}: step 16's ids");
         }
     }

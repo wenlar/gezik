@@ -32,7 +32,13 @@ fn mark_all(path: &Path, mark: &[u8]) {
             }
         }
         Ok(meta) if meta.is_file() => {
-            let _ = std::fs::write(stream(path), mark);
+            // Writing a stream sets the file's change time: the entry's own date is put back.
+            if std::fs::write(stream(path), mark).is_ok()
+                && let Ok(modified) = meta.modified()
+                && let Ok(file) = std::fs::OpenOptions::new().write(true).open(path)
+            {
+                let _ = file.set_modified(modified);
+            }
         }
         _ => {}
     }

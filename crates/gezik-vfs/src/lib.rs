@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 
 use gezik_core::Entry;
-use gezik_core::vfs::{Container, MAX_DEPTH, VfsRoot};
+use gezik_core::vfs::{Caps, Container, MAX_DEPTH, VfsRoot};
 
 pub use gezik_batch::archive::ExtractCx as Cx;
 
@@ -22,6 +22,15 @@ use self::archive::ArchiveVfs;
 
 pub trait Vfs: Send + Sync {
     fn root(&self) -> &VfsRoot;
+    /// What it can do besides being read (spec 16 §4.1).
+    fn caps(&self) -> Caps {
+        Caps::default()
+    }
+    /// An archive's file (on disk, or taken out of the archive it is in) and its password if
+    /// one was given: what a rewrite reads.
+    fn archive(&self) -> Option<(PathBuf, Option<String>)> {
+        None
+    }
     /// What folder `dir` holds (`""`: the top); `None` if it is no folder there.
     fn list(&self, dir: &str) -> Option<Vec<Entry>>;
     /// Everything under folder `dir` with its folder under `dir` (a search, spec 16 §5.5);

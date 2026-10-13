@@ -754,7 +754,7 @@ impl View {
         }
         let (name, is_dir) = {
             let data = self.0.data.borrow();
-            if !matches!(data.listing, Listing::Files(..) | Listing::Results(_)) {
+            if !renames_in_place(&data.listing) {
                 return false;
             }
             let Some(name) = data.listing.name_at(index) else { return false };
@@ -3307,6 +3307,16 @@ pub fn sizes_belong(shown: Option<&Path>, folder: &Path) -> bool {
     shown.is_some_and(|shown| same_path(shown, folder))
 }
 
+/// Whether rows of `listing` are renamed in place: a folder, search results, or a folder
+/// inside an archive Gezik writes (spec 16 §6.1).
+fn renames_in_place(listing: &Listing) -> bool {
+    match listing {
+        Listing::Files(..) | Listing::Results(_) => true,
+        Listing::Vfs(dir, _) => dir.vfs.caps().has(gezik_core::vfs::Caps::WRITE),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3547,11 +3557,14 @@ mod tests {
     }
 
     /// A place in an archive whose files take half their size packed.
-    struct Fake(gezik_core::vfs::VfsRoot);
+    struct Fake(gezik_core::vfs::VfsRoot, gezik_core::vfs::Caps);
 
     impl gezik_vfs::Vfs for Fake {
         fn root(&self) -> &gezik_core::vfs::VfsRoot {
             &self.0
+        }
+        fn caps(&self) -> gezik_core::vfs::Caps {
+            self.1
         }
         fn list(&self, _: &str) -> Option<Vec<Entry>> {
             None
@@ -3580,11 +3593,24 @@ mod tests {
     }
 
     #[test]
+    fn rows_inside_an_archive_gezik_writes_are_renamed_in_place() {
+        let at = VfsPath::archive("/w/a.zip".into());
+        let Listing::Files(_, full) = files("/x", &["a.txt"]) else { unreachable!() };
+        let listing = |caps| {
+            let dir = Rc::new(VfsDir { at: at.clone(), vfs: Arc::new(Fake(at.root.clone(), caps)) });
+            Listing::Vfs(dir, full.clone())
+        };
+        assert!(renames_in_place(&listing(gezik_core::vfs::Caps::EDIT)));
+        assert!(!renames_in_place(&listing(gezik_core::vfs::Caps::default())), "an archive Gezik only reads");
+        assert!(renames_in_place(&files("/x", &["a.txt"])));
+    }
+
+    #[test]
     fn rows_inside_an_archive_have_no_path_but_an_address() {
         use gezik_core::export::Column;
         let view = View::new(crate::panes::next_id(), slint::Weak::default(), Media::idle(), Default::default(), None);
         let at = VfsPath::archive("/w/a.zip".into()).join("docs");
-        let dir = Rc::new(VfsDir { at: at.clone(), vfs: Arc::new(Fake(at.root.clone())) });
+        let dir = Rc::new(VfsDir { at: at.clone(), vfs: Arc::new(Fake(at.root.clone(), Default::default())) });
         let Listing::Files(_, full) = files("/x", &["sub/", "c.png", "d.txt"]) else { unreachable!() };
         let listing = Listing::Vfs(dir, full.clone());
         assert_eq!((listing.path_at(1), listing.folder()), (None, None), "nothing that wants a real file sees one");
@@ -3613,7 +3639,7 @@ mod tests {
     fn an_archive_inside_an_archive_shows_as_an_archive() {
         let view = View::new(crate::panes::next_id(), slint::Weak::default(), Media::idle(), Default::default(), None);
         let at = VfsPath::archive("/w/a.zip".into());
-        let dir = Rc::new(VfsDir { at: at.clone(), vfs: Arc::new(Fake(at.root.clone())) });
+        let dir = Rc::new(VfsDir { at: at.clone(), vfs: Arc::new(Fake(at.root.clone(), Default::default())) });
         let Listing::Files(_, full) = files("/x", &["n.tar.gz"]) else { unreachable!() };
         view.0.data.borrow_mut().listing = Listing::Vfs(dir, full);
         let data = view.0.data.borrow();

@@ -280,22 +280,12 @@ msgstr "sin imágenes"
 msgid "the picture is damaged (no pixels)"
 msgstr "la imagen está dañada (sin píxeles)"
 
+#. {} is an archive's name
 #: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-ops/src/tasks/attrs.rs
 #, fuzzy
-msgid "Some items of the archive could not be read; nothing was added"
-msgstr "No se pudieron leer algunos elementos del archivo comprimido; no se añadió nada"
-
-#: crates/gezik-batch/src/tasks/add.rs
-#, fuzzy
-msgid "Some items of the archive could not be packed again; nothing was added"
-msgstr "No se pudieron volver a empaquetar algunos elementos del archivo comprimido; no se añadió nada"
-
-#. {0} is why it could not be put back, {1} where it is
-#: crates/gezik-batch/src/tasks/add.rs
-#: crates/gezik-batch/src/tasks/compress.rs
-#, fuzzy
-msgid "{0}; it is at {1}"
-msgstr "{0}; está en {1}"
+msgid "Changing {}"
+msgstr "Cambiando {}"
 
 #. {0} is a name or "3 items", {1} an archive
 #: crates/gezik-batch/src/tasks/add.rs
@@ -305,23 +295,136 @@ msgstr "Añadiendo {0} a {1}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Adding needs a Recycle Bin to undo"
-msgstr "Para deshacer la adición se necesita una Papelera de reciclaje"
+msgid "The archive is read-only; it was not changed"
+msgstr "El archivo comprimido es de solo lectura; no se cambió"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Adding needs a trash to undo"
-msgstr "Para deshacer la adición se necesita una Papelera"
+msgid "The archive has other names (hard links); it was not changed"
+msgstr "El archivo comprimido tiene otros nombres (vínculos físicos); no se cambió"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Cannot add to an archive in parts"
-msgstr "No se puede añadir a un archivo comprimido en partes"
+msgid "The old archive cannot be kept for undo"
+msgstr "No se puede conservar el archivo comprimido anterior para deshacer"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
-msgid "Only zip, 7z and tar archives can be added to"
-msgstr "Solo se puede añadir a archivos zip, 7z y tar"
+msgid "This drive has no Recycle Bin. Change the archive anyway?"
+msgstr "Esta unidad no tiene Papelera de reciclaje. ¿Cambiar el archivo comprimido de todos modos?"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "This drive has no trash. Change the archive anyway?"
+msgstr "Esta unidad no tiene papelera. ¿Cambiar el archivo comprimido de todos modos?"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik/src/integration.rs
+#, fuzzy
+msgid "Change"
+msgstr "Cambiar"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/extract.rs
+#: crates/gezik-batch/src/tasks/split.rs
+#: crates/gezik/src/admin.rs
+#: crates/gezik/src/archives.rs
+#: crates/gezik/src/checksums.rs
+#: crates/gezik/src/compare.rs
+#: crates/gezik/src/connect.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/convert.rs
+#: crates/gezik/src/copy_to.rs
+#: crates/gezik/src/export.rs
+#: crates/gezik/src/filter.rs
+#: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/info.rs
+#: crates/gezik/src/integration.rs
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/preview/mod.rs
+#: crates/gezik/src/saved_searches.rs
+#: crates/gezik/src/search.rs
+#: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/settings_window/backup.rs
+#: crates/gezik/src/sidebar.rs
+#: crates/gezik/src/tab_sets.rs
+#: crates/gezik/src/tags.rs
+#: crates/gezik/src/trash_view.rs
+#: crates/gezik/src/vfs_mounts.rs
+#: crates/gezik/ui/widgets/compress.slint
+#: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/ops-panel.slint
+#: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/settings.slint
+#, fuzzy
+msgid "Cancel"
+msgstr "Cancelar"
+
+#. {0} and {1} are sizes, {2} a drive
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/extract.rs
+#, fuzzy
+msgid "{0} needed, {1} free on {2}"
+msgstr "Se necesitan {0}, hay {1} libres en {2}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The archive changed while it was written; it was not changed"
+msgstr "El archivo comprimido cambió mientras se escribía; no se cambió"
+
+#. {0} is why it could not be put back, {1} where it is
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-batch/src/tasks/compress.rs
+#, fuzzy
+msgid "{0}; it is at {1}"
+msgstr "{0}; está en {1}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items to put in could not be read; the archive was not changed"
+msgstr "No se pudieron leer algunos elementos que se iban a añadir; el archivo comprimido no se cambió"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items of the archive could not be read; nothing was changed"
+msgstr "No se pudieron leer algunos elementos del archivo comprimido; no se cambió nada"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Some items of the archive could not be packed again; nothing was changed"
+msgstr "No se pudieron volver a empaquetar algunos elementos del archivo comprimido; no se cambió nada"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "The new archive did not read back as written; the archive was not changed"
+msgstr "El nuevo archivo comprimido no se leyó tal como se escribió; no se cambió"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "Not a usable name: {}"
+msgstr "Nombre no válido: {}"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik-ops/src/tasks/move_.rs
+#, fuzzy
+msgid "Cannot move a folder into itself"
+msgstr "No se puede mover una carpeta dentro de sí misma"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This kind of archive can only be read"
+msgstr "Este tipo de archivo comprimido solo se puede leer"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "{} is not in the archive"
+msgstr "{} no está en el archivo comprimido"
+
+#: crates/gezik-batch/src/tasks/add.rs
+#, fuzzy
+msgid "{} is already in the archive"
+msgstr "{} ya está en el archivo comprimido"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #, fuzzy
@@ -369,42 +472,6 @@ msgstr "Omitir"
 #, fuzzy
 msgid "Keep both"
 msgstr "Conservar ambos"
-
-#: crates/gezik-batch/src/tasks/add.rs
-#: crates/gezik-batch/src/tasks/extract.rs
-#: crates/gezik-batch/src/tasks/split.rs
-#: crates/gezik/src/admin.rs
-#: crates/gezik/src/archives.rs
-#: crates/gezik/src/checksums.rs
-#: crates/gezik/src/compare.rs
-#: crates/gezik/src/connect.rs
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/convert.rs
-#: crates/gezik/src/copy_to.rs
-#: crates/gezik/src/export.rs
-#: crates/gezik/src/filter.rs
-#: crates/gezik/src/finder_menu.rs
-#: crates/gezik/src/info.rs
-#: crates/gezik/src/integration.rs
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/preview/mod.rs
-#: crates/gezik/src/saved_searches.rs
-#: crates/gezik/src/search.rs
-#: crates/gezik/src/select_tools.rs
-#: crates/gezik/src/settings_window/backup.rs
-#: crates/gezik/src/sidebar.rs
-#: crates/gezik/src/tab_sets.rs
-#: crates/gezik/src/tags.rs
-#: crates/gezik/src/trash_view.rs
-#: crates/gezik/src/vfs_mounts.rs
-#: crates/gezik/ui/widgets/compress.slint
-#: crates/gezik/ui/widgets/convert.slint
-#: crates/gezik/ui/widgets/ops-panel.slint
-#: crates/gezik/ui/widgets/rename-batch.slint
-#: crates/gezik/ui/widgets/settings.slint
-#, fuzzy
-msgid "Cancel"
-msgstr "Cancelar"
 
 #. the texts about [[commands]] in settings.toml keep its keys (run, output,
 #: crates/gezik-batch/src/tasks/command.rs
@@ -575,12 +642,6 @@ msgstr "7-Zip no puede extraer en una carpeta cuyo nombre tenga * o ?"
 msgid "7-Zip could not extract it"
 msgstr "7-Zip no pudo extraerlo"
 
-#. {0} and {1} are sizes, {2} a drive
-#: crates/gezik-batch/src/tasks/extract.rs
-#, fuzzy
-msgid "{0} needed, {1} free on {2}"
-msgstr "Se necesitan {0}, hay {1} libres en {2}"
-
 #: crates/gezik-batch/src/tasks/extract.rs
 #, fuzzy
 msgid "Not enough space"
@@ -655,6 +716,7 @@ msgstr "Se necesita 7-Zip para abrir este tipo de archivo comprimido"
 
 #: crates/gezik-batch/src/tasks/mod.rs
 #: crates/gezik-ops/src/tasks/mod.rs
+#: crates/gezik-vfs/src/tasks.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/stack.rs
@@ -2623,6 +2685,7 @@ msgid "Copy To…"
 msgstr "Copiar en…"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Move To…"
@@ -4903,6 +4966,7 @@ msgstr[1] "Restaurar {n} elementos"
 #: crates/gezik-ops/src/tasks/group.rs
 #: crates/gezik-ops/src/tasks/new.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "New folder"
 msgstr "Nueva carpeta"
@@ -5080,11 +5144,6 @@ msgstr "Requiere administrador"
 msgid "Changing the items in {}"
 msgstr "Cambiando los elementos de {}"
 
-#: crates/gezik-ops/src/tasks/attrs.rs
-#, fuzzy
-msgid "Changing {}"
-msgstr "Cambiando {}"
-
 #: crates/gezik-ops/src/tasks/cloud.rs
 #, fuzzy
 msgid "Keeping {} on this device"
@@ -5097,12 +5156,14 @@ msgstr "Liberando el espacio de {}"
 
 #: crates/gezik-ops/src/tasks/copy.rs
 #: crates/gezik-ops/src/tasks/new.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Creating {}"
 msgstr "Creando {}"
 
 #. {0} is a name or "3 items", {1} a folder
 #: crates/gezik-ops/src/tasks/copy.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {0} to {1}"
 msgstr "Copiando {0} en {1}"
@@ -5322,6 +5383,7 @@ msgstr "Devolviendo {}"
 
 #. {0} is a name or "3 items", {1} a folder
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Moving {0} to {1}"
 msgstr "Moviendo {0} a {1}"
@@ -5330,11 +5392,6 @@ msgstr "Moviendo {0} a {1}"
 #, fuzzy
 msgid "Moving"
 msgstr "Moviendo"
-
-#: crates/gezik-ops/src/tasks/move_.rs
-#, fuzzy
-msgid "Cannot move a folder into itself"
-msgstr "No se puede mover una carpeta dentro de sí misma"
 
 #. {0} and {2} are why it failed, {1} where the item is
 #: crates/gezik-ops/src/tasks/move_.rs
@@ -5358,6 +5415,7 @@ msgid "New document.md"
 msgstr "Nuevo documento.md"
 
 #: crates/gezik-ops/src/tasks/rename.rs
+#: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Renaming {0} to {1}"
 msgstr "Cambiando el nombre de {0} a {1}"
@@ -5393,6 +5451,11 @@ msgstr "Restaurando {}"
 #, fuzzy
 msgid "no longer in the trash"
 msgstr "ya no está en la Papelera"
+
+#: crates/gezik-ops/src/tasks/restore.rs
+#, fuzzy
+msgid "The older version is no longer in the trash; this one was kept"
+msgstr "La versión anterior ya no está en la papelera; se conservó esta"
 
 #: crates/gezik-ops/src/tasks/sync.rs
 #, fuzzy
@@ -6321,6 +6384,11 @@ msgstr "Copiando {}"
 
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
+msgid "Copy {}"
+msgstr "Copiar {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
 msgid "Copying {n} item"
 msgid_plural "Copying {n} items"
 msgstr[0] "Copiando {n} elemento"
@@ -6328,8 +6396,20 @@ msgstr[1] "Copiando {n} elementos"
 
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
-msgid "Copy {}"
-msgstr "Copiar {}"
+msgid "Renaming {}"
+msgstr "Cambiando el nombre de {}"
+
+#. {0} is a name or "3 items", {1} an archive or a folder in one
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Deleting {0} from {1}"
+msgstr "Eliminando {0} de {1}"
+
+#. {} is a file's name; it is put back into the archive it was opened from
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Updating {} in the archive"
+msgstr "Actualizando {} en el archivo comprimido"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -9960,11 +10040,6 @@ msgstr "No hay bandeja en este escritorio (necesita un host StatusNotifier)"
 msgid "Closing the window quits Gezik"
 msgstr "Al cerrar la ventana se sale de Gezik"
 
-#: crates/gezik/src/integration.rs
-#, fuzzy
-msgid "Change"
-msgstr "Cambiar"
-
 #. {} is a shortcut, such as Ctrl+Shift+G.
 #: crates/gezik/src/integration.rs
 #, fuzzy
@@ -10641,11 +10716,6 @@ msgstr "Ya existe un archivo con este nombre"
 msgid "Not in search results: open a folder first"
 msgstr "No en los resultados de búsqueda: abra primero una carpeta"
 
-#: crates/gezik/src/operations.rs
-#, fuzzy
-msgid "Items in an archive can only be copied out"
-msgstr "Los elementos de un archivo comprimido solo se pueden copiar fuera"
-
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -10656,6 +10726,24 @@ msgstr "{} funciona en los resultados de búsqueda"
 #, fuzzy
 msgid "can't be undone"
 msgstr "no se puede deshacer"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the archive?"
+msgstr "¿Eliminar {} del archivo comprimido?"
+
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "You can undo this."
+msgstr "Puede deshacerlo."
+
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Cut {n} item"
+msgid_plural "Cut {n} items"
+msgstr[0] "{n} elemento cortado"
+msgstr[1] "{n} elementos cortados"
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -13601,6 +13689,50 @@ msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "¿Eliminar permanentemente {} elemento? No se puede deshacer."
 msgstr[1] "¿Eliminar permanentemente {} elementos? No se puede deshacer."
 
+#. {} is a file opened from inside an archive and saved by its app
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "{} changed"
+msgstr "{} ha cambiado"
+
+#. {} is an archive's name
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "It was opened from {}."
+msgstr "Se abrió desde {}."
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Update in Archive"
+msgstr "Actualizar en el archivo comprimido"
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Ignore"
+msgstr "Ignorar"
+
+#. {0} is a file opened from inside an archive, {1} the archive
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "{0} changed but is not in {1}"
+msgstr "{0} ha cambiado pero no está en {1}"
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Discard"
+msgstr "Descartar"
+
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Keep a Copy in Downloads"
+msgstr "Guardar una copia en Descargas"
+
+#. {} is where a file was copied to
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Kept {}"
+msgstr "Guardado: {}"
+
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
 msgid "Extracting {}…"
@@ -15477,6 +15609,27 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Comandos"
 
+#~ #, fuzzy
+#~ msgid "Some items of the archive could not be read; nothing was added"
+#~ msgstr "No se pudieron leer algunos elementos del archivo comprimido; no se añadió nada"
+#~ #, fuzzy
+#~ msgid "Some items of the archive could not be packed again; nothing was added"
+#~ msgstr "No se pudieron volver a empaquetar algunos elementos del archivo comprimido; no se añadió nada"
+#~ #, fuzzy
+#~ msgid "Adding needs a Recycle Bin to undo"
+#~ msgstr "Para deshacer la adición se necesita una Papelera de reciclaje"
+#~ #, fuzzy
+#~ msgid "Adding needs a trash to undo"
+#~ msgstr "Para deshacer la adición se necesita una Papelera"
+#~ #, fuzzy
+#~ msgid "Cannot add to an archive in parts"
+#~ msgstr "No se puede añadir a un archivo comprimido en partes"
+#~ #, fuzzy
+#~ msgid "Only zip, 7z and tar archives can be added to"
+#~ msgstr "Solo se puede añadir a archivos zip, 7z y tar"
+#~ #, fuzzy
+#~ msgid "Items in an archive can only be copied out"
+#~ msgstr "Los elementos de un archivo comprimido solo se pueden copiar fuera"
 #~ #, fuzzy
 #~ msgid "{0}: expected \"system\" or \"extract-here\", got {1}"
 #~ msgstr "{0}: se esperaba \"system\" o \"extract-here\", se obtuvo {1}"

@@ -12,7 +12,9 @@ use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{cover, path_key};
 
 use crate::task::{Outcome, Task};
-use crate::tasks::{ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, TagsTask, TrashTask};
+use crate::tasks::{
+    ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, SwapBackTask, TagsTask, TrashTask,
+};
 
 /// Files are checked before undo touches them; folders are not (they change as files land).
 fn expect(facts: &Facts) -> Option<Facts> {
@@ -63,6 +65,49 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut admin = Vec::new();
     let mut flat = Vec::new();
     flatten(outcomes, &mut flat);
+    // A file made in place of one the job trashed (an archive written anew): undone as a swap
+    // that keeps the newer file unless the older one can come back.
+    let replaced: HashSet<Vec<String>> = flat
+        .iter()
+        .filter_map(|outcome| match outcome {
+            Outcome::Trashed { original, .. } => Some(path_key(original)),
+            _ => None,
+        })
+        .collect();
+    let mut swaps: Vec<(PathBuf, PathBuf, Option<Facts>)> = Vec::new();
+    let mut swapped: HashSet<Vec<String>> = HashSet::new();
+    for outcome in &flat {
+        if let Outcome::Created { path, facts, from: None } | Outcome::Restored { original: path, facts } = outcome
+            && !facts.is_dir
+            && replaced.contains(&path_key(path))
+        {
+            swapped.insert(path_key(path));
+        }
+    }
+    for outcome in &flat {
+        if let Outcome::Trashed { original, trashed: at } = outcome
+            && swapped.contains(&path_key(original))
+        {
+            let made = flat.iter().find_map(|o| match o {
+                Outcome::Created { path, facts, from: None } | Outcome::Restored { original: path, facts }
+                    if path_key(path) == path_key(original) =>
+                {
+                    Some(expect(facts))
+                }
+                _ => None,
+            });
+            swaps.push((at.clone(), original.clone(), made.flatten()));
+        }
+    }
+    let flat: Vec<&Outcome> = flat
+        .into_iter()
+        .filter(|outcome| match outcome {
+            Outcome::Trashed { original: path, .. }
+            | Outcome::Created { path, from: None, .. }
+            | Outcome::Restored { original: path, .. } => !swapped.contains(&path_key(path)),
+            _ => true,
+        })
+        .collect();
     for outcome in flat {
         match outcome {
             Outcome::Created { path, facts, from: None } => {
@@ -130,6 +175,9 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let (renamed, moved): (Vec<_>, Vec<_>) =
         moved.into_iter().partition(|(now, was, _)| now.parent().is_some() && now.parent() == was.parent());
     let mut tasks: Vec<Arc<dyn Task>> = Vec::new();
+    if !swaps.is_empty() {
+        tasks.push(Arc::new(SwapBackTask::new(swaps)));
+    }
     if restore_first {
         tasks.extend(restore.take());
     }
@@ -208,7 +256,8 @@ mod tests {
             Outcome::Created { path: "/d/a.zip".into(), facts: file(), from: None },
         ])];
         let kinds: Vec<TaskKind> = build(&outcomes).iter().map(|t| t.kind()).collect();
-        assert_eq!(kinds, [TaskKind::Trash, TaskKind::Restore]);
+        // A file made in the trashed one's place: one swap, never "trash it, then try".
+        assert_eq!(kinds, [TaskKind::Restore]);
     }
 
     fn folder() -> Facts {
