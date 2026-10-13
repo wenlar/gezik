@@ -1897,6 +1897,40 @@ confirm-trash = true
         }
     }
 
+    /// A narrow pane's breadcrumb: every part keeps room for some text (0 px parts showed
+    /// nothing at all).
+    #[test]
+    fn breadcrumb_parts_never_shrink_to_nothing() {
+        use slint::{ModelRc, VecModel};
+        platform();
+        let window = AppWindow::new().unwrap();
+        let labels = ["This PC", "Local Disk (C:)", "…", "Work", "gezik-crumbs", "superpowers", "notes", "docs"];
+        let crumbs: Vec<crate::CrumbItem> = labels.iter().map(|l| crate::CrumbItem { label: (*l).into() }).collect();
+        let pane = crate::PaneData { crumbs: ModelRc::new(VecModel::from(crumbs)), ..Default::default() };
+        window.set_panes(ModelRc::new(VecModel::from(vec![pane])));
+        let spans = Rc::new(RefCell::new(vec![0.0_f32; labels.len()]));
+        window.on_crumb_span({
+            let spans = spans.clone();
+            move |_, i, _, width| spans.borrow_mut()[usize::try_from(i).unwrap()] = width
+        });
+        window.show().unwrap();
+        let adapter = ADAPTERS.with(|a| a.borrow().iter().rev().find_map(std::rc::Weak::upgrade)).unwrap();
+        let (w, h) = (640, 400);
+        adapter.set_size(slint::PhysicalSize::new(w, h));
+        let mut buffer = vec![slint::platform::software_renderer::Rgb565Pixel::default(); (w * h) as usize];
+        for _ in 0..3 {
+            slint::platform::update_timers_and_animations();
+            adapter.draw_if_needed(|renderer| {
+                renderer.render(&mut buffer, w as usize);
+            });
+        }
+        let spans = spans.borrow();
+        assert!(spans.iter().sum::<f32>() > 0.0, "the parts were laid out: {spans:?}");
+        for (label, width) in labels.iter().zip(spans.iter()) {
+            assert!(*width >= 20.0, "{label} got {width} px: {spans:?}");
+        }
+    }
+
     #[test]
     fn the_most_recently_focused_window_is_in_front() {
         let (a, _) = window();
