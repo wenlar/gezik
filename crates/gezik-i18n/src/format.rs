@@ -31,17 +31,19 @@ pub fn format(template: &str, args: &[&dyn Display], n: Option<u64>) -> String {
         let name = template[p + 1..end].trim();
         let arg = if end == p + 1 {
             next += 1;
-            args.get(next - 1).map(|a| a.to_string())
+            args.get(next - 1)
         } else if let Ok(i) = name.parse::<usize>() {
-            args.get(i).map(|a| a.to_string())
-        } else if name == "n" {
-            n.map(|n| n.to_string())
+            args.get(i)
         } else {
             None
         };
-        match arg {
-            Some(text) => out.push_str(&text),
-            None => out.push_str(&template[p..=end]),
+        // Written in place: no text per argument. `{n}` grouped as the language does.
+        match (arg, n) {
+            (Some(arg), _) => {
+                let _ = write!(out, "{arg}");
+            }
+            (None, Some(n)) if name == "n" => crate::number().write_grouped(&mut out, n),
+            _ => out.push_str(&template[p..=end]),
         }
         pos = end + 1;
     }
@@ -120,6 +122,7 @@ mod tests {
         assert_eq!(format("Hello {{0}} {}", &[&"world"], None), "Hello {0} world");
         // And Gezik's: the count, a missing argument, a lone brace, text after a multi-byte letter.
         assert_eq!(format("{n} öğe, {}", &[&"x"], Some(3)), "3 öğe, x");
+        assert_eq!(format("{n} files", &[], Some(1234)), "1,234 files", "grouped as the language does");
         assert_eq!(format("{n} {2} {name}", &[], None), "{n} {2} {name}");
         assert_eq!(format("a } b { c", &[], None), "a } b { c");
         assert_eq!(format("ş{}ş", &[&1], None), "ş1ş");
