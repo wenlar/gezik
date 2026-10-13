@@ -276,13 +276,15 @@ pub fn text(id: FieldId, value: &Value) -> String {
         Value::Date(d) => {
             format!("{:04}-{:02}-{:02} {:02}:{:02}", d.year, d.month, d.day, d.hour, d.minute)
         }
-        Value::Geo(lat, lon) => format!(
-            "{:.4}° {}, {:.4}° {}",
-            lat.abs(),
-            if *lat < 0.0 { "S" } else { "N" },
-            lon.abs(),
-            if *lon < 0.0 { "W" } else { "E" }
-        ),
+        Value::Geo(lat, lon) => {
+            let number = gezik_i18n::number();
+            let mut out = String::new();
+            number.write_decimal(&mut out, lat.abs(), 4);
+            out.push_str(if *lat < 0.0 { "° S, " } else { "° N, " });
+            number.write_decimal(&mut out, lon.abs(), 4);
+            out.push_str(if *lon < 0.0 { "° W" } else { "° E" });
+            out
+        }
     }
 }
 

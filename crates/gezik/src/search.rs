@@ -66,7 +66,8 @@ pub fn done_text(summary: &Summary) -> String {
     } else if summary.cancelled {
         format!("{} · {}", t!("Stopped"), tn!("{} result" | "{} results", n, found))
     } else {
-        let seconds = format!("{:.1}", summary.elapsed.as_secs_f64());
+        let mut seconds = String::new();
+        gezik_i18n::number().write_decimal(&mut seconds, summary.elapsed.as_secs_f64(), 1);
         tn!("{0} result in {1} s" | "{0} results in {1} s", n, found, seconds)
     };
     if summary.everything {
