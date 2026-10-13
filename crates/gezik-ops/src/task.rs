@@ -1039,6 +1039,8 @@ mod tests {
     }
 
     fn verifying_cx<'a>(control: &'a Control, temp: &'a TempCopies, no_bin: &'a dyn Fn(&Path) -> bool) -> RunCx<'a> {
+        // A clone (APFS) is neither read back nor slowed down: these test a byte copy.
+        gezik_platform::fs::CLONES.store(false, Ordering::SeqCst);
         control.verify.store(true, Ordering::SeqCst);
         RunCx { control, trash: no_bin, added: Cell::new(0), temp, job: None }
     }
@@ -1085,6 +1087,8 @@ mod tests {
         let size = 4_000_000u64;
         std::fs::write(dir.join("a.bin"), vec![1u8; size as usize]).unwrap();
         let (control, temp, no_bin) = (Control::default(), TempCopies::new(None), |_: &Path| false);
+        // A clone (APFS) is neither read back nor slowed down: these test a byte copy.
+        gezik_platform::fs::CLONES.store(false, Ordering::SeqCst);
         control.speed.store(1000, Ordering::SeqCst);
         let started = std::time::Instant::now();
         std::thread::scope(|scope| {

@@ -1,18 +1,21 @@
 //! Matching a name allocates nothing (spec 3.2), counted by a global allocator in this test
-//! binary only.
+//! binary only, on the thread that matches (the test harness's own threads allocate too).
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::cell::Cell;
 
 use gezik_core::pattern::Pattern;
 
 struct Counting;
 
-static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    // Const-initialised and without a destructor: reading it never allocates.
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        ALLOCATIONS.with(|n| n.set(n.get() + 1));
         // SAFETY: forwarded unchanged to the system allocator.
         unsafe { System.alloc(layout) }
     }
@@ -37,9 +40,9 @@ fn matching_allocates_nothing() {
             _ => format!("ISTANBUL {i}.txt"),
         })
         .collect();
-    let before = ALLOCATIONS.load(Ordering::SeqCst);
+    let before = ALLOCATIONS.with(Cell::get);
     let hits = names.iter().filter(|name| pattern.matches(name)).count();
-    let after = ALLOCATIONS.load(Ordering::SeqCst);
+    let after = ALLOCATIONS.with(Cell::get);
     assert_eq!(after - before, 0, "matching {} names allocated", names.len());
     // `rapor ş5.tmp` passes no including part (and `!*ş?.tmp` leaves it out): 500 of 2000.
     assert_eq!(hits, 1500);

@@ -130,7 +130,9 @@ fn trashed_from(original: &Path) -> Option<Vec<PathBuf>> {
                 let Some(stem) = name.strip_suffix(".trashinfo") else { continue };
                 let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
                 let Some(path) = text.lines().find_map(|line| line.strip_prefix("Path=")) else { continue };
-                if Path::new(&percent_decoded(path)) == original {
+                // A volume's `.Trash-<uid>` keeps the path relative to the folder it is in.
+                let top = trash.parent().unwrap_or(Path::new("/"));
+                if top.join(percent_decoded(path)) == original {
                     found.push(trash.join("files").join(stem));
                 }
             }

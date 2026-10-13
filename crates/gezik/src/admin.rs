@@ -305,10 +305,14 @@ mod tests {
             Ok(PathBuf::from(dir.to_str().unwrap().replacen("/etc", "/private/etc", 1)))
         };
         assert_eq!(real_path(&p("/etc/hosts"), mac), p("/private/etc/hosts"));
-        let windows = |dir: &Path| -> std::io::Result<PathBuf> { Ok(PathBuf::from(format!(r"\\?\{}", dir.display()))) };
-        assert_eq!(real_path(&p(r"C:\Program Files\x"), windows), p(r"C:\Program Files\x"), "the \\\\?\\ goes");
-        let unc = |_: &Path| -> std::io::Result<PathBuf> { Ok(p(r"\\?\UNC\nas\share")) };
-        assert_eq!(real_path(&p(r"Z:\x"), unc), p(r"\\?\UNC\nas\share\x"), "left for the check to refuse");
+        // Only Windows splits `C:\a\x` into folder and name, and only its canonicalize adds `\\?\`.
+        if cfg!(windows) {
+            let windows =
+                |dir: &Path| -> std::io::Result<PathBuf> { Ok(PathBuf::from(format!(r"\\?\{}", dir.display()))) };
+            assert_eq!(real_path(&p(r"C:\Program Files\x"), windows), p(r"C:\Program Files\x"), "the \\\\?\\ goes");
+            let unc = |_: &Path| -> std::io::Result<PathBuf> { Ok(p(r"\\?\UNC\nas\share")) };
+            assert_eq!(real_path(&p(r"Z:\x"), unc), p(r"\\?\UNC\nas\share\x"), "left for the check to refuse");
+        }
         let missing = |_: &Path| -> std::io::Result<PathBuf> { Err(std::io::ErrorKind::NotFound.into()) };
         assert_eq!(real_path(&p("/opt/new/x"), missing), p("/opt/new/x"));
     }

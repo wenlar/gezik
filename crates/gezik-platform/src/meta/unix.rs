@@ -243,10 +243,27 @@ pub fn volume(root: &Path) -> io::Result<Volume> {
     #[cfg(target_os = "linux")]
     #[allow(clippy::unnecessary_cast, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let holds = !read_only && !NO_ATTRS.contains(&(fs.f_type as u32));
-    // macOS writes attributes FAT and exFAT cannot hold into `._` files itself.
+    // macOS writes attributes FAT and exFAT cannot hold into `._` files itself. Its startup
+    // disk's `/` is the sealed system volume, which is read-only, but `/Users`, `/tmp` and the
+    // like are firmlinks into the writable data volume with the same device number, so
+    // `drive_root` stops at `/` for them: the data volume says whether they hold records.
     #[cfg(target_os = "macos")]
-    let holds = !read_only;
+    let holds = !read_only || (root == Path::new("/") && writable(Path::new("/System/Volumes/Data")));
     Ok(Volume { key: volume_key(root, &fs), holds })
+}
+
+/// Whether the volume `dir` is on is mounted read-write.
+#[cfg(target_os = "macos")]
+fn writable(dir: &Path) -> bool {
+    let Ok(c_dir) = c_path(dir) else { return false };
+    let mut vfs: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid C string and a statvfs to fill.
+    if unsafe { libc::statvfs(c_dir.as_ptr(), &mut vfs) } != 0 {
+        return false;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    let read_only = vfs.f_flag as u64 & libc::ST_RDONLY as u64 != 0;
+    !read_only
 }
 
 /// The file system's UUID (`/dev/disk/by-uuid`), else its mount source.

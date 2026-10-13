@@ -156,7 +156,10 @@ mod tests {
         let (report, _) = finish(&engine, undo, |_| Vec::new());
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(store.read(&a).unwrap(), Meta::default());
-        assert_eq!(store.read(&b).unwrap(), Meta { tags: vec![red()], rating: 5, ..Meta::default() });
+        assert_eq!(
+            store.read(&b).unwrap(),
+            crate::testing::as_kept(Meta { tags: vec![red()], rating: 5, ..Meta::default() })
+        );
         let redo = engine.redo().unwrap();
         finish(&engine, redo, |_| Vec::new());
         assert_eq!(store.read(&b).unwrap().rating, 3);
@@ -207,13 +210,14 @@ mod tests {
         let job = engine.submit(Box::new(crate::tasks::CopyTask::into(vec![a.clone()], &dir.join("fat"))));
         let (report, _) = finish(&engine, job, |_| Vec::new());
         assert!(report.failures.is_empty() && report.notes.is_empty(), "{report:?}");
-        assert_eq!(engine.meta().read(&dir.join("fat/a.txt")).unwrap().tags, [red()]);
+        let kept = crate::testing::as_kept(Meta { tags: vec![red()], ..Meta::default() }).tags;
+        assert_eq!(engine.meta().read(&dir.join("fat/a.txt")).unwrap().tags, kept);
         let store = std::fs::read_to_string(dir.join("config/tags-store.tsv")).unwrap();
         assert!(store.contains("fat/a.txt"), "saved when the job ended: {store}");
         // Renamed by Gezik on that drive: the entry follows.
         let job = engine.submit(Box::new(crate::tasks::RenameTask::one(dir.join("fat/a.txt"), "b.txt")));
         finish(&engine, job, |_| Vec::new());
-        assert_eq!(engine.meta().read(&dir.join("fat/b.txt")).unwrap().tags, [red()]);
+        assert_eq!(engine.meta().read(&dir.join("fat/b.txt")).unwrap().tags, kept);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

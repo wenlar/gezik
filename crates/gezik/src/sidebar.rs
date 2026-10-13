@@ -1372,7 +1372,7 @@ mod tests {
             [("TAGS", true, SECTION_TAGS, -1), ("Red", false, SECTION_TAGS, 0), ("Project X", false, SECTION_TAGS, 1)]
         );
         assert_eq!(rows[1].dot, crate::tags::color_of(TagColor::Red));
-        assert_eq!(rows[2].dot == slint::Color::default(), !cfg!(target_os = "linux"), "a ring, gray on Linux");
+        assert_eq!(rows[2].dot, slint::Color::default(), "a ring: a listed tag keeps the list's colour, on Linux too");
         assert!(rows.iter().all(|r| r.icon == 0 && r.depth == 0));
         assert!(tag_rows(&list, false).is_empty(), "[sidebar] tags = false");
         assert!(tag_rows(&[], true).is_empty(), "no heading without tags");

@@ -126,7 +126,13 @@ pub fn refused_by_volume(err: &io::Error) -> bool {
         // (FAT reads `a.txt:gezik.meta` as a bad name), ERROR_INVALID_PARAMETER.
         matches!(err.raw_os_error(), Some(1 | 19 | 50 | 87 | 123))
     }
-    #[cfg(unix)]
+    // macOS: a read-only volume is known before writing (`Volume::holds`); EROFS from a file on
+    // the startup disk means the sealed system part of it, not the whole volume.
+    #[cfg(target_os = "macos")]
+    {
+        err.raw_os_error().is_some_and(|code| [libc::ENOTSUP, libc::EOPNOTSUPP].contains(&code))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         err.raw_os_error().is_some_and(|code| [libc::ENOTSUP, libc::EOPNOTSUPP, libc::EROFS].contains(&code))
     }
@@ -135,6 +141,10 @@ pub fn refused_by_volume(err: &io::Error) -> bool {
 /// The file refused it (read only, a link on Linux, no rights): that file goes to the central
 /// store.
 pub fn refused_by_file(err: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    if err.raw_os_error() == Some(libc::EROFS) {
+        return true;
+    }
     err.kind() == io::ErrorKind::PermissionDenied
 }
 
@@ -226,6 +236,18 @@ mod tests {
 
     fn holds(dir: &Path) -> bool {
         volume(&crate::fs::drive_root(dir).unwrap()).unwrap().holds
+    }
+
+    /// The temp folder and home are firmlinks into the writable data volume, while
+    /// `drive_root` stops at the sealed, read-only `/` (macOS checklist R13).
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_startup_disk_holds_records() {
+        let dir = test_dir("startup");
+        assert_eq!(crate::fs::drive_root(&dir).unwrap(), Path::new("/"));
+        assert!(holds(&dir), "the temp folder");
+        assert!(holds(&dirs::home_dir().unwrap()), "home");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

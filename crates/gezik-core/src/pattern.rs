@@ -152,6 +152,17 @@ fn glob(tokens: &[Token], name: &str) -> bool {
 
 /// [`glob`], comparing characters folded (`fold_case`) or as they are.
 pub(crate) fn glob_case(tokens: &[Token], name: &str, fold_case: bool) -> bool {
+    // `*.txt` and the like (a star, then plain characters), the most common pattern by far: the
+    // end of the name, in one pass and no back-tracking.
+    if let [Token::Star, rest @ ..] = tokens
+        && rest.iter().all(|token| matches!(token, Token::Char(_)))
+    {
+        let mut chars = name.chars().rev();
+        return rest.iter().rev().all(|token| {
+            let Token::Char(want) = token else { return false };
+            chars.next().is_some_and(|c| *want == if fold_case { fold(c) } else { c })
+        });
+    }
     let (mut t, mut n) = (0, 0);
     // After the last `*`: the token after it and where in the name it was tried from.
     let mut back: Option<(usize, usize)> = None;
