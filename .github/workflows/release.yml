@@ -176,10 +176,17 @@ jobs:
         run: |
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
+      - uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: docs/release-notes-unsigned.md
+          sparse-checkout-cone-mode: false
+          path: src
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft \
-            --verify-tag --title "Gezik $VERSION" --generate-notes
+          # A version with a suffix (0.1.0-rc.1) is marked as a pre-release.
+          pre=(); case "$VERSION" in *-*) pre=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft "${pre[@]}" \
+            --verify-tag --title "Gezik $VERSION" --notes-file src/docs/release-notes-unsigned.md --generate-notes
