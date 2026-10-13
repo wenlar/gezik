@@ -19,6 +19,51 @@ const INLINE_CODE_FONT_SCALE: f32 = 0.85;
 
 std::thread_local! {
     static LAYOUT_CONTEXT: RefCell<parley::LayoutContext<Brush>> = Default::default();
+    // Gezik patch: the language all text is shaped in (see vendor/README.md). A property, so
+    // the cache entries that read it while shaping are invalidated when it changes.
+    static TEXT_LOCALE: Pin<alloc::boxed::Box<crate::Property<Option<parley::fontique::Language>>>> =
+        alloc::boxed::Box::pin(crate::Property::new(None));
+}
+
+/// Gezik patch: sets the language text is shaped in (a BCP 47 tag such as `zh-Hans`; `None`, or
+/// a tag that does not parse, gives none). fontique picks the fallback font of Han characters by
+/// it, so Simplified Chinese gets a Chinese font rather than a Japanese one. Set it before the
+/// first Han text is shaped: fontique shares one slot between no language and Simplified Chinese
+/// and fills it on the first query.
+pub fn set_text_locale(locale: Option<&str>) {
+    let locale = locale.and_then(|tag| parley::fontique::Language::parse(tag).ok());
+    TEXT_LOCALE.with(|property| property.as_ref().get_ref().set(locale));
+}
+
+/// Gezik patch: the families the runs of `text` are shaped with, through the path every text
+/// takes (for `crates/gezik/tests/slint_cjk.rs`; this crate's own tests do not build there).
+#[doc(hidden)]
+pub fn fallback_families_for_tests(
+    font_context: &mut parley::FontContext,
+    text: &str,
+) -> std::vec::Vec<std::string::String> {
+    let builder = LayoutWithoutLineBreaksBuilder::new(
+        Some(FontRequest::default()),
+        TextWrap::NoWrap,
+        None,
+        ScaleFactor::new(1.0),
+    );
+    let mut layout = builder.build(font_context, text, [], None);
+    layout.break_all_lines(None);
+    let mut families = std::vec::Vec::new();
+    for line in layout.lines() {
+        for item in line.items() {
+            let parley::PositionedLayoutItem::GlyphRun(run) = item else { continue };
+            let font = run.run().font();
+            let Ok(face) = skrifa::FontRef::from_index(font.data.data(), font.index) else {
+                continue;
+            };
+            let name =
+                face.localized_strings(skrifa::string::StringId::FAMILY_NAME).english_or_first();
+            families.push(name.map(|name| name.chars().collect()).unwrap_or_default());
+        }
+    }
+    families
 }
 
 #[derive(Debug, Default, PartialEq, Clone, Copy)]
@@ -121,6 +166,10 @@ impl LayoutWithoutLineBreaksBuilder {
             } else {
                 parley::style::FontStyle::Normal
             }));
+        }
+        // Gezik patch: read inside the cache entry's tracker (see `TEXT_LOCALE`).
+        if let Some(locale) = TEXT_LOCALE.with(|property| property.as_ref().get()) {
+            builder.push_default(parley::StyleProperty::Locale(Some(locale)));
         }
         builder.push_default(parley::StyleProperty::FontSize(self.pixel_size.get()));
         builder.push_default(parley::StyleProperty::WordBreak(match self.text_wrap {

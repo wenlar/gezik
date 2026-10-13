@@ -102,6 +102,21 @@ pub fn known(setting: &str, available: &[&str]) -> bool {
     [AUTO, PSEUDO, "en"].iter().chain(available).any(|code| code.eq_ignore_ascii_case(setting))
 }
 
+/// The language text is shaped in (spec 15 §3.4, decision 12): Han characters are drawn
+/// differently in Chinese, Japanese and Korean, and the font fallback picks by language. The
+/// interface language if it is one of those, else the system's first, else Simplified Chinese.
+pub fn text_locale(ui: &str, preferred: &[String]) -> String {
+    let cjk = |tag: &str| {
+        let base = tag.split('-').next().unwrap_or_default().to_ascii_lowercase();
+        matches!(base.as_str(), "zh" | "ja" | "ko")
+    };
+    let ui = normalize(ui);
+    if cjk(&ui) {
+        return ui;
+    }
+    preferred.iter().map(|tag| normalize(tag)).find(|tag| cjk(tag)).unwrap_or_else(|| "zh-Hans".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +174,18 @@ mod tests {
         assert!(!valid_code(&"a".repeat(33)) && !valid_code(""));
         assert!(file_code("pl") && file_code("en") && !file_code("auto") && !file_code("PSEUDO"));
         assert_eq!(endonym("TR"), Some("Türkçe"));
+    }
+
+    #[test]
+    fn the_language_of_han_characters() {
+        let system = |tags: &[&str]| tags.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(text_locale("zh-Hans", &system(&["ja-JP"])), "zh-Hans", "the interface first");
+        assert_eq!(text_locale("ja", &[]), "ja", "a dropped file");
+        assert_eq!(text_locale("zh_TW", &[]), "zh-TW");
+        assert_eq!(text_locale("tr", &system(&["tr-TR", "ja-JP"])), "ja-JP", "the system's first CJK");
+        assert_eq!(text_locale("en", &system(&["zh_TW.UTF-8"])), "zh-TW");
+        assert_eq!(text_locale("en", &system(&["zh-Hant-TW"])), "zh-Hant-TW");
+        assert_eq!(text_locale("pseudo", &[]), "zh-Hans");
+        assert_eq!(text_locale("en", &system(&["en-US", "C"])), "zh-Hans");
     }
 }

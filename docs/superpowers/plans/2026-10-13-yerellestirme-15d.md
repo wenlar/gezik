@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Han karakterleri okuyucunun beklediği biçimle çizilsin: Slint'in metin yolu (parley 0.11 + fontique 0.11) metne bir dil versin; dil önce arayüz dilinden (CJK ise), sonra sistemin ilk CJK dilinden, yoksa `zh-Hans`. Windows'ta `测试这检查对齐` Microsoft YaHei ile çizilir (bugün Yu Gothic, boş kutular); Japon sisteminde Kanji Yu Gothic/Hiragino'da kalır. Exe ≤ master + 8 KB, kare başına iş yok.
+**Goal:** Han karakterleri okuyucunun beklediği biçimle çizilsin: Slint'in metin yolu (parley 0.11 + fontique 0.11) metne bir dil versin; dil önce arayüz dilinden (CJK ise), sonra sistemin ilk CJK dilinden, yoksa `zh-Hans`. Windows'ta `测试这检查对齐` Microsoft YaHei ile çizilir (bugün yedek Yu Gothic UI; onda olmayan yalnız-Sadeleştirilmiş karakterler `这`, `对` Arial'ın boş kutusuna düşer); Japon sisteminde Kanji Yu Gothic/Hiragino'da kalır. Exe ≤ master + 8 KB, kare başına iş yok.
 
 **Spec:** `docs/superpowers/specs/2026-10-13-yerellestirme-design.md` §3.4, §13.2 15d, karar 12. Plan önceden onaylıdır. Dal `feat/i18n-15d` (`origin/master` üstüne), `D:\Work\gezik-15d`.
 
@@ -25,25 +25,29 @@
 5. **Linux'ta "Install a Chinese font" notu 15f'ye** (sapma 1).
 
 ## Task 1: Vendor yaması
-- [ ] `vendor/i-slint-core/textlayout/sharedparley/shaping.rs`: `TEXT_LOCALE`, `set_text_locale`, `ranged_builder`'da `font_request` bloğunun dışında `if let Some(locale) = text_locale() { push_default(Locale(Some(locale))) }`; test kancası. Hepsi "Gezik patch" işaretli.
-- [ ] `sharedparley.rs`: `pub use shaping::{set_text_locale, fallback_families_for_tests};`
-- [ ] `crates/gezik/Cargo.toml`: `i-slint-core` özelliklerine `shared-parley` (Slint zaten açıyor; modülü doğrudan kullandığımız için açıkça).
+- [x] `vendor/i-slint-core/textlayout/sharedparley/shaping.rs`: `TEXT_LOCALE`, `set_text_locale`, `ranged_builder`'da `font_request` bloğunun dışında `if let Some(locale) = text_locale() { push_default(Locale(Some(locale))) }`; test kancası. Hepsi "Gezik patch" işaretli.
+- [x] `sharedparley.rs`: `pub use shaping::{set_text_locale, fallback_families_for_tests};`
+- [x] `crates/gezik/Cargo.toml`: `i-slint-core` özelliklerine `shared-parley` (Slint zaten açıyor; modülü doğrudan kullandığımız için açıkça).
 
 ## Task 2: Gezik
-- [ ] `crates/gezik-i18n/src/lang.rs`: `text_locale` ve testi (`zh-Hans` arayüzü; `ja` topluluk dosyası; `tr` + `["tr-TR", "ja-JP"]` → `ja-JP`; `en` + `["zh_TW.UTF-8"]` → `zh-TW`; `pseudo` + `[]` → `zh-Hans`; `en` + `["en-US"]` → `zh-Hans`).
-- [ ] `crates/gezik/src/language.rs` `apply`: `set_text_locale(Some(&lang::text_locale(&code, system())))`.
+- [x] `crates/gezik-i18n/src/lang.rs`: `text_locale` ve testi (`zh-Hans` arayüzü; `ja` topluluk dosyası; `tr` + `["tr-TR", "ja-JP"]` → `ja-JP`; `en` + `["zh_TW.UTF-8"]` → `zh-TW`; `pseudo` + `[]` → `zh-Hans`; `en` + `["en-US"]` → `zh-Hans`).
+- [x] `crates/gezik/src/language.rs` `apply`: `set_text_locale(Some(&lang::text_locale(&code, system())))`.
 
 ## Task 3: Test
-- [ ] `crates/gezik/tests/slint_cjk.rs`: `set_text_locale(Some("zh-Hans"))` → `这` Windows'ta `Microsoft YaHei`, macOS'ta `PingFang SC`/`Heiti SC`; `ja` → Windows'ta `Yu Gothic`, macOS'ta `Hiragino…`; ikisi farklı (aile sistemde yoksa — Linux'ta CJK yazı tipi kurulu değilse — atlanır). `abc` iki dilde aynı aile. Bağımlılık: bir `PropertyTracker` içinde kanca çağrılır, `set_text_locale` değişince izleyici kirli (önbelleğin geçersizleşmesinin dayanağı).
+- [x] `crates/gezik/tests/slint_cjk.rs`: `zh-Hans`'ta `这` ve `日` Windows'ta `Microsoft YaHei UI`, macOS'ta `PingFang`/`Heiti`; `ja`'da `日` Windows'ta `Yu Gothic UI`, macOS'ta `Hiragino` (`这` Japonca yazı tiplerinde yok: `ja`'da Arial'a düşer, sınanmaz) (aile sistemde yoksa — Linux'ta CJK yazı tipi kurulu değilse — atlanır). `abc` iki dilde aynı aile. Bağımlılık: bir `PropertyTracker` içinde kanca çağrılır, `set_text_locale` değişince izleyici kirli (önbelleğin geçersizleşmesinin dayanağı).
 
 ## Task 4: Belgeler, ölçüm
-- [ ] `vendor/README.md` (i-slint-core bölümüne ikinci yama), `docs/superpowers/notes/parts/15d.md`, denetim listeleri macOS 395, Linux 285 (kendi `### 15d` bölümleri, dosya sonunda), spec Durum satırı yok (spec'i 15f kapatır).
-- [ ] fmt, `cargo test -p gezik-i18n`, `cargo test -p gezik --test slint_cjk --test slint_patch`, clippy, sürüm exe boyutu. Makine çapında derleme kilidi, `-j 4`.
+- [x] `vendor/README.md` (i-slint-core bölümüne ikinci yama), `docs/superpowers/notes/parts/15d.md`, denetim listeleri macOS 395, Linux 285 (kendi `### 15d` bölümleri, dosya sonunda), spec Durum satırı yok (spec'i 15f kapatır).
+- [x] fmt, `cargo test -p gezik-i18n`, `cargo test -p gezik --test slint_cjk --test slint_patch`, clippy, sürüm exe boyutu. Makine çapında derleme kilidi, `-j 4`.
 
 ## Sapmalar (spec'ten)
 
 1. **Linux'ta Çince yazı tipi yokken durum çubuğu notu 15f'de:** `zh-Hans` ancak 15f'de seçilebilir (`zh-Hans.po` orada gelir); not dil satırıyla birlikte yazılır.
 2. **Önbellek temizlenmez, bağımlılıkla geçersizleşir** (spec "değişince paragraf önbelleği temizlenir" diyor): aynı sonuç, kod yok, kaçırılan bir önbellek olamaz.
+
+## Uygulamada görülen (Windows, fontique yoklaması)
+
+Han yedeği: dilsiz ve `ja` → Yu Gothic UI, `zh-Hans` → Microsoft YaHei UI, `zh-TW` → Microsoft JhengHei UI, `ko` → Malgun Gothic. Dilsiz `这` Yu Gothic UI'da yok, parley ilk aileye (Arial) düşer: bugünkü boş kutu budur.
 
 ## Riskler
 

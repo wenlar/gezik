@@ -72,6 +72,8 @@ mod shaping;
 mod tests;
 
 pub use cache::TextLayoutCache;
+// Gezik patch (see vendor/README.md).
+pub use shaping::{fallback_families_for_tests, set_text_locale};
 pub use draw::{GlyphRenderer, RectangleBorder};
 
 use cache::cached_paragraphs;
