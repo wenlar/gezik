@@ -331,7 +331,7 @@ mod tests {
         let pseudo = gezik_i18n::Catalog::pseudo();
         for action in crate::shortcuts::Action::ALL {
             assert!(has("", action.title()), "{}", action.name());
-            assert!(pseudo.get("", action.title()).starts_with('⟦'), "{}", action.name());
+            assert!(pseudo.get("", action.title()).starts_with('«'), "{}", action.name());
         }
     }
 

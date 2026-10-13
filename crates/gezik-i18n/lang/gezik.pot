@@ -305,14 +305,17 @@ msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik-platform/src/tray.rs
+#: crates/gezik/src/language.rs
 msgid "Quit Gezik"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/language.rs
 msgid "Hide Gezik"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/language.rs
 msgid "Hide Others"
 msgstr ""
 
@@ -2192,6 +2195,18 @@ msgstr ""
 
 #: crates/gezik/src/integration.rs
 msgid "Do not start Gezik at login"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "About Gezik"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "Services"
+msgstr ""
+
+#: crates/gezik/src/language.rs
+msgid "Show All"
 msgstr ""
 
 #: crates/gezik/src/language.rs
