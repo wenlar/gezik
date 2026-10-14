@@ -97,19 +97,28 @@ const POWERSHELL_RUN: &str = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new
     $ProgressPreference='SilentlyContinue';\
     & ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:GEZIK_COMMAND))))";
 
-/// How `shell` runs `command`, as typed. cmd gets `/s /c "<command>"`: it takes off the outer
-/// quotes and runs the rest exactly as typed, `"`, `%`, `^` and all; PowerShell gets it in
+/// How `shell` runs `command`, as typed. cmd runs in two: the first sets the console's code
+/// page to UTF-8 (`chcp 65001`) and starts the second, which therefore writes UTF-8 from its
+/// own commands (`echo`, `dir`) and its console programs (ping) alike: the OEM code page loses
+/// letters (437 has no ğ, ş, ı), and cmd reads the code page only when it starts. The second
+/// gets `/s /c "<command>"` through `GEZIK_COMMAND`, put in by the first's delayed expansion
+/// (`!…!`, after it parsed its own line): it takes off the outer quotes and runs the rest
+/// exactly as typed, `"`, `%`, `^` and all; PowerShell gets it in
 /// base64, which no quoting can break; a POSIX shell gets it as one argument. `comspec` is
 /// `%ComSpec%`, cmd's own path.
 pub fn invocation(shell: &Shell, command: &str, comspec: Option<OsString>) -> Invocation {
     let plain = |program: OsString, args: Vec<OsString>| Invocation { program, args, raw: None, env: Vec::new() };
     match shell {
-        Shell::Cmd => Invocation {
-            program: comspec.filter(|c| !c.is_empty()).unwrap_or_else(|| "cmd.exe".into()),
-            args: ["/d", "/s", "/c"].map(OsString::from).to_vec(),
-            raw: Some(format!("\"{command}\"")),
-            env: Vec::new(),
-        },
+        Shell::Cmd => {
+            let program = comspec.filter(|c| !c.is_empty()).unwrap_or_else(|| "cmd.exe".into());
+            let inner = program.to_string_lossy().into_owned();
+            Invocation {
+                program,
+                args: ["/v:on", "/d", "/s", "/c"].map(OsString::from).to_vec(),
+                raw: Some(format!("\"chcp 65001>nul & \"{inner}\" /d /s /c !GEZIK_COMMAND!\"")),
+                env: vec![("GEZIK_COMMAND", format!("\"{command}\"").into())],
+            }
+        }
         Shell::Pwsh(program) => Invocation {
             program: program.into(),
             args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_RUN].map(OsString::from).to_vec(),
@@ -998,8 +1007,10 @@ mod tests {
         let typed = r#"echo "a b" 100% ^& ğüş & dir "C:\Program Files""#;
         let call = invocation(&Shell::Cmd, typed, Some(r"C:\Windows\system32\cmd.exe".into()));
         assert_eq!(call.program, r"C:\Windows\system32\cmd.exe");
-        assert_eq!(call.args, ["/d", "/s", "/c"]);
-        assert_eq!(call.raw.as_deref(), Some(format!("\"{typed}\"").as_str()));
+        assert_eq!(call.args, ["/v:on", "/d", "/s", "/c"]);
+        let inner = r#""chcp 65001>nul & "C:\Windows\system32\cmd.exe" /d /s /c !GEZIK_COMMAND!""#;
+        assert_eq!(call.raw.as_deref(), Some(inner));
+        assert_eq!(call.env, [("GEZIK_COMMAND", OsString::from(format!("\"{typed}\"")))]);
         assert_eq!(invocation(&Shell::Cmd, "dir", None).program, "cmd.exe");
     }
 
@@ -1355,15 +1366,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Letters the OEM code page lacks (437 has no ğ, ş, ı, İ) come through cmd's own commands
+    /// and a console program alike; the exit code is the command's, not `chcp`'s.
     #[cfg(windows)]
     #[test]
-    fn cmd_output_in_the_oem_code_page_reads_right() {
-        let dir = temp("oem");
-        let (lines, _) = run(&Shell::Cmd, "echo über", &dir, &[]);
-        // Where the OEM code page has ü (437, 850, 857 and UTF-8 all do).
-        if gezik_platform::decode_oem(b"\x81").as_deref() == Some("ü") {
-            assert_eq!(texts(&lines, false), ["über"]);
-        }
+    fn cmd_output_keeps_every_letter() {
+        let dir = temp("letters");
+        std::fs::create_dir_all(dir.join("Türkçe ğüşıİöç")).unwrap();
+        let typed = r#"echo copy ğüşıİ test & echo a^&b ^^ 100% "x&y" !z! & dir /b& exit /b 4"#;
+        let (lines, code) = run(&Shell::Cmd, typed, &dir, &[]);
+        assert_eq!(code, Some(4));
+        let out: Vec<&str> = texts(&lines, false).iter().map(|l| l.trim_end()).collect();
+        assert_eq!(out, ["copy ğüşıİ test", r#"a&b ^ 100% "x&y" !z!"#, "Türkçe ğüşıİöç"]);
+        // where.exe, a console program, names a file with them.
+        std::fs::write(dir.join("ğüşıİ.txt"), "").unwrap();
+        let (lines, _) = run(&Shell::Cmd, "where /r . *.txt", &dir, &[]);
+        assert!(texts(&lines, false).iter().any(|l| l.ends_with("ğüşıİ.txt")), "{lines:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

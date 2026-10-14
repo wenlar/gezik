@@ -25,15 +25,16 @@ export component CommandOutput inherits Rectangle {
     callback button(int);
 
     property <length> line-height: Theme.font-size + 5px;
-    property <int> count: root.lines.length;
-    property <int> shown-count;
     property <length> pressed-height;
-    changed count => {
-        // At the end before these lines came: it stays there.
-        if list.content-y <= min(0px, list.visible-height - root.shown-count * root.line-height) + 1px {
-            list.content-y = min(0px, list.visible-height - root.count * root.line-height);
+    // The list follows new lines while it is at the end (as a terminal does); scrolled up, it
+    // stays where it is until it is scrolled back down.
+    property <bool> follow: true;
+    property <length> bottom: min(0px, list.visible-height - list.content-height);
+    // Once the list has grown (not when the lines came: its height follows a frame later).
+    changed bottom => {
+        if root.follow {
+            list.content-y = root.bottom;
         }
-        root.shown-count = root.count;
     }
 
     background: Theme.surface;
@@ -116,6 +117,7 @@ export component CommandOutput inherits Rectangle {
         }
         list := ListView {
             accessible-label: @tr("Output");
+            changed content-y => { root.follow = self.content-y <= root.bottom + 1px; }
             for line in root.lines: Text {
                 height: root.line-height;
                 text: line.text;
