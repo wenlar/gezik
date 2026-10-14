@@ -36,7 +36,7 @@ Windows · macOS · Linux
 
 **Finding things.** A filter that narrows the folder as you type, search under any folder by name or content (Everything on Windows), flat view, saved searches, a command palette and quick open. → [Filter](docs/features.md#filter-and-selection) · [Search](docs/features.md#search)
 
-**Navigation.** Tabs that come back as you left them, tab sets, pinned folders with aliases and groups, and an address bar with Recent and Frequent folders that also runs a command typed after `>` in the folder shown (its output in a panel, no terminal needed). → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal) · [Commands in the address bar](docs/features.md#commands-in-the-address-bar)
+**Navigation.** Tabs that come back as you left them, tab sets, pinned folders with aliases, groups, colours and icons, and an address bar with Recent and Frequent folders that also runs a command typed after `>` in the folder shown (its output in a panel, no terminal needed). → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal) · [Commands in the address bar](docs/features.md#commands-in-the-address-bar)
 
 **Layouts.** Two panes with F5/F6 copy and move and synced browsing, a folder tree in the sidebar, grouping by type, date or size, Miller columns, several windows with tabs you can tear off, and view rules that pick a folder's view by path, kind or content. → [Layouts](docs/features.md#layouts)
 

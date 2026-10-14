@@ -11,6 +11,7 @@ use gezik_config::pins::{self, PinEntry};
 use gezik_config::settings_writer::SettingsChange;
 use gezik_config::shortcuts::{Action, Chord, Platform};
 use gezik_config::store::ConfigStore;
+use gezik_core::highlight::Hue;
 use gezik_core::nav::Location;
 use gezik_core::tree::{self, Listed, NodeId, Read, RootKey};
 use gezik_i18n::t;
@@ -50,6 +51,16 @@ const ICON_SEARCH: i32 = 6;
 const ICON_TRASH: i32 = 7;
 const ICON_CLOUD: i32 = 8;
 const ICON_PHONE: i32 = 9;
+/// A pin's own icon: this plus its place in `pins::ICONS` (`Glyph.pin-icons`).
+const ICON_PIN_OWN: i32 = 100;
+
+/// A pin icon's colour: a tag colour as Finder draws it, or its own.
+fn pin_color(hue: Hue) -> slint::Color {
+    match hue {
+        Hue::Named(color) => crate::tags::color_of(color),
+        Hue::Rgb([r, g, b]) => slint::Color::from_rgb_u8(r, g, b),
+    }
+}
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
 /// and names "Home" (when it exists; translated only when shown).
@@ -710,6 +721,25 @@ impl Sidebar {
         self.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_group(list, i, group)));
     }
 
+    /// The shown pin of `path`: its colour and icon as settings.toml has them.
+    pub fn style_of(&self, path: &Path) -> (Option<String>, Option<String>) {
+        let inner = self.0.borrow();
+        let pin = inner.pins.visible.iter().find(|pin| same_path(&pin.path, path));
+        pin.map(|pin| (pin.entry.color.clone(), pin.entry.icon.clone())).unwrap_or_default()
+    }
+
+    /// Color ▸ on a pin: a tag colour's name, or none for the theme's (spec 16 §4).
+    pub fn set_color(&self, path: &Path, color: Option<&str>) {
+        let Some(entry) = self.entry_of(path) else { return };
+        self.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_color(list, i, color)));
+    }
+
+    /// Icon ▸ on a pin: one of `pins::ICONS`, or none for the default.
+    pub fn set_icon(&self, path: &Path, icon: Option<&str>) {
+        let Some(entry) = self.entry_of(path) else { return };
+        self.edit(|list| pins::find(list, &entry).is_some_and(|i| pins::set_icon(list, i, icon)));
+    }
+
     /// Move group up/down: past groups with no pin shown, so the heading always moves.
     pub fn move_group(&self, group: &str, up: bool) {
         let shown = self.shown_groups();
@@ -1293,15 +1323,15 @@ impl Sidebar {
                         let key = Action::pin(n + 1)
                             .and_then(crate::keys::chord_for)
                             .map(|chord| crate::keys::chord_label(&chord, Platform::current()));
+                        let icon = match pin.entry.icon.as_deref().and_then(pins::icon_index) {
+                            Some(i) => ICON_PIN_OWN + i as i32,
+                            None if pin.entry.name.is_some() => ICON_ALIAS,
+                            None => ICON_PIN,
+                        };
                         SidebarRow {
                             tip: pin_tip(&pin.path, key.as_deref()).into(),
-                            ..item(
-                                &label,
-                                SECTION_PINNED,
-                                *n,
-                                &pin.path,
-                                if pin.entry.name.is_some() { ICON_ALIAS } else { ICON_PIN },
-                            )
+                            dot: pin.entry.hue().map(pin_color).unwrap_or_default(),
+                            ..item(&label, SECTION_PINNED, *n, &pin.path, icon)
                         }
                     }
                 });
@@ -1524,20 +1554,17 @@ mod tests {
         pins.set(plain(&["/a"]));
         let ticket = pins.begin_check();
         pins.finish_check(ticket, vec![pin("/a", "/a")]);
-        let named = PinEntry { path: "/a".into(), name: Some("Alpha".into()), group: None };
+        let named = PinEntry { name: Some("Alpha".into()), ..PinEntry::plain("/a") };
         assert!(pins.set(vec![named.clone()]));
         assert_eq!(pins.visible, [Pin { entry: named, path: PathBuf::from("/a") }], "no check needed");
     }
 
     fn grouped(path: &str, group: Option<&str>) -> Pin {
-        Pin {
-            entry: PinEntry { path: path.into(), name: None, group: group.map(str::to_owned) },
-            path: PathBuf::from(path),
-        }
+        Pin { entry: PinEntry { group: group.map(str::to_owned), ..PinEntry::plain(path) }, path: PathBuf::from(path) }
     }
 
     fn entry(path: &str, group: Option<&str>) -> PinEntry {
-        PinEntry { path: path.into(), name: None, group: group.map(str::to_owned) }
+        PinEntry { group: group.map(str::to_owned), ..PinEntry::plain(path) }
     }
 
     #[test]

@@ -649,8 +649,8 @@ mod tests {
         use crate::settings::Settings;
         let list = [
             PinEntry::plain("{documents}/Projects"),
-            PinEntry { path: "D:/Work/gezik".into(), name: Some("Gezik".into()), group: Some("Work".into()) },
-            PinEntry { path: "//nas/foto".into(), name: None, group: Some("Media".into()) },
+            PinEntry { name: Some("Gezik".into()), group: Some("Work".into()), ..PinEntry::plain("D:/Work/gezik") },
+            PinEntry { group: Some("Media".into()), ..PinEntry::plain("//nas/foto") },
         ];
         let out = with_pinned("pinned = []\n\n[layout]\nsidebar = \"left\"\n", &list).unwrap();
         // The spec's example (6.1), as written.
@@ -671,13 +671,13 @@ mod tests {
     #[test]
     fn unreadable_pins_are_kept_after_ours() {
         use crate::settings::Settings;
-        let text = "pinned = [\"/a\", { path = \"/b\", icon = \"star\" }, \"{home}/../x\", { name = \"no path\" }]\n";
+        let text = "pinned = [\"/a\", { path = \"/b\", shape = \"star\" }, \"{home}/../x\", { name = \"no path\" }]\n";
         let out = with_pinned(text, &pins(&["/c"])).unwrap();
         let parsed = out.parse::<toml::Table>().unwrap();
         let items = parsed["pinned"].as_array().unwrap();
         assert_eq!(items.len(), 4, "{out}");
         assert_eq!(items[0].as_str(), Some("/c"));
-        assert_eq!(items[1]["icon"].as_str(), Some("star"));
+        assert_eq!(items[1]["shape"].as_str(), Some("star"));
         assert_eq!(items[2].as_str(), Some("{home}/../x"));
         assert_eq!(items[3]["name"].as_str(), Some("no path"));
         let mut warnings = Vec::new();

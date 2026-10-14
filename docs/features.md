@@ -215,7 +215,7 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
   menu (`[[tab-sets]]`); with two panes both panes' tabs are saved (`right = [...]`).
 - The address bar (Ctrl+L) completes folder names and lists **Recent** and **Frequent**
   folders.
-- **Pinned folders** can have an alias and a group; Alt+1…9 (⌘⌥1…9 on macOS) go to the first nine.
+- **Pinned folders** can have an alias, a group, an icon colour and one of 24 icons (right-click ▸ Color, Icon); Alt+1…9 (⌘⌥1…9 on macOS) go to the first nine.
 - **Compare** (Shift+F2, ⌃⌘C on macOS, or right-click ▸ Tools ▸ Compare): two selected
   files, or one selected in each pane, side by side. Changed lines and the changed part of
   each are marked; added and removed lines are tinted; line-ending and encoding differences

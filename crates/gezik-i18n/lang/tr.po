@@ -879,6 +879,14 @@ msgid "{0}: expected folder, file, pictures, videos, audio, documents, archives 
 msgstr "{0}: folder, file, pictures, videos, audio, documents, archives ya da code bekleniyordu, gelen: \"{1}\""
 
 #: crates/gezik-config/src/pins.rs
+msgid "unknown color \"{0}\" for {1}; expected a tag color or #rrggbb"
+msgstr "bilinmeyen renk \"{0}\" ({1} için); etiket rengi ya da #rrggbb bekleniyordu"
+
+#: crates/gezik-config/src/pins.rs
+msgid "unknown icon \"{0}\" for {1}; the default icon is shown"
+msgstr "bilinmeyen simge \"{0}\" ({1} için); varsayılan simge gösterilir"
+
+#: crates/gezik-config/src/pins.rs
 msgid "unknown key \"{0}\" in {1}"
 msgstr "{1} içinde bilinmeyen anahtar \"{0}\""
 
@@ -3261,6 +3269,7 @@ msgid "Picture"
 msgstr "Resim"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Photo"
 msgstr "Fotoğraf"
 
@@ -3269,11 +3278,13 @@ msgid "Media"
 msgstr "Medya"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Music"
 msgstr "Müzik"
 
 #: crates/gezik-core/src/fields.rs
 #: crates/gezik-core/src/kind.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Document"
 msgstr "Belge"
 
@@ -3519,6 +3530,7 @@ msgid "Install Git to see repository status"
 msgstr "Depo durumunu görmek için Git'i kurun"
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/compress.slint
@@ -4021,6 +4033,7 @@ msgid "Archives"
 msgstr "Arşivler"
 
 #: crates/gezik-core/src/search.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Code"
 msgstr "Kod"
 
@@ -5219,6 +5232,7 @@ msgid "the download failed (WinHTTP error {})"
 msgstr "indirme başarısız oldu (WinHTTP hatası {})"
 
 #: crates/gezik-platform/src/known.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Home"
 msgstr "Giriş klasörü"
 
@@ -5879,6 +5893,7 @@ msgid "Type the size of a part in MB"
 msgstr "Bir parçanın boyutunu MB olarak yazın"
 
 #: crates/gezik/src/archives.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Archive"
 msgstr "Arşiv"
 
@@ -7403,6 +7418,78 @@ msgstr "Yeni grup…"
 #: crates/gezik/src/context_menu.rs
 msgid "No group"
 msgstr "Grup yok"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Star"
+msgstr "Yıldız"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Heart"
+msgstr "Kalp"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Work"
+msgstr "İş"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Video"
+msgstr "Video"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Cloud"
+msgstr "Bulut"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Book"
+msgstr "Kitap"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Game"
+msgstr "Oyun"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Money"
+msgstr "Para"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Mail"
+msgstr "Posta"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Link"
+msgstr "Bağlantı"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Lock"
+msgstr "Kilit"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Flag"
+msgstr "Bayrak"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Bolt"
+msgstr "Şimşek"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Leaf"
+msgstr "Yaprak"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Globe"
+msgstr "Küre"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Person"
+msgstr "Kişi"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Default"
+msgstr "Varsayılan"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Icon"
+msgstr "Simge"
 
 #: crates/gezik/src/context_menu.rs
 msgid "Move group up"
