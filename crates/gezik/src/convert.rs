@@ -1259,8 +1259,8 @@ pub fn run_by_index(index: usize, items: Vec<(PathBuf, bool)>) {
     with_current(|convert| convert.run_checked(spec, items));
 }
 
-/// Whether `items` fit one command line of `spec` (a `{files}` command) here. One that
-/// cannot be made at all is left to the task, which says why.
+/// Whether `items` fit one command line of `spec` (a `{files}` command, the other pane put
+/// in) here. One that cannot be made at all is left to the task, which says why.
 fn fits_one_run(spec: &CommandSpec, items: &[(PathBuf, bool)]) -> bool {
     let Some((first, _)) = items.first() else { return true };
     let dir = first.parent().unwrap_or(Path::new(""));
@@ -2262,31 +2262,33 @@ impl Convert {
     }
 
     /// Runs `spec` on the items it takes, asking first when it says so (`ask`). A `{files}`
-    /// run that does not fit one command line is refused before the question.
+    /// run that does not fit one command line, or one without the other pane it needs, is
+    /// refused before the question.
     fn run_asked(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
         let taken: Vec<(PathBuf, bool)> =
             items.into_iter().filter(|(path, is_dir)| command_applies(&spec, &name_of(path), *is_dir)).collect();
         if taken.is_empty() {
             return;
         }
-        if uses_files(&spec) && !fits_one_run(&spec, &taken) {
+        let once = uses_files(&spec);
+        let Some(spec) = self.with_other_pane(spec) else { return };
+        if once && !fits_one_run(&spec, &taken) {
             return self.note(too_many_text(&spec.name));
         }
         if !spec.ask {
-            return self.run_command(spec, taken);
+            return self.submit_command(spec, taken, once);
         }
         let this = self.clone();
         let message = ask_text(&spec.name, taken.len());
         self.0.dialogs.ask(spec.name.clone(), message, &[&t!("Run"), &t!("Cancel")], move |answer| {
             if answer == Some(0) {
-                this.run_command(spec, taken);
+                this.submit_command(spec, taken, once);
             }
         });
     }
 
     /// Runs a user command on the `items` it takes, as one job undone as one action (a
-    /// `{files}` run: nothing to undo, which the panel says). `{other}` and `{other-files}`
-    /// are the other pane's as it is now; without one (or its folder) the status bar says why.
+    /// `{files}` run: nothing to undo, which the panel says).
     fn run_command(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
         let items: Vec<(PathBuf, bool)> =
             items.into_iter().filter(|(p, d)| command_applies(&spec, &name_of(p), *d)).collect();
@@ -2294,12 +2296,23 @@ impl Convert {
             return;
         }
         let once = uses_files(&spec);
+        if let Some(spec) = self.with_other_pane(spec) {
+            self.submit_command(spec, items, once);
+        }
+    }
+
+    /// `spec` with `{other}` and `{other-files}` put in from the other pane as it is now;
+    /// `None` (the status bar says why) without one, its folder or its selection.
+    fn with_other_pane(&self, spec: CommandSpec) -> Option<CommandSpec> {
         if !uses_other(&spec) {
-            return self.submit_command(spec, items, once);
+            return Some(spec);
         }
         match crate::dual::for_command().and_then(|(dir, files)| with_other(&spec, &dir, &files)) {
-            Ok(filled) => self.submit_command(filled, items, once),
-            Err(why) => self.note(t!("{0} — {1}", spec.name, why)),
+            Ok(filled) => Some(filled),
+            Err(why) => {
+                self.note(t!("{0} — {1}", spec.name, why));
+                None
+            }
         }
     }
 
@@ -2317,11 +2330,8 @@ impl Convert {
             })
         };
         self.0.ops.remember_for(&paths);
-        let task: Box<dyn gezik_ops::Task> = if once {
-            Box::new(CommandTask::once(items, spec))
-        } else {
-            Box::new(CommandTask::new(items, spec))
-        };
+        let task: Box<dyn gezik_ops::Task> =
+            if once { Box::new(CommandTask::once(items, spec)) } else { Box::new(CommandTask::new(items, spec)) };
         if once {
             // What it did is not known: nothing to undo (spec 7), and the panel says so.
             let id = self.0.ops.submit_chain(vec![task], None, Some(again), After::Nothing);

@@ -3663,7 +3663,8 @@ last-pattern = \"\"
                 "Resize to 50% (ImageMagick)",
                 "Office to PDF (LibreOffice)",
                 "E-book to EPUB (Calibre)",
-                "Zip together (7-Zip)"
+                "Zip together (7-Zip)",
+                "Compare with the other pane (Meld)"
             ]
         );
     }

@@ -1603,7 +1603,8 @@ mod tests {
         let list = expand_files_command(&filled, &dir, &mine).unwrap();
         let mut to = OsString::from("--to=");
         to.push(&other);
-        assert_eq!(list, [OsString::from("diff"), mine[0].clone().into(), picked[0].clone().into(), picked[1].clone().into(), to, "x{y}".into()]);
+        let wanted = [&mine[0], &picked[0], &picked[1]].map(|path| path.as_os_str().to_os_string());
+        assert_eq!(list, [vec![OsString::from("diff")], wanted.to_vec(), vec![to, "x{y}".into()]].concat());
         assert_eq!(with_other(&diff, &other, &[]).unwrap_err(), "select the items in the other pane");
         // Per item: {other} is a folder like {dir}.
         let per_item = command(&["cp", "{in}", "{other}"], None, &[]);
