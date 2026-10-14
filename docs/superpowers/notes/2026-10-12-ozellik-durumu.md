@@ -146,13 +146,17 @@ Bu listeye girmeyenler: **görünüm kuralları** (TC'de var, satır 63), **bır
 - 44: macOS ve Linux'ta gerçek telefon (denetim listeleri macOS 409–412, Linux 293–296); macOS libmtp indirme paketi yayımlanmayı bekliyor
 - 12–16. adımlar macOS ve Linux'ta denetim listeleriyle (`checklists/`)
 
+**Bilerek dışarıda bırakılanlardan geri alınanlar** (2026-10-15, tek tek konuşuldu; bir adımda yapılacak)
+- 6 Ağ keşfi: kenar çubuğunda "Network", yalnız açılınca tarar (Windows ağ klasörü, macOS Bonjour, Linux Avahi); önbellek ve arka plan taraması yok
+- 15 Hardlink: bağlantı menüsünde "Hard link" (yalnız dosya, aynı sürücü, geri alınabilir); Bilgi penceresinde bağlantı sayısı
+- 19 Sabitlenen klasöre renk (etiket renkleri ya da `#rrggbb`) ve sabit bir setten simge; kullanıcı resmi yok
+- 26 Zaman damgası: Bilgi penceresinde ve toplu "Tarihleri ayarla" (belirli tarih, şimdi, EXIF tarihi, başka dosyadan); geri alınabilir. **ACL dışarıda kalır** (Windows'ta sistem Özellikler)
+- 56 Yaylı klasörler: liste, ağaç ve kenar çubuğunda; varsayılan açık, ~0,7 sn, ayarlanır; vazgeçince başlangıç klasörüne döner
+- 58 Yerleştirilebilir paneller **dışarıda kalır**; yerine iki bölme üst üste ve önizleme altta seçeneği
+
 **Planı olmayan kısmi ya da bilerek dışarıda kalanlar**
-- 6 Ağ keşfi (9 spec)
-- 15 Hardlink oluşturma (7 spec)
-- 19 Sabitlenen klasöre simge ve renk (7 spec)
-- 26 Zaman damgası ve ACL düzenleme (9 spec)
+- 26'nın ACL düzenleme kısmı (9 spec; 2026-10-15'te yeniden onaylandı)
 - 30'un sınırı: `menu = "A/B"` gerçek alt alt menü değil, gri başlık
-- 56 Listede ve kenar çubuğunda yaylı klasörler (7 spec)
-- 58 Yerleştirilebilir paneller (10 spec)
+- 58 Yerleştirilebilir paneller (10 spec; 2026-10-15'te yeniden onaylandı)
 - 66'nın eksiği: etiketlerin meta veri alanı kaydına bağlanması (iç düzen, bilerek atlandı)
 - 14'ün sınırı: Windows'ta başka programların "Klasörde göster"i (9b11 düştü)
