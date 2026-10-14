@@ -73,6 +73,13 @@ max-speed = ""
 double-click = "browse"   # browse | system | extract-here
 preview-limit = 64        # MB: files inside an archive up to this size are extracted for the preview by themselves
 
+[command-line]
+# The shell a command typed after ">" in the address bar runs with (Enter only), in the
+# folder shown: "" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; "powershell" or
+# "pwsh"; or a full path, given shell-args then the command.
+shell = ""
+shell-args = []           # arguments before the command, for a full path (["-c"])
+
 [convert]
 ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH
 
@@ -89,8 +96,9 @@ folder-diff = false       # also hand it two folders (otherwise Gezik compares f
 typing = "jump"           # jump | filter
 
 [history]
-# Remember the folders you open, for the address bar's Recent and Frequent lists (kept in
-# state.toml). false also forgets them; "clear-history" (no key by default) empties the list.
+# Remember the folders you open, for the address bar's Recent and Frequent lists, and the
+# commands run with ">" (kept in state.toml). false also forgets them; "clear-history" (no key
+# by default) empties both.
 remember = true
 
 [session]
@@ -213,7 +221,7 @@ properties = true
 # reopen-tab = "mod+shift+t"
 # tab-picker = "mod+shift+a"
 # toggle-tab-lock = ""     # a locked tab does not close
-# clear-history = ""     # forget the folders the address bar remembers
+# clear-history = ""     # forget the folders and commands the address bar remembers
 # open-terminal = ["shift+f4", "ctrl+alt+t"]   # macOS: "mod+alt+t"
 # open-terminal-admin = ""   # Windows only: the terminal as administrator
 # copy-path = "ctrl+shift+c"   # the selected items' paths as text; macOS: "mod+alt+c"
@@ -279,6 +287,8 @@ properties = true
 # preview-hex = ""  # Show Preview as Hex: the selected file's bytes in the preview, or back to its text or picture
 # preview-play = ""  # Play/Pause Preview: the selected video or sound file plays in the preview, or pauses
 # browse-archive = ""   # Open as Folder: goes into the selected archive, whatever double-click does
+# run-command = ""         # the address bar with ">" typed, for a command in the folder shown
+# toggle-command-output = ""   # show or hide the command output panel
 # settings = "mod+,"      # Settings…: this file in a window (macOS: ⌘,)
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename

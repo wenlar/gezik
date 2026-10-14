@@ -330,6 +330,7 @@ msgstr "Modifier"
 #: crates/gezik/src/admin.rs
 #: crates/gezik/src/archives.rs
 #: crates/gezik/src/checksums.rs
+#: crates/gezik/src/command_line.rs
 #: crates/gezik/src/compare.rs
 #: crates/gezik/src/connect.rs
 #: crates/gezik/src/context_menu.rs
@@ -2818,6 +2819,17 @@ msgstr "Importer les paramètres…"
 #, fuzzy
 msgid "Open as Folder"
 msgstr "Ouvrir comme un dossier"
+
+#: crates/gezik-config/src/shortcuts.rs
+#, fuzzy
+msgid "Run Command…"
+msgstr "Exécuter une commande…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Command Output"
+msgstr "Sortie de la commande"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -6450,6 +6462,7 @@ msgstr "Gezik demande au système des droits d'administrateur pour faire exactem
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/size-map.slint
@@ -7238,6 +7251,101 @@ msgstr "Pas dans un dossier cloud"
 #, fuzzy
 msgid "Choose the items first"
 msgstr "Choisissez d'abord les éléments"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "{} s"
+msgstr "{} s"
+
+#. minutes and seconds a command ran
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "{0} min {1} s"
+msgstr "{0} min {1} s"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Commands run in a folder on disk"
+msgstr "Les commandes s'exécutent dans un dossier sur le disque"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Run Command"
+msgstr "Exécuter une commande"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "A command is still running. Stop it?"
+msgstr "Une commande est encore en cours. L'arrêter ?"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Stop and Run"
+msgstr "Arrêter et exécuter"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "The selection is too long for GEZIK_FILES: GEZIK_FILES_LIST names a file with it"
+msgstr "La sélection est trop longue pour GEZIK_FILES : GEZIK_FILES_LIST indique un fichier qui la contient"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "The selection is too long for GEZIK_FILES and its list was not written: {}"
+msgstr "La sélection est trop longue pour GEZIK_FILES et sa liste n'a pas été écrite : {}"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "cmd cannot run in a network folder; set [command-line] shell = \"powershell\""
+msgstr "cmd ne peut pas s'exécuter dans un dossier réseau ; définissez [command-line] shell = \"powershell\""
+
+#. {0} is a shell program, {1} why it did not start
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Could not start {0}: {1}"
+msgstr "Impossible de démarrer {0} : {1}"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Did not start"
+msgstr "Non démarrée"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "No command has run in this pane"
+msgstr "Aucune commande n'a encore été exécutée dans ce volet"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Output copied"
+msgstr "Sortie copiée"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Could not copy the output"
+msgstr "Impossible de copier la sortie"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Running… {}"
+msgstr "En cours… {}"
+
+#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
+#: crates/gezik/src/command_line.rs
+#: crates/gezik/src/size_map.rs
+#, fuzzy
+msgid "Stopped · {}"
+msgstr "Arrêté · {}"
+
+#. {0} is a number, {1} how long the command ran ("0.4 s")
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Exit code {0} · {1}"
+msgstr "Code de sortie {0} · {1}"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Ended by a signal · {}"
+msgstr "Terminée par un signal · {}"
 
 #: crates/gezik/src/compare.rs
 #, fuzzy
@@ -12922,12 +13030,6 @@ msgstr "Afficher dans le volet"
 msgid "Scanning…"
 msgstr "Analyse…"
 
-#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
-#: crates/gezik/src/size_map.rs
-#, fuzzy
-msgid "Stopped · {}"
-msgstr "Arrêté · {}"
-
 #: crates/gezik/src/size_map.rs
 #, fuzzy
 msgid "{n} file"
@@ -13932,6 +14034,33 @@ msgstr "Adresse"
 msgid "{}, tags {}"
 msgstr "{}, étiquettes {}"
 
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/filter-bar.slint
+#, fuzzy
+msgid "Stop"
+msgstr "Arrêter"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Run Again"
+msgstr "Exécuter à nouveau"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Copy Output"
+msgstr "Copier la sortie"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Earlier output dropped"
+msgstr "Sortie antérieure supprimée"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/convert.slint
+#, fuzzy
+msgid "Output"
+msgstr "Sortie"
+
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 #, fuzzy
@@ -14233,11 +14362,6 @@ msgstr "{} ppp"
 
 #: crates/gezik/ui/widgets/convert.slint
 #, fuzzy
-msgid "Output"
-msgstr "Sortie"
-
-#: crates/gezik/ui/widgets/convert.slint
-#, fuzzy
 msgid "Same folder, new name"
 msgstr "Même dossier, nouveau nom"
 
@@ -14386,11 +14510,6 @@ msgstr "Texte des fichiers"
 #, fuzzy
 msgid "Search subfolders"
 msgstr "Inclure les sous-dossiers"
-
-#: crates/gezik/ui/widgets/filter-bar.slint
-#, fuzzy
-msgid "Stop"
-msgstr "Arrêter"
 
 #: crates/gezik/ui/widgets/filter-bar.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -14928,8 +15047,8 @@ msgstr "Mémoriser"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:history.remember"
-msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
-msgstr "Mémoriser les dossiers ouverts, pour les listes Récents et Fréquents de la barre d'adresse (dans state.toml). false les oublie aussi ; \"clear-history\" (sans touche par défaut) vide la liste."
+msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
+msgstr "Mémoriser les dossiers ouverts, pour les listes Récents et Fréquents de la barre d'adresse, et les commandes exécutées avec \">\" (dans state.toml). false les oublie aussi ; \"clear-history\" (sans touche par défaut) vide les deux."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15317,6 +15436,18 @@ msgstr "Mo : les fichiers d’une archive jusqu’à cette taille sont extraits 
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:command-line.shell"
+msgid "Shell"
+msgstr "Shell"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:command-line.shell"
+msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
+msgstr "Le shell avec lequel s'exécute une commande saisie après \">\" dans la barre d'adresse (Entrée uniquement), dans le dossier affiché : \"\" est cmd sous Windows et $SHELL (sinon /bin/sh) ailleurs ; \"powershell\" ou \"pwsh\" ; ou un chemin complet, qui reçoit shell-args puis la commande."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:convert.ffmpeg"
 msgid "Ffmpeg"
 msgstr "Ffmpeg"
@@ -15551,6 +15682,18 @@ msgstr "Le terminal lancé par « Ouvrir le terminal » : un programme et 
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:command-line.shell-args"
+msgid "Shell args"
+msgstr "Arguments du shell"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:command-line.shell-args"
+msgid "Arguments before the command, for a full path ([\"-c\"])"
+msgstr "Arguments avant la commande, pour un chemin complet ([\"-c\"])"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:search.skip"
 msgid "Skip"
 msgstr "Ignorer"
@@ -15609,6 +15752,10 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Commandes"
 
+#~ #, fuzzy
+#~ msgctxt "setting:history.remember"
+#~ msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
+#~ msgstr "Mémoriser les dossiers ouverts, pour les listes Récents et Fréquents de la barre d'adresse (dans state.toml). false les oublie aussi ; \"clear-history\" (sans touche par défaut) vide la liste."
 #~ #, fuzzy
 #~ msgid "Some items of the archive could not be read; nothing was added"
 #~ msgstr "Certains éléments de l'archive n'ont pas pu être lus ; rien n'a été ajouté"

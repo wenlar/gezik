@@ -169,6 +169,7 @@ fn release(id: PaneId) -> Option<Session> {
 /// Stops what `pane` runs (its search, folder sizes, watcher and media requests): it closes,
 /// or its window does.
 pub fn stop(pane: &Pane) {
+    pane.command.end();
     pane.search.leaving();
     pane.folder_sizes.shown(&Location::Drives);
     pane.nav.unwatch();
@@ -184,6 +185,7 @@ fn make(like: &Pane, session: Session) -> Pane {
     Pane {
         id,
         folder_sizes: like.folder_sizes.for_pane(id, view.clone()),
+        command: crate::command_line::CommandLine::new(id),
         path_box: like.path_box.for_pane(id, nav.clone()),
         filter: like.filter.for_pane(id, view.clone()),
         search: like.search.for_pane(id, nav.clone(), view.clone()),
@@ -660,6 +662,7 @@ pub(crate) mod tests {
         Pane {
             id,
             folder_sizes: crate::folder_sizes::FolderSizes::new(id, window.clone(), view.clone()),
+            command: crate::command_line::CommandLine::new(id),
             path_box: crate::path_box::PathBox::new(id, window.clone(), nav.clone(), None, Vec::new()),
             filter: crate::filter::Filter::new(id, window.clone(), view.clone(), dialogs.clone(), None),
             search: crate::search::Searches::new(id, window, nav.clone(), view.clone(), dialogs),

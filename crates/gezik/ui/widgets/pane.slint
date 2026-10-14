@@ -8,6 +8,7 @@ import { FileView, ItemRow, FieldColumn } from "file-view.slint";
 import { FilterBar } from "filter-bar.slint";
 import { ColumnView, ColumnItem } from "column-view.slint";
 import { PreviewInfo } from "preview-pane.slint";
+import { CommandOutput, CmdLine } from "command-output.slint";
 
 // What Rust shows in one pane (spec 10 §3.2): written as one row of the window's `panes`
 // (panes.rs `edit`). Only what changes now and then: the selection, the focus ring, cut and
@@ -92,6 +93,15 @@ export struct PaneData {
     path-text-at: int,
     // Shift+F10 or the Menu key: the keyboard menu (`open-keyboard-menu`).
     menu-request: int,
+    // The command panel under the list (command_line.rs, spec 16 §7.3): shown, its lines,
+    // the command, its folder, how it runs or ended (`state` as CommandOutput's).
+    cmd-open: bool,
+    cmd-lines: [CmdLine],
+    cmd-title: string,
+    cmd-folder: string,
+    cmd-status: string,
+    cmd-state: int,
+    cmd-dropped: bool,
 }
 
 // Where the pane's parts are in the window and how big its lines are (drag.rs, sidebar.rs,
@@ -257,6 +267,8 @@ export component PaneView inherits Rectangle {
     callback column-middle(int, int, int);
     callback column-scrolled(int, int, length);
     callback columns-shown(int, int, int);
+    // The command panel's button `int` (CommandOutput's `button`).
+    callback command-button(int, int);
 
     // What lives here and Rust only hears of (callbacks above) or asks for (`data` requests).
     property <length> list-scroll;
@@ -775,6 +787,17 @@ export component PaneView inherits Rectangle {
                         border-color: Theme.border;
                         border-radius: Theme.sheet-radius;
                     }
+                }
+                if root.data.cmd-open: CommandOutput {
+                    height: self.panel-height;
+                    lines: root.data.cmd-lines;
+                    title: root.data.cmd-title;
+                    folder: root.data.cmd-folder;
+                    status: root.data.cmd-status;
+                    state: root.data.cmd-state;
+                    dropped: root.data.cmd-dropped;
+                    mono-font: root.mono-font;
+                    button(which) => { root.command-button(root.index, which); }
                 }
             }
         }

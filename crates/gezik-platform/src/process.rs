@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -361,6 +361,23 @@ impl ChildProcess {
         Ok((process, stdin, stdout))
     }
 
+    /// Starts `command` as the caller made it (its arguments, folder, environment) with no
+    /// window, kept with what it starts as `spawn` does, its input empty (a program that waits
+    /// for input reads its end at once) and its output and error output as raw pipes (a
+    /// user's command in the address bar: both shown as they come).
+    ///
+    /// On Windows the process joins its job object just after it starts (std gives no
+    /// suspended start to resume): a program it starts in those first microseconds is not in
+    /// the job, and `kill_tree` would miss it. Shells start nothing that fast.
+    pub fn spawn_piped(mut command: Command) -> io::Result<(ChildProcess, ChildStdout, ChildStderr)> {
+        command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut process = ChildProcess::start_command(command, false)?;
+        let (Some(stdout), Some(stderr)) = (process.child.stdout.take(), process.child.stderr.take()) else {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        };
+        Ok((process, stdout, stderr))
+    }
+
     /// Starts it with no window, in its own job object (Windows) or process group (Unix), its
     /// output and error output piped (the error output read on another thread), its input
     /// piped when `stdin`.
@@ -375,6 +392,12 @@ impl ChildProcess {
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
+        ChildProcess::start_command(command, true)
+    }
+
+    /// `command` started as `start` says; its error output read on another thread when
+    /// `keep_errors`.
+    fn start_command(mut command: Command, keep_errors: bool) -> io::Result<ChildProcess> {
         #[cfg(windows)]
         let job = Job::new()?;
         #[cfg(windows)]
@@ -395,7 +418,11 @@ impl ChildProcess {
             let _ = child.wait();
             return Err(err);
         }
-        let stderr = child.stderr.take().map(|stderr| std::thread::spawn(move || read_errors(stderr)));
+        let stderr = if keep_errors {
+            child.stderr.take().map(|stderr| std::thread::spawn(move || read_errors(stderr)))
+        } else {
+            None
+        };
         Ok(ChildProcess {
             child,
             #[cfg(windows)]
@@ -439,6 +466,23 @@ impl ChildProcess {
             }
             std::thread::sleep(POLL);
         }
+    }
+
+    /// How it ended, if it has (without waiting).
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        self.finished |= status.is_some();
+        Ok(status)
+    }
+
+    /// Lets what it left running live on once it has ended by itself (a program a user's
+    /// command started in the background: an editor with unsaved work): on Windows its job no
+    /// longer ends them when it closes; on Unix nothing ends a process group. Call after it
+    /// ended; `kill_tree` still ends them until the process is dropped.
+    pub fn let_go(&mut self) {
+        #[cfg(windows)]
+        self.job.keep_on_close();
+        self.finished = true;
     }
 
     /// Ends it and everything it started.
@@ -508,6 +552,22 @@ impl Job {
         use windows::Win32::System::JobObjects::AssignProcessToJobObject;
         let process = windows::Win32::Foundation::HANDLE(child.as_raw_handle());
         unsafe { AssignProcessToJobObject(self.0, process) }.map_err(win_error)
+    }
+
+    /// Its processes go on when the handle closes (the kill-on-close limit is taken off).
+    fn keep_on_close(&self) {
+        use windows::Win32::System::JobObjects::{
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
+        };
+        let limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        let _ = unsafe {
+            SetInformationJobObject(
+                self.0,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
     }
 
     fn terminate(&self) {
@@ -602,6 +662,38 @@ mod tests {
         assert_eq!(stopped, None);
         assert!(started.elapsed() < Duration::from_secs(5));
         assert!(eventually(|| ids.iter().all(|&id| !process_alive(id))), "{ids:?} still run");
+    }
+
+    /// What a shell started in the background outlives the shell once it is let go; without
+    /// that, dropping the process ends it with the job.
+    #[cfg(windows)]
+    #[test]
+    fn a_let_go_job_keeps_what_was_started_in_the_background() {
+        use std::os::windows::process::CommandExt;
+        for let_go in [true, false] {
+            let mut command = Command::new("cmd");
+            command.raw_arg("/d /c start \"\" /b ping -n 30 127.0.0.1 >nul");
+            let (child, _out, _err) = ChildProcess::spawn_piped(command).unwrap();
+            let child_cell = std::cell::RefCell::new(child);
+            assert!(eventually(|| child_cell.borrow_mut().try_wait().unwrap().is_some()), "cmd ended");
+            let mut child = child_cell.into_inner();
+            // ping (and the console host it may have).
+            let left: Vec<u32> = child.process_ids();
+            assert!(!left.is_empty(), "ping left running");
+            if let_go {
+                child.let_go();
+            }
+            drop(child);
+            if let_go {
+                std::thread::sleep(Duration::from_millis(300));
+                assert!(left.iter().all(|&id| process_alive(id)), "they outlive the job");
+                for id in &left {
+                    let _ = Command::new("taskkill").args(["/f", "/pid", &id.to_string()]).output();
+                }
+            } else {
+                assert!(eventually(|| left.iter().all(|&id| !process_alive(id))), "they ended with the job");
+            }
+        }
     }
 
     #[cfg(unix)]

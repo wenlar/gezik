@@ -327,6 +327,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::ClearTags
         | Action::EditComment
         | Action::BrowseArchive
+        | Action::RunCommand
+        | Action::ToggleCommandOutput
         | Action::CopyToOtherPane => false,
     }
 }

@@ -155,6 +155,15 @@ impl Default for ArchivesSettings {
     }
 }
 
+/// `[command-line]` (spec 16 §7.2): the shell `>` commands in the address bar run with.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommandLineSettings {
+    /// "" (cmd on Windows, `$SHELL` elsewhere), "cmd", "powershell", "pwsh" or a full path.
+    pub shell: String,
+    /// Arguments before the command, for a full path.
+    pub shell_args: Vec<String>,
+}
+
 /// What Space shows on macOS (`[system] quick-look`, spec 9 §4.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuickLookMode {
@@ -410,6 +419,7 @@ pub struct Settings {
     /// Saved folder syncs (`[[sync-profiles]]`, spec 11 §8.4); invalid ones are left out.
     pub sync_profiles: Vec<crate::sync_profiles::SyncProfile>,
     pub archives: ArchivesSettings,
+    pub command_line: CommandLineSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
     /// User commands (`[[commands]]`); invalid ones are left out.
@@ -459,6 +469,7 @@ impl Default for Settings {
             searches: Vec::new(),
             sync_profiles: Vec::new(),
             archives: ArchivesSettings::default(),
+            command_line: CommandLineSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
             commands: Vec::new(),
@@ -637,6 +648,13 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(archives) => settings.archives = parse_archives(archives, file, warnings),
                 None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "archives", value))),
+            },
+        }
+        match table.get("command-line") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(command_line) => settings.command_line = parse_command_line(command_line, file, warnings),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "command-line", value))),
             },
         }
         match table.get("tools") {
@@ -1614,6 +1632,26 @@ fn parse_archives(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) 
     out
 }
 
+fn parse_command_line(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> CommandLineSettings {
+    let mut out = CommandLineSettings::default();
+    if let Some(value) = table.get("shell") {
+        match value.as_str() {
+            Some(shell) => out.shell = shell.trim().to_owned(),
+            None => warnings.push(Warning::new(file, t!("{0}: expected text, got {1}", "command-line.shell", value))),
+        }
+    }
+    if let Some(value) = table.get("shell-args") {
+        match string_list(value, "shell-args") {
+            Ok(args) => out.shell_args = args,
+            Err(_) => warnings.push(Warning::new(
+                file,
+                t!("{0}: expected a list of text, got {1}", "command-line.shell-args", value),
+            )),
+        }
+    }
+    out
+}
+
 fn parse_tools(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> ToolsSettings {
     let mut out = ToolsSettings::default();
     if let Some(value) = table.get("download") {
@@ -1841,6 +1879,8 @@ pub struct WindowState {
 
 /// Connect to Server's addresses kept in state.toml `[servers] recent` (spec 9 §7.4); never a password.
 pub const SERVERS_MAX: usize = 10;
+/// The `>` commands kept (spec 16 §7.4).
+pub const COMMANDS_MAX: usize = 100;
 
 /// A window besides the most recently focused one (`[[session.window]]`, spec 10 §9.7): its
 /// tabs and panes as `[session]` keeps the first one's, and where it was.
@@ -1890,6 +1930,8 @@ pub struct State {
     pub selection: SelectionState,
     /// The folders visited (`[history] folders`), for the address bar's lists.
     pub history: Vec<Visit>,
+    /// The address bar's `>` commands run, newest first (`[command-line] history`, spec 16 §7.4).
+    pub command_history: Vec<String>,
     /// The tabs of last time (`[session]`), opened at start if `[session] restore`.
     pub session: Session,
     /// The right pane's tabs (`[session] right-tabs`, `right-active`), kept while it is closed.
@@ -2144,6 +2186,16 @@ impl State {
                 })
                 .unwrap_or_default()
         };
+        let command_history = table
+            .get("command-line")
+            .and_then(|v| v.as_table())
+            .and_then(|t| t.get("history"))
+            .and_then(|v| v.as_array())
+            .map(|items| items.iter().filter_map(|v| v.as_str()).filter(|s| !s.trim().is_empty()).take(COMMANDS_MAX))
+            .into_iter()
+            .flatten()
+            .map(str::to_owned)
+            .collect();
         let hint = |key: &str| table.get("hints").and_then(|v| v.as_table()).and_then(|t| t.get(key));
         let first = panes_state(table.get("session"));
         // An entry with no tabs (or not a table) is left out.
@@ -2213,6 +2265,7 @@ impl State {
                 .filter(|w| (120..=600).contains(w)),
             palette_recent,
             servers_recent,
+            command_history,
             f3_moved: hint("f3-moved").and_then(|v| v.as_bool()).unwrap_or(false),
             f3_moved_at: hint("f3-moved-at").and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()),
             windows,
@@ -2388,6 +2441,12 @@ impl State {
             }
             compare.insert("mode".into(), toml::Value::String(o.mode.key().to_owned()));
             root.insert("compare".into(), toml::Value::Table(compare));
+        }
+        if !self.command_history.is_empty() {
+            let list = self.command_history.iter().take(COMMANDS_MAX).cloned().map(toml::Value::String).collect();
+            let mut command_line = toml::Table::new();
+            command_line.insert("history".into(), toml::Value::Array(list));
+            root.insert("command-line".into(), toml::Value::Table(command_line));
         }
         if !self.servers_recent.is_empty() {
             let recent = self.servers_recent.iter().take(SERVERS_MAX).cloned().map(toml::Value::String).collect();
@@ -4170,6 +4229,45 @@ tags = [\"a,b\"]")
         assert_eq!(back.palette_recent.len(), 20);
         assert_eq!(back.palette_recent[0], "action:0");
         assert!(State::parse("[palette]\nrecent = [1, \"tab:2\"]\n").palette_recent == ["tab:2"]);
+    }
+
+    #[test]
+    fn the_command_history_keeps_a_hundred() {
+        let state =
+            State { command_history: (0..120).map(|i| format!("echo {i} \"ü\"")).collect(), ..State::default() };
+        let back = State::parse(&state.to_toml());
+        assert_eq!(back.command_history.len(), COMMANDS_MAX);
+        assert_eq!(back.command_history[0], "echo 0 \"ü\"");
+        assert_eq!(
+            State::parse(
+                "[command-line]
+history = [1, \" \", \"dir\"]
+"
+            )
+            .command_history,
+            ["dir"]
+        );
+        assert!(!State::default().to_toml().contains("command-line"), "nothing written while empty");
+    }
+
+    #[test]
+    fn reads_the_command_line_shell() {
+        let (settings, warnings) = parse(
+            "[command-line]
+shell = \" pwsh \"
+shell-args = [\"-l\"]
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(settings.command_line, CommandLineSettings { shell: "pwsh".into(), shell_args: vec!["-l".into()] });
+        let (settings, warnings) = parse(
+            "[command-line]
+shell = 1
+shell-args = \"-c\"
+",
+        );
+        assert_eq!(settings.command_line, CommandLineSettings::default());
+        assert_eq!(warnings.len(), 2);
     }
 
     #[test]

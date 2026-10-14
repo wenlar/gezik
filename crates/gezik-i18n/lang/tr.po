@@ -271,6 +271,7 @@ msgstr "Değiştir"
 #: crates/gezik/src/admin.rs
 #: crates/gezik/src/archives.rs
 #: crates/gezik/src/checksums.rs
+#: crates/gezik/src/command_line.rs
 #: crates/gezik/src/compare.rs
 #: crates/gezik/src/connect.rs
 #: crates/gezik/src/context_menu.rs
@@ -2321,6 +2322,15 @@ msgstr "Ayarları içe aktar…"
 #: crates/gezik/ui/app.slint
 msgid "Open as Folder"
 msgstr "Klasör olarak aç"
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Run Command…"
+msgstr "Komut çalıştır…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Command Output"
+msgstr "Komut çıktısı"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "{0}: unknown action"
@@ -5237,6 +5247,7 @@ msgstr "Gezik tam olarak şunu yapmak için sistemden yönetici hakları ister:"
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/size-map.slint
@@ -5866,6 +5877,83 @@ msgstr "Bir bulut klasöründe değil"
 #: crates/gezik/src/cloud.rs
 msgid "Choose the items first"
 msgstr "Önce öğeleri seçin"
+
+#: crates/gezik/src/command_line.rs
+msgid "{} s"
+msgstr "{} sn"
+
+#. minutes and seconds a command ran
+#: crates/gezik/src/command_line.rs
+msgid "{0} min {1} s"
+msgstr "{0} dk {1} sn"
+
+#: crates/gezik/src/command_line.rs
+msgid "Commands run in a folder on disk"
+msgstr "Komutlar diskteki bir klasörde çalışır"
+
+#: crates/gezik/src/command_line.rs
+msgid "Run Command"
+msgstr "Komut çalıştır"
+
+#: crates/gezik/src/command_line.rs
+msgid "A command is still running. Stop it?"
+msgstr "Bir komut hâlâ çalışıyor. Durdurulsun mu?"
+
+#: crates/gezik/src/command_line.rs
+msgid "Stop and Run"
+msgstr "Durdur ve çalıştır"
+
+#: crates/gezik/src/command_line.rs
+msgid "The selection is too long for GEZIK_FILES: GEZIK_FILES_LIST names a file with it"
+msgstr "Seçim GEZIK_FILES için çok uzun: listesi GEZIK_FILES_LIST'in gösterdiği dosyada"
+
+#: crates/gezik/src/command_line.rs
+msgid "The selection is too long for GEZIK_FILES and its list was not written: {}"
+msgstr "Seçim GEZIK_FILES için çok uzun ve listesi yazılamadı: {}"
+
+#: crates/gezik/src/command_line.rs
+msgid "cmd cannot run in a network folder; set [command-line] shell = \"powershell\""
+msgstr "cmd ağ klasöründe çalışamaz; [command-line] shell = \"powershell\" yapın"
+
+#. {0} is a shell program, {1} why it did not start
+#: crates/gezik/src/command_line.rs
+msgid "Could not start {0}: {1}"
+msgstr "{0} başlatılamadı: {1}"
+
+#: crates/gezik/src/command_line.rs
+msgid "Did not start"
+msgstr "Başlatılamadı"
+
+#: crates/gezik/src/command_line.rs
+msgid "No command has run in this pane"
+msgstr "Bu bölmede henüz komut çalışmadı"
+
+#: crates/gezik/src/command_line.rs
+msgid "Output copied"
+msgstr "Çıktı kopyalandı"
+
+#: crates/gezik/src/command_line.rs
+msgid "Could not copy the output"
+msgstr "Çıktı kopyalanamadı"
+
+#: crates/gezik/src/command_line.rs
+msgid "Running… {}"
+msgstr "Çalışıyor… {}"
+
+#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
+#: crates/gezik/src/command_line.rs
+#: crates/gezik/src/size_map.rs
+msgid "Stopped · {}"
+msgstr "Durduruldu · {}"
+
+#. {0} is a number, {1} how long the command ran ("0.4 s")
+#: crates/gezik/src/command_line.rs
+msgid "Exit code {0} · {1}"
+msgstr "Çıkış kodu {0} · {1}"
+
+#: crates/gezik/src/command_line.rs
+msgid "Ended by a signal · {}"
+msgstr "Bir sinyalle bitti · {}"
 
 #: crates/gezik/src/compare.rs
 msgid "Subfolders"
@@ -10402,11 +10490,6 @@ msgstr "Bölmede göster"
 msgid "Scanning…"
 msgstr "Taranıyor…"
 
-#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
-#: crates/gezik/src/size_map.rs
-msgid "Stopped · {}"
-msgstr "Durduruldu · {}"
-
 #: crates/gezik/src/size_map.rs
 msgid "{n} file"
 msgid_plural "{n} files"
@@ -11195,6 +11278,28 @@ msgstr "Adres"
 msgid "{}, tags {}"
 msgstr "{}, etiketler: {}"
 
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Stop"
+msgstr "Durdur"
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Run Again"
+msgstr "Yeniden çalıştır"
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Copy Output"
+msgstr "Çıktıyı kopyala"
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Earlier output dropped"
+msgstr "Önceki çıktı atıldı"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Output"
+msgstr "Çıktı"
+
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 msgid "Format"
@@ -11436,10 +11541,6 @@ msgid "{} dpi"
 msgstr "{} dpi"
 
 #: crates/gezik/ui/widgets/convert.slint
-msgid "Output"
-msgstr "Çıktı"
-
-#: crates/gezik/ui/widgets/convert.slint
 msgid "Same folder, new name"
 msgstr "Aynı klasör, yeni ad"
 
@@ -11561,10 +11662,6 @@ msgstr "Dosyalardaki metin"
 #: crates/gezik/ui/widgets/filter-bar.slint
 msgid "Search subfolders"
 msgstr "Alt klasörlerde ara"
-
-#: crates/gezik/ui/widgets/filter-bar.slint
-msgid "Stop"
-msgstr "Durdur"
 
 #: crates/gezik/ui/widgets/filter-bar.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -11997,8 +12094,8 @@ msgstr "Hatırla"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:history.remember"
-msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
-msgstr "Açtığınız klasörleri adres çubuğunun Son kullanılanlar ve Sık kullanılanlar listeleri için hatırla (state.toml'da). false bunları da unutur; \"clear-history\" (varsayılan tuşu yok) listeyi boşaltır."
+msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
+msgstr "Açtığınız klasörleri adres çubuğunun Son kullanılanlar ve Sık kullanılanlar listeleri için, \">\" ile çalıştırılan komutları da hatırla (state.toml'da). false bunları da unutur; \"clear-history\" (varsayılan tuşu yok) ikisini de boşaltır."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:files.confirm-trash"
@@ -12321,6 +12418,16 @@ msgid "MB: files inside an archive up to this size are extracted for the preview
 msgstr "MB: bir arşivin içinde bu boyuta kadar olan dosyalar önizleme için kendiliğinden ayıklanır"
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell"
+msgid "Shell"
+msgstr "Kabuk"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell"
+msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
+msgstr "Adres çubuğunda \">\" ile yazılan komutun gösterilen klasörde çalıştığı kabuk (yalnız Enter ile): \"\" Windows'ta cmd, başka yerde $SHELL (yoksa /bin/sh); \"powershell\" ya da \"pwsh\"; ya da tam yol, önce shell-args sonra komut verilir."
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:convert.ffmpeg"
 msgid "Ffmpeg"
 msgstr "Ffmpeg"
@@ -12516,6 +12623,16 @@ msgid "The terminal \"Open terminal\" runs: a program and its arguments, {dir} i
 msgstr "\"Terminal aç\" komutunun çalıştırdığı terminal: bir program ve argümanları, {dir} klasördür (\"{{\" ve \"}}\" süslü ayraçtır). Ayarlanmamışsa Gezik birini bulur (Windows Terminal, yoksa PowerShell; macOS'ta Terminal; Linux'ta $TERMINAL, x-terminal-emulator ya da bildiği bir terminal). cmd ya da bir .bat/.cmd dosyası üzerinden, adında % & | < > ^ \" ( ) ! geçen klasör reddedilir. {dir} değerini ayrı bir argüman olarak (ya da bir bayrağın değeri olarak) verin, asla bir kabuğa giden kodun içinde değil ([\"powershell\", \"-Command\", \"cd {dir}\"], [\"bash\", \"-c\", \"cd {dir}\"], cmd /c): klasörün adı orada kod olarak çalışır, yönetici olarak da."
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell-args"
+msgid "Shell args"
+msgstr "Kabuk argümanları"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell-args"
+msgid "Arguments before the command, for a full path ([\"-c\"])"
+msgstr "Tam yol için komuttan önceki argümanlar ([\"-c\"])"
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:search.skip"
 msgid "Skip"
 msgstr "Atla"
@@ -12565,6 +12682,9 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Komutlar"
 
+#~ msgctxt "setting:history.remember"
+#~ msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
+#~ msgstr "Açtığınız klasörleri adres çubuğunun Son kullanılanlar ve Sık kullanılanlar listeleri için hatırla (state.toml'da). false bunları da unutur; \"clear-history\" (varsayılan tuşu yok) listeyi boşaltır."
 #~ msgid "Some items of the archive could not be read; nothing was added"
 #~ msgstr "Arşivin bazı öğeleri okunamadı; hiçbir şey eklenmedi"
 #~ msgid "Some items of the archive could not be packed again; nothing was added"

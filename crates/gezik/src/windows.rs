@@ -907,6 +907,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     searches.set_settings(settings.search.clone());
     // Every pane's bars and address go through the same window callbacks.
     path_box::PathBox::connect(&window);
+    crate::command_line::CommandLine::connect(&window);
     filter::Filter::connect(&window);
     search::Searches::connect(&window);
     let left = panes::Pane {
@@ -917,6 +918,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         search: searches,
         path_box,
         folder_sizes,
+        command: crate::command_line::CommandLine::new(pane_id),
     };
     dual::connect(&left);
     // Installed before the window's parts are made: they reach the active pane.
@@ -1423,9 +1425,13 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             p.nav.reload();
         }
     });
+    // Enter in the address bar, the only way a `>` command runs (spec 16 §7.1).
     window.on_navigate(|pane, text| {
         if let Some(p) = crate::pick(pane) {
-            p.nav.navigate_text(text.into());
+            match crate::command_line::command_text(&text) {
+                Some(command) => p.command.enter(&p, command),
+                None => p.nav.navigate_text(text.into()),
+            }
         }
     });
     window.on_crumb_clicked(|pane, i| {
@@ -1519,6 +1525,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             let chord =
                 keys::chord_from_press(&text, press.physical, control, alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, control, alt, m.shift, m.meta);
+            // A held Enter in the address field runs no `>` command (spec 16 §7.1: only a press).
+            let enter = chord.as_ref().is_some_and(|c| c.key == Key::Enter);
+            if crate::command_line::held_enter(event.repeat, enter, panes::mirror(pane.id).path_editing.get()) {
+                return press.swallowed(true);
+            }
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
                 return true;

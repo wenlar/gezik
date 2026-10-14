@@ -64,7 +64,7 @@ pub use picture::{
     only_in_cloud, picture_size, thumbnail, thumbnail_while,
 };
 pub use process::{ChildProcess, Lines, process_alive};
-pub use text::{ansi_code_page, decode_ansi};
+pub use text::{ansi_code_page, decode_ansi, decode_oem};
 
 /// What was right-clicked.
 #[derive(Debug, Clone, PartialEq, Eq)]

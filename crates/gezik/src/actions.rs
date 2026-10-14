@@ -66,7 +66,12 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::TabPicker => crate::tab_tools::with_current(crate::tab_tools::TabTools::open),
         Action::MoreColumns => crate::field_picker::with_current(|p| p.open(crate::field_picker::Purpose::Columns)),
         Action::ClearHistory => {
+            crate::command_line::forget();
             crate::panes::with_active(|p| p.path_box.forget(true));
+        }
+        Action::RunCommand => crate::command_line::open_bar(view.pane_id()),
+        Action::ToggleCommandOutput => {
+            crate::panes::with_active(|p| p.command.toggle());
         }
         Action::OpenTerminal => crate::terminal::open_for_view(view, false),
         Action::OpenTerminalAdmin => crate::terminal::open_for_view(view, true),

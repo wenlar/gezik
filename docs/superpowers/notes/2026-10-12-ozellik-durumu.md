@@ -75,7 +75,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 50 | Vurgulama kuralları, sıralama grupları | 3/8 | Kısmen (tür rengi) | ✅ Var | 12f (#97): `[[highlight-rules]]` ad, tür, boyut, yaş, etiket, puan, yoruma göre renk ve kalınlık |
 | 51 | Düz görünüm | 3/8 | Yok | ✅ Var | 8a (#22): Ctrl+B |
 | 52 | Yinelenen dosya bulucu | 3/8 | Yok | ✅ Var | 11f (#81) |
-| 53 | Gömülü terminal / adres çubuğunda komut | 3/8 | Yok | 🔜 Planlı | 16 Gelişmiş (sonra) |
+| 53 | Gömülü terminal / adres çubuğunda komut | 3/8 | Yok | ✅ Var | 16c: `>` + Enter bulunulan klasörde kabukta; çıktı paneli, Stop, geçmiş (terminal öykünücüsü değil) |
 | 54 | İki dosyayı karşılaştırma | 3/8 | Yok | ✅ Var | 11c (#75): yan yana ve `[tools] diff` |
 | 55 | Görünür işlem günlüğü | 3/8 | Kısmen | ✅ Var | 7c (#20): işlem panelinin History sekmesi; kalıcı log bilerek yok |
 | 56 | Listede ve kenar çubuğunda yaylı klasörler | 2/8 | Kısmen (yalnız sekmede) | 🟡 Kısmen | Hâlâ yalnız sekmede; bilerek kapsam dışı (7 spec) |

@@ -17,8 +17,8 @@ next to Gezik keeps everything next to it instead (see [Portable mode](#portable
 - `themes/*.toml` — your themes. `themes/example.toml` is a commented starting point.
 - `templates/` — files and folders offered under **New ▸** (see [File operations](features.md#file-operations)).
 - `state.toml` — window size and position, column widths, the preview pane, the windows,
-  panes and tabs of the last session and the folders you visited on this machine. Not meant
-  to be copied.
+  panes and tabs of the last session, the folders you visited and the commands you ran in the
+  address bar (`[command-line] history`, the last 100) on this machine. Not meant to be copied.
 - `views.toml` — the view (list, grid or columns, sort, grouping, size) of each folder you
   changed. Local to this machine, like `state.toml`; at most 500 folders are remembered.
 - `pending-deletes` — permanent deletes not finished yet (Gezik finishes them on start).
@@ -50,6 +50,10 @@ The top of `settings.toml` holds:
 - `max-fps` — most frames drawn per second, e.g. while scrolling (default 120; 0 = as many as
   the display refreshes). The software renderer redraws the visible text every frame, so on
   high refresh rate displays a cap saves a lot of CPU.
+- `[command-line] shell` — the shell a `>` command in the address bar runs with: `""`
+  (default) is cmd on Windows and `$SHELL` (else `/bin/sh`) on macOS and Linux; `"powershell"`
+  or `"pwsh"`; or a full path, which gets `shell-args` (say `["-c"]`) and then the command.
+  See [Commands in the address bar](features.md#commands-in-the-address-bar).
 - `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group }` for an alias
   and a group. Gezik updates this list when you pin, unpin, rename, group or reorder; the rest
   of the file, including your comments, is kept.
