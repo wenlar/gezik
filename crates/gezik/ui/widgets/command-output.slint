@@ -23,15 +23,23 @@ export component CommandOutput inherits Rectangle {
     in-out property <length> panel-height: 180px;
     // Bumped by each run: the list starts at its end and follows it.
     in property <int> run;
+    // While the list does not follow: what came since ("1,204 new lines · End"), or "".
+    in property <string> new-lines;
     // Open in Terminal is offered (a git command that wanted a password, spec 16 §9.4).
     in property <bool> terminal;
     // 0 Stop, 1 Run Again, 2 Copy Output, 3 Close, 4 Open in Terminal.
     callback button(int);
+    // The list starts or stops following its end: while it does not, Rust leaves its rows as
+    // they are (nothing added or dropped under the reader) and counts what comes instead.
+    callback follow-changed(bool);
     // Where the list is scrolled, and where its end is (the last line whole at the bottom): the
     // tests' (`CommandOutputProbe`).
     out property <length> view-y: list.content-y;
     out property <length> view-end: min(0px, list.visible-height - root.lines.length * root.line-height);
     out property <length> line-step: root.line-height;
+    // The scroll bar's middle and bottom in the window (tests drag its thumb).
+    out property <length> bar-x: list.absolute-position.x + list.width - 5px;
+    out property <length> bar-bottom: list.absolute-position.y + list.height;
 
     property <length> line-height: Theme.font-size + 5px;
     property <length> pressed-height;
@@ -40,6 +48,9 @@ export component CommandOutput inherits Rectangle {
     // list short of its end; reaching the end again, End, or a new run turn it back on.
     property <bool> follow: true;
     property <length> end: min(0px, list.visible-height - list.content-height);
+    // At the end: the last line shows whole (within half a line: positions on a scaled screen
+    // are whole device pixels).
+    property <bool> at-end: list.content-y <= root.end + root.line-height / 2;
     function to-end() {
         list.content-y = root.end;
     }
@@ -48,14 +59,21 @@ export component CommandOutput inherits Rectangle {
             root.to-end();
         }
     }
+    changed follow => { root.follow-changed(self.follow); }
     changed run => {
         root.follow = true;
+        root.to-end();
+    }
+    // End, or the new-lines bar: the rows come up to date, the list goes to its end and follows.
+    function follow-end() {
+        root.follow = true;
+        root.follow-changed(true);
         root.to-end();
     }
     // The user scrolled to `y`.
     function scroll-to(y: length) {
         list.content-y = clamp(y, root.end, 0px);
-        root.follow = list.content-y <= root.end + 1px;
+        root.follow = root.at-end;
     }
 
     background: Theme.surface;
@@ -156,7 +174,7 @@ export component CommandOutput inherits Rectangle {
                 } else if event.text == Key.Home {
                     root.scroll-to(0px);
                 } else if event.text == Key.End {
-                    root.scroll-to(root.end);
+                    root.follow-end();
                 } else {
                     return reject;
                 }
@@ -166,15 +184,19 @@ export component CommandOutput inherits Rectangle {
                 width: parent.width;
                 height: parent.height;
                 accessible-label: @tr("Output");
-                // Every line is one height: the list's own estimate came a line short at the end.
-                content-height: root.lines.length * root.line-height;
+                // Its height is the list's own (from the rows it made): set from the line count
+                // the list made every row at once, and a flood of output froze the window.
                 // Taking lines off the top moves the list (after `end` changed): back to the end.
+                // However it got there (the wheel, the keys, the thumb, the list's own clamping),
+                // a list at its end follows; one that follows stays at its end.
                 changed content-y => {
                     if root.follow && self.content-y != root.end {
                         root.to-end();
+                    } else if !root.follow && root.at-end {
+                        root.follow-end();
                     }
                 }
-                bar-moved => { root.follow = self.content-y <= root.end + 1px; }
+                bar-moved => { root.follow = root.at-end; }
                 for line in root.lines: Text {
                     height: root.line-height;
                     text: line.text;
@@ -204,6 +226,30 @@ export component CommandOutput inherits Rectangle {
                 border-width: keys.has-focus ? Theme.focus-width : 0px;
                 border-color: Theme.focus-ring;
                 border-radius: Theme.radius-small;
+            }
+        }
+        // What came while the list did not follow, in a row of its own under it: a click goes
+        // there.
+        if !root.follow && root.new-lines != "": HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: new-text.preferred-width + Theme.spacing * 2;
+                height: root.line-height + 4px;
+                border-radius: Theme.radius;
+                background: Theme.accent;
+                accessible-role: AccessibleRole.button;
+                accessible-label: root.new-lines;
+                accessible-action-default => { root.follow-end(); }
+                new-text := Text {
+                    text: root.new-lines;
+                    color: Theme.accent-foreground;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.follow-end(); }
+                }
             }
         }
     }

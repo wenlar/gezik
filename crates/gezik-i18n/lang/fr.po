@@ -7686,6 +7686,14 @@ msgstr "Code de sortie {0} · {1}"
 msgid "Ended by a signal · {}"
 msgstr "Terminée par un signal · {}"
 
+#. a bar under the command output while it is scrolled up; End goes there
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "{n} new line · End"
+msgid_plural "{n} new lines · End"
+msgstr[0] "{n} nouvelle ligne · Fin"
+msgstr[1] "{n} nouvelles lignes · Fin"
+
 #: crates/gezik/src/compare.rs
 #, fuzzy
 msgid "Subfolders"
