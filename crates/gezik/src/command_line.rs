@@ -1426,6 +1426,9 @@ mod tests {
             model.push_all(
                 (from..from + LINES_PER_TICK).map(|i| Line { text: format!("{i:0>200}"), err: false }).collect(),
             );
+            // The bar's text, as `show` writes it.
+            let n = model.new_lines.get();
+            probe.set_new_lines(if n == 0 { "".into() } else { format!("{n} new lines · End").into() });
             // A frame makes only the rows on screen (a list that made every row froze).
             let took = frame();
             assert!(took < Duration::from_millis(500), "a frame took {took:?}");
@@ -1441,6 +1444,8 @@ mod tests {
             probe.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
             probe.window().dispatch_event(WindowEvent::KeyReleased { text });
         };
+        // A real window's scale (fractional positions).
+        probe.window().dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.25 });
         // The first frame loads the fonts.
         frame();
         // Following until the cap drops lines.
@@ -1481,6 +1486,60 @@ mod tests {
             frame();
             assert!(at_end(), "follows after End: {} vs {}", probe.get_view_y(), probe.get_view_end());
         }
+        // Reaching the frozen rows' own end follows again, as End does: by the wheel, by the
+        // keys, and by the scroll bar's thumb dragged down.
+        let following_bottom = probe.get_bar_bottom();
+        let frozen = |how: &str| {
+            key(Key::PageUp);
+            frame();
+            tick();
+            frame();
+            assert!(model.new_lines.get() > 0, "{how}: frozen");
+            assert!(!at_end(), "{how}: up from the end");
+            // The new-lines bar has a row of its own: the list ends above it.
+            assert!(probe.get_bar_bottom() < following_bottom - step, "{how}: the bar covers the list");
+        };
+        let resumed = |how: &str| {
+            tick();
+            frame();
+            frame();
+            assert_eq!(model.new_lines.get(), 0, "{how}: following again");
+            assert_eq!(model.row_count(), model.output.borrow().len(), "{how}");
+            assert!(at_end(), "{how}: at {} vs {}", probe.get_view_y(), probe.get_view_end());
+        };
+        frozen("wheel");
+        probe.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: at,
+            delta_x: 0.0,
+            delta_y: -step * 3.0,
+        });
+        frame();
+        probe.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: at,
+            delta_x: 0.0,
+            delta_y: -step * 300.0,
+        });
+        resumed("wheel");
+        frozen("PageDown");
+        key(Key::PageDown);
+        frame();
+        key(Key::PageDown);
+        resumed("PageDown");
+        frozen("Down");
+        for _ in 0..40 {
+            key(Key::DownArrow);
+        }
+        resumed("Down");
+        // The thumb: grabbed at the bottom of the bar (where it sits after a page up in a long
+        // output) and dragged below it.
+        frozen("thumb");
+        let (x, bottom) = (probe.get_bar_x(), probe.get_bar_bottom());
+        let grab = slint::LogicalPosition::new(x, bottom - 4.0);
+        let below = slint::LogicalPosition::new(x, bottom + 40.0);
+        probe.window().dispatch_event(WindowEvent::PointerPressed { position: grab, button });
+        probe.window().dispatch_event(WindowEvent::PointerMoved { position: below });
+        probe.window().dispatch_event(WindowEvent::PointerReleased { position: below, button });
+        resumed("thumb");
     }
 
     #[test]

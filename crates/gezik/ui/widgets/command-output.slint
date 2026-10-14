@@ -35,6 +35,9 @@ export component CommandOutput inherits Rectangle {
     out property <length> view-y: list.content-y;
     out property <length> view-end: min(0px, list.visible-height - root.lines.length * root.line-height);
     out property <length> line-step: root.line-height;
+    // The scroll bar's middle and bottom in the window (tests drag its thumb).
+    out property <length> bar-x: list.absolute-position.x + list.width - 5px;
+    out property <length> bar-bottom: list.absolute-position.y + list.height;
 
     property <length> line-height: Theme.font-size + 5px;
     property <length> pressed-height;
@@ -43,6 +46,9 @@ export component CommandOutput inherits Rectangle {
     // list short of its end; reaching the end again, End, or a new run turn it back on.
     property <bool> follow: true;
     property <length> end: min(0px, list.visible-height - list.content-height);
+    // At the end: the last line shows whole (within half a line: positions on a scaled screen
+    // are whole device pixels).
+    property <bool> at-end: list.content-y <= root.end + root.line-height / 2;
     function to-end() {
         list.content-y = root.end;
     }
@@ -65,7 +71,7 @@ export component CommandOutput inherits Rectangle {
     // The user scrolled to `y`.
     function scroll-to(y: length) {
         list.content-y = clamp(y, root.end, 0px);
-        root.follow = list.content-y <= root.end + 1px;
+        root.follow = root.at-end;
     }
 
     background: Theme.surface;
@@ -174,12 +180,16 @@ export component CommandOutput inherits Rectangle {
                 // Its height is the list's own (from the rows it made): set from the line count
                 // the list made every row at once, and a flood of output froze the window.
                 // Taking lines off the top moves the list (after `end` changed): back to the end.
+                // However it got there (the wheel, the keys, the thumb, the list's own clamping),
+                // a list at its end follows; one that follows stays at its end.
                 changed content-y => {
                     if root.follow && self.content-y != root.end {
                         root.to-end();
+                    } else if !root.follow && root.at-end {
+                        root.follow-end();
                     }
                 }
-                bar-moved => { root.follow = self.content-y <= root.end + 1px; }
+                bar-moved => { root.follow = root.at-end; }
                 for line in root.lines: Text {
                     height: root.line-height;
                     text: line.text;
@@ -204,10 +214,18 @@ export component CommandOutput inherits Rectangle {
                     accept
                 }
             }
-            // What came while the list did not follow: a click goes there.
-            if !root.follow && root.new-lines != "": Rectangle {
-                x: (parent.width - self.width) / 2;
-                y: parent.height - self.height - 4px;
+            // Its ring while it has the keyboard.
+            Rectangle {
+                border-width: keys.has-focus ? Theme.focus-width : 0px;
+                border-color: Theme.focus-ring;
+                border-radius: Theme.radius-small;
+            }
+        }
+        // What came while the list did not follow, in a row of its own under it: a click goes
+        // there.
+        if !root.follow && root.new-lines != "": HorizontalLayout {
+            alignment: center;
+            Rectangle {
                 width: new-text.preferred-width + Theme.spacing * 2;
                 height: root.line-height + 4px;
                 border-radius: Theme.radius;
@@ -225,12 +243,6 @@ export component CommandOutput inherits Rectangle {
                     mouse-cursor: pointer;
                     clicked => { root.follow-end(); }
                 }
-            }
-            // Its ring while it has the keyboard.
-            Rectangle {
-                border-width: keys.has-focus ? Theme.focus-width : 0px;
-                border-color: Theme.focus-ring;
-                border-radius: Theme.radius-small;
             }
         }
     }
