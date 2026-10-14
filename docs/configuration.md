@@ -69,9 +69,12 @@ The top of `settings.toml` holds:
   the libmtp to load; empty uses Homebrew's or Gezik's download on macOS
   (`/opt/homebrew/lib/libmtp.9.dylib`, `/usr/local/lib/libmtp.9.dylib`) and the system's
   `libmtp.so.9` on Linux.
-- `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group }` for an alias
-  and a group. Gezik updates this list when you pin, unpin, rename, group or reorder; the rest
-  of the file, including your comments, is kept.
+- `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group, color, icon }` for
+  an alias, a group and a look: `color` is a tag colour (`red`, `orange`, `yellow`, `green`,
+  `blue`, `purple`, `gray`) or `#rrggbb`, `icon` one of `folder star heart home work code music
+  photo video document download cloud archive book game money mail link lock flag bolt leaf
+  globe person` (an unknown value warns and is ignored). Gezik updates this list when you pin,
+  unpin, rename, group, colour or reorder; the rest of the file, including your comments, is kept.
 
 ```toml
 [layout]

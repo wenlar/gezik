@@ -16,13 +16,15 @@ export struct SidebarRow {
     // Shown when the pointer rests on the row: a pinned folder's full path and its key.
     tip: string,
     // A place's glyph (sidebar.rs): 1 home, 2 folder, 3 pin, 4 pin with an alias, 5 drive,
-    // 6 saved search, 7 trash, 8 cloud; 0 on headings and "… n more".
+    // 6 saved search, 7 trash, 8 cloud, 9 phone; 100 + n a pin's own icon (`Glyph.pin-icons[n]`);
+    // 0 on headings and "… n more".
     icon: int,
     // The tree (spec 10 §5): how deep the row is (0: a place), and its arrow: 0 none,
     // 1 closed, 2 open, 3 its read on its way.
     depth: int,
     arrow: int,
-    // A tag's colour (section 9; transparent: a tag without one, drawn as a ring).
+    // A tag's colour (section 9; transparent: a tag without one, drawn as a ring); a pin's icon
+    // colour (transparent: the theme's).
     dot: color,
 }
 
@@ -220,12 +222,14 @@ export component Sidebar inherits Rectangle {
                         height: 16px;
                         viewbox-width: 16;
                         viewbox-height: 16;
-                        commands: row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
+                        commands: row.icon >= 100 ? Glyph.pin-icons[row.icon - 100]
+                            : row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
                             : row.icon == 5 ? Glyph.drive : row.icon == 6 ? Glyph.search : row.icon == 7 ? Glyph.trash
                             : row.icon == 8 ? Glyph.cloud : row.icon == 9 ? Glyph.phone
                             : Glyph.folder-line;
-                        stroke: row.active ? Theme.accent : Theme.foreground-muted;
+                        stroke: row.active ? Theme.accent : row.section == 1 && row.dot != transparent ? row.dot : Theme.foreground-muted;
                         stroke-width: 1.3px;
+
                         stroke-line-cap: round;
                         stroke-line-join: round;
                     }

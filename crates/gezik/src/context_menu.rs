@@ -578,6 +578,11 @@ pub const GROUP_UP: u32 = 1260;
 pub const GROUP_DOWN: u32 = 1261;
 pub const GROUP_RENAME: u32 = 1262;
 pub const UNGROUP: u32 = 1263;
+/// 1264-1271: a pin's Color ▸ (by Finder's number; 1264 None). 1272-1296: its Icon ▸ (1272
+/// Default, then `pins::ICONS` in order).
+pub const PIN_COLOR_FIRST: u32 = 1264;
+pub const PIN_ICON_FIRST: u32 = 1272;
+const PIN_ICONS_END: u32 = PIN_ICON_FIRST + 1 + gezik_config::pins::ICONS.len() as u32;
 /// 1300-1304: the View menu's options (Hide extensions, Folders first, Single-click to open,
 /// Show hidden items, Show system items); 1310-1313 Date format ▸ in `DateFormat::ALL` order;
 /// 1320-1321 Size format ▸ in `SizeFormat::ALL` order.
@@ -1389,6 +1394,66 @@ pub fn group_items(groups: &[String], own: Option<&str>) -> Vec<(u32, String, bo
     out
 }
 
+/// A pin's Color ▸ and Icon ▸ (spec 16 §4), its own colour and icon marked.
+pub fn pin_style_subs(color: Option<&str>, icon: Option<&str>, at: usize) -> [Submenu; 2] {
+    let hue = color.and_then(gezik_core::highlight::Hue::parse);
+    let colors = [
+        TagColor::None,
+        TagColor::Red,
+        TagColor::Orange,
+        TagColor::Yellow,
+        TagColor::Green,
+        TagColor::Blue,
+        TagColor::Purple,
+        TagColor::Gray,
+    ]
+    .into_iter()
+    .map(|c| {
+        let own = if c == TagColor::None { color.is_none() } else { hue == Some(gezik_core::highlight::Hue::Named(c)) };
+        let title = if c == TagColor::None { t!("None") } else { t("", c.default_name()) };
+        (PIN_COLOR_FIRST + u32::from(c.number()), marked(own, &title), true)
+    })
+    .collect();
+    let own = icon.and_then(gezik_config::pins::icon_index);
+    let titles = [
+        tx!("Folder"),
+        tx!("Star"),
+        tx!("Heart"),
+        tx!("Home"),
+        tx!("Work"),
+        tx!("Code"),
+        tx!("Music"),
+        tx!("Photo"),
+        tx!("Video"),
+        tx!("Document"),
+        tx!("Download"),
+        tx!("Cloud"),
+        tx!("Archive"),
+        tx!("Book"),
+        tx!("Game"),
+        tx!("Money"),
+        tx!("Mail"),
+        tx!("Link"),
+        tx!("Lock"),
+        tx!("Flag"),
+        tx!("Bolt"),
+        tx!("Leaf"),
+        tx!("Globe"),
+        tx!("Person"),
+    ];
+    let mut icons = vec![(PIN_ICON_FIRST, marked(own.is_none(), &t!("Default")), true)];
+    icons.extend(
+        titles
+            .iter()
+            .enumerate()
+            .map(|(i, title)| (PIN_ICON_FIRST + 1 + i as u32, marked(own == Some(i), &t("", title)), true)),
+    );
+    [
+        Submenu { title: t!("Color").into_owned(), at, items: colors },
+        Submenu { title: t!("Icon").into_owned(), at, items: icons },
+    ]
+}
+
 /// A group heading's menu: move it (not past the first or the last), rename it, ungroup it.
 pub fn group_heading_items(first: bool, last: bool) -> Vec<(u32, &'static str)> {
     let mut out = Vec::new();
@@ -1965,6 +2030,8 @@ impl Menus {
                 items: group_items(&groups, own.as_deref()),
             });
             *self.pin_groups.borrow_mut() = groups;
+            let (color, icon) = self.sidebar.style_of(&path);
+            subs.extend(pin_style_subs(color.as_deref(), icon.as_deref(), list.len()));
         }
         if section == crate::sidebar::SECTION_DRIVES && !cfg!(windows) {
             list.extend(drive_items(crate::eject::way_at(&path), false));
@@ -2702,6 +2769,15 @@ impl Menus {
             (RENAME_PIN, Subject::SidebarEntry(path)) => self.sidebar.ask_alias(&path),
             (GROUP_NEW, Subject::SidebarEntry(path)) => self.sidebar.ask_new_group(&path),
             (GROUP_NONE, Subject::SidebarEntry(path)) => self.sidebar.set_group(&path, None),
+            (id, Subject::SidebarEntry(path)) if (PIN_COLOR_FIRST..PIN_ICON_FIRST).contains(&id) => {
+                let color = TagColor::from_number((id - PIN_COLOR_FIRST) as u8);
+                let name = color.default_name().to_lowercase();
+                self.sidebar.set_color(&path, (color != TagColor::None).then_some(name.as_str()));
+            }
+            (id, Subject::SidebarEntry(path)) if (PIN_ICON_FIRST..PIN_ICONS_END).contains(&id) => {
+                let icon = (id - PIN_ICON_FIRST).checked_sub(1).map(|i| gezik_config::pins::ICONS[i as usize]);
+                self.sidebar.set_icon(&path, icon);
+            }
             (id, Subject::SidebarEntry(path)) if (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id) => {
                 let group = self.pin_groups.borrow().get((id - GROUP_MOVE_FIRST) as usize).cloned();
                 if let Some(group) = group {
@@ -3087,6 +3163,7 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_BY_RATING
         || id == GROUP_BY_GIT
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
+        || (PIN_COLOR_FIRST..PIN_ICONS_END).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
         || id == TOOLS_EXPORT_LIST
@@ -3722,6 +3799,8 @@ mod tests {
             DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32,
             SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32,
             GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX,
+            PIN_COLOR_FIRST..PIN_ICON_FIRST,
+            PIN_ICON_FIRST..PIN_ICONS_END,
             TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX,
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
@@ -3999,6 +4078,21 @@ mod tests {
         assert_eq!(group_items(&many, None).len(), GROUP_MAX as usize + 1);
         assert!(from_submenu(GROUP_MOVE_FIRST + 3) && from_submenu(GROUP_NEW) && from_submenu(GROUP_NONE));
         assert!(!from_submenu(RENAME_PIN));
+    }
+
+    #[test]
+    fn a_pin_offers_its_colours_and_icons() {
+        let [colors, icons] = pin_style_subs(Some("RED"), Some("leaf"), 3);
+        assert_eq!((colors.at, colors.items.len(), icons.items.len()), (3, 8, 25));
+        assert_eq!(colors.items[0], (PIN_COLOR_FIRST, "    None".to_owned(), true));
+        assert_eq!(colors.items[1], (PIN_COLOR_FIRST + 6, "• Red".to_owned(), true), "Finder's number");
+        assert_eq!(icons.items[0].1, "    Default");
+        assert_eq!(icons.items[22], (PIN_ICON_FIRST + 22, "• Leaf".to_owned(), true));
+        assert_eq!(gezik_config::pins::ICONS[22 - 1], "leaf");
+        assert_eq!(icons.items.last().unwrap().0, PIN_ICONS_END - 1);
+        let [colors, icons] = pin_style_subs(None, Some("rocket"), 0);
+        assert!(colors.items[0].1.starts_with('•') && icons.items[0].1.starts_with('•'), "none and default");
+        assert!(from_submenu(PIN_COLOR_FIRST) && from_submenu(PIN_ICONS_END - 1) && !from_submenu(PIN_ICONS_END));
     }
 
     #[test]

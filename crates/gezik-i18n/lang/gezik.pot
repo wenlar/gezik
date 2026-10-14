@@ -887,6 +887,14 @@ msgid "{0}: expected folder, file, pictures, videos, audio, documents, archives 
 msgstr ""
 
 #: crates/gezik-config/src/pins.rs
+msgid "unknown color \"{0}\" for {1}; expected a tag color or #rrggbb"
+msgstr ""
+
+#: crates/gezik-config/src/pins.rs
+msgid "unknown icon \"{0}\" for {1}; the default icon is shown"
+msgstr ""
+
+#: crates/gezik-config/src/pins.rs
 msgid "unknown key \"{0}\" in {1}"
 msgstr ""
 
@@ -3273,6 +3281,7 @@ msgid "Picture"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Photo"
 msgstr ""
 
@@ -3281,11 +3290,13 @@ msgid "Media"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Music"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
 #: crates/gezik-core/src/kind.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Document"
 msgstr ""
 
@@ -3534,6 +3545,7 @@ msgid "Install Git to see repository status"
 msgstr ""
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/compress.slint
@@ -4038,6 +4050,7 @@ msgid "Archives"
 msgstr ""
 
 #: crates/gezik-core/src/search.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Code"
 msgstr ""
 
@@ -5255,6 +5268,7 @@ msgid "the download failed (WinHTTP error {})"
 msgstr ""
 
 #: crates/gezik-platform/src/known.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Home"
 msgstr ""
 
@@ -5919,6 +5933,7 @@ msgid "Type the size of a part in MB"
 msgstr ""
 
 #: crates/gezik/src/archives.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Archive"
 msgstr ""
 
@@ -7464,6 +7479,78 @@ msgstr ""
 
 #: crates/gezik/src/context_menu.rs
 msgid "No group"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Star"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Heart"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Work"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Video"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Cloud"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Book"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Game"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Money"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Mail"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Lock"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Flag"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Bolt"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Leaf"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Globe"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Person"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Default"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Icon"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs

@@ -662,7 +662,12 @@ impl Settings {
                                 file,
                                 t!("{0}: \"{1}\" is pinned twice; the second is left out", "pinned", pin.path),
                             )),
-                            Ok(pin) => settings.pinned.push(pin),
+                            Ok(pin) => {
+                                for problem in pin.problems() {
+                                    warnings.push(Warning::new(file, format!("pinned: {problem}")));
+                                }
+                                settings.pinned.push(pin)
+                            }
                             Err(err) => warnings.push(Warning::new(file, format!("pinned: {err}"))),
                         }
                     }
@@ -2974,20 +2979,24 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
     fn pins_of_both_forms_are_read_and_bad_ones_warned() {
         let (settings, warnings) = parse(
             "pinned = [\n  \"{documents}/Projects\",\n  { path = \"D:/Work/gezik\", name = \" Gezik \", group = \"Work\" },\n  \
-             { path = \"//nas/foto\", group = \"Media\" },\n  { path = \"/x\", icon = \"star\" },\n  { name = \"no path\" },\n  \
-             \"\",\n  \"{home}/../etc\",\n  3,\n  \"{documents}/Projects\",\n  { path = \"/n\", name = 5 },\n]\n",
+             { path = \"//nas/foto\", group = \"Media\" },\n  { path = \"/x\", shape = \"star\" },\n  { name = \"no path\" },\n  \
+             \"\",\n  \"{home}/../etc\",\n  3,\n  \"{documents}/Projects\",\n  { path = \"/n\", name = 5 },\n  \
+             { path = \"/c\", color = \"teal\", icon = \"star\" },\n]\n",
         );
         assert_eq!(
             settings.pinned,
             [
                 PinEntry::plain("{documents}/Projects"),
-                PinEntry { path: "D:/Work/gezik".into(), name: Some("Gezik".into()), group: Some("Work".into()) },
-                PinEntry { path: "//nas/foto".into(), name: None, group: Some("Media".into()) },
+                PinEntry { name: Some("Gezik".into()), group: Some("Work".into()), ..PinEntry::plain("D:/Work/gezik") },
+                PinEntry { group: Some("Media".into()), ..PinEntry::plain("//nas/foto") },
+                PinEntry { color: Some("teal".into()), icon: Some("star".into()), ..PinEntry::plain("/c") },
             ]
         );
         let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
-        assert_eq!(messages.len(), 7, "{messages:?}");
-        assert!(messages[0].starts_with("pinned: unknown key \"icon\" in "), "{messages:?}");
+        assert_eq!(messages.len(), 8, "{messages:?}");
+        assert!(messages[0].starts_with("pinned: unknown key \"shape\" in "), "{messages:?}");
+        assert_eq!(messages[7], "pinned: unknown color \"teal\" for /c; expected a tag color or #rrggbb");
+
         assert!(messages[1].starts_with("pinned: path is missing in "), "{messages:?}");
         assert_eq!(messages[2], "pinned: path is missing in \"\"");
         assert_eq!(messages[3], "pinned: \"{home}/../etc\" must not contain \"..\"");

@@ -1,5 +1,5 @@
 //! Pinned folders (`pinned` in settings.toml, spec 6): each a path, or an inline table
-//! `{ path, name, group }` for an alias and a group. Reading and writing them, and the changes
+//! `{ path, name, group, color, icon }` for an alias, a group and a look (spec 16 §4). Reading and writing them, and the changes
 //! the sidebar makes to the list. Pure: the paths are text with `{home}`-style tokens.
 
 use gezik_i18n::t;
@@ -12,12 +12,46 @@ pub struct PinEntry {
     /// The alias the sidebar shows instead of the folder's name.
     pub name: Option<String>,
     pub group: Option<String>,
+    /// The icon's colour as written (a tag colour's name or `#rrggbb`); kept as text so a
+    /// value Gezik cannot read survives a rewrite (it warns and draws the theme's colour).
+    pub color: Option<String>,
+    /// One of `ICONS` as written; an unknown name draws the default icon.
+    pub icon: Option<String>,
+}
+
+/// The icons a pin can have, in menu order; `glyphs.slint`'s `pin-icons` has their paths in
+/// the same order.
+pub const ICONS: [&str; 24] = [
+    "folder", "star", "heart", "home", "work", "code", "music", "photo", "video", "document", "download", "cloud",
+    "archive", "book", "game", "money", "mail", "link", "lock", "flag", "bolt", "leaf", "globe", "person",
+];
+
+/// Where icon `name` is in `ICONS` (ignoring case).
+pub fn icon_index(name: &str) -> Option<usize> {
+    ICONS.iter().position(|icon| icon.eq_ignore_ascii_case(name.trim()))
 }
 
 impl PinEntry {
     /// A pin without alias and group (written as plain text).
     pub fn plain(path: impl Into<String>) -> PinEntry {
-        PinEntry { path: path.into(), name: None, group: None }
+        PinEntry { path: path.into(), name: None, group: None, color: None, icon: None }
+    }
+
+    /// The icon's colour, if it has one Gezik can read.
+    pub fn hue(&self) -> Option<gezik_core::highlight::Hue> {
+        self.color.as_deref().and_then(gezik_core::highlight::Hue::parse)
+    }
+
+    /// Why its colour or icon is ignored (settings.toml warns).
+    pub(crate) fn problems(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Some(color) = self.color.as_deref().filter(|_| self.hue().is_none()) {
+            out.push(t!("unknown color \"{0}\" for {1}; expected a tag color or #rrggbb", color, self.path));
+        }
+        if let Some(icon) = self.icon.as_deref().filter(|icon| icon_index(icon).is_none()) {
+            out.push(t!("unknown icon \"{0}\" for {1}; the default icon is shown", icon, self.path));
+        }
+        out
     }
 }
 
@@ -32,7 +66,9 @@ pub(crate) fn parse_pin(value: &toml::Value) -> Result<PinEntry, String> {
     let pin = match value {
         toml::Value::String(path) => PinEntry::plain(path.as_str()),
         toml::Value::Table(table) => {
-            if let Some(key) = table.keys().find(|k| !matches!(k.as_str(), "path" | "name" | "group")) {
+            if let Some(key) =
+                table.keys().find(|k| !matches!(k.as_str(), "path" | "name" | "group" | "color" | "icon"))
+            {
                 return Err(t!("unknown key \"{0}\" in {1}", key, value));
             }
             let text = |key: &str| match table.get(key) {
@@ -41,7 +77,13 @@ pub(crate) fn parse_pin(value: &toml::Value) -> Result<PinEntry, String> {
                 Some(other) => Err(t!("{0} must be text, got {1}", key, other)),
             };
             let path = text("path")?.unwrap_or_default().to_owned();
-            PinEntry { path, name: trimmed(text("name")?), group: trimmed(text("group")?) }
+            PinEntry {
+                path,
+                name: trimmed(text("name")?),
+                group: trimmed(text("group")?),
+                color: trimmed(text("color")?),
+                icon: trimmed(text("icon")?),
+            }
         }
         other => return Err(t!("expected text or {{ path, name, group }}, got {}", other)),
     };
@@ -54,19 +96,19 @@ pub(crate) fn parse_pin(value: &toml::Value) -> Result<PinEntry, String> {
     Ok(pin)
 }
 
-/// `pin` as settings.toml keeps it: plain text without alias and group, else an inline table
-/// (`path`, `name`, `group`; the ones it has).
+/// `pin` as settings.toml keeps it: plain text without alias, group, colour and icon, else an
+/// inline table (`path`, `name`, `group`, `color`, `icon`; the ones it has).
 pub(crate) fn pin_to_value(pin: &PinEntry) -> toml_edit::Value {
-    if pin.name.is_none() && pin.group.is_none() {
+    let optional = [("name", &pin.name), ("group", &pin.group), ("color", &pin.color), ("icon", &pin.icon)];
+    if optional.iter().all(|(_, value)| value.is_none()) {
         return toml_edit::Value::from(pin.path.as_str());
     }
     let mut table = toml_edit::InlineTable::new();
     table.insert("path", pin.path.as_str().into());
-    if let Some(name) = &pin.name {
-        table.insert("name", name.as_str().into());
-    }
-    if let Some(group) = &pin.group {
-        table.insert("group", group.as_str().into());
+    for (key, value) in optional {
+        if let Some(value) = value {
+            table.insert(key, value.as_str().into());
+        }
     }
     table.fmt();
     toml_edit::Value::InlineTable(table)
@@ -207,10 +249,29 @@ pub fn set_group(list: &mut Vec<PinEntry>, index: usize, group: Option<&str>) ->
 
 /// Gives pin `index` the alias `name` (none or empty: the folder's own name again).
 pub fn set_name(list: &mut [PinEntry], index: usize, name: Option<&str>) -> bool {
-    let name = trimmed(name);
-    match list.get_mut(index) {
-        Some(pin) if pin.name != name => {
-            pin.name = name;
+    set_text(list, index, name, |pin| &mut pin.name)
+}
+
+/// Gives pin `index`'s icon the colour `color` (none: the theme's).
+pub fn set_color(list: &mut [PinEntry], index: usize, color: Option<&str>) -> bool {
+    set_text(list, index, color, |pin| &mut pin.color)
+}
+
+/// Gives pin `index` the icon `icon` (none: the default).
+pub fn set_icon(list: &mut [PinEntry], index: usize, icon: Option<&str>) -> bool {
+    set_text(list, index, icon, |pin| &mut pin.icon)
+}
+
+fn set_text(
+    list: &mut [PinEntry],
+    index: usize,
+    text: Option<&str>,
+    field: fn(&mut PinEntry) -> &mut Option<String>,
+) -> bool {
+    let text = trimmed(text);
+    match list.get_mut(index).map(field) {
+        Some(own) if *own != text => {
+            *own = text;
             true
         }
         _ => false,
@@ -276,7 +337,7 @@ mod tests {
     use super::*;
 
     fn entry(path: &str, group: Option<&str>) -> PinEntry {
-        PinEntry { path: path.into(), name: None, group: group.map(str::to_owned) }
+        PinEntry { group: group.map(str::to_owned), ..PinEntry::plain(path) }
     }
 
     fn plain(list: &[&str]) -> Vec<PinEntry> {
@@ -300,7 +361,7 @@ mod tests {
             entry("/a", None),
             entry("/m", Some("Media")),
             entry("/w2", Some(" work ")),
-            PinEntry { path: "/b".into(), name: Some("  ".into()), group: Some(String::new()) },
+            PinEntry { name: Some("  ".into()), group: Some(String::new()), ..PinEntry::plain("/b") },
         ];
         let tidy = normalize(list);
         assert_eq!(shown(&tidy), ["/a", "/b", "Work:/w1", "Work:/w2", "Media:/m"]);
@@ -322,7 +383,7 @@ mod tests {
         assert!(!place(&mut list, vec!["/z".into()], 99, false), "no such anchor");
 
         let mut list = vec![
-            PinEntry { path: "/a".into(), name: Some("Alias".into()), group: None },
+            PinEntry { name: Some("Alias".into()), ..PinEntry::plain("/a") },
             entry("/w1", Some("Work")),
             entry("/w2", Some("Work")),
             entry("/gone", Some("Media")),
@@ -388,6 +449,28 @@ mod tests {
         assert_eq!(list[0].name.as_deref(), Some("Bee"));
         assert!(set_name(&mut list, 0, Some("")) && list[0].name.is_none());
         assert!(!set_name(&mut list, 0, None));
+    }
+
+    #[test]
+    fn colour_and_icon_read_write_and_warn() {
+        let table: toml::Table = toml::from_str(r#"p = { path = "/a", color = " Red ", icon = "STAR" }"#).unwrap();
+        let pin = parse_pin(&table["p"]).unwrap();
+        assert_eq!((pin.color.as_deref(), pin.icon.as_deref()), (Some("Red"), Some("STAR")));
+        assert!(pin.hue().is_some() && icon_index("STAR") == Some(1) && pin.problems().is_empty());
+        assert_eq!(pin_to_value(&pin).to_string(), r#"{ path = "/a", color = "Red", icon = "STAR" }"#);
+        assert_eq!(pin_to_value(&PinEntry::plain("/a")).to_string(), r#""/a""#, "plain stays text");
+
+        let odd = PinEntry { color: Some("teal".into()), icon: Some("rocket".into()), ..PinEntry::plain("/b") };
+        assert_eq!(odd.problems().len(), 2, "both warn");
+        assert!(odd.hue().is_none(), "an unknown colour is ignored");
+        assert_eq!(pin_to_value(&odd).to_string(), r#"{ path = "/b", color = "teal", icon = "rocket" }"#, "but kept");
+        assert!(PinEntry { color: Some("#2e7d32".into()), ..odd.clone() }.hue().is_some());
+
+        let mut list = vec![PinEntry::plain("/a")];
+        assert!(set_color(&mut list, 0, Some("blue")) && set_icon(&mut list, 0, Some("leaf")));
+        assert!(!set_icon(&mut list, 0, Some(" leaf ")), "the same");
+        assert!(set_color(&mut list, 0, None) && list[0].color.is_none());
+        assert_eq!(ICONS.len(), ICONS.iter().collect::<std::collections::HashSet<_>>().len());
     }
 
     #[test]
