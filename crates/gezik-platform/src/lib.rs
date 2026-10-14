@@ -169,9 +169,13 @@ mod removal_elsewhere {
         None
     }
 
-    /// Phones come with 16g there: nothing to watch yet.
-    pub fn watch_phones(_window: &impl raw_window_handle::HasWindowHandle, _on_change: impl Fn() + 'static) -> bool {
-        false
+    /// Calls `on_change` whenever a USB device comes or goes (`mtp::watch`: on the main thread
+    /// on macOS, on a thread of its own on Linux). Call once, after the first frame.
+    pub fn watch_phones(
+        _window: &impl raw_window_handle::HasWindowHandle,
+        on_change: impl Fn() + Send + 'static,
+    ) -> bool {
+        crate::mtp::watch(on_change)
     }
 }
 #[cfg(not(windows))]

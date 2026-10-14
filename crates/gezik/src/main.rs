@@ -182,7 +182,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     path_box::set_settings(loaded.settings.history);
     command_line::set_settings(loaded.settings.command_line.clone(), loaded.settings.history.remember);
     // Git marks turned on or off, or another git: every pane looks again (spec 16 §8).
-    phones::set_settings(loaded.settings.devices.phones);
+    phones::set_settings(&loaded.settings.devices);
     if git::set_settings(loaded.settings.git.clone()) {
         for p in panes::everywhere() {
             p.nav.reload();

@@ -1257,6 +1257,10 @@ msgid "\"off\", \"local\" or \"all\""
 msgstr "\"off\", \"local\" ya da \"all\""
 
 #: crates/gezik-config/src/settings.rs
+msgid "{0}: \"{1}\" must be a full path (it is ignored)"
+msgstr "{0}: \"{1}\" tam yol olmalı (yok sayılır)"
+
+#: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}: [[rename-presets]] tabloları bekleniyordu, gelen: {1}"
 
@@ -1424,10 +1428,6 @@ msgstr "{0}: 1 ile 4096 arası bir sayı bekleniyordu, gelen: {1}"
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected a number from 1 to 600, got {1}"
 msgstr "{0}: 1 ile 600 arası bir sayı bekleniyordu, gelen: {1}"
-
-#: crates/gezik-config/src/settings.rs
-msgid "{0}: \"{1}\" must be a full path (it is ignored)"
-msgstr "{0}: \"{1}\" tam yol olmalı (yok sayılır)"
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: {1}; {{left}} {{right}} is used"
@@ -5232,14 +5232,67 @@ msgstr "Gezik'in tanımadığı bir etiket kaydı; dokunulmadı"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Bir dosya için çok fazla etiket ve çok uzun bir yorum"
 
-#: crates/gezik-platform/src/mtp/mod.rs
-msgid "Phone"
-msgstr "Telefon"
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)"
+msgstr "{0} kullanılamıyor: {1} yok (libmtp 1.1.17 ya da daha yenisi gerekir)"
 
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "{0} could not be loaded: {1}"
+msgstr "{0} yüklenemedi: {1}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "No permission to open the phone (libmtp's udev rules)"
+msgstr "Telefonu açma izni yok (libmtp'nin udev kuralları)"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Another app is using the phone (Image Capture, Android File Transfer). Quit it and try again."
+msgstr "Telefonu başka bir uygulama kullanıyor (Görüntü Yakalama, Android File Transfer). Ondan çıkıp yeniden deneyin."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Another app is using the phone. Quit it and try again."
+msgstr "Telefonu başka bir uygulama kullanıyor. Ondan çıkıp yeniden deneyin."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The file ended early"
+msgstr "Dosya erken bitti"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "a partial file {} may remain on the phone"
+msgstr "telefonda yarım bir {} dosyası kalmış olabilir"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
 #: crates/gezik-platform/src/mtp/windows.rs
 #: crates/gezik/src/operations.rs
 msgid "A storage of the phone cannot be deleted"
 msgstr "Telefonun deposu silinemez"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The copy stopped on an internal error"
+msgstr "Kopyalama bir iç hatayla durdu"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Storage {}"
+msgstr "Depolama {}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Only {0} of {1} bytes arrived"
+msgstr "{1} bayttan yalnız {0} tanesi geldi"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The phone did not say what it made of {}"
+msgstr "Telefon {} için ne oluşturduğunu bildirmedi"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phones need libmtp"
+msgstr "Telefonlar için libmtp gerekir"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Install libmtp (e.g. sudo apt install libmtp9)"
+msgstr "libmtp'yi kurun (ör. sudo apt install libmtp9)"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phone"
+msgstr "Telefon"
 
 #: crates/gezik-platform/src/network.rs
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -5660,6 +5713,10 @@ msgid "pdfium needed"
 msgstr "pdfium gerekli"
 
 #: crates/gezik/src/archives.rs
+msgid "libmtp needed"
+msgstr "libmtp gerekli"
+
+#: crates/gezik/src/archives.rs
 msgid "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
 msgstr "HEIC ve AVIF resimlerini okumak için ffmpeg 9 ya da daha yenisi gerekir. settings.toml içinde [convert] altında ayarlı ffmpeg daha eski: ffmpeg 9 ya da daha yenisini ayarlayın veya Gezik'in indirdiğini kullanmak için kaldırın."
 
@@ -5752,6 +5809,18 @@ msgstr "{} arşivlerini açmak için 7-Zip gerekir. Gezik bunu bu sistem için h
 #: crates/gezik/src/archives.rs
 msgid "Opening {} archives needs 7-Zip: install 7-Zip 25 or newer yourself, or set seven-zip under [tools] in settings.toml."
 msgstr "{} arşivlerini açmak için 7-Zip gerekir: 7-Zip 25 ya da daha yenisini kendiniz yükleyin veya settings.toml içinde [tools] altında seven-zip ayarlayın."
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp (~{}, free)."
+msgstr "Telefonlar için libmtp gerekir (~{}, ücretsiz)."
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install libmtp)."
+msgstr "Telefonlar için libmtp gerekir. Gezik onu bu sistem için henüz indiremiyor: kendiniz kurun (brew install libmtp)."
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in settings.toml."
+msgstr "Telefonlar için libmtp gerekir: kendiniz kurun (brew install libmtp) ya da settings.toml'da [devices] altında libmtp'yi ayarlayın."
 
 #: crates/gezik/src/archives.rs
 msgid "Type the size of a part in MB"
@@ -12861,6 +12930,16 @@ msgstr "Telefonlar"
 msgctxt "setting:devices.phones"
 msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
 msgstr "Takılınca Android telefonları (MTP) göster; false: Gezik onları aramaz"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.libmtp"
+msgid "Libmtp"
+msgstr "libmtp"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.libmtp"
+msgid "Path to libmtp (macOS, Linux); empty = Homebrew's or Gezik's download (macOS), the system's (Linux)"
+msgstr "libmtp yolu (macOS, Linux); boş = Homebrew'unki ya da Gezik'in indirdiği (macOS), sistemin (Linux)"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:convert.ffmpeg"

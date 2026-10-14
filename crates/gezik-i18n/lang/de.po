@@ -1532,6 +1532,11 @@ msgstr "\"off\", \"local\" oder \"all\""
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
+msgid "{0}: \"{1}\" must be a full path (it is ignored)"
+msgstr "{0}: \"{1}\" muss ein vollständiger Pfad sein (wird ignoriert)"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}: [[rename-presets]]-Tabellen erwartet, {1} erhalten"
 
@@ -1739,11 +1744,6 @@ msgstr "{0}: Zahl von 1 bis 4096 erwartet, {1} erhalten"
 #, fuzzy
 msgid "{0}: expected a number from 1 to 600, got {1}"
 msgstr "{0}: Zahl von 1 bis 600 erwartet, {1} erhalten"
-
-#: crates/gezik-config/src/settings.rs
-#, fuzzy
-msgid "{0}: \"{1}\" must be a full path (it is ignored)"
-msgstr "{0}: \"{1}\" muss ein vollständiger Pfad sein (wird ignoriert)"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -6438,16 +6438,82 @@ msgstr "Ein Gezik unbekannter Tag-Eintrag; unverändert gelassen"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Zu viele Tags und zu langer Kommentar für eine Datei"
 
-#: crates/gezik-platform/src/mtp/mod.rs
+#: crates/gezik-platform/src/mtp/libmtp.rs
 #, fuzzy
-msgid "Phone"
-msgstr "Telefon"
+msgid "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)"
+msgstr "{0} kann nicht verwendet werden: {1} fehlt (libmtp 1.1.17 oder neuer wird benötigt)"
 
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "{0} could not be loaded: {1}"
+msgstr "{0} konnte nicht geladen werden: {1}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "No permission to open the phone (libmtp's udev rules)"
+msgstr "Keine Berechtigung, das Telefon zu öffnen (udev-Regeln von libmtp)"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Another app is using the phone (Image Capture, Android File Transfer). Quit it and try again."
+msgstr "Eine andere App verwendet das Telefon (Digitale Bilder, Android File Transfer). Beende sie und versuche es erneut."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Another app is using the phone. Quit it and try again."
+msgstr "Eine andere App verwendet das Telefon. Beende sie und versuche es erneut."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The file ended early"
+msgstr "Die Datei endete zu früh"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "a partial file {} may remain on the phone"
+msgstr "eine unvollständige Datei {} kann auf dem Telefon bleiben"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
 #: crates/gezik-platform/src/mtp/windows.rs
 #: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "A storage of the phone cannot be deleted"
 msgstr "Ein Speicher des Telefons kann nicht gelöscht werden"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The copy stopped on an internal error"
+msgstr "Das Kopieren wurde durch einen internen Fehler abgebrochen"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Storage {}"
+msgstr "Speicher {}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Only {0} of {1} bytes arrived"
+msgstr "Nur {0} von {1} Bytes kamen an"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The phone did not say what it made of {}"
+msgstr "Das Telefon hat nicht mitgeteilt, was es aus {} gemacht hat"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phones need libmtp"
+msgstr "Telefone benötigen libmtp"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Install libmtp (e.g. sudo apt install libmtp9)"
+msgstr "Installiere libmtp (z. B. sudo apt install libmtp9)"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phone"
+msgstr "Telefon"
 
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
@@ -6967,6 +7033,11 @@ msgstr "pdfium erforderlich"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
+msgid "libmtp needed"
+msgstr "libmtp benötigt"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
 msgid "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
 msgstr "HEIC- und AVIF-Bilder brauchen ffmpeg 9 oder neuer. Das unter [convert] in settings.toml gesetzte ffmpeg ist älter: setzen Sie ffmpeg 9 oder neuer oder entfernen Sie es, um Geziks Download zu nutzen."
 
@@ -7081,6 +7152,21 @@ msgstr "{}-Archive brauchen 7-Zip. Gezik kann es für dieses System noch nicht h
 #, fuzzy
 msgid "Opening {} archives needs 7-Zip: install 7-Zip 25 or newer yourself, or set seven-zip under [tools] in settings.toml."
 msgstr "{}-Archive brauchen 7-Zip: installieren Sie selbst 7-Zip 25 oder neuer oder setzen Sie seven-zip unter [tools] in settings.toml."
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp (~{}, free)."
+msgstr "Telefone benötigen libmtp (~{}, kostenlos)."
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install libmtp)."
+msgstr "Telefone benötigen libmtp. Gezik kann es für dieses System noch nicht herunterladen: Installiere es selbst (brew install libmtp)."
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in settings.toml."
+msgstr "Telefone benötigen libmtp: Installiere es selbst (brew install libmtp) oder setze libmtp unter [devices] in settings.toml."
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
@@ -15979,6 +16065,18 @@ msgstr "Telefone"
 msgctxt "setting:devices.phones"
 msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
 msgstr "Android-Telefone (MTP) beim Anschließen zeigen; false: Gezik sucht nicht nach ihnen"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.libmtp"
+msgid "Libmtp"
+msgstr "libmtp"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.libmtp"
+msgid "Path to libmtp (macOS, Linux); empty = Homebrew's or Gezik's download (macOS), the system's (Linux)"
+msgstr "Pfad zu libmtp (macOS, Linux); leer = die von Homebrew oder Gezik heruntergeladene (macOS), die des Systems (Linux)"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

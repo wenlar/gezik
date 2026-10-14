@@ -92,6 +92,7 @@ timeout = 10              # seconds a status may take
 
 [devices]
 phones = true             # show Android phones (MTP) when plugged in; false: Gezik does not look for them
+libmtp = ""               # path to libmtp (macOS, Linux); empty = Homebrew's or Gezik's download (macOS), the system's (Linux)
 
 [convert]
 ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH
