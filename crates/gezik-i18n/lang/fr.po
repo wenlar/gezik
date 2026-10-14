@@ -9989,6 +9989,12 @@ msgid_plural "and {n} more"
 msgstr[0] "et {n} de plus"
 msgstr[1] "et {n} de plus"
 
+#. {} is a lock file of git's (…/.git/index.lock)
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git left {} behind: delete it only if no git is running"
+msgstr "Git a laissé {} : ne le supprimez que si aucun git ne tourne"
+
 #. {} is git's own message (not translated).
 #: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/view/folder_git.rs
@@ -10059,10 +10065,25 @@ msgstr "Abandonner"
 
 #: crates/gezik/src/git_commands.rs
 #, fuzzy
+msgid "cancelled"
+msgstr "annulé"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "{0}; the file is still in the trash at {1} ({2})"
+msgstr "{0} ; le fichier est encore dans la corbeille : {1} ({2})"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
 msgid "Discarding changes to {n} file"
 msgid_plural "Discarding changes to {n} files"
 msgstr[0] "Annulation des modifications de {n} fichier"
 msgstr[1] "Annulation des modifications de {n} fichiers"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "changed since: left as it is"
+msgstr "modifié depuis : laissé tel quel"
 
 #: crates/gezik/src/git_commands.rs
 #, fuzzy
@@ -14927,8 +14948,18 @@ msgstr "Message de validation"
 
 #: crates/gezik/ui/widgets/git-commit.slint
 #, fuzzy
+msgid "No changes to commit."
+msgstr "Aucune modification à valider."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
 msgid "Nothing is staged."
 msgstr "Rien n'est indexé."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "To commit:"
+msgstr "À valider :"
 
 #: crates/gezik/ui/widgets/git-commit.slint
 #, fuzzy

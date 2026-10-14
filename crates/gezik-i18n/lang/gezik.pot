@@ -8169,6 +8169,11 @@ msgid_plural "and {n} more"
 msgstr[0] ""
 msgstr[1] ""
 
+#. {} is a lock file of git's (…/.git/index.lock)
+#: crates/gezik/src/git_commands.rs
+msgid "Git left {} behind: delete it only if no git is running"
+msgstr ""
+
 #. {} is git's own message (not translated).
 #: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/view/folder_git.rs
@@ -8226,10 +8231,22 @@ msgid "Discard"
 msgstr ""
 
 #: crates/gezik/src/git_commands.rs
+msgid "cancelled"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "{0}; the file is still in the trash at {1} ({2})"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
 msgid "Discarding changes to {n} file"
 msgid_plural "Discarding changes to {n} files"
 msgstr[0] ""
 msgstr[1] ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "changed since: left as it is"
+msgstr ""
 
 #: crates/gezik/src/git_commands.rs
 msgid "Select one file to compare with HEAD"
@@ -12159,7 +12176,15 @@ msgid "Commit message"
 msgstr ""
 
 #: crates/gezik/ui/widgets/git-commit.slint
+msgid "No changes to commit."
+msgstr ""
+
+#: crates/gezik/ui/widgets/git-commit.slint
 msgid "Nothing is staged."
+msgstr ""
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "To commit:"
 msgstr ""
 
 #: crates/gezik/ui/widgets/git-commit.slint

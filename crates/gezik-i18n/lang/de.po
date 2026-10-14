@@ -9989,6 +9989,12 @@ msgid_plural "and {n} more"
 msgstr[0] "und {n} weitere"
 msgstr[1] "und {n} weitere"
 
+#. {} is a lock file of git's (…/.git/index.lock)
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git left {} behind: delete it only if no git is running"
+msgstr "Git hat {} zurückgelassen: nur löschen, wenn kein Git läuft"
+
 #. {} is git's own message (not translated).
 #: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/view/folder_git.rs
@@ -10059,10 +10065,25 @@ msgstr "Verwerfen"
 
 #: crates/gezik/src/git_commands.rs
 #, fuzzy
+msgid "cancelled"
+msgstr "abgebrochen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "{0}; the file is still in the trash at {1} ({2})"
+msgstr "{0}; die Datei liegt noch im Papierkorb unter {1} ({2})"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
 msgid "Discarding changes to {n} file"
 msgid_plural "Discarding changes to {n} files"
 msgstr[0] "Änderungen an {n} Datei werden verworfen"
 msgstr[1] "Änderungen an {n} Dateien werden verworfen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "changed since: left as it is"
+msgstr "seitdem geändert: unverändert gelassen"
 
 #: crates/gezik/src/git_commands.rs
 #, fuzzy
@@ -14927,8 +14948,18 @@ msgstr "Commit-Nachricht"
 
 #: crates/gezik/ui/widgets/git-commit.slint
 #, fuzzy
+msgid "No changes to commit."
+msgstr "Keine Änderungen zum Committen."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
 msgid "Nothing is staged."
 msgstr "Nichts ist gestagt."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "To commit:"
+msgstr "Wird committet:"
 
 #: crates/gezik/ui/widgets/git-commit.slint
 #, fuzzy

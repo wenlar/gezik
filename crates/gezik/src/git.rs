@@ -462,9 +462,95 @@ pub enum Trust {
 /// The protocols push, pull and fetch may use: never `ext::` (a command line) or another one.
 pub const PROTOCOLS: &str = "http:https:ssh:git:file";
 
-/// The git command `args` in `dir` as `trust` allows. For `Local` and `Network` the repository's
-/// own filter drivers are looked up first (a `git config` run, ended by `stop`); a config that
-/// cannot be read refuses the command. Blocking.
+/// The repository settings that name a program git runs (spec 16 §9.4): filter drivers, merge
+/// and diff drivers, ssh and proxy commands, credential helpers, a remote's upload-pack and
+/// receive-pack (a `file` remote runs them here). Keys as git writes them (section and key in
+/// lower case).
+const PROGRAM_KEYS: &str = r"^(filter\..*\.(clean|process|smudge)|merge\..*\.driver|core\.(sshcommand|gitproxy|askpass)|credential\.(.*\.)?helper|remote\..*\.(uploadpack|receivepack|proxy)|diff\..*\.(command|textconv))$";
+
+/// What a program setting of the repository's own is replaced by when the user's own config has
+/// none: nothing, or what git does without it.
+fn blank(key: &str) -> &'static str {
+    if key.starts_with("merge.") {
+        // Git's own three-way merge of the file, as an external driver.
+        "git merge-file --marker-size=%L %A %O %B"
+    } else if key.ends_with(".uploadpack") {
+        "git-upload-pack"
+    } else if key.ends_with(".receivepack") {
+        "git-receive-pack"
+    } else {
+        ""
+    }
+}
+
+/// The settings that replace the program settings the repository's own config sets (`local`,
+/// `worktree` scope, files it includes too), from `config -z --show-scope --get-regexp`
+/// (`scope\0key\nvalue\0…`): each such key gets its blank and then the user's own values for it
+/// again (system, global, command line), so the last one is theirs. Credential helpers are a
+/// list: it is reset and the user's helpers come back in their order. A key with `=` or a line
+/// break is refused.
+fn overrides(out: &[u8]) -> Result<Vec<(String, String)>, String> {
+    let mut words = out.split(|b| *b == 0).map(String::from_utf8_lossy);
+    let mut entries: Vec<(bool, String, String)> = Vec::new();
+    while let (Some(scope), Some(pair)) = (words.next(), words.next()) {
+        let (key, value) = pair.split_once('\n').unwrap_or((&pair, ""));
+        entries.push((matches!(&*scope, "local" | "worktree"), key.to_owned(), value.to_owned()));
+    }
+    let credential = |key: &str| key.starts_with("credential.");
+    let mut keys: Vec<&str> = Vec::new();
+    for (own, key, _) in &entries {
+        if *own && !keys.contains(&key.as_str()) {
+            if key.contains(['=', '\n', '\r']) {
+                return Err(format!(
+                    "the repository's setting \"{}\" has a name Gezik does not pass to git",
+                    key.escape_debug()
+                ));
+            }
+            keys.push(key);
+        }
+    }
+    let mut out = Vec::new();
+    for key in keys.iter().filter(|k| !credential(k)) {
+        out.push(((*key).to_owned(), blank(key).to_owned()));
+        out.extend(entries.iter().filter(|(own, k, _)| !own && k == key).map(|(_, k, v)| (k.clone(), v.clone())));
+    }
+    if keys.iter().any(|k| credential(k)) {
+        for key in keys.iter().filter(|k| credential(k)) {
+            out.push(((*key).to_owned(), String::new()));
+        }
+        out.extend(entries.iter().filter(|(own, k, _)| !own && credential(k)).map(|(_, k, v)| (k.clone(), v.clone())));
+    }
+    Ok(out)
+}
+
+/// An empty folder of Gezik's own for `core.hooksPath`: no hook runs (a repository's own
+/// `core.hooksPath` is overridden too). Made once a run.
+fn no_hooks() -> Result<PathBuf, Outcome> {
+    static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+    let mut dir = lock(&DIR);
+    if let Some(dir) = dir.as_ref().filter(|d| d.is_dir()) {
+        return Ok(dir.clone());
+    }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+    // shortcut: an empty folder left in the temp folder after Gezik quits; a cleanup is not
+    // worth its code.
+    let made = std::env::temp_dir().join(format!("gezik-no-hooks-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&made).map_err(|e| Outcome::Failed(e.to_string()))?;
+    *dir = Some(made.clone());
+    Ok(made)
+}
+
+/// Whether ssh must be told not to ask (`GIT_SSH_COMMAND=ssh -o BatchMode=yes`): neither the
+/// environment (`GIT_SSH`, `GIT_SSH_COMMAND`) nor the user's own config names an ssh command.
+pub fn batch_ssh(env_ssh: bool, user_ssh_command: bool) -> bool {
+    !env_ssh && !user_ssh_command
+}
+
+/// The git command `args` in `dir` as `trust` allows (spec 16 §9.4). Always: the program
+/// settings of the repository's own config replaced by the user's or nothing (a `git config`
+/// look first; a config that cannot be read refuses the command). `Local` and `Network`: no
+/// hooks at all. `Network`, `HooksNetwork`: transport by [`PROTOCOLS`] only, ssh never asks.
+/// Blocking.
 pub fn prepared(
     args: &[OsString],
     dir: &Path,
@@ -477,21 +563,43 @@ pub fn prepared(
     if network {
         config.retain(|(key, _)| key != "protocol.allow");
     }
-    if matches!(trust, Trust::Local | Trust::Network) {
-        let deadline = Instant::now() + Duration::from_secs(settings().timeout.into());
-        let listing = ["config", "-z", "--show-scope", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$"]
-            .map(OsString::from);
-        let (code, out, errors) = run(&program, &listing, dir, &config, deadline, stop)?;
-        for driver in drivers_from(code.code(), &out, &errors).map_err(Outcome::Failed)? {
-            for key in ["clean", "process"] {
-                config.push((format!("filter.{driver}.{key}"), String::new()));
-            }
-        }
+    let deadline = Instant::now() + Duration::from_secs(settings().timeout.into());
+    let listing = ["config", "-z", "--show-scope", "--get-regexp", PROGRAM_KEYS].map(OsString::from);
+    let (code, out, errors) = run(&program, &listing, dir, &config, deadline, stop)?;
+    if !matches!(code.code(), Some(0 | 1)) {
+        return Err(Outcome::Failed(format!("git too old or config unreadable: {}", first_line(&errors))));
     }
-    let mut command = command(&program, args, dir, &config);
+    let user_ssh = out.split(|b| *b == 0).collect::<Vec<_>>().chunks(2).any(|pair| {
+        pair.len() == 2 && !matches!(pair[0], b"local" | b"worktree") && pair[1].starts_with(b"core.sshcommand\n")
+    });
+    let (set, packs) = overrides(&out)
+        .map_err(Outcome::Failed)?
+        .into_iter()
+        .partition::<Vec<_>, _>(|(key, _)| !(key.ends_with(".uploadpack") || key.ends_with(".receivepack")));
+    config.extend(set);
+    if matches!(trust, Trust::Local | Trust::Network) {
+        config.push(("core.hooksPath".to_owned(), no_hooks()?.to_string_lossy().into_owned()));
+    }
+    let mut args = args.to_vec();
+    // A remote's upload-pack and receive-pack cannot be set twice (git keeps the first, the
+    // repository's): the command's own option replaces them (the user's value, else git's).
+    let pack = |end: &str| packs.iter().rev().find(|(key, _)| key.ends_with(end)).map(|(_, value)| value.clone());
+    let option = match args.first().and_then(|a| a.to_str()) {
+        Some("fetch" | "pull") => pack(".uploadpack").map(|v| format!("--upload-pack={v}")),
+        Some("push") => pack(".receivepack").map(|v| format!("--receive-pack={v}")),
+        _ => None,
+    };
+    if let Some(option) = option {
+        args.insert(1, option.into());
+    }
+    let mut command = command(&program, &args, dir, &config);
     command.env("GIT_LITERAL_PATHSPECS", "1");
     if network {
         command.env_remove("GIT_NO_LAZY_FETCH").env("GIT_ALLOW_PROTOCOL", PROTOCOLS);
+        let env_ssh = ["GIT_SSH", "GIT_SSH_COMMAND"].iter().any(|v| std::env::var_os(v).is_some_and(|v| !v.is_empty()));
+        if batch_ssh(env_ssh, user_ssh) {
+            command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+        }
     }
     Ok(command)
 }
@@ -596,8 +704,7 @@ mod tests {
         {
             // A FIFO would block an open() until a writer comes.
             let fifo = dir.join("fifo");
-            let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
-            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+            assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
             assert_eq!(read_small(&fifo), None);
         }
         let _ = std::fs::remove_dir_all(&dir);
@@ -665,6 +772,32 @@ mod tests {
         assert_eq!(parse_version("git version 2.39.5 (Apple Git-154)"), Some((2, 39)));
         assert_eq!(parse_version("hub version 2"), None);
         assert!(parse_version("git version 2.30.1").unwrap() < MIN_VERSION);
+    }
+
+    #[test]
+    fn the_repository_s_program_settings_give_way_to_the_user_s() {
+        let out = b"global\0filter.lfs.smudge\ngit-lfs smudge\0local\0filter.lfs.smudge\nevil\0\
+            global\0credential.helper\nmanager\0local\0credential.helper\n!evil\0\
+            worktree\0credential.https://x.helper\n!evil2\0local\0remote.origin.uploadpack\nevil\0\
+            local\0merge.m.driver\nevil\0local\0core.sshcommand\nevil\0";
+        let set = overrides(out).unwrap();
+        let pairs: Vec<(&str, &str)> = set.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(
+            pairs,
+            [
+                ("filter.lfs.smudge", ""),
+                ("filter.lfs.smudge", "git-lfs smudge"),
+                ("remote.origin.uploadpack", "git-upload-pack"),
+                ("merge.m.driver", "git merge-file --marker-size=%L %A %O %B"),
+                ("core.sshcommand", ""),
+                ("credential.helper", ""),
+                ("credential.https://x.helper", ""),
+                ("credential.helper", "manager"),
+            ]
+        );
+        assert!(overrides(b"global\0core.sshcommand\nmine\0").unwrap().is_empty(), "the user's own stay as they are");
+        assert!(overrides(b"local\0filter.a=b.smudge\nx\0").is_err());
+        assert!(batch_ssh(false, false) && !batch_ssh(true, false) && !batch_ssh(false, true));
     }
 
     #[test]
