@@ -165,7 +165,9 @@ preview-limit = 64        # MB: files inside an archive up to this size are extr
 - **PDF**: Images to PDF, Merge PDFs, Split PDF, PDF to images, Extract pages (with pdfium).
 - **Your own commands** from `[[commands]]` (see the template's comments): a program and its
   arguments with placeholders like `{in}` and `{out}`, no shell. A command can have a
-  `shortcut`, a `menu` heading and an `ask` question.
+  `shortcut`, a `menu` heading (`menu = "Images/Resize"`: a heading under a heading) and an
+  `ask` question. With two panes, `{other}` is the other pane's folder and `{other-files}` its
+  selected items, so a two-file tool works: `run = ["meld", "{files}", "{other-files}"]`.
 
 When ffmpeg, 7-Zip or pdfium is needed and not found, Gezik offers to download it (checked
 against a fixed SHA-256) or uses the one on PATH.

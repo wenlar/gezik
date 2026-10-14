@@ -10,12 +10,12 @@ Rakip kısaltmaları rakip özetindeki gibi: OC, Fi, DO, FP, Far, FL, PF, TC.
 
 | Durum | §1 tablosu (66 satır) | Önerilmeyenler (13 madde) |
 |---|---|---|
-| ✅ Var | 53 | 0 |
-| 🟡 Kısmen | 7 | 0 |
+| ✅ Var | 54 | 0 |
+| 🟡 Kısmen | 6 | 0 |
 | 🔜 Planlı | 5 | 0 |
 | ❌ Yok / bilerek kapsam dışı | 1 | 13 |
 
-Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65); 15. adım satır 9'u; 16. adım (16a, 16b) satır 12'yi.
+Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65); 15. adım satır 9'u; 16. adım (16a, 16b) satır 12'yi; commands-more satır 30'u.
 
 ## Ana tablo
 
@@ -52,7 +52,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 27 | Komut paleti / Quick Open | 4/8 | Planlı | ✅ Var | 8b (#29): Ctrl+Shift+P, Ctrl+P, `>` |
 | 28 | Sekme kolaylıkları (kapatılanı aç, Ctrl+1…9, seçici) | 5/8 | Yok | ✅ Var | 6a (#13): Ctrl+Shift+T, Ctrl+1…9, Ctrl+Shift+A |
 | 29 | Desenle seç/bırak, ters çevir, aynı uzantı, önceki seçim | 5/8 | Yok | ✅ Var | 6a (#13) |
-| 30 | `[[commands]]` büyütme (kısayol, alt menü, `ask`, `{files}`, diğer panel, iki dosya) | 5/8 | Kısmen | 🟡 Kısmen | 6b (#14): `shortcut`, `menu`, `ask`, `{files}`. Diğer bölme yer tutucusu ve iç içe menü yok |
+| 30 | `[[commands]]` büyütme (kısayol, alt menü, `ask`, `{files}`, diğer panel, iki dosya) | 5/8 | Kısmen | ✅ Var | 6b (#14): `shortcut`, `menu`, `ask`, `{files}`; commands-more: `{other}`, `{other-files}`, `menu = "Resimler/Boyut"` (iç içe başlık) |
 | 31 | Sağlama toplamı | 5/8 | Yok | ✅ Var | 11a (#78): CRC32–SHA-512, doğrulama, CSV |
 | 32 | Klasör ağacı | 5/8 | Yok | ✅ Var | 10c (#59): kenar çubuğunda |
 | 33 | Çöp kutusu görünümü | 5/8 | Kısmen (Ctrl+Z) | ✅ Var | 9b2 (#37): Put Back, kalıcı sil, boşalt |

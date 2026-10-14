@@ -3332,8 +3332,8 @@ msgstr "GIF a partir de vídeo"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be used with {in}, {name}, {ext}, {out} or output"
-msgstr "{files} no se puede usar con {in}, {name}, {ext}, {out} ni output"
+msgid "{{{}}} can't be used with {in}, {name}, {ext}, {out} or output"
+msgstr "{{{}}} no se puede usar con {in}, {name}, {ext}, {out} ni output"
 
 #. a setting's text is wrong; {} is that text.
 #: crates/gezik-core/src/batch/convert.rs
@@ -3358,13 +3358,13 @@ msgstr "el comando no tiene programa"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be the program"
-msgstr "{files} no puede ser el programa"
+msgid "{{{}}} can't be the program"
+msgstr "{{{}}} no puede ser el programa"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} must be an argument of its own"
-msgstr "{files} debe ser un argumento aparte"
+msgid "{{{}}} must be an argument of its own"
+msgstr "{{{}}} debe ser un argumento aparte"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -3395,6 +3395,21 @@ msgstr "parallel debe estar entre 1 y 16, no {}"
 #, fuzzy
 msgid "{files} runs once on all the items"
 msgstr "{files} se ejecuta una vez sobre todos los elementos"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "needs the second pane"
+msgstr "necesita el segundo panel"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "{} is not a name a command can take"
+msgstr "{} no es un nombre que un comando pueda recibir"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "select the items in the other pane"
+msgstr "selecciona los elementos en el otro panel"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -9821,6 +9836,11 @@ msgstr "La ventana es demasiado estrecha para dos paneles"
 #, fuzzy
 msgid "The preview pane closed to keep room for two panes"
 msgstr "El panel de vista previa se cerró para dejar sitio a dos paneles"
+
+#: crates/gezik/src/dual.rs
+#, fuzzy
+msgid "the other pane shows no folder on disk"
+msgstr "el otro panel no muestra una carpeta del disco"
 
 #: crates/gezik/src/dual.rs
 #, fuzzy

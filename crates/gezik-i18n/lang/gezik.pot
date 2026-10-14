@@ -2746,7 +2746,7 @@ msgid "GIF from video"
 msgstr ""
 
 #: crates/gezik-core/src/batch/convert.rs
-msgid "{files} can't be used with {in}, {name}, {ext}, {out} or output"
+msgid "{{{}}} can't be used with {in}, {name}, {ext}, {out} or output"
 msgstr ""
 
 #. a setting's text is wrong; {} is that text.
@@ -2767,11 +2767,11 @@ msgid "the command has no program"
 msgstr ""
 
 #: crates/gezik-core/src/batch/convert.rs
-msgid "{files} can't be the program"
+msgid "{{{}}} can't be the program"
 msgstr ""
 
 #: crates/gezik-core/src/batch/convert.rs
-msgid "{files} must be an argument of its own"
+msgid "{{{}}} must be an argument of its own"
 msgstr ""
 
 #: crates/gezik-core/src/batch/convert.rs
@@ -2796,6 +2796,18 @@ msgstr ""
 
 #: crates/gezik-core/src/batch/convert.rs
 msgid "{files} runs once on all the items"
+msgstr ""
+
+#: crates/gezik-core/src/batch/convert.rs
+msgid "needs the second pane"
+msgstr ""
+
+#: crates/gezik-core/src/batch/convert.rs
+msgid "{} is not a name a command can take"
+msgstr ""
+
+#: crates/gezik-core/src/batch/convert.rs
+msgid "select the items in the other pane"
 msgstr ""
 
 #: crates/gezik-core/src/batch/convert.rs
@@ -8031,6 +8043,10 @@ msgstr ""
 
 #: crates/gezik/src/dual.rs
 msgid "The preview pane closed to keep room for two panes"
+msgstr ""
+
+#: crates/gezik/src/dual.rs
+msgid "the other pane shows no folder on disk"
 msgstr ""
 
 #: crates/gezik/src/dual.rs

@@ -3315,8 +3315,8 @@ msgstr "从视频生成 GIF"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be used with {in}, {name}, {ext}, {out} or output"
-msgstr "{files} 不能与 {in}、{name}、{ext}、{out} 或 output 一起使用"
+msgid "{{{}}} can't be used with {in}, {name}, {ext}, {out} or output"
+msgstr "{{{}}} 不能与 {in}、{name}、{ext}、{out} 或 output 一起使用"
 
 #. a setting's text is wrong; {} is that text.
 #: crates/gezik-core/src/batch/convert.rs
@@ -3341,13 +3341,13 @@ msgstr "命令没有程序"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be the program"
-msgstr "{files} 不能作为程序"
+msgid "{{{}}} can't be the program"
+msgstr "{{{}}} 不能作为程序"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} must be an argument of its own"
-msgstr "{files} 必须是单独的参数"
+msgid "{{{}}} must be an argument of its own"
+msgstr "{{{}}} 必须是单独的参数"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -3378,6 +3378,21 @@ msgstr "parallel 必须为 1-16，而不是 {}"
 #, fuzzy
 msgid "{files} runs once on all the items"
 msgstr "{files} 对所有项目运行一次"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "needs the second pane"
+msgstr "需要第二个窗格"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "{} is not a name a command can take"
+msgstr "{} 不是命令可以接受的名称"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "select the items in the other pane"
+msgstr "请在另一个窗格中选择项目"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -9717,6 +9732,11 @@ msgstr "窗口太窄，无法显示双窗格"
 #, fuzzy
 msgid "The preview pane closed to keep room for two panes"
 msgstr "预览窗格已关闭，以便为双窗格留出空间"
+
+#: crates/gezik/src/dual.rs
+#, fuzzy
+msgid "the other pane shows no folder on disk"
+msgstr "另一个窗格没有显示磁盘上的文件夹"
 
 #: crates/gezik/src/dual.rs
 #, fuzzy

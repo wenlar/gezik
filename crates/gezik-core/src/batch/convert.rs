@@ -631,19 +631,29 @@ pub struct CommandSpec {
     /// The key that runs it on the selection (`shortcut`, written as `[shortcuts]` writes
     /// keys); the shortcut table checks it.
     pub shortcut: Option<String>,
-    /// The heading it goes under in "Commands ▸" (`menu`).
+    /// The heading it goes under in "Commands ▸" (`menu`): its parts trimmed, joined by `/`
+    /// (`Images/Resize`).
     pub menu: Option<String>,
     /// Asks "Run … on N items?" before it runs (`ask`).
     pub ask: bool,
 }
 
-const PLACEHOLDERS: [&str; 7] = ["in", "out", "dir", "name", "ext", "outdir", "files"];
+const PLACEHOLDERS: [&str; 9] = ["in", "out", "dir", "name", "ext", "outdir", "files", "other", "other-files"];
+
+/// The placeholders that run a command once on all the items, each an argument of its own:
+/// the selection and the other pane's selection.
+const ONCE: [&str; 2] = ["files", "other-files"];
 
 pub const FILES_ALONE: &str = "{files} can't be used with {in}, {name}, {ext}, {out} or output";
 
-/// [`FILES_ALONE`] in the language in use.
-fn files_alone() -> String {
-    t!("{files} can't be used with {in}, {name}, {ext}, {out} or output").into_owned()
+/// [`FILES_ALONE`] for `field` (`files`, `other-files`) in the language in use.
+fn files_alone(field: &str) -> String {
+    t!("{{{}}} can't be used with {in}, {name}, {ext}, {out} or output", field)
+}
+
+/// The first of [`ONCE`] in an argument's `pieces`.
+fn once_field<'t>(pieces: &[Result<String, &'t str>]) -> Option<&'t str> {
+    pieces.iter().find_map(|piece| piece.as_ref().err().copied().filter(|field| ONCE.contains(field)))
 }
 
 /// Splits `text` into literal pieces and placeholders; `{{` and `}}` are literal braces.
@@ -754,26 +764,32 @@ pub fn check_command(spec: &CommandSpec) -> Result<(), String> {
     if spec.run.first().is_none_or(|program| program.trim().is_empty()) {
         return Err(t!("run has no program").into_owned());
     }
-    let files = uses_files(spec);
-    if spec.run.first().is_some_and(|program| pieces(program).is_ok_and(|p| p.contains(&Err("files")))) {
-        return Err(t!("{files} can't be the program").into_owned());
+    let once = spec.run.iter().find_map(|arg| pieces(arg).ok().and_then(|pieces| once_field(&pieces)));
+    if let Some(field) = spec.run.first().and_then(|program| pieces(program).ok()).and_then(|p| once_field(&p)) {
+        return Err(t!("{{{}}} can't be the program", field));
     }
     for arg in &spec.run {
         let pieces = pieces(arg)?;
-        if pieces.contains(&Err("files")) && pieces.len() != 1 {
-            return Err(t!("{files} must be an argument of its own").into_owned());
+        if let Some(field) = once_field(&pieces)
+            && pieces.len() != 1
+        {
+            return Err(t!("{{{}}} must be an argument of its own", field));
         }
         for piece in &pieces {
-            if files && matches!(piece, Err("in" | "name" | "ext" | "out")) {
-                return Err(files_alone());
+            if let Some(field) = once
+                && matches!(piece, Err("in" | "name" | "ext" | "out"))
+            {
+                return Err(files_alone(field));
             }
             if *piece == Err("out") && spec.output.is_none() {
                 return Err(t!("{out} needs an output").into_owned());
             }
         }
     }
-    if files && spec.output.is_some() {
-        return Err(files_alone());
+    if let Some(field) = once
+        && spec.output.is_some()
+    {
+        return Err(files_alone(field));
     }
     if let Some(output) = &spec.output {
         for piece in pieces(output)? {
@@ -828,7 +844,8 @@ pub fn expand_command(
                     Err("name") => expanded.push(name_of(input, is_dir)),
                     Err("ext") => expanded.push(ext_of(input, is_dir)),
                     Err("outdir") => expanded.push(outdir),
-                    Err("files") => return Err(t!("{files} runs once on all the items").into_owned()),
+                    Err("files" | "other-files") => return Err(t!("{files} runs once on all the items").into_owned()),
+                    Err("other") => return Err(needs_other()),
                     Err(field) => unreachable!("pieces lets through only known placeholders, not {field}"),
                 }
             }
@@ -867,9 +884,53 @@ pub fn expand_output_name(template: &str, input: &Path, is_dir: bool) -> Result<
     Ok(name)
 }
 
-/// Whether `spec` runs once on the whole selection (`{files}` in `run`).
+/// Whether `spec` runs once on the whole selection (`{files}` or `{other-files}` in `run`).
 pub fn uses_files(spec: &CommandSpec) -> bool {
-    spec.run.iter().any(|arg| pieces(arg).is_ok_and(|pieces| pieces.contains(&Err("files"))))
+    spec.run.iter().any(|arg| pieces(arg).is_ok_and(|pieces| once_field(&pieces).is_some()))
+}
+
+/// Whether `spec` uses the other pane: `{other}` (its folder) or `{other-files}` (its
+/// selected items).
+pub fn uses_other(spec: &CommandSpec) -> bool {
+    spec.run.iter().any(|arg| pieces(arg).is_ok_and(|p| p.contains(&Err("other")) || p.contains(&Err("other-files"))))
+}
+
+/// Why a command with `{other}` or `{other-files}` cannot run: one pane only.
+pub fn needs_other() -> String {
+    t!("needs the second pane").into_owned()
+}
+
+/// `spec` with the other pane put in: `{other}` becomes its folder `other`, `{other-files}`
+/// one argument per item of `other_files` (absolute); the rest stays for `expand_command` or
+/// `expand_files_command` (braces in the paths are doubled). A `{other-files}` command whose
+/// `{files}` is not there no longer says it runs once: the caller keeps that (`uses_files`).
+pub fn with_other(spec: &CommandSpec, other: &Path, other_files: &[PathBuf]) -> Result<CommandSpec, String> {
+    // `run` is text: a name that is not Unicode cannot go into it.
+    let text = |path: &Path| {
+        let text = path.to_str().ok_or_else(|| t!("{} is not a name a command can take", path.display()))?;
+        Ok::<_, String>(text.replace('{', "{{").replace('}', "}}"))
+    };
+    let mut run = Vec::with_capacity(spec.run.len() + other_files.len());
+    for arg in &spec.run {
+        let pieces = pieces(arg)?;
+        if pieces == [Err("other-files")] {
+            if other_files.is_empty() {
+                return Err(t!("select the items in the other pane").into_owned());
+            }
+            run.extend(other_files.iter().map(|file| text(file)).collect::<Result<Vec<_>, _>>()?);
+            continue;
+        }
+        let mut filled = String::new();
+        for piece in pieces {
+            match piece {
+                Ok(literal) => filled.push_str(&literal.replace('{', "{{").replace('}', "}}")),
+                Err("other") => filled.push_str(&text(other)?),
+                Err(field) => filled.push_str(&format!("{{{field}}}")),
+            }
+        }
+        run.push(filled);
+    }
+    Ok(CommandSpec { run, ..spec.clone() })
 }
 
 /// The program and arguments for running `spec` (a `{files}` command) once on `files`
@@ -894,6 +955,7 @@ pub fn expand_files_command(spec: &CommandSpec, dir: &Path, files: &[PathBuf]) -
             match piece {
                 Ok(text) => expanded.push(text),
                 Err("dir" | "outdir") => expanded.push(dir),
+                Err("other" | "other-files") => return Err(needs_other()),
                 Err(field) => return Err(t!("{{{}}} can't be used with {files}", field)),
             }
         }
@@ -1526,6 +1588,47 @@ mod tests {
         let per_item = command(&["t", "{files}"], None, &[]);
         assert!(expand_command(&per_item, &root().join("a"), false, None).is_err(), "never one item at a time");
         assert!(!uses_files(&command(&["t", "{in}", "{{files}}"], None, &[])), "escaped braces are text");
+    }
+
+    #[test]
+    fn the_other_pane_goes_in_before_the_rest() {
+        let other = root().join("right {x}");
+        let picked = [other.join("b 1.txt"), other.join("c.txt")];
+        let diff = command(&["diff", "{files}", "{other-files}", "--to={other}", "x{{y}}"], None, &[]);
+        assert!(uses_files(&diff) && uses_other(&diff) && check_command(&diff).is_ok());
+        let filled = with_other(&diff, &other, &picked).unwrap();
+        assert!(!uses_other(&filled));
+        let dir = root().join("left");
+        let mine = [dir.join("a.txt")];
+        let list = expand_files_command(&filled, &dir, &mine).unwrap();
+        let mut to = OsString::from("--to=");
+        to.push(&other);
+        assert_eq!(list, [OsString::from("diff"), mine[0].clone().into(), picked[0].clone().into(), picked[1].clone().into(), to, "x{y}".into()]);
+        assert_eq!(with_other(&diff, &other, &[]).unwrap_err(), "select the items in the other pane");
+        // Per item: {other} is a folder like {dir}.
+        let per_item = command(&["cp", "{in}", "{other}"], None, &[]);
+        assert!(!uses_files(&per_item) && uses_other(&per_item) && check_command(&per_item).is_ok());
+        assert_eq!(expand_command(&per_item, &mine[0], false, None).unwrap_err(), "needs the second pane");
+        let list = expand_command(&with_other(&per_item, &other, &[]).unwrap(), &mine[0], false, None).unwrap();
+        assert_eq!(list[2], other.as_os_str());
+        // {other-files} alone runs once, as {files} does.
+        let copy_here = command(&["cp", "{other-files}", "{dir}"], None, &[]);
+        assert!(uses_files(&copy_here) && check_command(&copy_here).is_ok());
+    }
+
+    #[test]
+    fn other_files_stands_alone() {
+        let check = |run: &[&str], output: Option<&str>| check_command(&command(run, output, &[]));
+        assert_eq!(check(&["t", "-{other-files}"], None).unwrap_err(), "{other-files} must be an argument of its own");
+        assert_eq!(check(&["{other-files}"], None).unwrap_err(), "{other-files} can't be the program");
+        assert_eq!(
+            check(&["t", "{other-files}", "{in}"], None).unwrap_err(),
+            "{other-files} can't be used with {in}, {name}, {ext}, {out} or output"
+        );
+        assert!(check(&["t", "{other-files}"], Some("{name}.x")).is_err());
+        assert!(check(&["t", "{dir}", "{other}", "{files}", "{other-files}"], None).is_ok());
+        assert!(check(&["t", "{other}/{name}.{ext}", "{in}"], None).is_ok());
+        assert!(check(&["t"], Some("{other}.x")).is_err(), "output takes {{name}} and {{ext}} only");
     }
 
     #[test]

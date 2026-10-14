@@ -27,7 +27,7 @@ use gezik_config::store::ConfigStore;
 use gezik_core::batch::convert::{
     CommandSpec, Eol, ImageFormat, ImageOptions, Kind, Output, PRESETS, Preset, PresetWhat, Resize, TextOptions,
     command_applies, command_line_len, expand_files_command, image_inputs, media_inputs, needs_ffmpeg_to_read,
-    too_many_text, uses_files,
+    too_many_text, uses_files, uses_other, with_other,
 };
 use gezik_core::batch::pdf::{
     PageImage, PdfOp, RENDER_DPIS, Split, is_pdf, is_pdf_picture, ops_for, pictures_pdf_name,
@@ -282,7 +282,8 @@ enum Line<'a> {
 }
 
 /// The commands `shown` (indices into `commands`) in menu order: those without a `menu`
-/// first, then each group under its heading, groups in the order they first appear.
+/// first, then each group under its heading, groups in the order they first appear; a group
+/// under another (`Images/Resize`) right after the one above it.
 fn grouped<'a>(commands: &'a [CommandSpec], shown: &[usize]) -> Vec<Line<'a>> {
     let mut lines: Vec<Line> =
         shown.iter().filter(|i| commands[**i].menu.is_none()).map(|i| Line::Command(*i)).collect();
@@ -294,11 +295,28 @@ fn grouped<'a>(commands: &'a [CommandSpec], shown: &[usize]) -> Vec<Line<'a>> {
             groups.push(group);
         }
     }
-    for group in groups {
+    // Each of a group's parts sorts by where it first shows: `Images` before `Images/Resize`.
+    let first = |part: &str| {
+        groups.iter().position(|g| g.strip_prefix(part).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')))
+    };
+    let mut keyed: Vec<(Vec<Option<usize>>, &str)> = groups
+        .iter()
+        .map(|group| {
+            let parts = group.match_indices('/').map(|(at, _)| &group[..at]).chain([*group]);
+            (parts.map(first).collect(), *group)
+        })
+        .collect();
+    keyed.sort();
+    for (_, group) in keyed {
         lines.push(Line::Heading(group));
         lines.extend(shown.iter().filter(|i| commands[**i].menu.as_deref() == Some(group)).map(|i| Line::Command(*i)));
     }
     lines
+}
+
+/// A group's heading: its parts joined by " ▸ " (`Images ▸ Resize`), cut to fit.
+fn heading(group: &str) -> String {
+    shown_name(&group.replace('/', " ▸ "))
 }
 
 /// Why `spec` runs on none of the items it was asked to (spec 7): by its endings, else
@@ -333,7 +351,7 @@ pub fn bar_entries(commands: &[CommandSpec], key_of: impl Fn(usize) -> Option<St
     grouped(commands, &shown)
         .into_iter()
         .map(|line| match line {
-            Line::Heading(group) => (-1, shown_name(group), false),
+            Line::Heading(group) => (-1, heading(group), false),
             Line::Command(i) => {
                 let key = key_of(i).unwrap_or_default();
                 (i32::try_from(i).unwrap_or(-1), format!("{}    {key}", shown_name(&commands[i].name)), true)
@@ -355,7 +373,7 @@ pub fn menu_entries(items: &[(PathBuf, bool)], commands: &[CommandSpec], states:
     let sub: Vec<(u32, String, bool)> = grouped(commands, &shown)
         .into_iter()
         .map(|line| match line {
-            Line::Heading(group) => (COMMAND_GROUP, shown_name(group), false),
+            Line::Heading(group) => (COMMAND_GROUP, heading(group), false),
             Line::Command(i) => {
                 let (title, enabled) = command_title(&commands[i], &states[i]);
                 (COMMAND_FIRST + i as u32, title, enabled)
@@ -2267,13 +2285,26 @@ impl Convert {
     }
 
     /// Runs a user command on the `items` it takes, as one job undone as one action (a
-    /// `{files}` run: nothing to undo, which the panel says).
+    /// `{files}` run: nothing to undo, which the panel says). `{other}` and `{other-files}`
+    /// are the other pane's as it is now; without one (or its folder) the status bar says why.
     fn run_command(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
         let items: Vec<(PathBuf, bool)> =
             items.into_iter().filter(|(p, d)| command_applies(&spec, &name_of(p), *d)).collect();
         if items.is_empty() {
             return;
         }
+        let once = uses_files(&spec);
+        if !uses_other(&spec) {
+            return self.submit_command(spec, items, once);
+        }
+        match crate::dual::for_command().and_then(|(dir, files)| with_other(&spec, &dir, &files)) {
+            Ok(filled) => self.submit_command(filled, items, once),
+            Err(why) => self.note(t!("{0} — {1}", spec.name, why)),
+        }
+    }
+
+    /// `run_command` with the other pane put in; `once`: a `{files}` or `{other-files}` run.
+    fn submit_command(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>, once: bool) {
         let paths: Vec<PathBuf> = items.iter().map(|(p, _)| p.clone()).collect();
         // TRANSLATORS: an undo label; {0} is a command's name, {1} a file name or "3 items".
         let label = t!("{0} on {1}", spec.name, items_text(&paths));
@@ -2282,12 +2313,15 @@ impl Convert {
             let (spec, items) = (spec.clone(), items.clone());
             Rc::new(move || {
                 let (spec, items) = (spec.clone(), items.clone());
-                with_current(|this| this.run_command(spec, items));
+                with_current(|this| this.submit_command(spec, items, once));
             })
         };
         self.0.ops.remember_for(&paths);
-        let once = uses_files(&spec);
-        let task: Box<dyn gezik_ops::Task> = Box::new(CommandTask::new(items, spec));
+        let task: Box<dyn gezik_ops::Task> = if once {
+            Box::new(CommandTask::once(items, spec))
+        } else {
+            Box::new(CommandTask::new(items, spec))
+        };
         if once {
             // What it did is not known: nothing to undo (spec 7), and the panel says so.
             let id = self.0.ops.submit_chain(vec![task], None, Some(again), After::Nothing);
@@ -2760,6 +2794,27 @@ mod tests {
                 (COMMAND_GROUP, "Images".to_owned(), false),
                 (COMMAND_FIRST + 1, "Small".to_owned(), true),
             ]
+        );
+    }
+
+    #[test]
+    fn a_group_under_another_follows_it_with_its_path() {
+        let grouped = |name: &str, group: &str| CommandSpec {
+            menu: Some(group.to_owned()),
+            ..spec(name, &["x", "{in}"], None, &[], false)
+        };
+        let commands = vec![
+            grouped("Half", "Images/Resize"),
+            grouped("Zip", "Archives"),
+            grouped("Grey", "Images"),
+            grouped("Tar", "Archives/Old"),
+            grouped("Big", "Images/Resize"),
+        ];
+        let (_, sub) = menu_entries(&[file("a.jpg")], &commands, &vec![CommandState::Ready; 5]);
+        let titles: Vec<String> = sub.unwrap().into_iter().map(|(_, title, _)| title).collect();
+        assert_eq!(
+            titles,
+            ["Images", "Grey", "Images ▸ Resize", "Half", "Big", "Archives", "Zip", "Archives ▸ Old", "Tar"]
         );
     }
 
