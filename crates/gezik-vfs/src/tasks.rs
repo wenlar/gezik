@@ -108,7 +108,7 @@ impl Task for TakeOutTask {
         // The archive's file stands for the place: jobs on it and on the target's drive queue.
         let mut paths = vec![self.dest.clone()];
         paths.extend(disk_of(&self.root).map(Path::to_path_buf));
-        Resources { paths, work: Work::Disk }
+        Resources { paths, work: Work::Disk, vfs_roots: crate::queue_key(&self.root).into_iter().collect() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
@@ -179,6 +179,7 @@ impl VfsEditTask {
                 Edit::Put { to: name, .. }
                 | Edit::MakeDir(name)
                 | Edit::Delete(name)
+                | Edit::Unmake { path: name, .. }
                 | Edit::Rename { from: name, .. } => last(name).to_owned(),
             })
             .collect();
@@ -227,12 +228,21 @@ impl VfsEditTask {
     }
 
     /// Entries of a place copied (`moving`: moved) into folder `dir`; within one archive a
-    /// move is a rename.
+    /// move is a rename. A move leaves out what is `dir` itself or holds it, and what is in
+    /// `dir` already (`movable`).
     pub fn copy_in(items: &[VfsPath], dir: &VfsPath, moving: bool) -> VfsEditTask {
+        let kept;
+        let items = if moving {
+            kept = movable(items, dir);
+            kept.as_slice()
+        } else {
+            items
+        };
         let names: Vec<String> = items.iter().map(|item| last(&item.inner).to_owned()).collect();
         let from = items.first().map(|item| item.root.clone());
         let mut task = match from {
-            Some(from) if moving && crate::same_root(&from, &dir.root) => {
+            // On a phone a move between folders is a copy and a delete (MTP has no cheap move).
+            Some(from) if moving && crate::same_root(&from, &dir.root) && crate::queue_key(&from).is_none() => {
                 let edits = items
                     .iter()
                     .map(|item| Edit::Rename { from: item.inner.clone(), to: dir.join(last(&item.inner)).inner })
@@ -289,6 +299,21 @@ impl VfsEditTask {
         if !vfs.caps().has(Caps::WRITE) {
             return Err(read_only());
         }
+        if vfs.device() {
+            // A phone: each edit on its own, after one question for names taken.
+            let Some((edits, replace)) = settle_on_device(vfs.as_ref(), edits, self.replace, run)? else {
+                return Ok(None);
+            };
+            let applied = vfs.apply(&edits, replace, &cx)?;
+            // Stopped early: what was done stays undoable; a phone gone is a failure row.
+            if let Some(err) = &applied.ended
+                && err.kind() != io::ErrorKind::Interrupted
+            {
+                run.fail(Path::new(&root.text()), err);
+            }
+            let done = gezik_batch::tasks::Rewritten { sources: applied.sources, seen: (0, None) };
+            return Ok(Some((Outcome::Several(applied.outcomes), done)));
+        }
         // Held while writing: an archive in an archive is a file in that one's folder, which
         // goes when it is let go of.
         let (file, password) = vfs.archive().ok_or_else(read_only)?;
@@ -332,13 +357,23 @@ impl Task for VfsEditTask {
         let mut paths: Vec<PathBuf> = disk_of(&self.root).map(Path::to_path_buf).into_iter().collect();
         paths.extend(put_sources(&self.edits));
         paths.extend(self.take.as_ref().and_then(|(from, _)| disk_of(from)).map(Path::to_path_buf));
-        Resources { paths, work: Work::Cpu }
+        // A phone stands for itself: two jobs on one phone queue (one session, one worker).
+        let vfs_roots: Vec<String> = crate::queue_key(&self.root)
+            .into_iter()
+            .chain(self.take.as_ref().and_then(|(from, _)| crate::queue_key(from)))
+            .collect();
+        let work = if vfs_roots.is_empty() { Work::Cpu } else { Work::Disk };
+        Resources { paths, work, vfs_roots }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
         match disk_of(&self.root) {
             Some(disk) => plan_archive(disk, sink),
-            None => sink.failed(Path::new(&self.root.text()), io::ErrorKind::Unsupported.into()),
+            // A phone: one item, the edits done one by one in it.
+            None => {
+                let facts = Facts { is_dir: false, size: 0, modified: None };
+                sink.item(PlanItem::new(Stage::Parallel, facts).source(self.root.text()).top(0).uncounted());
+            }
         }
     }
 
@@ -358,8 +393,8 @@ impl Task for VfsEditTask {
                 return Ok(Outcome::Nothing);
             }
         }
-        let disk = disk_of(&self.root).ok_or_else(|| io::Error::from(io::ErrorKind::Unsupported))?;
-        let trash = run.has_trash(disk);
+        // A phone has no trash, nor needs one: no old archive is kept there.
+        let trash = disk_of(&self.root).is_none_or(|disk| run.has_trash(disk));
         let source_trash =
             self.take.as_ref().and_then(|(from, _)| disk_of(from)).is_none_or(|from| run.has_trash(from));
         if (!trash || (self.moving && !source_trash)) && !confirm_no_trash(run)? {
@@ -391,7 +426,7 @@ impl Task for VfsEditTask {
             }
             None => None,
         };
-        if self.replace {
+        if self.replace && crate::queue_key(&self.root).is_none() {
             let cx = Engine::new(run, &self.root);
             let vfs = crate::mount(&self.root, &cx)?;
             edits = edits
@@ -441,6 +476,80 @@ impl Task for VfsEditTask {
     }
 }
 
+/// On a phone, the puts whose names are taken there (a folder onto a folder merges) are asked
+/// about once (Replace / Skip / Keep both); replacing where the phone cannot rename asks again,
+/// since the old file then goes first. `replace` (Update): replaced without asking. The edits
+/// to apply and whether they replace; `None`: cancelled.
+fn settle_on_device(
+    vfs: &dyn crate::Vfs,
+    mut edits: Vec<Edit>,
+    replace: bool,
+    run: &RunCx<'_>,
+) -> io::Result<Option<(Vec<Edit>, bool)>> {
+    let mut read = HashSet::new();
+    let mut taken = |to: &str, is_dir: bool| {
+        let dir = to.rsplit_once('/').map_or("", |(up, _)| up).to_owned();
+        if read.insert(dir.clone()) {
+            let _ = vfs.list(&dir);
+        }
+        vfs.is_file(to) || (vfs.is_dir(to) && !is_dir)
+    };
+    let clashes: Vec<usize> = edits
+        .iter()
+        .enumerate()
+        .filter(|(_, edit)| matches!(edit, Edit::Put { from, to } if taken(to, from.is_dir())))
+        .map(|(i, _)| i)
+        .collect();
+    if clashes.is_empty() || replace {
+        return Ok(Some((edits, replace)));
+    }
+    let names: Vec<&str> = clashes.iter().map(|&i| last(edit_name(&edits[i]))).collect();
+    let title = gezik_i18n::tn!("{n} item already on the phone" | "{n} items already on the phone", names.len());
+    let buttons = [t("Replace"), t("Skip"), t("Keep both"), t("Cancel")].to_vec();
+    let mut message = names.join("\n");
+    // A file put where a folder is: Replace deletes the folder with what it holds.
+    if clashes.iter().any(|&i| vfs.is_dir(edit_name(&edits[i]))) {
+        message.push_str("\n\n");
+        message.push_str(&gezik_i18n::t!("Replace deletes a folder of that name with everything in it."));
+    }
+    match run.ask(Question::Confirm { title, message, buttons }) {
+        Answer::Button(0) => {
+            if clashes.iter().any(|&i| !vfs.can_rename(edit_name(&edits[i]))) {
+                let title = gezik_i18n::t!("Replace on the phone?").into_owned();
+                let message = gezik_i18n::t!("The old file is deleted before the new one is written").into_owned();
+                let buttons = vec![t("Replace"), t("Cancel")];
+                if run.ask(Question::Confirm { title, message, buttons }) != Answer::Button(0) {
+                    return Ok(None);
+                }
+            }
+            Ok(Some((edits, true)))
+        }
+        Answer::Button(1) => {
+            let kept = edits.into_iter().enumerate().filter(|(i, _)| !clashes.contains(i)).map(|(_, e)| e).collect();
+            Ok(Some((kept, false)))
+        }
+        Answer::Button(2) => {
+            for &i in &clashes {
+                if let Edit::Put { from, to } = &mut edits[i] {
+                    let dir = to.rsplit_once('/').map_or(String::new(), |(up, _)| format!("{up}/"));
+                    let free = gezik_core::ops::names::next_free(last(to), from.is_dir(), |name| {
+                        let path = format!("{dir}{name}");
+                        vfs.is_file(&path) || vfs.is_dir(&path)
+                    });
+                    *to = format!("{dir}{free}");
+                }
+            }
+            Ok(Some((edits, false)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// A button's text.
+fn t(text: &'static str) -> String {
+    gezik_i18n::t("", text).into_owned()
+}
+
 fn flatten(outcome: Outcome, into: &mut Vec<Outcome>) {
     match outcome {
         Outcome::Several(all) => into.extend(all),
@@ -448,10 +557,35 @@ fn flatten(outcome: Outcome, into: &mut Vec<Outcome>) {
     }
 }
 
+/// The items a move into folder `dir` may take: in one place, not `dir` nor a folder holding
+/// it (it would go into itself), nor what is in `dir` already (it would replace itself).
+pub fn movable(items: &[VfsPath], dir: &VfsPath) -> Vec<VfsPath> {
+    items
+        .iter()
+        .filter(|item| {
+            if !crate::same_root(&item.root, &dir.root) {
+                return true;
+            }
+            let fold = |s: &str| {
+                if cfg!(windows) || crate::queue_key(&item.root).is_some() { s.to_lowercase() } else { s.to_owned() }
+            };
+            let (item_key, dir_key) = (fold(&item.inner), fold(&dir.inner));
+            let into_itself = dir_key == item_key || dir_key.starts_with(&format!("{item_key}/"));
+            let parent = item_key.rsplit_once('/').map_or("", |(up, _)| up);
+            !into_itself && parent != dir_key
+        })
+        .cloned()
+        .collect()
+}
+
 /// The name an edit acts on.
 fn edit_name(edit: &Edit) -> &str {
     match edit {
-        Edit::Put { to: name, .. } | Edit::MakeDir(name) | Edit::Delete(name) | Edit::Rename { from: name, .. } => name,
+        Edit::Put { to: name, .. }
+        | Edit::MakeDir(name)
+        | Edit::Delete(name)
+        | Edit::Unmake { path: name, .. }
+        | Edit::Rename { from: name, .. } => name,
     }
 }
 

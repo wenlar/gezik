@@ -543,6 +543,37 @@ network = false           # also look for repositories on network drives
 timeout = 10              # seconds a status may take
 ```
 
+## Phones
+
+On Windows, Android phones (and other MTP devices: media players, cameras) show under the
+drives in the sidebar once plugged in, found by the system's device event within moments;
+Gezik does not poll and loads nothing for them until you open one. A USB stick or card
+reader that Windows also lists as a portable device is left out (it is a drive already).
+macOS and Linux follow in a later step.
+
+- **Open**: click the phone (right-click: Open, Open in new tab), or type
+  `mtp://Pixel 8/Internal shared storage/DCIM` in the address bar. Its top shows the
+  phone's storages ("Internal shared storage", "SD card") as folders. A phone that is
+  locked, or not in **File transfer** mode, shows nothing: unlock it and choose File transfer
+  in its USB notification, then press F5.
+- **Copy off** (Ctrl+C then Ctrl+V into a folder, Copy To…, a drag into a Gezik folder):
+  files come out whole, with the phone's change date. The preview, Quick Look and opening a
+  file with its app take it out first, as inside archives (up to `[archives] preview-limit`).
+- **Copy on** (paste or drop files and folders into a phone folder), **New folder**,
+  **Rename** (F2) and **Delete**. A name already on the phone asks once: Replace, Skip or Keep
+  both. MTP cannot write over a file: a replaced file is written beside the old one, the old
+  one deleted and the new one renamed; where the phone refuses renames Gezik says the old
+  file goes first. Undo (Ctrl+Z) deletes what was copied onto the phone and renames back;
+  **a delete on the phone cannot be undone** (it is asked first). Moving between folders on
+  the phone is a copy and a delete.
+- Jobs on one phone run one after another; each shows its progress and can be cancelled
+  (a file cut short is never left on the phone or on disk). A phone unplugged during a job
+  ends it with an error; its tabs go to This PC with "Pixel 8 was disconnected".
+- Not on phones: search, tags, folder sizes, file properties, Git, the terminal and commands,
+  the Windows shell menu. An iPhone shows its photos read only. Thumbnails in the grid are
+  file icons.
+- `[devices] phones = false` turns it off: Gezik then never looks for phones.
+
 ## System integration
 
 - **Command line**: `gezik [PATH...]` opens folders as tabs; a file opens its folder with it

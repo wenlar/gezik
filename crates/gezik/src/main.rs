@@ -45,6 +45,7 @@ mod palette;
 mod panes;
 mod path_box;
 mod pdf;
+mod phones;
 mod places;
 mod popup;
 mod preview;
@@ -181,6 +182,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     path_box::set_settings(loaded.settings.history);
     command_line::set_settings(loaded.settings.command_line.clone(), loaded.settings.history.remember);
     // Git marks turned on or off, or another git: every pane looks again (spec 16 §8).
+    phones::set_settings(loaded.settings.devices.phones);
     if git::set_settings(loaded.settings.git.clone()) {
         for p in panes::everywhere() {
             p.nav.reload();
@@ -1239,6 +1241,15 @@ fn main() -> Result<(), slint::PlatformError> {
     let memory = Rc::new(std::cell::RefCell::new(memory));
     // The templates of New ▸, read once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
+    // Phones: the system's device event, set up after the first frame (spec 16 §10.2).
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), {
+        let window = window.as_weak();
+        move || {
+            if let Some(window) = window.upgrade() {
+                phones::start(&window);
+            }
+        }
+    });
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.local_dir().join("pending-deletes")),

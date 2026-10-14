@@ -112,7 +112,7 @@ impl Task for SplitTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.source.clone(), self.dir.clone()], work: Work::Disk }
+        Resources { paths: vec![self.source.clone(), self.dir.clone()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
@@ -282,7 +282,7 @@ impl Task for JoinTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.part.clone(), self.dir.clone()], work: Work::Disk }
+        Resources { paths: vec![self.part.clone(), self.dir.clone()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

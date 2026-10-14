@@ -66,7 +66,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 41 | Eşli gezinme | 4/8 | Yok | ✅ Var | 10b (#64): Sync Browsing |
 | 42 | Tek tıkla açma | 4/8 | Yok | ✅ Var | 7b (#19): `single-click-open` |
 | 43 | Komut satırı seçenekleri | 4/8 | Kısmen | ✅ Var | 9b1 (#35): `--new-tab`, `--new-window`, `--select`; PATH 9b3 (#38) |
-| 44 | MTP / telefon | 4/8 | Planlı | 🔜 Planlı | 16 Gelişmiş |
+| 44 | MTP / telefon | 4/8 | Kısmen | 🟡 Kısmen | 16f: Windows (WPD) kenar çubuğu, gezinme, kopyalama, yeni klasör, yeniden adlandırma, silme. macOS/Linux 16g'de |
 | 45 | macOS sistem simgeleri, QuickLook | 2/8 | Yok | ✅ Var | 9a1 (#34), sistem paneli 9a2 (#36) |
 | 46 | Panodaki resmi/metni dosya olarak yapıştırma | 2/8 | Yok | ✅ Var | 7c (#20) |
 | 47 | Yeni dosya şablonları; seçimle yeni klasör | 3/8 | Kısmen | ✅ Var | 7c (#20): `templates/`, Ctrl+Alt+N |

@@ -345,7 +345,7 @@ impl Task for DeleteTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: self.roots.clone(), work: Work::Disk }
+        Resources { paths: self.roots.clone(), work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

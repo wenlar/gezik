@@ -177,6 +177,21 @@ pub const NOT_HERE: &str = tx!("Not in search results: open a folder first");
 /// A change inside an archive Gezik only reads (spec 16 §6.1); shown with `t`.
 pub const READ_ONLY: &str = tx!("This kind of archive can only be read");
 
+/// Whether `at` is a phone's storage (its top level): never deleted, cut or renamed.
+fn is_storage(at: &VfsPath) -> bool {
+    gezik_vfs::queue_key(&at.root).is_some() && !at.inner.contains('/')
+}
+
+/// Why a place cannot be changed: an archive Gezik only reads, or a phone that lets nothing
+/// change (an iPhone's photos).
+fn read_only_note(root: &gezik_core::vfs::VfsRoot) -> String {
+    if gezik_vfs::queue_key(root).is_some() {
+        t!("This device can only be read").into_owned()
+    } else {
+        t("", READ_ONLY).into_owned()
+    }
+}
+
 /// `name` if no entry has it, else the next free `name (2)`, `name (3)`…
 fn free_folder_name(name: String, taken: impl Fn(&str) -> bool) -> String {
     if taken(&name) { gezik_core::ops::names::next_free(&name, true, taken) } else { name }
@@ -994,7 +1009,7 @@ impl Operations {
             return None;
         };
         if !dir.vfs.caps().has(Caps::WRITE) {
-            view.note(t("", READ_ONLY).into_owned());
+            view.note(read_only_note(dir.vfs.root()));
             return None;
         }
         Some(dir.at.clone())
@@ -1010,7 +1025,7 @@ impl Operations {
     /// Files on disk dropped or pasted into the archive folder `dir` (moved: trashed once in).
     pub fn put_in(&self, paths: Vec<PathBuf>, dir: VfsPath, moving: bool) {
         if !writable(&dir.root) {
-            return crate::panes::active_view().note(t("", READ_ONLY).into_owned());
+            return crate::panes::active_view().note(read_only_note(&dir.root));
         }
         let names = crate::copy_to::item_names(&paths);
         self.edit_inside(VfsEditTask::put(&dir, paths, moving), names, After::Select);
@@ -1019,7 +1034,12 @@ impl Operations {
     /// Entries of an archive dropped or pasted into the archive folder `dir`.
     pub fn copy_in(&self, items: Vec<VfsPath>, dir: VfsPath, moving: bool) {
         if !writable(&dir.root) || (moving && items.first().is_some_and(|item| !writable(&item.root))) {
-            return crate::panes::active_view().note(t("", READ_ONLY).into_owned());
+            return crate::panes::active_view().note(read_only_note(&dir.root));
+        }
+        // Not into itself, nor onto itself (a cut pasted where it is).
+        let items = if moving { gezik_vfs::tasks::movable(&items, &dir) } else { items };
+        if items.is_empty() {
+            return crate::panes::active_view().note(t!("Cannot move a folder into itself").into_owned());
         }
         let names = items.iter().map(VfsPath::name).collect();
         self.edit_inside(VfsEditTask::copy_in(&items, &dir, moving), names, After::Select);
@@ -1031,7 +1051,10 @@ impl Operations {
         let items: Vec<VfsPath> = view.selected_vfs_items().into_iter().map(|(at, _)| at).collect();
         let Some(first) = items.first() else { return };
         if !writable(&first.root) {
-            return view.note(t("", READ_ONLY).into_owned());
+            return view.note(read_only_note(&first.root));
+        }
+        if items.iter().any(is_storage) {
+            return view.note(t!("A storage of the phone cannot be deleted").into_owned());
         }
         let what = match items.as_slice() {
             [one] => one.name(),
@@ -1040,9 +1063,15 @@ impl Operations {
         let root = first.root.clone();
         let edits = items.iter().map(|item| Edit::Delete(item.inner.clone())).collect();
         let ops = self.clone();
-        // TRANSLATORS: {} is a name or "3 items"
-        let title = t!("Delete {} from the archive?", what);
-        self.dialogs().ask(title, t!("You can undo this."), &[&t!("Delete"), &t!("Cancel")], move |choice| {
+        // A phone has no trash: what is deleted there is gone (spec 16 §10.1).
+        let (title, message) = if gezik_vfs::queue_key(&root).is_some() {
+            // TRANSLATORS: {} is a name or "3 items"
+            (t!("Delete {} from the phone?", what), t!("This cannot be undone."))
+        } else {
+            // TRANSLATORS: {} is a name or "3 items"
+            (t!("Delete {} from the archive?", what), t!("You can undo this."))
+        };
+        self.dialogs().ask(title, message, &[&t!("Delete"), &t!("Cancel")], move |choice| {
             if choice == Some(0) {
                 ops.edit_inside(VfsEditTask::new(root, edits), Vec::new(), After::Nothing);
             }
@@ -1072,7 +1101,10 @@ impl Operations {
         let items: Vec<VfsPath> = view.selected_vfs_items().into_iter().map(|(at, _)| at).collect();
         let Some(first) = items.first() else { return };
         if cut && !writable(&first.root) {
-            return view.note(t("", READ_ONLY).into_owned());
+            return view.note(read_only_note(&first.root));
+        }
+        if cut && items.iter().any(is_storage) {
+            return view.note(t!("A storage of the phone cannot be deleted").into_owned());
         }
         let text: Vec<String> = items.iter().map(VfsPath::text).collect();
         if let Err(ClipboardError::Failed(why)) = clipboard::write_text(&text.join("\n")) {
@@ -1113,7 +1145,7 @@ impl Operations {
     /// placed are deleted inside (spec 16 §4.6), one job and one undo.
     pub fn move_out(&self, items: Vec<VfsPath>, dir: PathBuf) {
         if items.first().is_some_and(|item| !writable(&item.root)) {
-            return crate::panes::active_view().note(t("", READ_ONLY).into_owned());
+            return crate::panes::active_view().note(read_only_note(&items[0].root));
         }
         let (tasks, label) = gezik_vfs::tasks::move_out(&items, dir);
         if !tasks.is_empty() {

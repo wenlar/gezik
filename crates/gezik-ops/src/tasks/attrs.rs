@@ -114,7 +114,7 @@ impl Task for SetAttributesTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: self.paths(), work: Work::Disk }
+        Resources { paths: self.paths(), work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

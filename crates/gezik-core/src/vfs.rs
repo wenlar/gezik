@@ -41,6 +41,12 @@ pub enum Edit {
     MakeDir(String),
     /// The entry, a folder with what it holds.
     Delete(String),
+    /// The undo of what was made on a phone: deleted only while it is still the object `id`, a
+    /// folder only once empty.
+    Unmake {
+        path: String,
+        id: String,
+    },
     Rename {
         from: String,
         to: String,
@@ -197,6 +203,24 @@ pub fn split_archive(path: &Path, is_file: impl Fn(&Path) -> bool) -> Option<Vfs
     None
 }
 
+/// A typed phone address (`mtp://Pixel 8/DCIM`, §4.2, either slash): the phone's name and the
+/// place on it. `None` for any other text.
+pub fn split_device(path: &Path) -> Option<(String, String)> {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let rest = text.get(6..).filter(|_| text[..6].eq_ignore_ascii_case("mtp://"))?;
+    let mut parts = rest.split('/').filter(|part| !part.is_empty() && *part != ".");
+    let name = parts.next()?.to_owned();
+    let mut inner: Vec<&str> = Vec::new();
+    for part in parts {
+        if part == ".." {
+            inner.pop();
+        } else {
+            inner.push(part);
+        }
+    }
+    Some((name, inner.join("/")))
+}
+
 /// The same rule inside an archive: `inner` split at its first part that is a file there
 /// (`is_file`) named like an archive; (that entry, the rest).
 pub fn split_inner(inner: &str, is_file: impl Fn(&str) -> bool) -> Option<(String, String)> {
@@ -232,6 +256,23 @@ mod tests {
         assert_eq!(split_archive(Path::new("/w/x.zip/a"), is_file), None, "a folder called x.zip");
         assert_eq!(split_archive(Path::new("/w/notes.txt/a"), is_file), None, "a file, but no archive");
         assert_eq!(split_archive(Path::new("/w/docs"), is_file), None);
+    }
+
+    #[test]
+    fn a_phone_address_gives_its_name_and_place() {
+        let split = |text: &str| split_device(Path::new(text));
+        assert_eq!(
+            split("mtp://Pixel 8/Internal shared storage/DCIM"),
+            Some(("Pixel 8".into(), "Internal shared storage/DCIM".into()))
+        );
+        assert_eq!(split(r"MTP:\\Pixel 8\a\..\b\"), Some(("Pixel 8".into(), "b".into())), "either slash, any case");
+        assert_eq!(split("mtp://Pixel 8"), Some(("Pixel 8".into(), String::new())));
+        assert_eq!(split("mtp://"), None);
+        assert_eq!(split("/w/mtp://x"), None);
+        assert_eq!(split("mt"), None);
+        let at =
+            VfsPath { root: VfsRoot::Device { id: "usb#1".into(), name: "Pixel 8".into() }, inner: "S/DCIM".into() };
+        assert_eq!(split(&at.text()), Some(("Pixel 8".into(), "S/DCIM".into())), "its own text");
     }
 
     #[cfg(windows)]

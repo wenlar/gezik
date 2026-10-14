@@ -5,6 +5,7 @@
 
 pub mod archive;
 pub mod motw;
+pub mod mtp;
 pub mod stage;
 pub mod tasks;
 
@@ -14,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 
 use gezik_core::Entry;
-use gezik_core::vfs::{Caps, Container, MAX_DEPTH, VfsRoot};
+use gezik_core::vfs::{Caps, Container, Edit, MAX_DEPTH, VfsRoot};
 
 pub use gezik_batch::archive::ExtractCx as Cx;
 
@@ -48,6 +49,21 @@ pub trait Vfs: Send + Sync {
     fn unchanged(&self) -> bool;
     /// How many entries it has.
     fn len(&self) -> usize;
+    /// Whether `path` can be renamed where it is (a phone may refuse it).
+    fn can_rename(&self, _path: &str) -> bool {
+        true
+    }
+    /// Applies `edits` one by one (a phone, spec 16 §4.6; an archive is written anew by
+    /// `VfsEditTask` instead). `replace`: a put replaces an entry of its name.
+    fn apply(&self, _edits: &[Edit], _replace: bool, _cx: &dyn Cx) -> io::Result<mtp::Applied> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+    /// The device went away (its event came): what it holds is not used again.
+    fn lost(&self) {}
+    /// Whether it is a device (a phone) rather than an archive.
+    fn device(&self) -> bool {
+        false
+    }
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -100,7 +116,19 @@ pub fn under(dest: &Path, inner: &str) -> PathBuf {
 
 /// Whether `a` and `b` are one root: the same text, ignoring case where the file system does.
 pub fn same_root(a: &VfsRoot, b: &VfsRoot) -> bool {
-    a == b || (cfg!(windows) && gezik_core::ops::paths::same_path(Path::new(&a.text()), Path::new(&b.text())))
+    match (a, b) {
+        // A phone is its id; its name may change (`Pixel 8 (2)` once another one is plugged in).
+        (VfsRoot::Device { id: a, .. }, VfsRoot::Device { id: b, .. }) => a.eq_ignore_ascii_case(b),
+        _ => a == b || (cfg!(windows) && gezik_core::ops::paths::same_path(Path::new(&a.text()), Path::new(&b.text()))),
+    }
+}
+
+/// The queue key of a place that is no file on disk (a phone's id; spec 16 §4.6).
+pub fn queue_key(root: &VfsRoot) -> Option<String> {
+    match root {
+        VfsRoot::Device { id, .. } => Some(id.to_lowercase()),
+        VfsRoot::Archive(_) => None,
+    }
 }
 
 /// A fresh folder, removed with what is left in it.
@@ -213,13 +241,17 @@ pub fn mount(root: &VfsRoot, cx: &dyn Cx) -> io::Result<Arc<dyn Vfs>> {
             let file = stage_here(outer.as_ref(), &at.inner, cx)?;
             Arc::new(ArchiveVfs::open(root.clone(), file, Some(outer), cx, &find_seven_zip)?)
         }
-        // Phones come with 16f.
-        VfsRoot::Device { .. } => return Err(io::ErrorKind::Unsupported.into()),
+        VfsRoot::Device { id, .. } => mtp::MtpVfs::open(root.clone(), gezik_platform::mtp::open(id)?)?,
     };
-    let mut open = OPEN.lock().unwrap_or_else(PoisonError::into_inner);
-    open.retain(|(r, weak)| weak.strong_count() > 0 && !same_root(r, root));
-    open.push((root.clone(), Arc::downgrade(&vfs)));
+    hold(&vfs);
     Ok(vfs)
+}
+
+/// Makes `vfs` the open place of its root, while something holds it.
+pub fn hold(vfs: &Arc<dyn Vfs>) {
+    let mut open = OPEN.lock().unwrap_or_else(PoisonError::into_inner);
+    open.retain(|(r, weak)| weak.strong_count() > 0 && !same_root(r, vfs.root()));
+    open.push((vfs.root().clone(), Arc::downgrade(vfs)));
 }
 
 #[cfg(test)]

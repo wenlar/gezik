@@ -62,7 +62,7 @@ impl Task for CloudPinTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: self.paths.clone(), work: Work::External }
+        Resources { paths: self.paths.clone(), work: Work::External, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

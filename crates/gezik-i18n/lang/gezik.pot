@@ -337,6 +337,7 @@ msgstr ""
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 msgid "Cannot move a folder into itself"
 msgstr ""
 
@@ -5279,6 +5280,15 @@ msgstr ""
 msgid "Too many tags and too long a comment for one file"
 msgstr ""
 
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phone"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+msgid "A storage of the phone cannot be deleted"
+msgstr ""
+
 #: crates/gezik-platform/src/network.rs
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
 msgstr ""
@@ -5382,6 +5392,34 @@ msgstr ""
 msgid "Archives nested more than {} deep are not opened"
 msgstr ""
 
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A name no path can hold"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "The file came short from the phone"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the old file could not be put back: {1}"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A storage of the phone cannot be changed"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It changed since"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It is not empty"
+msgstr ""
+
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Copying {}"
 msgstr ""
@@ -5408,6 +5446,24 @@ msgstr ""
 #. {} is a file's name; it is put back into the archive it was opened from
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Updating {} in the archive"
+msgstr ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Replace on the phone?"
+msgstr ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "The old file is deleted before the new one is written"
 msgstr ""
 
 #: crates/gezik/src/actions.rs
@@ -8975,7 +9031,15 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: crates/gezik/src/navigation.rs
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr ""
+
+#: crates/gezik/src/navigation.rs
 msgid "{} no longer exists"
+msgstr ""
+
+#: crates/gezik/src/navigation.rs
+msgid "{} is not connected"
 msgstr ""
 
 #: crates/gezik/src/navigation.rs
@@ -9079,6 +9143,10 @@ msgstr ""
 msgid "Not in search results: open a folder first"
 msgstr ""
 
+#: crates/gezik/src/operations.rs
+msgid "This device can only be read"
+msgstr ""
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 msgid "{} works in search results"
@@ -9086,6 +9154,16 @@ msgstr ""
 
 #: crates/gezik/src/operations.rs
 msgid "can't be undone"
+msgstr ""
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+msgid "Delete {} from the phone?"
+msgstr ""
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+msgid "This cannot be undone."
 msgstr ""
 
 #. {} is a name or "3 items"
@@ -9139,11 +9217,6 @@ msgstr ""
 
 #: crates/gezik/src/operations.rs
 msgid "Delete {} permanently?"
-msgstr ""
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-msgid "This cannot be undone."
 msgstr ""
 
 #: crates/gezik/src/operations.rs
@@ -9448,6 +9521,10 @@ msgstr ""
 
 #: crates/gezik/src/pdf.rs
 msgid "Could not load pdfium: {}"
+msgstr ""
+
+#: crates/gezik/src/phones.rs
+msgid "{} was disconnected"
 msgstr ""
 
 #: crates/gezik/src/places.rs
@@ -9909,6 +9986,10 @@ msgstr ""
 
 #: crates/gezik/src/search.rs
 msgid "Flat view works in folders"
+msgstr ""
+
+#: crates/gezik/src/search.rs
+msgid "Phones are not searched"
 msgstr ""
 
 #: crates/gezik/src/search.rs
@@ -12929,6 +13010,16 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:git.timeout"
 msgid "Seconds a status may take"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

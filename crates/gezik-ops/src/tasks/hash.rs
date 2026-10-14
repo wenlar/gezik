@@ -390,7 +390,7 @@ impl Task for HashTask {
             HashWork::Again => lock(&self.results).rows.first().map(|row| row.path.clone()).into_iter().collect(),
             HashWork::Verify { file } => vec![file.clone()],
         };
-        Resources { paths, work: Work::Disk }
+        Resources { paths, work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

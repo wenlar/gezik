@@ -409,6 +409,7 @@ msgstr "Kein verwendbarer Name: {}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "Ein Ordner kann nicht in sich selbst verschoben werden"
@@ -6437,6 +6438,17 @@ msgstr "Ein Gezik unbekannter Tag-Eintrag; unverändert gelassen"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Zu viele Tags und zu langer Kommentar für eine Datei"
 
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phone"
+msgstr "Telefon"
+
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "Ein Speicher des Telefons kann nicht gelöscht werden"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6565,6 +6577,41 @@ msgstr "Einige Elemente konnten nicht aus dem Archiv geholt werden"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "Archive, die tiefer als {} Ebenen verschachtelt sind, werden nicht geöffnet"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "Ein Name, den kein Pfad aufnehmen kann"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "Die Datei kam unvollständig vom Telefon"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}; die neue Datei bleibt auf dem Telefon als {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}; die alte Datei konnte nicht zurückgelegt werden: {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "Ein Speicher des Telefons kann nicht geändert werden"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "Es hat sich seitdem geändert"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "Es ist nicht leer"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6598,6 +6645,28 @@ msgstr "{0} wird aus {1} gelöscht"
 #, fuzzy
 msgid "Updating {} in the archive"
 msgstr "{} wird im Archiv aktualisiert"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "{n} Element schon auf dem Telefon"
+msgstr[1] "{n} Elemente schon auf dem Telefon"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "Ersetzen löscht einen Ordner dieses Namens mit seinem gesamten Inhalt."
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace on the phone?"
+msgstr "Auf dem Telefon ersetzen?"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "The old file is deleted before the new one is written"
+msgstr "Die alte Datei wird gelöscht, bevor die neue geschrieben wird"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -11015,8 +11084,18 @@ msgstr[1] "{} wird gelesen: {n} Elemente"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "Entsperren Sie das Telefon und wählen Sie in seiner USB-Benachrichtigung „Dateiübertragung“"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} existiert nicht mehr"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
+msgid "{} is not connected"
+msgstr "{} ist nicht verbunden"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -11140,6 +11219,11 @@ msgstr "Eine Datei mit diesem Namen existiert bereits"
 msgid "Not in search results: open a folder first"
 msgstr "Nicht in Suchergebnissen: öffnen Sie zuerst einen Ordner"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This device can only be read"
+msgstr "Dieses Gerät kann nur gelesen werden"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11150,6 +11234,18 @@ msgstr "{} geht in Suchergebnissen"
 #, fuzzy
 msgid "can't be undone"
 msgstr "nicht rückgängig zu machen"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the phone?"
+msgstr "{} vom Telefon löschen?"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+#, fuzzy
+msgid "This cannot be undone."
+msgstr "Dies kann nicht rückgängig gemacht werden."
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -11214,12 +11310,6 @@ msgstr "Papierkorb"
 #, fuzzy
 msgid "Delete {} permanently?"
 msgstr "{} endgültig löschen?"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-#, fuzzy
-msgid "This cannot be undone."
-msgstr "Dies kann nicht rückgängig gemacht werden."
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11590,6 +11680,11 @@ msgstr "pdfium lädt auf diesem System nicht: {}"
 #, fuzzy
 msgid "Could not load pdfium: {}"
 msgstr "pdfium konnte nicht geladen werden: {}"
+
+#: crates/gezik/src/phones.rs
+#, fuzzy
+msgid "{} was disconnected"
+msgstr "{} wurde getrennt"
 
 #: crates/gezik/src/places.rs
 #, fuzzy
@@ -12154,6 +12249,11 @@ msgstr "Öffnen Sie eine Suche, um sie zu speichern"
 #, fuzzy
 msgid "Flat view works in folders"
 msgstr "Flache Ansicht geht in Ordnern"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
+msgid "Phones are not searched"
+msgstr "Telefone werden nicht durchsucht"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
@@ -15867,6 +15967,18 @@ msgstr "Zeitlimit"
 msgctxt "setting:git.timeout"
 msgid "Seconds a status may take"
 msgstr "Sekunden, die eine Statusabfrage dauern darf"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "Telefone"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "Android-Telefone (MTP) beim Anschließen zeigen; false: Gezik sucht nicht nach ihnen"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

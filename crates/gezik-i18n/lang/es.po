@@ -409,6 +409,7 @@ msgstr "Nombre no válido: {}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "No se puede mover una carpeta dentro de sí misma"
@@ -6437,6 +6438,17 @@ msgstr "Un registro de etiquetas que Gezik no conoce; sin cambios"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Demasiadas etiquetas y un comentario demasiado largo para un archivo"
 
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phone"
+msgstr "Teléfono"
+
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "No se puede eliminar un almacenamiento del teléfono"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6565,6 +6577,41 @@ msgstr "No se pudieron sacar algunos elementos del archivo comprimido"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "No se abren archivos comprimidos anidados a más de {} niveles"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "Un nombre que ninguna ruta puede contener"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "El archivo llegó incompleto del teléfono"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}; el archivo nuevo queda en el teléfono como {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}; no se pudo devolver el archivo antiguo: {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "No se puede cambiar un almacenamiento del teléfono"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "Ha cambiado desde entonces"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "No está vacío"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6598,6 +6645,28 @@ msgstr "Eliminando {0} de {1}"
 #, fuzzy
 msgid "Updating {} in the archive"
 msgstr "Actualizando {} en el archivo comprimido"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "{n} elemento ya está en el teléfono"
+msgstr[1] "{n} elementos ya están en el teléfono"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "Reemplazar elimina una carpeta con ese nombre y todo su contenido."
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace on the phone?"
+msgstr "¿Reemplazar en el teléfono?"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "The old file is deleted before the new one is written"
+msgstr "El archivo antiguo se elimina antes de escribir el nuevo"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -11015,8 +11084,18 @@ msgstr[1] "Leyendo {}: {n} elementos"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "Desbloquea el teléfono y elige Transferencia de archivos en su notificación USB"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} ya no existe"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
+msgid "{} is not connected"
+msgstr "{} no está conectado"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -11140,6 +11219,11 @@ msgstr "Ya existe un archivo con este nombre"
 msgid "Not in search results: open a folder first"
 msgstr "No en los resultados de búsqueda: abra primero una carpeta"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This device can only be read"
+msgstr "Este dispositivo solo se puede leer"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11150,6 +11234,18 @@ msgstr "{} funciona en los resultados de búsqueda"
 #, fuzzy
 msgid "can't be undone"
 msgstr "no se puede deshacer"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the phone?"
+msgstr "¿Eliminar {} del teléfono?"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+#, fuzzy
+msgid "This cannot be undone."
+msgstr "No se puede deshacer."
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -11214,12 +11310,6 @@ msgstr "Papelera"
 #, fuzzy
 msgid "Delete {} permanently?"
 msgstr "¿Eliminar {} permanentemente?"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-#, fuzzy
-msgid "This cannot be undone."
-msgstr "No se puede deshacer."
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11590,6 +11680,11 @@ msgstr "pdfium no se carga en este sistema: {}"
 #, fuzzy
 msgid "Could not load pdfium: {}"
 msgstr "No se pudo cargar pdfium: {}"
+
+#: crates/gezik/src/phones.rs
+#, fuzzy
+msgid "{} was disconnected"
+msgstr "{} se desconectó"
 
 #: crates/gezik/src/places.rs
 #, fuzzy
@@ -12154,6 +12249,11 @@ msgstr "Abra una búsqueda para guardarla"
 #, fuzzy
 msgid "Flat view works in folders"
 msgstr "La vista plana funciona en carpetas"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
+msgid "Phones are not searched"
+msgstr "No se busca en los teléfonos"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
@@ -15867,6 +15967,18 @@ msgstr "Tiempo límite"
 msgctxt "setting:git.timeout"
 msgid "Seconds a status may take"
 msgstr "Segundos que puede tardar una consulta de estado"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "Teléfonos"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "Mostrar los teléfonos Android (MTP) al conectarlos; false: Gezik no los busca"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

@@ -409,6 +409,7 @@ msgstr "不可用的名称：{}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "无法将文件夹移入其自身"
@@ -6381,6 +6382,17 @@ msgstr "Gezik 无法识别的标签记录；未处理"
 msgid "Too many tags and too long a comment for one file"
 msgstr "单个文件的标签过多且备注过长"
 
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phone"
+msgstr "手机"
+
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "无法删除手机的存储"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6509,6 +6521,41 @@ msgstr "部分项目无法从压缩包中取出"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "嵌套超过 {} 层的压缩包不会打开"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "任何路径都无法容纳的名称"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "从手机读取的文件不完整"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}；新文件以 {1} 的名称保留在手机上"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}；无法放回旧文件：{1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "无法更改手机的存储"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "此后已更改"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "不是空的"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6541,6 +6588,27 @@ msgstr "正在从 {1} 中删除 {0}"
 #, fuzzy
 msgid "Updating {} in the archive"
 msgstr "正在更新压缩包中的 {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "手机上已有 {n} 个项目"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "替换会删除同名文件夹及其中的所有内容。"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace on the phone?"
+msgstr "替换手机上的项目？"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "The old file is deleted before the new one is written"
+msgstr "写入新文件之前会先删除旧文件"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -10895,8 +10963,18 @@ msgstr[0] "正在读取 {}：{n} 个项目"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "请解锁手机，并在其 USB 通知中选择“文件传输”"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} 已不存在"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
+msgid "{} is not connected"
+msgstr "{} 未连接"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -11013,6 +11091,11 @@ msgstr "已存在同名文件"
 msgid "Not in search results: open a folder first"
 msgstr "不适用于搜索结果：请先打开文件夹"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This device can only be read"
+msgstr "此设备只能读取"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11023,6 +11106,18 @@ msgstr "{} 适用于搜索结果"
 #, fuzzy
 msgid "can't be undone"
 msgstr "无法撤销"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the phone?"
+msgstr "从手机删除 {}？"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+#, fuzzy
+msgid "This cannot be undone."
+msgstr "此操作无法撤销。"
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -11084,12 +11179,6 @@ msgstr "移到回收站"
 #, fuzzy
 msgid "Delete {} permanently?"
 msgstr "永久删除 {}？"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-#, fuzzy
-msgid "This cannot be undone."
-msgstr "此操作无法撤销。"
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11445,6 +11534,11 @@ msgstr "pdfium 无法在此系统上加载：{}"
 #, fuzzy
 msgid "Could not load pdfium: {}"
 msgstr "无法加载 pdfium：{}"
+
+#: crates/gezik/src/phones.rs
+#, fuzzy
+msgid "{} was disconnected"
+msgstr "{} 已断开连接"
 
 #: crates/gezik/src/places.rs
 #, fuzzy
@@ -11991,6 +12085,11 @@ msgstr "打开搜索后才能保存"
 #, fuzzy
 msgid "Flat view works in folders"
 msgstr "平铺视图仅适用于文件夹"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
+msgid "Phones are not searched"
+msgstr "不搜索手机"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
@@ -15654,6 +15753,18 @@ msgstr "超时"
 msgctxt "setting:git.timeout"
 msgid "Seconds a status may take"
 msgstr "一次状态查询可用的秒数"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "手机"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "插入时显示 Android 手机 (MTP)；false：Gezik 不查找它们"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

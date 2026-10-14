@@ -273,7 +273,11 @@ impl Task for CommandTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: self.inputs.iter().map(|(path, _)| path.clone()).collect(), work: Work::External }
+        Resources {
+            paths: self.inputs.iter().map(|(path, _)| path.clone()).collect(),
+            work: Work::External,
+            vfs_roots: Vec::new(),
+        }
     }
 
     fn workers(&self) -> Option<usize> {

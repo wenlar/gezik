@@ -259,7 +259,7 @@ impl Task for PdfTask {
     fn resources(&self) -> Resources {
         let mut paths = self.inputs.clone();
         paths.push(self.dir.clone());
-        Resources { paths, work: Work::Cpu }
+        Resources { paths, work: Work::Cpu, vfs_roots: Vec::new() }
     }
 
     fn workers(&self) -> Option<usize> {

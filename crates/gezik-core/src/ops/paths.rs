@@ -53,6 +53,11 @@ impl DriveSet {
         DriveSet(ids)
     }
 
+    /// With `more` ids too.
+    pub fn with(self, more: impl IntoIterator<Item = String>) -> DriveSet {
+        DriveSet::new(self.0.into_iter().chain(more))
+    }
+
     pub fn intersects(&self, other: &DriveSet) -> bool {
         self.0.iter().any(|id| other.0.contains(id))
     }

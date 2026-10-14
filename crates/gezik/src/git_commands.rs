@@ -839,7 +839,7 @@ impl Task for DiscardTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.root.clone()], work: Work::Disk }
+        Resources { paths: vec![self.root.clone()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn workers(&self) -> Option<usize> {

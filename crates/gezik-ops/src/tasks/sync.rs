@@ -242,7 +242,7 @@ impl Task for SyncTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.left.clone(), self.right.clone()], work: Work::Disk }
+        Resources { paths: vec![self.left.clone(), self.right.clone()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

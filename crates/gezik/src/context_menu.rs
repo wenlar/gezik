@@ -1460,6 +1460,8 @@ enum Subject {
     Preview,
     /// Rows or empty space inside an archive (they have no path on disk).
     Inside,
+    /// A phone's row in the sidebar: its top.
+    Phone(Location),
     /// A property row of the preview, by its value.
     /// A property row's value, and its field when the row is one (Show Column).
     PreviewValue(String, Option<gezik_core::fields::FieldId>),
@@ -1941,6 +1943,12 @@ impl Menus {
         if section == crate::sidebar::SECTION_TRASH {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&[(EMPTY_TRASH, empty_title(), true)], Vec::new(), Anchor::point(x, y));
+        }
+        if section == crate::sidebar::SECTION_PHONES {
+            let Some(place) = self.sidebar.location_of(section, index) else { return };
+            *self.subject.borrow_mut() = Some(Subject::Phone(place));
+            return self
+                .open_slint(&[(OPEN, tx!("Open")), (OPEN_IN_NEW_TAB, tx!("Open in new tab"))], Anchor::point(x, y));
         }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;
@@ -2666,6 +2674,8 @@ impl Menus {
                     _ => archives.compress_to(rows),
                 });
             }
+            (OPEN, Subject::Phone(place)) => crate::panes::active_nav().go(place),
+            (OPEN_IN_NEW_TAB, Subject::Phone(place)) => crate::panes::active_nav().open_tab(place, false),
             (OPEN_IN_NEW_TAB, Subject::Row(path) | Subject::SidebarEntry(path)) => {
                 crate::panes::active_nav().open_tab(Location::Path(path), false);
             }

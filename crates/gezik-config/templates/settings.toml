@@ -90,6 +90,9 @@ ignored = true            # also mark ignored files (drawn faint)
 network = false           # also look for repositories on network drives
 timeout = 10              # seconds a status may take
 
+[devices]
+phones = true             # show Android phones (MTP) when plugged in; false: Gezik does not look for them
+
 [convert]
 ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH
 

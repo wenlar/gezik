@@ -87,7 +87,7 @@ impl Task for PlaceTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.to.dir().to_path_buf()], work: Work::Disk }
+        Resources { paths: vec![self.to.dir().to_path_buf()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

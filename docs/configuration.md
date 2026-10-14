@@ -62,6 +62,9 @@ The top of `settings.toml` holds:
   on network drives are not looked for) and `timeout` (seconds a status may take, 1-600,
   default 10; also the longest Gezik waits for git to read a branch list or a file at
   HEAD for the Git commands).
+- `[devices]` — `phones` (default `true`): Android phones and other portable devices (MTP)
+  show in the sidebar when plugged in (Windows; see [Phones](features.md#phones)); `false` and
+  Gezik does not look for them.
 - `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group }` for an alias
   and a group. Gezik updates this list when you pin, unpin, rename, group or reorder; the rest
   of the file, including your comments, is kept.
