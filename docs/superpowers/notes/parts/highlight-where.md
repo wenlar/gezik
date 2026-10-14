@@ -15,7 +15,6 @@ Spec `../../specs/2026-10-12-onizleme-2-design.md` §9.3; 13f notunda (followups
 ## Sapmalar
 
 1. Sütun hücreleri ve `where` aynı satır için ayrı istek yapar (iki ayrı `MediaKey::Fields`): ikisi de varken ve satır hiç okunmamışken dosya iki kez açılabilir. Birleştirmek klasör okumasının kapsama denetimini karıştırıyordu; ilk incelemede birleşik hali dışa aktarmada klasör değerlerini kaybettiriyordu.
-2. Ekran testi yapılmadı (aşağıda).
 
 ## Boyut
 
@@ -30,6 +29,11 @@ Sürüm exe'si master (2e90d920) **31.810.560 B** → bu dal **31.814.144 B**: *
 
 ## Ekran testleri (Windows)
 
-Yapılmadı: test Gezik'i açıldığında ön planda bir oyun vardı (ilk ekran görüntüsü oyunu gösterdi); hiçbir tuş/tıklama gönderilmeden kapatıldı, görüntü silindi. Hazır olanlar: `%TEMP%\gezik-gui-hlwhere\bin\hlwhere.exe`, ayar `%TEMP%\gezik-gui-hlwhere\cfg\settings.toml` (1: `where = "duration>3s"` kırmızı kalın, 2: `kind = "audio"` mavi, 3: bozuk `duration>3x`), veri `%TEMP%\gezik-gui-hlwhere\data` (1 s, 5 s, 10 s WAV, bir MP3, bir `.txt`, bir klasör). Beklenen: 5 s ve 10 s kırmızı kalın, 1 s mavi, MP3 süresine göre, `.txt` ve klasör renksiz, durum satırında `highlight-rules[3]` uyarısı.
+`%TEMP%\gezik-gui-hlwhere` (ayar: 1: `where = "duration>3s"` kırmızı kalın, 2: `kind = "audio"` mavi, 3: bozuk `duration>3x`; veri: 1 s, 5 s, 10 s WAV, kısa bir MP3, `.txt`, klasör).
+
+| # | Adım | Sonuç | Kanıt |
+|---|---|---|---|
+| 1 | Klasörü aç | PASS | `long-10s.wav` ve `mid-5s.wav` kırmızı kalın; `short-1s.wav` ve `song.mp3` mavi; `notes.txt` ve klasör renksiz; durum satırında `settings.toml: highlight-rules[3]: where: duration>3x: "3x" is not a duration (3m, 1:30)` |
+| 2 | F5, 150 ms sonra ve 2 s sonra görüntü | PASS | İki görüntüde de renkler aynı, yanıp sönme yok |
 
 macOS/Linux denetimleri: `../checklists/highlight-where-macos.md` (423–425, 387'nin yerine), `../checklists/highlight-where-linux.md` (307–309, 281'in yerine).
