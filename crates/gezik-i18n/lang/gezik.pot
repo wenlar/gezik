@@ -5425,6 +5425,10 @@ msgstr ""
 msgid "The server gave no folder"
 msgstr ""
 
+#: crates/gezik-platform/src/network/discover.rs
+msgid "Avahi is not running"
+msgstr ""
+
 #: crates/gezik-platform/src/properties.rs
 msgid "Windows did not open its Properties window"
 msgstr ""
@@ -9160,6 +9164,18 @@ msgstr ""
 msgid "{} — Gezik"
 msgstr ""
 
+#: crates/gezik/src/network_places.rs
+msgid "Searching…"
+msgstr ""
+
+#: crates/gezik/src/network_places.rs
+msgid "No computers found"
+msgstr ""
+
+#: crates/gezik/src/network_places.rs
+msgid "Open Settings"
+msgstr ""
+
 #: crates/gezik/src/op_history.rs
 #: crates/gezik/src/operations.rs
 #: crates/gezik/ui/widgets/info.slint
@@ -11042,6 +11058,10 @@ msgstr ""
 
 #: crates/gezik/src/sidebar.rs
 msgid "SEARCHES"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "NETWORK"
 msgstr ""
 
 #: crates/gezik/src/sidebar_model.rs

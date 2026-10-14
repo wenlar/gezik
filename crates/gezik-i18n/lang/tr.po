@@ -5377,6 +5377,10 @@ msgstr "Eşlenecek bir paylaşım yazın, örn. \\\\server\\share"
 msgid "The server gave no folder"
 msgstr "Sunucu klasör vermedi"
 
+#: crates/gezik-platform/src/network/discover.rs
+msgid "Avahi is not running"
+msgstr "Avahi çalışmıyor"
+
 #: crates/gezik-platform/src/properties.rs
 msgid "Windows did not open its Properties window"
 msgstr "Windows Özellikler penceresini açmadı"
@@ -9093,6 +9097,18 @@ msgstr "{} bağlı değil"
 msgid "{} — Gezik"
 msgstr "{} — Gezik"
 
+#: crates/gezik/src/network_places.rs
+msgid "Searching…"
+msgstr "Aranıyor…"
+
+#: crates/gezik/src/network_places.rs
+msgid "No computers found"
+msgstr "Bilgisayar bulunamadı"
+
+#: crates/gezik/src/network_places.rs
+msgid "Open Settings"
+msgstr "Ayarları Aç"
+
 #: crates/gezik/src/op_history.rs
 #: crates/gezik/src/operations.rs
 #: crates/gezik/ui/widgets/info.slint
@@ -10917,6 +10933,10 @@ msgstr "SABİTLENENLER"
 #: crates/gezik/src/sidebar.rs
 msgid "SEARCHES"
 msgstr "ARAMALAR"
+
+#: crates/gezik/src/sidebar.rs
+msgid "NETWORK"
+msgstr "AĞ"
 
 #: crates/gezik/src/sidebar_model.rs
 msgid "Leads back to a folder above it"

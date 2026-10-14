@@ -67,11 +67,15 @@ pub(crate) fn buttons(windows: bool, letter: Option<char>) -> Vec<String> {
 
 /// The action and the menus' Connect to Server…: the field starts with the last address.
 pub fn open() {
+    open_with(recent().into_iter().next().unwrap_or_default());
+}
+
+/// Connect to Server… with `initial` in the field (a computer of the Network section, spec 16h).
+pub fn open_with(initial: String) {
     let windows = cfg!(windows);
     // `drive_signature` is `GetLogicalDrives` on Windows.
     let letter = if windows { network::free_letter(gezik_platform::drive_signature() as u32) } else { None };
     let buttons = buttons(windows, letter);
-    let initial = recent().into_iter().next().unwrap_or_default();
     crate::operations::with_current(|ops| {
         let names: Vec<&str> = buttons.iter().map(String::as_str).collect();
         ops.dialogs().ask_text_choice(

@@ -590,6 +590,22 @@ also lists as a portable device is left out (it is a drive already).
   file icons.
 - `[devices] phones = false` turns it off: Gezik then never looks for phones.
 
+## Network
+
+The sidebar's NETWORK section, at its end, lists the computers sharing files on the local
+network. It starts closed; clicking its heading opens it and starts one search on a thread of
+its own ("Searching…"), which ends within 5 seconds. Computers show as they answer. Nothing
+runs while the section is closed or open and idle: right-click the heading and choose
+**Refresh** to search again. Closing the section drops the list.
+
+- **Windows**: the computers of Explorer's Network folder. Clicking one lists its shares
+  (`\\NAME`), as typing the address would. With none found the section offers **Open
+  Settings** (Control Panel's advanced sharing settings), where network discovery is turned
+  on; Gezik never changes it.
+- **macOS**: Bonjour's `_smb._tcp` services. **Linux**: the same through Avahi
+  (`avahi-browse`, from `avahi-utils`); without it the section says "Avahi is not running".
+  Clicking a computer opens Connect to Server with `smb://host/`: add the share's name.
+
 ## System integration
 
 - **Command line**: `gezik [PATH...]` opens folders as tabs; a file opens its folder with it

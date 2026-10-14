@@ -638,6 +638,8 @@ pub fn drive_items(way: Option<gezik_platform::eject::EjectWay>, native: bool) -
 
 /// Connect to Server… on This PC's empty space, then the last ten addresses (spec 13.3).
 pub const CONNECT_SERVER: u32 = 1812;
+/// Refresh on the sidebar's Network section (spec 16h).
+pub const NETWORK_REFRESH: u32 = 1813;
 pub const RECENT_SERVER_FIRST: u32 = 1820;
 pub const RECENT_SERVER_MAX: u32 = 10;
 
@@ -1944,6 +1946,10 @@ impl Menus {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&[(EMPTY_TRASH, empty_title(), true)], Vec::new(), Anchor::point(x, y));
         }
+        if section == crate::sidebar::SECTION_NETWORK {
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint(&[(NETWORK_REFRESH, tx!("Refresh"))], Anchor::point(x, y));
+        }
         if section == crate::sidebar::SECTION_PHONES {
             let Some(place) = self.sidebar.location_of(section, index) else { return };
             *self.subject.borrow_mut() = Some(Subject::Phone(place));
@@ -2483,6 +2489,7 @@ impl Menus {
             (TRASH_DELETE, _) => crate::trash_view::delete_selection(&crate::panes::active_view()),
             (EMPTY_TRASH, _) => crate::trash_view::empty(),
             (CONNECT_SERVER, _) => crate::connect::open(),
+            (NETWORK_REFRESH, _) => crate::network_places::refresh(),
             (EJECT | DISCONNECT, Subject::Row(path) | Subject::SidebarEntry(path)) => crate::eject::eject_path(&path),
             (id, _) if (RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX).contains(&id) => {
                 crate::connect::open_recent((id - RECENT_SERVER_FIRST) as usize)
@@ -3643,6 +3650,7 @@ mod tests {
             TRASH_DELETE,
             EMPTY_TRASH,
             CONNECT_SERVER,
+            NETWORK_REFRESH,
             EJECT,
             DISCONNECT,
             COLLAPSE_GROUPS,

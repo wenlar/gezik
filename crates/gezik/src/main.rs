@@ -39,6 +39,7 @@ mod media;
 #[cfg(target_os = "macos")]
 mod menu_bar;
 mod navigation;
+mod network_places;
 mod op_history;
 mod operations;
 mod palette;

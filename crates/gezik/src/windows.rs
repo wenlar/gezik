@@ -1039,6 +1039,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             if section == sidebar::SECTION_TAGS {
                 return crate::tags::sidebar_clicked(index, false);
             }
+            if section == sidebar::SECTION_NETWORK {
+                return crate::network_places::clicked(index, false);
+            }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().go(location);
             }
@@ -1052,6 +1055,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             }
             if section == sidebar::SECTION_TAGS {
                 return crate::tags::sidebar_clicked(index, true);
+            }
+            if section == sidebar::SECTION_NETWORK {
+                return crate::network_places::clicked(index, true);
             }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().open_tab(location, false);
