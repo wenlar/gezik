@@ -58,6 +58,8 @@ pub trait Vfs: Send + Sync {
     fn apply(&self, _edits: &[Edit], _replace: bool, _cx: &dyn Cx) -> io::Result<mtp::Applied> {
         Err(io::ErrorKind::Unsupported.into())
     }
+    /// The device went away (its event came): what it holds is not used again.
+    fn lost(&self) {}
     /// Whether it is a device (a phone) rather than an archive.
     fn device(&self) -> bool {
         false

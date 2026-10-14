@@ -337,6 +337,7 @@ msgstr ""
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 msgid "Cannot move a folder into itself"
 msgstr ""
 
@@ -5283,6 +5284,11 @@ msgstr ""
 msgid "Phone"
 msgstr ""
 
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+msgid "A storage of the phone cannot be deleted"
+msgstr ""
+
 #: crates/gezik-platform/src/network.rs
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
 msgstr ""
@@ -5386,6 +5392,34 @@ msgstr ""
 msgid "Archives nested more than {} deep are not opened"
 msgstr ""
 
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A name no path can hold"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "The file came short from the phone"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the old file could not be put back: {1}"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A storage of the phone cannot be changed"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It changed since"
+msgstr ""
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It is not empty"
+msgstr ""
+
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Copying {}"
 msgstr ""
@@ -5419,6 +5453,10 @@ msgid "{n} item already on the phone"
 msgid_plural "{n} items already on the phone"
 msgstr[0] ""
 msgstr[1] ""
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr ""
 
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Replace on the phone?"

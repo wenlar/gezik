@@ -409,6 +409,7 @@ msgstr "不可用的名称：{}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "无法将文件夹移入其自身"
@@ -6386,6 +6387,12 @@ msgstr "单个文件的标签过多且备注过长"
 msgid "Phone"
 msgstr "手机"
 
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "无法删除手机的存储"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6514,6 +6521,41 @@ msgstr "部分项目无法从压缩包中取出"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "嵌套超过 {} 层的压缩包不会打开"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "任何路径都无法容纳的名称"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "从手机读取的文件不完整"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}；新文件以 {1} 的名称保留在手机上"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}；无法放回旧文件：{1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "无法更改手机的存储"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "此后已更改"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "不是空的"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6552,6 +6594,11 @@ msgstr "正在更新压缩包中的 {}"
 msgid "{n} item already on the phone"
 msgid_plural "{n} items already on the phone"
 msgstr[0] "手机上已有 {n} 个项目"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "替换会删除同名文件夹及其中的所有内容。"
 
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy

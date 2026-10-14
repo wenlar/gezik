@@ -341,6 +341,7 @@ msgstr "Kullanılamayan ad: {}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 msgid "Cannot move a folder into itself"
 msgstr "Bir klasör kendi içine taşınamaz"
 
@@ -5235,6 +5236,11 @@ msgstr "Bir dosya için çok fazla etiket ve çok uzun bir yorum"
 msgid "Phone"
 msgstr "Telefon"
 
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+msgid "A storage of the phone cannot be deleted"
+msgstr "Telefonun deposu silinemez"
+
 #: crates/gezik-platform/src/network.rs
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
 msgstr "Bir sunucu adresi yazın, örn. \\\\server\\share ya da smb://server/share"
@@ -5338,6 +5344,34 @@ msgstr "Bazı öğeler arşivden çıkarılamadı"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "{} düzeyden daha derin iç içe arşivler açılmaz"
 
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A name no path can hold"
+msgstr "Hiçbir yolun tutamayacağı bir ad"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "The file came short from the phone"
+msgstr "Dosya telefondan eksik geldi"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}; yeni dosya telefonda {1} adıyla duruyor"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}; eski dosya geri konamadı: {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A storage of the phone cannot be changed"
+msgstr "Telefonun deposu değiştirilemez"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It changed since"
+msgstr "O zamandan beri değişti"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It is not empty"
+msgstr "Boş değil"
+
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Copying {}"
 msgstr "Kopyalanıyor: {}"
@@ -5369,6 +5403,10 @@ msgstr "Arşivde güncelleniyor: {}"
 msgid "{n} item already on the phone"
 msgid_plural "{n} items already on the phone"
 msgstr[0] "{n} öğe zaten telefonda"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "Değiştir, bu adlı bir klasörü içindeki her şeyle siler."
 
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Replace on the phone?"

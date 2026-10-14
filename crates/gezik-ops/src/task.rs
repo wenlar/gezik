@@ -332,6 +332,8 @@ pub enum Outcome {
     /// Made on a phone (spec 16 §4.6): undo deletes it there.
     VfsCreated {
         at: gezik_core::vfs::VfsPath,
+        /// The phone's id of what was made: undo leaves an object that took its place.
+        id: String,
     },
     /// Renamed on a phone: undo renames it back.
     VfsRenamed {

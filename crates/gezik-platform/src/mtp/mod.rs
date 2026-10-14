@@ -82,8 +82,16 @@ pub fn devices() -> Vec<Device> {
 
 /// `(id, name)` of each phone plugged in.
 fn found() -> Vec<(String, String)> {
+    // A drive's interface is left out before anything of it is read (not even its name).
     #[cfg(windows)]
-    return windows::interfaces().into_iter().filter(|(id, _)| !has_drive_letter(id)).collect();
+    return windows::interfaces()
+        .into_iter()
+        .filter(|id| !has_drive_letter(id))
+        .map(|id| {
+            let name = windows::name_of(&id);
+            (id, name)
+        })
+        .collect();
     #[cfg(target_os = "macos")]
     return watch_mac::interfaces();
     #[cfg(target_os = "linux")]
@@ -108,7 +116,7 @@ pub fn open(id: &str) -> io::Result<Box<dyn Session>> {
 /// Whether the device `id` is still plugged in (no WPD or libmtp call).
 pub fn present(id: &str) -> bool {
     #[cfg(windows)]
-    return windows::interfaces().iter().any(|(found, _)| found.eq_ignore_ascii_case(id));
+    return windows::interfaces().iter().any(|found| found.eq_ignore_ascii_case(id));
     #[cfg(not(windows))]
     found().iter().any(|(found, _)| found == id)
 }
@@ -247,9 +255,14 @@ mod tests {
     }
 
     #[test]
-    fn finding_phones_never_fails() {
+    fn finding_phones_never_fails_and_is_quick() {
         // This PC may have none, or a USB stick listed as one (left out): either way a list.
+        // What `[devices] phones` (on by default) costs once after start: this one read.
+        let started = std::time::Instant::now();
         let devices = devices();
+        let took = started.elapsed();
+        println!("phones found in {took:?}");
         assert!(devices.iter().all(|d| !has_drive_letter(&d.id) && !d.name.is_empty()));
+        assert!(took < std::time::Duration::from_millis(500), "{took:?}");
     }
 }
