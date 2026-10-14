@@ -14,6 +14,20 @@ pub fn decode_ansi(bytes: &[u8]) -> Option<String> {
     }
 }
 
+/// `bytes` decoded with the system's OEM code page (`GetOEMCP`, what console programs write
+/// in: 857 for Turkish, 437 for English); `None` elsewhere or when the call fails.
+pub fn decode_oem(bytes: &[u8]) -> Option<String> {
+    #[cfg(windows)]
+    {
+        win::decode_page(unsafe { windows::Win32::Globalization::GetOEMCP() }, bytes)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = bytes;
+        None
+    }
+}
+
 /// The legacy code page the user's text files are most likely in: the user's locale's ANSI
 /// code page on Windows (1254 for Turkish); elsewhere Windows-1254 for a Turkish `LANG`
 /// (files from Turkish Windows), else none.
@@ -54,13 +68,16 @@ mod win {
     }
 
     pub fn decode(bytes: &[u8]) -> Option<String> {
+        decode_page(code_page(), bytes)
+    }
+
+    pub fn decode_page(page: u32, bytes: &[u8]) -> Option<String> {
         if bytes.is_empty() {
             return Some(String::new());
         }
         // The input length must fit an i32; callers pass at most a preview's worth.
         i32::try_from(bytes.len()).ok()?;
         let flags = MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0);
-        let page = code_page();
         // SAFETY: the slices are valid for their lengths; a `None` output only measures.
         let len = unsafe { MultiByteToWideChar(page, flags, bytes, None) };
         if len <= 0 {
@@ -85,5 +102,6 @@ mod tests {
     fn ascii_and_empty_pass_through() {
         assert_eq!(decode_ansi(b"").as_deref(), Some(""));
         assert_eq!(decode_ansi(b"plain text").as_deref(), Some("plain text"));
+        assert_eq!(decode_oem(b"plain text").as_deref(), Some("plain text"));
     }
 }

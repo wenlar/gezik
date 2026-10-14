@@ -8,6 +8,7 @@ mod batch_rename;
 mod checksums;
 mod cli;
 mod cloud;
+mod command_line;
 mod compare;
 mod conflicts;
 mod connect;
@@ -176,6 +177,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     convert::set_settings(loaded.settings.convert.clone(), loaded.settings.commands.clone());
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
+    command_line::set_settings(loaded.settings.command_line.clone(), loaded.settings.history.remember);
     for p in panes::everywhere() {
         p.search.set_settings(loaded.settings.search.clone());
         p.folder_sizes.set_settings(loaded.settings.folder_sizes, loaded.settings.search.everything);
@@ -373,6 +375,8 @@ fn perform(
         | Action::ExportSettings
         | Action::ImportSettings
         | Action::BrowseArchive
+        | Action::RunCommand
+        | Action::ToggleCommandOutput
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow
@@ -727,6 +731,8 @@ fn handle_key(
                         panes::with_active(|p| p.search.stop());
                     } else if view.filter_text().is_some() {
                         panes::with_active(|p| p.filter.close());
+                    } else if panes::with_active(|p| p.command.escape()) == Some(true) {
+                        // A command panel whose command ended closed.
                     } else {
                         view.clear_selection();
                     }
@@ -1233,6 +1239,7 @@ fn main() -> Result<(), slint::PlatformError> {
         saved_state.batch_rename.clone().unwrap_or_default(),
     );
     connect::install(config.clone(), saved_state.servers_recent.clone());
+    command_line::install(config.clone(), saved_state.command_history.clone());
     tags::install(ops.tag_store(), config.clone(), saved_state.tags_used);
     // Deletes cut short last time finish in the background once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), {

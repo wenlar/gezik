@@ -540,7 +540,7 @@ impl Navigator {
 
     /// Reloads the watched folder for its changes, quietly; later while the user loads
     /// something, drags a selection rectangle or renames.
-    fn refresh_due(&self) {
+    pub(crate) fn refresh_due(&self) {
         let watched = {
             let inner = self.0.borrow();
             // A reload rebuilds the rows: it would end a rubber-band drag, and put a rename's

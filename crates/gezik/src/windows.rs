@@ -907,6 +907,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     searches.set_settings(settings.search.clone());
     // Every pane's bars and address go through the same window callbacks.
     path_box::PathBox::connect(&window);
+    crate::command_line::CommandLine::connect(&window);
     filter::Filter::connect(&window);
     search::Searches::connect(&window);
     let left = panes::Pane {
@@ -917,6 +918,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         search: searches,
         path_box,
         folder_sizes,
+        command: crate::command_line::CommandLine::new(pane_id),
     };
     dual::connect(&left);
     // Installed before the window's parts are made: they reach the active pane.
@@ -1423,9 +1425,13 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             p.nav.reload();
         }
     });
+    // Enter in the address bar, the only way a `>` command runs (spec 16 §7.1).
     window.on_navigate(|pane, text| {
         if let Some(p) = crate::pick(pane) {
-            p.nav.navigate_text(text.into());
+            match crate::command_line::command_text(&text) {
+                Some(command) => p.command.enter(&p, command),
+                None => p.nav.navigate_text(text.into()),
+            }
         }
     });
     window.on_crumb_clicked(|pane, i| {

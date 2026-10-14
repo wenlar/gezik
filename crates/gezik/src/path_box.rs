@@ -36,6 +36,9 @@ pub enum Row {
     Heading(&'static str),
     /// A folder: its name, the folder it is in (or ""), and where it leads.
     Folder { title: String, detail: String, path: PathBuf },
+    /// A command run before (after `>`, spec 16 §7.1): chosen, it is written into the field,
+    /// never run.
+    Command(String),
 }
 
 /// The user's home folder, `~`: USERPROFILE on Windows, HOME elsewhere.
@@ -118,7 +121,7 @@ pub fn with_history(mut rows: Vec<Row>, history: &FolderHistory, typed: &str, no
         .iter()
         .filter_map(|row| match row {
             Row::Folder { path, .. } => Some(path.clone()),
-            Row::Heading(_) => None,
+            Row::Heading(_) | Row::Command(_) => None,
         })
         .collect();
     let found = history.matching(typed, HISTORY_MATCHES, now, |path| listed.iter().any(|l| same_path(l, path)));
@@ -240,7 +243,7 @@ pub fn path_key(key: Key, shift: bool, open: bool, current: Option<usize>) -> Pa
 
 /// The row Up/Down moves to, past headings; up from the first folder is back to the text.
 pub fn step(rows: &[Row], current: Option<usize>, down: bool) -> Option<usize> {
-    let folder = |i: &usize| matches!(rows[*i], Row::Folder { .. });
+    let folder = |i: &usize| !matches!(rows[*i], Row::Heading(_));
     match (current, down) {
         (None, true) => (0..rows.len()).find(folder),
         (None, false) => None,
@@ -413,6 +416,13 @@ fn slint_row(row: &Row) -> PathRow {
             path: path.display().to_string().into(),
             heading: false,
         },
+        // Its "path" starts with `>`, which no folder's does: a click writes it in the field.
+        Row::Command(command) => PathRow {
+            title: command.as_str().into(),
+            detail: "".into(),
+            path: format!(">{command}").into(),
+            heading: false,
+        },
     }
 }
 
@@ -496,7 +506,10 @@ impl PathBox {
         });
         // By path, not by row: whatever happened to the list meanwhile, the click goes there.
         window.on_path_chosen(|path| {
-            crate::panes::with_active(|p| p.path_box.go_to(PathBuf::from(path.as_str())));
+            match crate::command_line::command_text(&path) {
+                Some(command) => crate::panes::with_active(|p| p.path_box.take_command(command)),
+                None => crate::panes::with_active(|p| p.path_box.go_to(PathBuf::from(path.as_str()))),
+            };
         });
         window.on_path_editing_changed(|pane, on| {
             crate::panes::mirror_at(pane).path_editing.set(on);
@@ -506,6 +519,13 @@ impl PathBox {
             }
             crate::panes::with_row(pane, |p| p.path_box.reset());
         });
+    }
+
+    /// Typing in the field as if `text` were typed (`run-command`'s `>`).
+    pub fn typed_text(&self, text: String) {
+        if self.editing() {
+            self.edited(text);
+        }
     }
 
     fn edited(&self, text: String) {
@@ -558,6 +578,10 @@ impl PathBox {
     /// they are not in memory.
     fn update(&self) {
         let typed = self.typed();
+        if let Some(command) = crate::command_line::command_text(&typed) {
+            let rows = crate::command_line::history_for(command).into_iter().map(Row::Command).collect();
+            return self.show(rows);
+        }
         if shows_history(&typed, cfg!(windows)) {
             return self.show(self.history_list());
         }
@@ -778,6 +802,25 @@ impl PathBox {
         }
     }
 
+    fn command_of(&self, index: usize) -> Option<String> {
+        match self.0.list.borrow().rows.get(index) {
+            Some(Row::Command(command)) => Some(command.clone()),
+            _ => None,
+        }
+    }
+
+    /// A command row chosen: written into the field after `>`; only Enter runs it.
+    fn take_command(&self, command: &str) {
+        if self.0.window.upgrade().is_none() {
+            return;
+        }
+        let text = format!(">{command}");
+        let at = i32::try_from(text.len()).unwrap_or(i32::MAX);
+        crate::panes::edit(self.0.id, |d| crate::panes::path_text(d, &text, at));
+        *self.0.text.borrow_mut() = Some(text);
+        self.close();
+    }
+
     /// A key while the address bar is typed in (no Ctrl, Alt or ⌘); returns whether it was used.
     pub fn chord(&self, chord: &Chord) -> bool {
         let key = || self.0.list.borrow().key(chord.key, chord.shift);
@@ -789,6 +832,16 @@ impl PathBox {
             what = key();
         }
         let current = self.0.list.borrow().current;
+        // A command row is written into the field (Tab, →, Enter on it), never run.
+        let chosen = match what {
+            PathKey::Accept => current.or_else(|| first_folder(&self.0.list.borrow().rows)),
+            PathKey::Go => current,
+            _ => None,
+        };
+        if let Some(command) = chosen.and_then(|i| self.command_of(i)) {
+            self.take_command(&command);
+            return true;
+        }
         match what {
             PathKey::Field => return false,
             PathKey::Open => {
@@ -896,6 +949,19 @@ mod tests {
         assert_eq!(step(&rows, Some(1), false), None, "back to the text");
         assert_eq!(step(&[], None, true), None);
         assert_eq!(first_folder(&rows), Some(1));
+    }
+
+    #[test]
+    fn command_rows_are_chosen_like_folders() {
+        let rows = [Row::Command("dir".into()), Row::Command("git status".into())];
+        assert_eq!(step(&rows, None, true), Some(0));
+        assert_eq!(step(&rows, Some(0), true), Some(1));
+        let row = slint_row(&rows[1]);
+        assert_eq!(
+            crate::command_line::command_text(&row.path),
+            Some("git status"),
+            "a click writes it, never runs it"
+        );
     }
 
     #[test]
@@ -1041,6 +1107,7 @@ mod tests {
             .map(|row| match row {
                 Row::Heading(title) => format!("# {title}"),
                 Row::Folder { title, .. } => title.clone(),
+                Row::Command(command) => format!("> {command}"),
             })
             .collect()
     }

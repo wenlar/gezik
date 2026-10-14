@@ -538,6 +538,10 @@ actions! {
     ImportSettings,
     /// Goes into the selected archive as into a folder (spec 16 §5.1; no key).
     BrowseArchive,
+    /// The address bar with ">" typed: a command in the folder shown (spec 16 §7.1; no key).
+    RunCommand,
+    /// Shows or hides the active pane's command output panel (spec 16 §7.3; no key).
+    ToggleCommandOutput,
 }
 
 impl Action {
@@ -676,6 +680,8 @@ impl Action {
             Action::ExportSettings => "export-settings",
             Action::ImportSettings => "import-settings",
             Action::BrowseArchive => "browse-archive",
+            Action::RunCommand => "run-command",
+            Action::ToggleCommandOutput => "toggle-command-output",
         }
     }
 
@@ -827,6 +833,8 @@ impl Action {
             Action::ExportSettings => tx!("Export Settings…"),
             Action::ImportSettings => tx!("Import Settings…"),
             Action::BrowseArchive => tx!("Open as Folder"),
+            Action::RunCommand => tx!("Run Command…"),
+            Action::ToggleCommandOutput => tx!("Command Output"),
         }
     }
 
@@ -2390,7 +2398,9 @@ copy-path = \"ctrl+k\"
         assert_eq!(Action::from_name("install-theme"), Some(Action::InstallTheme));
         assert_eq!(Action::from_name("import-settings"), Some(Action::ImportSettings));
         assert_eq!(Action::from_name("browse-archive"), Some(Action::BrowseArchive));
-        assert_eq!(Action::ALL.len(), 133);
+        assert_eq!(Action::from_name("run-command"), Some(Action::RunCommand));
+        assert_eq!(Action::from_name("toggle-command-output"), Some(Action::ToggleCommandOutput));
+        assert_eq!(Action::ALL.len(), 135);
     }
 
     #[test]

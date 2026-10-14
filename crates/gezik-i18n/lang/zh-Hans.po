@@ -330,6 +330,7 @@ msgstr "更改"
 #: crates/gezik/src/admin.rs
 #: crates/gezik/src/archives.rs
 #: crates/gezik/src/checksums.rs
+#: crates/gezik/src/command_line.rs
 #: crates/gezik/src/compare.rs
 #: crates/gezik/src/connect.rs
 #: crates/gezik/src/context_menu.rs
@@ -2803,6 +2804,17 @@ msgstr "导入设置…"
 #, fuzzy
 msgid "Open as Folder"
 msgstr "作为文件夹打开"
+
+#: crates/gezik-config/src/shortcuts.rs
+#, fuzzy
+msgid "Run Command…"
+msgstr "运行命令…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Command Output"
+msgstr "命令输出"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -6396,6 +6408,7 @@ msgstr "Gezik 将向系统请求管理员权限，仅用于执行以下操作：
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/size-map.slint
@@ -7166,6 +7179,91 @@ msgstr "不在云文件夹中"
 #, fuzzy
 msgid "Choose the items first"
 msgstr "请先选择项目"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "{} s"
+msgstr "{} 秒"
+
+#. minutes and seconds a command ran
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "{0} min {1} s"
+msgstr "{0} 分 {1} 秒"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Commands run in a folder on disk"
+msgstr "命令在磁盘上的文件夹中运行"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Run Command"
+msgstr "运行命令"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "A command is still running. Stop it?"
+msgstr "仍有命令在运行。要停止它吗？"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Stop and Run"
+msgstr "停止并运行"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "cmd cannot run in a network folder; set [command-line] shell = \"powershell\""
+msgstr "cmd 无法在网络文件夹中运行；请设置 [command-line] shell = \"powershell\""
+
+#. {0} is a shell program, {1} why it did not start
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Could not start {0}: {1}"
+msgstr "无法启动 {0}：{1}"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Did not start"
+msgstr "未启动"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "No command has run in this pane"
+msgstr "此窗格中尚未运行过命令"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Output copied"
+msgstr "已复制输出"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Could not copy the output"
+msgstr "无法复制输出"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Running… {}"
+msgstr "正在运行… {}"
+
+#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
+#: crates/gezik/src/command_line.rs
+#: crates/gezik/src/size_map.rs
+#, fuzzy
+msgid "Stopped · {}"
+msgstr "已停止 · {}"
+
+#. {0} is a number, {1} how long the command ran ("0.4 s")
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Exit code {0} · {1}"
+msgstr "退出代码 {0} · {1}"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Ended by a signal · {}"
+msgstr "被信号结束 · {}"
 
 #: crates/gezik/src/compare.rs
 #, fuzzy
@@ -12750,12 +12848,6 @@ msgstr "在窗格中显示"
 msgid "Scanning…"
 msgstr "正在扫描…"
 
-#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
-#: crates/gezik/src/size_map.rs
-#, fuzzy
-msgid "Stopped · {}"
-msgstr "已停止 · {}"
-
 #: crates/gezik/src/size_map.rs
 #, fuzzy
 msgid "{n} file"
@@ -13728,6 +13820,33 @@ msgstr "地址"
 msgid "{}, tags {}"
 msgstr "{}，标签 {}"
 
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/filter-bar.slint
+#, fuzzy
+msgid "Stop"
+msgstr "停止"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Run Again"
+msgstr "再次运行"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Copy Output"
+msgstr "复制输出"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Earlier output dropped"
+msgstr "已丢弃较早的输出"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/convert.slint
+#, fuzzy
+msgid "Output"
+msgstr "输出"
+
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 #, fuzzy
@@ -14029,11 +14148,6 @@ msgstr "{} dpi"
 
 #: crates/gezik/ui/widgets/convert.slint
 #, fuzzy
-msgid "Output"
-msgstr "输出"
-
-#: crates/gezik/ui/widgets/convert.slint
-#, fuzzy
 msgid "Same folder, new name"
 msgstr "同一文件夹，新名称"
 
@@ -14182,11 +14296,6 @@ msgstr "文件中的文本"
 #, fuzzy
 msgid "Search subfolders"
 msgstr "搜索子文件夹"
-
-#: crates/gezik/ui/widgets/filter-bar.slint
-#, fuzzy
-msgid "Stop"
-msgstr "停止"
 
 #: crates/gezik/ui/widgets/filter-bar.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -14723,8 +14832,8 @@ msgstr "记住"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:history.remember"
-msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
-msgstr "记住打开过的文件夹，用于地址栏的“最近使用”和“常用”列表（保存在 state.toml）。false 也会忘记它们；\"clear-history\"（默认无快捷键）清空列表。"
+msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
+msgstr "记住打开的文件夹（用于地址栏的“最近”和“常用”列表）以及用 \">\" 运行的命令（保存在 state.toml 中）。false 也会忘记它们；\"clear-history\"（默认无快捷键）清空两者。"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15112,6 +15221,18 @@ msgstr "MB：压缩包中不超过此大小的文件会自动解压以供预览"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:command-line.shell"
+msgid "Shell"
+msgstr "Shell"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:command-line.shell"
+msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
+msgstr "在地址栏中 \">\" 后输入的命令在当前文件夹中运行所用的 shell（仅按 Enter 时）：\"\" 在 Windows 上为 cmd，其他系统为 $SHELL（否则 /bin/sh）；\"powershell\" 或 \"pwsh\"；或完整路径，依次传入 shell-args 和命令。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:convert.ffmpeg"
 msgid "Ffmpeg"
 msgstr "ffmpeg"
@@ -15346,6 +15467,18 @@ msgstr "“打开终端”运行的终端：程序及其参数，{dir} 为文件
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:command-line.shell-args"
+msgid "Shell args"
+msgstr "Shell 参数"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:command-line.shell-args"
+msgid "Arguments before the command, for a full path ([\"-c\"])"
+msgstr "完整路径时放在命令之前的参数（[\"-c\"]）"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:search.skip"
 msgid "Skip"
 msgstr "跳过"
@@ -15404,6 +15537,10 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "命令"
 
+#~ #, fuzzy
+#~ msgctxt "setting:history.remember"
+#~ msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
+#~ msgstr "记住打开过的文件夹，用于地址栏的“最近使用”和“常用”列表（保存在 state.toml）。false 也会忘记它们；\"clear-history\"（默认无快捷键）清空列表。"
 #~ #, fuzzy
 #~ msgid "Some items of the archive could not be read; nothing was added"
 #~ msgstr "压缩包中的部分项目无法读取；未添加任何内容"

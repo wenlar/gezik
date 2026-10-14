@@ -14,6 +14,7 @@ use slint::{Model, ModelRc, SharedString, VecModel};
 
 use crate::{PaneData, PaneFocus, PaneGeometry};
 
+use crate::command_line::CommandLine;
 use crate::filter::Filter;
 use crate::folder_sizes::FolderSizes;
 use crate::navigation::Navigator;
@@ -34,6 +35,8 @@ pub struct Pane {
     pub search: Searches,
     pub path_box: PathBox,
     pub folder_sizes: FolderSizes,
+    /// The command panel under its list (spec 16 §7).
+    pub command: CommandLine,
 }
 
 /// What Rust knows of the state a pane's `PaneView` keeps (each changes there, and the pane

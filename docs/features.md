@@ -250,6 +250,7 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
 - **Select Differences** (right-click ▸ Tools with two panes, the palette, Tools on the macOS
   menu bar): in each pane, what the other pane's list lacks or has older. Only the two lists
   shown are compared (no subfolders, nothing read).
+- **Commands in the address bar**: see [below](#commands-in-the-address-bar).
 - **Open terminal** (Shift+F4 or Ctrl+Alt+T, ⌘⌥T on macOS) opens one in the folder; on
   Windows also as administrator. **Copy path** (Ctrl+Shift+C, ⌘⌥C on macOS) copies the
   selected paths; **Copy path as ▸** has quoted, forward slashes, name, folder, `file://` and
@@ -257,13 +258,48 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
 
 ```toml
 [history]
-remember = true           # false also forgets the folders the address bar remembers
+remember = true           # false also forgets the folders and commands the address bar remembers
 
 [session]
 restore = true            # open the tabs of last time at start
 
 [terminal]
 # command = ["wezterm", "start", "--cwd", "{dir}"]   # unset: Gezik finds one
+```
+
+### Commands in the address bar
+
+- Type `>` and a command in the address bar (Ctrl+L, or **Run Command…** in the palette) and
+  press **Enter**: it runs in the folder shown, with the system's shell (cmd on Windows,
+  `$SHELL` on macOS and Linux; `[command-line] shell` picks PowerShell or another). Only Enter
+  runs a command: pasting, choosing one from the list, a restored session or a tab set never
+  do. Inside an archive, in This PC or the trash nothing runs ("Commands run in a folder on
+  disk").
+- Its output fills a panel under the list as it comes (error output in the warning color),
+  with the command, the folder, the time it runs and, once it ended, its exit code (green for
+  0, red otherwise). **Stop** ends it with everything it started; **Run Again**, **Copy
+  Output** and **Close** (Esc on the list once it ended) are there too; drag the panel's top
+  edge to size it. **Command Output** (palette) shows or hides it. Each pane has its own; it
+  ends with its pane.
+- The selection goes in as environment variables, the text you type is never changed:
+  `GEZIK_FILE` (the focused item), `GEZIK_FILES` (the selected ones, one per line) and
+  `GEZIK_DIR`: `>echo %GEZIK_FILES%` on Windows, `>echo "$GEZIK_FILES"` elsewhere.
+- No terminal: programs get no input (one that asks for some ends at once), colors and other
+  escape codes are taken out, full-screen programs (vim, top, less) and password prompts (ssh,
+  sudo) do not work; use **Open terminal** for those. `TERM=dumb`, `NO_COLOR=1`,
+  `PAGER=cat`, `GIT_PAGER=cat` and `GIT_TERMINAL_PROMPT=0` are set. Commands run as you,
+  never as administrator. On Windows output that is not UTF-8 is read in the console's code
+  page. At most 2 MB is kept ("Earlier output dropped" above it). cmd cannot work in a
+  network folder (`\\server\share`): there Gezik does not start it (PowerShell can).
+- ↑ and ↓ after `>` go through the commands run before (newest first, no repeats, the last
+  100, kept in `state.toml`); Enter or a click on one only writes it in the field. A command
+  typed with a space after `>` is not kept (one holding a password). `[history] remember =
+  false` and **Clear Folder History** forget them too.
+
+```toml
+[command-line]
+shell = ""                # "" = cmd (Windows) / $SHELL; "powershell", "pwsh" or a full path
+shell-args = []           # before the command, for a full path
 ```
 
 ## Layouts

@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -361,6 +361,19 @@ impl ChildProcess {
         Ok((process, stdin, stdout))
     }
 
+    /// Starts `command` as the caller made it (its arguments, folder, environment) with no
+    /// window, kept with what it starts as `spawn` does, its input empty (a program that waits
+    /// for input reads its end at once) and its output and error output as raw pipes (a
+    /// user's command in the address bar: both shown as they come).
+    pub fn spawn_piped(mut command: Command) -> io::Result<(ChildProcess, ChildStdout, ChildStderr)> {
+        command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut process = ChildProcess::start_command(command, false)?;
+        let (Some(stdout), Some(stderr)) = (process.child.stdout.take(), process.child.stderr.take()) else {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        };
+        Ok((process, stdout, stderr))
+    }
+
     /// Starts it with no window, in its own job object (Windows) or process group (Unix), its
     /// output and error output piped (the error output read on another thread), its input
     /// piped when `stdin`.
@@ -375,6 +388,12 @@ impl ChildProcess {
         if let Some(cwd) = cwd {
             command.current_dir(cwd);
         }
+        ChildProcess::start_command(command, true)
+    }
+
+    /// `command` started as `start` says; its error output read on another thread when
+    /// `keep_errors`.
+    fn start_command(mut command: Command, keep_errors: bool) -> io::Result<ChildProcess> {
         #[cfg(windows)]
         let job = Job::new()?;
         #[cfg(windows)]
@@ -395,7 +414,11 @@ impl ChildProcess {
             let _ = child.wait();
             return Err(err);
         }
-        let stderr = child.stderr.take().map(|stderr| std::thread::spawn(move || read_errors(stderr)));
+        let stderr = if keep_errors {
+            child.stderr.take().map(|stderr| std::thread::spawn(move || read_errors(stderr)))
+        } else {
+            None
+        };
         Ok(ChildProcess {
             child,
             #[cfg(windows)]
@@ -439,6 +462,13 @@ impl ChildProcess {
             }
             std::thread::sleep(POLL);
         }
+    }
+
+    /// How it ended, if it has (without waiting).
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        self.finished |= status.is_some();
+        Ok(status)
     }
 
     /// Ends it and everything it started.

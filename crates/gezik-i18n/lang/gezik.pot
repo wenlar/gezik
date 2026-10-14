@@ -267,6 +267,7 @@ msgstr ""
 #: crates/gezik/src/admin.rs
 #: crates/gezik/src/archives.rs
 #: crates/gezik/src/checksums.rs
+#: crates/gezik/src/command_line.rs
 #: crates/gezik/src/compare.rs
 #: crates/gezik/src/connect.rs
 #: crates/gezik/src/context_menu.rs
@@ -2327,6 +2328,15 @@ msgstr ""
 #: crates/gezik/src/archives.rs
 #: crates/gezik/ui/app.slint
 msgid "Open as Folder"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Run Command…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Command Output"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
@@ -5283,6 +5293,7 @@ msgstr ""
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/size-map.slint
@@ -5929,6 +5940,75 @@ msgstr ""
 
 #: crates/gezik/src/cloud.rs
 msgid "Choose the items first"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "{} s"
+msgstr ""
+
+#. minutes and seconds a command ran
+#: crates/gezik/src/command_line.rs
+msgid "{0} min {1} s"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Commands run in a folder on disk"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Run Command"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "A command is still running. Stop it?"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Stop and Run"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "cmd cannot run in a network folder; set [command-line] shell = \"powershell\""
+msgstr ""
+
+#. {0} is a shell program, {1} why it did not start
+#: crates/gezik/src/command_line.rs
+msgid "Could not start {0}: {1}"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Did not start"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "No command has run in this pane"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Output copied"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Could not copy the output"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Running… {}"
+msgstr ""
+
+#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
+#: crates/gezik/src/command_line.rs
+#: crates/gezik/src/size_map.rs
+msgid "Stopped · {}"
+msgstr ""
+
+#. {0} is a number, {1} how long the command ran ("0.4 s")
+#: crates/gezik/src/command_line.rs
+msgid "Exit code {0} · {1}"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "Ended by a signal · {}"
 msgstr ""
 
 #: crates/gezik/src/compare.rs
@@ -10520,11 +10600,6 @@ msgstr ""
 msgid "Scanning…"
 msgstr ""
 
-#. {} is what the map shows ("38.2 GB · 1204 files · 12 folders").
-#: crates/gezik/src/size_map.rs
-msgid "Stopped · {}"
-msgstr ""
-
 #: crates/gezik/src/size_map.rs
 msgid "{n} file"
 msgid_plural "{n} files"
@@ -11345,6 +11420,28 @@ msgstr ""
 msgid "{}, tags {}"
 msgstr ""
 
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/filter-bar.slint
+msgid "Stop"
+msgstr ""
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Run Again"
+msgstr ""
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Copy Output"
+msgstr ""
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Earlier output dropped"
+msgstr ""
+
+#: crates/gezik/ui/widgets/command-output.slint
+#: crates/gezik/ui/widgets/convert.slint
+msgid "Output"
+msgstr ""
+
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
 msgid "Format"
@@ -11586,10 +11683,6 @@ msgid "{} dpi"
 msgstr ""
 
 #: crates/gezik/ui/widgets/convert.slint
-msgid "Output"
-msgstr ""
-
-#: crates/gezik/ui/widgets/convert.slint
 msgid "Same folder, new name"
 msgstr ""
 
@@ -11710,10 +11803,6 @@ msgstr ""
 
 #: crates/gezik/ui/widgets/filter-bar.slint
 msgid "Search subfolders"
-msgstr ""
-
-#: crates/gezik/ui/widgets/filter-bar.slint
-msgid "Stop"
 msgstr ""
 
 #: crates/gezik/ui/widgets/filter-bar.slint
@@ -12148,7 +12237,7 @@ msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:history.remember"
-msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
+msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
@@ -12472,6 +12561,16 @@ msgid "MB: files inside an archive up to this size are extracted for the preview
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell"
+msgid "Shell"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell"
+msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:convert.ffmpeg"
 msgid "Ffmpeg"
 msgstr ""
@@ -12664,6 +12763,16 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:terminal.command"
 msgid "The terminal \"Open terminal\" runs: a program and its arguments, {dir} is the folder (\"{{\" and \"}}\" are braces). Unset: Gezik finds one (Windows Terminal, else PowerShell; Terminal on macOS; $TERMINAL, x-terminal-emulator or a terminal it knows on Linux). Through cmd or a .bat/.cmd file, a folder with % & | < > ^ \" ( ) ! in its name is refused. Give {dir} as an argument of its own (or a flag's value), never inside code for a shell ([\"powershell\", \"-Command\", \"cd {dir}\"], [\"bash\", \"-c\", \"cd {dir}\"], cmd /c): the folder's name would run there as code, as administrator too."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell-args"
+msgid "Shell args"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:command-line.shell-args"
+msgid "Arguments before the command, for a full path ([\"-c\"])"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
