@@ -6640,6 +6640,11 @@ msgstr "输入要映射的共享，如 \\server\\share"
 msgid "The server gave no folder"
 msgstr "服务器未提供文件夹"
 
+#: crates/gezik-platform/src/network/discover.rs
+#, fuzzy
+msgid "Avahi is not running"
+msgstr "Avahi 未运行"
+
 #: crates/gezik-platform/src/properties.rs
 #, fuzzy
 msgid "Windows did not open its Properties window"
@@ -11323,6 +11328,21 @@ msgstr "{} 未连接"
 msgid "{} — Gezik"
 msgstr "{} — Gezik"
 
+#: crates/gezik/src/network_places.rs
+#, fuzzy
+msgid "Searching…"
+msgstr "正在搜索…"
+
+#: crates/gezik/src/network_places.rs
+#, fuzzy
+msgid "No computers found"
+msgstr "未找到计算机"
+
+#: crates/gezik/src/network_places.rs
+#, fuzzy
+msgid "Open Settings"
+msgstr "打开设置"
+
 #: crates/gezik/src/op_history.rs
 #: crates/gezik/src/operations.rs
 #: crates/gezik/ui/widgets/info.slint
@@ -13613,6 +13633,11 @@ msgstr "已固定"
 #, fuzzy
 msgid "SEARCHES"
 msgstr "搜索"
+
+#: crates/gezik/src/sidebar.rs
+#, fuzzy
+msgid "NETWORK"
+msgstr "网络"
 
 #: crates/gezik/src/sidebar_model.rs
 #, fuzzy

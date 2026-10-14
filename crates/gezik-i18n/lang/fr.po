@@ -6697,6 +6697,11 @@ msgstr "Saisissez un partage à connecter, par ex. \\\\server\\share"
 msgid "The server gave no folder"
 msgstr "Le serveur n'a fourni aucun dossier"
 
+#: crates/gezik-platform/src/network/discover.rs
+#, fuzzy
+msgid "Avahi is not running"
+msgstr "Avahi n'est pas lancé"
+
 #: crates/gezik-platform/src/properties.rs
 #, fuzzy
 msgid "Windows did not open its Properties window"
@@ -11445,6 +11450,21 @@ msgstr "{} n’est pas connecté"
 msgid "{} — Gezik"
 msgstr "{} — Gezik"
 
+#: crates/gezik/src/network_places.rs
+#, fuzzy
+msgid "Searching…"
+msgstr "Recherche…"
+
+#: crates/gezik/src/network_places.rs
+#, fuzzy
+msgid "No computers found"
+msgstr "Aucun ordinateur trouvé"
+
+#: crates/gezik/src/network_places.rs
+#, fuzzy
+msgid "Open Settings"
+msgstr "Ouvrir les paramètres"
+
 #: crates/gezik/src/op_history.rs
 #: crates/gezik/src/operations.rs
 #: crates/gezik/ui/widgets/info.slint
@@ -13794,6 +13814,11 @@ msgstr "ÉPINGLÉS"
 #, fuzzy
 msgid "SEARCHES"
 msgstr "RECHERCHES"
+
+#: crates/gezik/src/sidebar.rs
+#, fuzzy
+msgid "NETWORK"
+msgstr "RÉSEAU"
 
 #: crates/gezik/src/sidebar_model.rs
 #, fuzzy

@@ -40,6 +40,9 @@ pub const SECTION_TREE_MORE: i32 = 8;
 pub const SECTION_TAGS: i32 = 9;
 /// A phone plugged in (spec 16 §10.5), under the drives, `index` its place in `phones::list`.
 pub const SECTION_PHONES: i32 = 10;
+/// The Network section (spec 16h): its heading (`index` -1), a computer (`index` its place in
+/// `network_places::lines`) or a note under it (`index` < 0).
+pub const SECTION_NETWORK: i32 = 11;
 
 /// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
 const ICON_HOME: i32 = 1;
@@ -61,6 +64,7 @@ fn pin_color(hue: Hue) -> slint::Color {
         Hue::Rgb([r, g, b]) => slint::Color::from_rgb_u8(r, g, b),
     }
 }
+const ICON_COMPUTER: i32 = 10;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
 /// and names "Home" (when it exists; translated only when shown).
@@ -505,6 +509,11 @@ impl Sidebar {
         self.update_rows();
     }
 
+    /// The Network section opened, closed or found a computer (spec 16h).
+    pub fn network_changed(&self) {
+        self.update_rows();
+    }
+
     /// Makes this sidebar reachable from the config watcher and background checks. Call
     /// once, right after `new`, before any pins are set.
     pub fn install(&self) {
@@ -910,6 +919,10 @@ impl Sidebar {
 
     /// The arrow of row `row` (spec 10 §5.1): its branch opens (read in the background) or closes.
     pub fn toggle_row(&self, row: usize) {
+        let network = self.0.borrow().shown.borrow().row(row).is_some_and(|r| r.header && r.section == SECTION_NETWORK);
+        if network {
+            return crate::network_places::toggle();
+        }
         // The user's own arrow ends an opening on its way (sapma 16).
         self.0.borrow_mut().pending = None;
         let read = self.publish(|shown, touched| match shown.lines.get(row).copied() {
@@ -1380,6 +1393,13 @@ impl Sidebar {
                 arrow: 0,
                 dot: Default::default(),
             });
+            // After the trash, which stays with the drives above it.
+            let open = crate::network_places::is_open();
+            rows.push(SidebarRow { arrow: if open { 2 } else { 1 }, ..header(&t!("NETWORK"), SECTION_NETWORK, -1) });
+            rows.extend(crate::network_places::lines().into_iter().map(|(label, i)| SidebarRow {
+                index: i,
+                ..item(&label, SECTION_NETWORK, 0, Path::new(""), if i >= 0 { ICON_COMPUTER } else { 0 })
+            }));
 
             let current_path = match &current {
                 Location::Path(path) => Some(path.clone()),
