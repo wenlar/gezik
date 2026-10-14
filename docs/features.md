@@ -280,7 +280,9 @@ restore = true            # open the tabs of last time at start
   0, red otherwise). **Stop** ends it with everything it started; **Run Again**, **Copy
   Output** and **Close** (Esc on the list once it ended) are there too; drag the panel's top
   edge to size it. Scrolled up, the output stays as it is while more comes ("1,204 new lines ·
-  End" under it); End, a click on that bar or scrolling to the bottom brings it up to date. **Command Output** (palette) shows or hides it. Each pane has its own; a
+  End" under it); End, a click on that bar or scrolling to the bottom brings it up to date. In
+  a very long output a small scroll up leaves the scroll bar's thumb at the bottom, where
+  dragging it does nothing: use End, the bar, the wheel or PageDown. **Command Output** (palette) shows or hides it. Each pane has its own; a
   running command ends with its pane, and when Gezik quits. A program a command started in
   the background (`start notepad`, `code .`, `gimp &`) goes on once the shell has ended.
 - The selection goes in as environment variables, the text you type is never changed:
