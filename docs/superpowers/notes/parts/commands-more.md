@@ -34,14 +34,14 @@ Release exe (Windows, `cargo build --release -j 4 -p gezik`): master 31,810,560 
 
 ## Ekran testi (Windows)
 
-`%TEMP%\gezik-gui-cmds\` (bu dalın release'i; `Args both` = `{files} {other-files} {other}`, `menu = "Test/Deep"`; `Args other` = `{in} {other}`, `menu = "Test"`; `binrgs.ps1` argümanları `args.txt`'e yazar).
+`%TEMP%\gezik-gui-cmds\` (bu dalın release'i; `Args both` = `{files} {other-files} {other}`, `menu = "Test/Deep"`; `Args other` = `{in} {other}`, `menu = "Test"`; `bin\args.ps1` argümanları `args.txt`'e yazar).
 
 | # | Adım | Sonuç | Kanıt |
 |---|---|---|---|
 | 1 | Sağ tık ▸ Commands | PASS | Gri "Test" başlığı, altında `Args other`; gri "Test ▸ Deep" başlığı, altında `Args both` |
 | 2 | Tek bölmede `Args other` | PASS | Hiçbir şey çalışmadı; durum çubuğu "Args other — needs the second pane" |
-| 3 | F3, sağ bölme `right`'ta `c {x}.txt` seçili; **pasif** sol bölmede doğrudan sağ tık `a.txt` ▸ `Args other` | PASS | Sağ tık sol bölmeyi etkin yaptı (başlık "left — Gezik"); `args.txt`: `left.txt`, `right`; `a.txt` yerinde |
-| 4 | Solda `a.txt` + `b.txt` seçili ▸ `Args both` | PASS | Dört satır: `left.txt`, `leftb.txt`, `right\c {x}.txt` (tek satır, ayraçlar bozulmadan), `right` |
+| 3 | F3, sağ bölme `right`'ta `c {x}.txt` seçili; **pasif** sol bölmede doğrudan sağ tık `a.txt` ▸ `Args other` | PASS | Sağ tık sol bölmeyi etkin yaptı (başlık "left — Gezik"); `args.txt`: `left\a.txt`, `right`; `a.txt` yerinde |
+| 4 | Solda `a.txt` + `b.txt` seçili ▸ `Args both` | PASS | Dört satır: `left\a.txt`, `left\b.txt`, `right\c {x}.txt` (tek satır, ayraçlar bozulmadan), `right` |
 | 5 | Sağ bölmede seçim yok ▸ `Args both` | PASS | Hiçbir şey çalışmadı; durum çubuğu "Args both — select the items in the other pane" |
 
 macOS/Linux maddeleri: `../checklists/commands-more-macos.md` (413–415), `../checklists/commands-more-linux.md` (297–299).
