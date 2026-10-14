@@ -457,8 +457,16 @@ properties = true
 # what it does can't be undone. shortcut = "ctrl+alt+z" runs a command on the selection while
 # the file list has the keyboard (the keys of [shortcuts], with Ctrl, Alt or Cmd, or an F key;
 # a key already taken is left out, with a warning); menu = "Archives" lists it under that
-# heading in "Commands >"; ask = true asks "Run … on N items?" first. Ctrl+Alt+letter may type a
+# heading in "Commands >" (menu = "Images/Resize": a heading under a heading, shown as
+# "Images > Resize"); ask = true asks "Run … on N items?" first. Ctrl+Alt+letter may type a
 # character on some layouts (AltGr on Windows), so the command never runs: pick another key then.
+# With two panes: {other} is the other pane's folder (in any command) and {other-files} its
+# selected items (one argument each, as {files}: the command runs once). Without a second
+# pane showing a folder on disk (not an archive, a phone or search results), or with nothing
+# selected there for {other-files}, the command does not run and the status bar says why.
+# A "/" in menu always starts a new heading. A per-item command without "output" still counts
+# as changing {in} in place (the original goes to the recycle bin for Undo), even if it only
+# copies it to {other}.
 # [[commands]]
 # name = "Resize to 50% (ImageMagick)"
 # run = ["magick", "{in}", "-resize", "50%", "{out}"]
@@ -485,3 +493,8 @@ properties = true
 # shortcut = "ctrl+alt+z"
 # menu = "Archives"
 # ask = true
+#
+# [[commands]]
+# name = "Compare with the other pane (Meld)"
+# run = ["meld", "{files}", "{other-files}"]
+# menu = "Compare"

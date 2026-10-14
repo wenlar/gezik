@@ -1899,8 +1899,10 @@ fn parse_command(value: &toml::Value) -> Result<CommandSpec, String> {
     let menu = match table.get("menu") {
         None => None,
         Some(v) => {
-            let menu = v.as_str().ok_or_else(|| t!("menu must be text, got {}", v))?.trim();
-            (!menu.is_empty()).then(|| menu.to_owned())
+            // `Images/Resize`: a heading under a heading; empty parts are dropped.
+            let menu = v.as_str().ok_or_else(|| t!("menu must be text, got {}", v))?;
+            let parts: Vec<&str> = menu.split('/').map(str::trim).filter(|part| !part.is_empty()).collect();
+            (!parts.is_empty()).then(|| parts.join("/"))
         }
     };
     let ask = match table.get("ask") {
@@ -3661,7 +3663,8 @@ last-pattern = \"\"
                 "Resize to 50% (ImageMagick)",
                 "Office to PDF (LibreOffice)",
                 "E-book to EPUB (Calibre)",
-                "Zip together (7-Zip)"
+                "Zip together (7-Zip)",
+                "Compare with the other pane (Meld)"
             ]
         );
     }
@@ -3715,7 +3718,8 @@ text = true
         let (settings, warnings) = parse(
             "[[commands]]\nname = \"Zip\"\nrun = [\"7z\", \"a\", \"x.zip\", \"{files}\"]\nshortcut = \"ctrl+alt+z\"\n\
              menu = \" Archives \"\nask = true\n\
-             [[commands]]\nname = \"Plain\"\nrun = [\"x\", \"{in}\"]\nmenu = \"\"\n",
+             [[commands]]\nname = \"Plain\"\nrun = [\"x\", \"{in}\"]\nmenu = \" / \"\n\
+             [[commands]]\nname = \"Half\"\nrun = [\"x\", \"{in}\", \"{other}\"]\nmenu = \"/ Images //Resize \"\n",
         );
         assert!(warnings.is_empty(), "{warnings:?}");
         let zip = &settings.commands[0];
@@ -3725,6 +3729,7 @@ text = true
         );
         let plain = &settings.commands[1];
         assert_eq!((plain.shortcut.as_deref(), plain.menu.as_deref(), plain.ask), (None, None, false));
+        assert_eq!(settings.commands[2].menu.as_deref(), Some("Images/Resize"));
         let chord = parse_chord("ctrl+alt+z", Platform::current()).unwrap().unwrap();
         assert_eq!(settings.shortcuts.command_for(&chord), Some(0));
         assert_eq!(settings.shortcuts.command_chord(0), Some(chord));

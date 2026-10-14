@@ -3332,8 +3332,8 @@ msgstr "GIF aus Video"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be used with {in}, {name}, {ext}, {out} or output"
-msgstr "{files} geht nicht mit {in}, {name}, {ext}, {out} oder output"
+msgid "{{{}}} can't be used with {in}, {name}, {ext}, {out} or output"
+msgstr "{{{}}} geht nicht mit {in}, {name}, {ext}, {out} oder output"
 
 #. a setting's text is wrong; {} is that text.
 #: crates/gezik-core/src/batch/convert.rs
@@ -3358,13 +3358,13 @@ msgstr "der Befehl hat kein Programm"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be the program"
-msgstr "{files} kann nicht das Programm sein"
+msgid "{{{}}} can't be the program"
+msgstr "{{{}}} kann nicht das Programm sein"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} must be an argument of its own"
-msgstr "{files} muss ein eigenes Argument sein"
+msgid "{{{}}} must be an argument of its own"
+msgstr "{{{}}} muss ein eigenes Argument sein"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -3395,6 +3395,21 @@ msgstr "parallel muss 1–16 sein, nicht {}"
 #, fuzzy
 msgid "{files} runs once on all the items"
 msgstr "{files} läuft einmal für alle Elemente"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "needs the second pane"
+msgstr "braucht den zweiten Bereich"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "{} is not a name a command can take"
+msgstr "{} ist kein Name, den ein Befehl annehmen kann"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "select the items in the other pane"
+msgstr "wähle die Elemente im anderen Bereich aus"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -9821,6 +9836,11 @@ msgstr "Das Fenster ist zu schmal für zwei Bereiche"
 #, fuzzy
 msgid "The preview pane closed to keep room for two panes"
 msgstr "Vorschau geschlossen, um Platz für zwei Bereiche zu schaffen"
+
+#: crates/gezik/src/dual.rs
+#, fuzzy
+msgid "the other pane shows no folder on disk"
+msgstr "der andere Bereich zeigt keinen Ordner auf dem Datenträger"
 
 #: crates/gezik/src/dual.rs
 #, fuzzy

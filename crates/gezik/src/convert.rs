@@ -27,7 +27,7 @@ use gezik_config::store::ConfigStore;
 use gezik_core::batch::convert::{
     CommandSpec, Eol, ImageFormat, ImageOptions, Kind, Output, PRESETS, Preset, PresetWhat, Resize, TextOptions,
     command_applies, command_line_len, expand_files_command, image_inputs, media_inputs, needs_ffmpeg_to_read,
-    too_many_text, uses_files,
+    too_many_text, uses_files, uses_other, with_other,
 };
 use gezik_core::batch::pdf::{
     PageImage, PdfOp, RENDER_DPIS, Split, is_pdf, is_pdf_picture, ops_for, pictures_pdf_name,
@@ -282,7 +282,8 @@ enum Line<'a> {
 }
 
 /// The commands `shown` (indices into `commands`) in menu order: those without a `menu`
-/// first, then each group under its heading, groups in the order they first appear.
+/// first, then each group under its heading, groups in the order they first appear; a group
+/// under another (`Images/Resize`) right after the one above it.
 fn grouped<'a>(commands: &'a [CommandSpec], shown: &[usize]) -> Vec<Line<'a>> {
     let mut lines: Vec<Line> =
         shown.iter().filter(|i| commands[**i].menu.is_none()).map(|i| Line::Command(*i)).collect();
@@ -294,11 +295,28 @@ fn grouped<'a>(commands: &'a [CommandSpec], shown: &[usize]) -> Vec<Line<'a>> {
             groups.push(group);
         }
     }
-    for group in groups {
+    // Each of a group's parts sorts by where it first shows: `Images` before `Images/Resize`.
+    let first = |part: &str| {
+        groups.iter().position(|g| g.strip_prefix(part).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')))
+    };
+    let mut keyed: Vec<(Vec<Option<usize>>, &str)> = groups
+        .iter()
+        .map(|group| {
+            let parts = group.match_indices('/').map(|(at, _)| &group[..at]).chain([*group]);
+            (parts.map(first).collect(), *group)
+        })
+        .collect();
+    keyed.sort();
+    for (_, group) in keyed {
         lines.push(Line::Heading(group));
         lines.extend(shown.iter().filter(|i| commands[**i].menu.as_deref() == Some(group)).map(|i| Line::Command(*i)));
     }
     lines
+}
+
+/// A group's heading: its parts joined by " ▸ " (`Images ▸ Resize`), cut to fit.
+fn heading(group: &str) -> String {
+    shown_name(&group.replace('/', " ▸ "))
 }
 
 /// Why `spec` runs on none of the items it was asked to (spec 7): by its endings, else
@@ -333,7 +351,7 @@ pub fn bar_entries(commands: &[CommandSpec], key_of: impl Fn(usize) -> Option<St
     grouped(commands, &shown)
         .into_iter()
         .map(|line| match line {
-            Line::Heading(group) => (-1, shown_name(group), false),
+            Line::Heading(group) => (-1, heading(group), false),
             Line::Command(i) => {
                 let key = key_of(i).unwrap_or_default();
                 (i32::try_from(i).unwrap_or(-1), format!("{}    {key}", shown_name(&commands[i].name)), true)
@@ -355,7 +373,7 @@ pub fn menu_entries(items: &[(PathBuf, bool)], commands: &[CommandSpec], states:
     let sub: Vec<(u32, String, bool)> = grouped(commands, &shown)
         .into_iter()
         .map(|line| match line {
-            Line::Heading(group) => (COMMAND_GROUP, shown_name(group), false),
+            Line::Heading(group) => (COMMAND_GROUP, heading(group), false),
             Line::Command(i) => {
                 let (title, enabled) = command_title(&commands[i], &states[i]);
                 (COMMAND_FIRST + i as u32, title, enabled)
@@ -1241,8 +1259,8 @@ pub fn run_by_index(index: usize, items: Vec<(PathBuf, bool)>) {
     with_current(|convert| convert.run_checked(spec, items));
 }
 
-/// Whether `items` fit one command line of `spec` (a `{files}` command) here. One that
-/// cannot be made at all is left to the task, which says why.
+/// Whether `items` fit one command line of `spec` (a `{files}` command, the other pane put
+/// in) here. One that cannot be made at all is left to the task, which says why.
 fn fits_one_run(spec: &CommandSpec, items: &[(PathBuf, bool)]) -> bool {
     let Some((first, _)) = items.first() else { return true };
     let dir = first.parent().unwrap_or(Path::new(""));
@@ -2244,24 +2262,27 @@ impl Convert {
     }
 
     /// Runs `spec` on the items it takes, asking first when it says so (`ask`). A `{files}`
-    /// run that does not fit one command line is refused before the question.
+    /// run that does not fit one command line, or one without the other pane it needs, is
+    /// refused before the question.
     fn run_asked(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>) {
         let taken: Vec<(PathBuf, bool)> =
             items.into_iter().filter(|(path, is_dir)| command_applies(&spec, &name_of(path), *is_dir)).collect();
         if taken.is_empty() {
             return;
         }
-        if uses_files(&spec) && !fits_one_run(&spec, &taken) {
+        let once = uses_files(&spec);
+        let Some(spec) = self.with_other_pane(spec) else { return };
+        if once && !fits_one_run(&spec, &taken) {
             return self.note(too_many_text(&spec.name));
         }
         if !spec.ask {
-            return self.run_command(spec, taken);
+            return self.submit_command(spec, taken, once);
         }
         let this = self.clone();
         let message = ask_text(&spec.name, taken.len());
         self.0.dialogs.ask(spec.name.clone(), message, &[&t!("Run"), &t!("Cancel")], move |answer| {
             if answer == Some(0) {
-                this.run_command(spec, taken);
+                this.submit_command(spec, taken, once);
             }
         });
     }
@@ -2274,6 +2295,29 @@ impl Convert {
         if items.is_empty() {
             return;
         }
+        let once = uses_files(&spec);
+        if let Some(spec) = self.with_other_pane(spec) {
+            self.submit_command(spec, items, once);
+        }
+    }
+
+    /// `spec` with `{other}` and `{other-files}` put in from the other pane as it is now;
+    /// `None` (the status bar says why) without one, its folder or its selection.
+    fn with_other_pane(&self, spec: CommandSpec) -> Option<CommandSpec> {
+        if !uses_other(&spec) {
+            return Some(spec);
+        }
+        match crate::dual::for_command().and_then(|(dir, files)| with_other(&spec, &dir, &files)) {
+            Ok(filled) => Some(filled),
+            Err(why) => {
+                self.note(t!("{0} — {1}", spec.name, why));
+                None
+            }
+        }
+    }
+
+    /// `run_command` with the other pane put in; `once`: a `{files}` or `{other-files}` run.
+    fn submit_command(&self, spec: CommandSpec, items: Vec<(PathBuf, bool)>, once: bool) {
         let paths: Vec<PathBuf> = items.iter().map(|(p, _)| p.clone()).collect();
         // TRANSLATORS: an undo label; {0} is a command's name, {1} a file name or "3 items".
         let label = t!("{0} on {1}", spec.name, items_text(&paths));
@@ -2282,12 +2326,12 @@ impl Convert {
             let (spec, items) = (spec.clone(), items.clone());
             Rc::new(move || {
                 let (spec, items) = (spec.clone(), items.clone());
-                with_current(|this| this.run_command(spec, items));
+                with_current(|this| this.submit_command(spec, items, once));
             })
         };
         self.0.ops.remember_for(&paths);
-        let once = uses_files(&spec);
-        let task: Box<dyn gezik_ops::Task> = Box::new(CommandTask::new(items, spec));
+        let task: Box<dyn gezik_ops::Task> =
+            if once { Box::new(CommandTask::once(items, spec)) } else { Box::new(CommandTask::new(items, spec)) };
         if once {
             // What it did is not known: nothing to undo (spec 7), and the panel says so.
             let id = self.0.ops.submit_chain(vec![task], None, Some(again), After::Nothing);
@@ -2760,6 +2804,27 @@ mod tests {
                 (COMMAND_GROUP, "Images".to_owned(), false),
                 (COMMAND_FIRST + 1, "Small".to_owned(), true),
             ]
+        );
+    }
+
+    #[test]
+    fn a_group_under_another_follows_it_with_its_path() {
+        let grouped = |name: &str, group: &str| CommandSpec {
+            menu: Some(group.to_owned()),
+            ..spec(name, &["x", "{in}"], None, &[], false)
+        };
+        let commands = vec![
+            grouped("Half", "Images/Resize"),
+            grouped("Zip", "Archives"),
+            grouped("Grey", "Images"),
+            grouped("Tar", "Archives/Old"),
+            grouped("Big", "Images/Resize"),
+        ];
+        let (_, sub) = menu_entries(&[file("a.jpg")], &commands, &vec![CommandState::Ready; 5]);
+        let titles: Vec<String> = sub.unwrap().into_iter().map(|(_, title, _)| title).collect();
+        assert_eq!(
+            titles,
+            ["Images", "Grey", "Images ▸ Resize", "Half", "Big", "Archives", "Zip", "Archives ▸ Old", "Tar"]
         );
     }
 

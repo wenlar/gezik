@@ -2737,8 +2737,8 @@ msgid "GIF from video"
 msgstr "Videodan GIF"
 
 #: crates/gezik-core/src/batch/convert.rs
-msgid "{files} can't be used with {in}, {name}, {ext}, {out} or output"
-msgstr "{files}; {in}, {name}, {ext}, {out} ya da output ile kullanılamaz"
+msgid "{{{}}} can't be used with {in}, {name}, {ext}, {out} or output"
+msgstr "{{{}}}; {in}, {name}, {ext}, {out} ya da output ile kullanılamaz"
 
 #. a setting's text is wrong; {} is that text.
 #: crates/gezik-core/src/batch/convert.rs
@@ -2758,12 +2758,12 @@ msgid "the command has no program"
 msgstr "komutta program yok"
 
 #: crates/gezik-core/src/batch/convert.rs
-msgid "{files} can't be the program"
-msgstr "{files} program olamaz"
+msgid "{{{}}} can't be the program"
+msgstr "{{{}}} program olamaz"
 
 #: crates/gezik-core/src/batch/convert.rs
-msgid "{files} must be an argument of its own"
-msgstr "{files} tek başına bir argüman olmalı"
+msgid "{{{}}} must be an argument of its own"
+msgstr "{{{}}} tek başına bir argüman olmalı"
 
 #: crates/gezik-core/src/batch/convert.rs
 msgid "{out} needs an output"
@@ -2788,6 +2788,18 @@ msgstr "parallel 1-16 olmalı, {} değil"
 #: crates/gezik-core/src/batch/convert.rs
 msgid "{files} runs once on all the items"
 msgstr "{files} tüm öğelerde bir kez çalışır"
+
+#: crates/gezik-core/src/batch/convert.rs
+msgid "needs the second pane"
+msgstr "ikinci bölme gerekiyor"
+
+#: crates/gezik-core/src/batch/convert.rs
+msgid "{} is not a name a command can take"
+msgstr "{} adı bir komuta verilemez"
+
+#: crates/gezik-core/src/batch/convert.rs
+msgid "select the items in the other pane"
+msgstr "diğer bölmede öğeleri seçin"
 
 #: crates/gezik-core/src/batch/convert.rs
 msgid "no items to run on"
@@ -7943,6 +7955,10 @@ msgstr "Pencere iki bölme için çok dar"
 #: crates/gezik/src/dual.rs
 msgid "The preview pane closed to keep room for two panes"
 msgstr "İki bölmeye yer açmak için önizleme bölmesi kapandı"
+
+#: crates/gezik/src/dual.rs
+msgid "the other pane shows no folder on disk"
+msgstr "diğer bölme diskte bir klasör göstermiyor"
 
 #: crates/gezik/src/dual.rs
 msgid "Sync browsing needs two panes"

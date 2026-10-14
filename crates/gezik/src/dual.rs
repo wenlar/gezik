@@ -326,6 +326,14 @@ fn other_pane() -> Option<Pane> {
     panes::at(i32::from(panes::active_index() == 0)).filter(|_| is_open())
 }
 
+/// The other pane's folder and its selected items, for a command's `{other}` and
+/// `{other-files}`; the error says why there are none (one pane, an archive, a phone, results).
+pub fn for_command() -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let other = other_pane().ok_or_else(gezik_core::batch::convert::needs_other)?;
+    let folder = other.view.folder().ok_or_else(|| t!("the other pane shows no folder on disk").into_owned())?;
+    Ok((folder, other.view.selected_items().into_iter().map(|(path, _)| path).collect()))
+}
+
 pub fn is_synced() -> bool {
     with_dual(|d| d.borrow().sync.is_some())
 }

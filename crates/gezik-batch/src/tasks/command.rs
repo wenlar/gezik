@@ -33,12 +33,22 @@ const ALL: u8 = 2;
 pub struct CommandTask {
     inputs: Vec<(PathBuf, bool)>,
     spec: CommandSpec,
+    /// One run on all the items (`{files}`, `{other-files}`).
+    once: bool,
 }
 
 impl CommandTask {
-    /// Runs `spec` on each of `inputs` (absolute paths, each with whether it is a folder).
+    /// Runs `spec` on each of `inputs` (absolute paths, each with whether it is a folder), or
+    /// once on all of them with `{files}`.
     pub fn new(inputs: Vec<(PathBuf, bool)>, spec: CommandSpec) -> CommandTask {
-        CommandTask { inputs, spec }
+        let once = uses_files(&spec);
+        CommandTask { inputs, spec, once }
+    }
+
+    /// Runs `spec` once on all of `inputs`: a `{other-files}` command with the other pane's
+    /// items put in already (`with_other`), which no longer says so itself.
+    pub fn once(inputs: Vec<(PathBuf, bool)>, spec: CommandSpec) -> CommandTask {
+        CommandTask { inputs, spec, once: true }
     }
 
     /// Runs the command (`args` from `expand_command` or `expand_files_command`) in `cwd`; an
@@ -291,7 +301,7 @@ impl Task for CommandTask {
             }
             return;
         }
-        if uses_files(&self.spec) {
+        if self.once {
             return self.plan_once(sink);
         }
         let inputs: HashSet<Vec<String>> = self.inputs.iter().map(|(input, _)| path_key(input)).collect();

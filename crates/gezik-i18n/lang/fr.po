@@ -3332,8 +3332,8 @@ msgstr "GIF depuis une vidéo"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be used with {in}, {name}, {ext}, {out} or output"
-msgstr "{files} ne peut pas être utilisé avec {in}, {name}, {ext}, {out} ou output"
+msgid "{{{}}} can't be used with {in}, {name}, {ext}, {out} or output"
+msgstr "{{{}}} ne peut pas être utilisé avec {in}, {name}, {ext}, {out} ou output"
 
 #. a setting's text is wrong; {} is that text.
 #: crates/gezik-core/src/batch/convert.rs
@@ -3358,13 +3358,13 @@ msgstr "la commande n'a pas de programme"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} can't be the program"
-msgstr "{files} ne peut pas être le programme"
+msgid "{{{}}} can't be the program"
+msgstr "{{{}}} ne peut pas être le programme"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
-msgid "{files} must be an argument of its own"
-msgstr "{files} doit être un argument à part entière"
+msgid "{{{}}} must be an argument of its own"
+msgstr "{{{}}} doit être un argument à part entière"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -3395,6 +3395,21 @@ msgstr "parallel doit valoir de 1 à 16, pas {}"
 #, fuzzy
 msgid "{files} runs once on all the items"
 msgstr "{files} s'exécute une seule fois sur tous les éléments"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "needs the second pane"
+msgstr "nécessite le second volet"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "{} is not a name a command can take"
+msgstr "{} n'est pas un nom qu'une commande peut recevoir"
+
+#: crates/gezik-core/src/batch/convert.rs
+#, fuzzy
+msgid "select the items in the other pane"
+msgstr "sélectionnez les éléments dans l'autre volet"
 
 #: crates/gezik-core/src/batch/convert.rs
 #, fuzzy
@@ -9821,6 +9836,11 @@ msgstr "La fenêtre est trop étroite pour deux volets"
 #, fuzzy
 msgid "The preview pane closed to keep room for two panes"
 msgstr "Le volet d'aperçu s'est fermé pour laisser place à deux volets"
+
+#: crates/gezik/src/dual.rs
+#, fuzzy
+msgid "the other pane shows no folder on disk"
+msgstr "l'autre volet n'affiche pas de dossier sur le disque"
 
 #: crates/gezik/src/dual.rs
 #, fuzzy
