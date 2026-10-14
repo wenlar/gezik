@@ -6437,6 +6437,11 @@ msgstr "Un enregistrement d'étiquette inconnu de Gezik ; laissé tel quel"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Trop d'étiquettes et commentaire trop long pour un fichier"
 
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phone"
+msgstr "Téléphone"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6598,6 +6603,23 @@ msgstr "Suppression de {0} dans {1}"
 #, fuzzy
 msgid "Updating {} in the archive"
 msgstr "Mise à jour de {} dans l'archive"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "{n} élément déjà sur le téléphone"
+msgstr[1] "{n} éléments déjà sur le téléphone"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace on the phone?"
+msgstr "Remplacer sur le téléphone ?"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "The old file is deleted before the new one is written"
+msgstr "L’ancien fichier est supprimé avant que le nouveau soit écrit"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -10986,8 +11008,18 @@ msgstr[1] "Lecture de {} : {n} éléments"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "Déverrouillez le téléphone et choisissez Transfert de fichiers dans sa notification USB"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} n'existe plus"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
+msgid "{} is not connected"
+msgstr "{} n’est pas connecté"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -11111,6 +11143,11 @@ msgstr "Un fichier portant ce nom existe déjà"
 msgid "Not in search results: open a folder first"
 msgstr "Pas dans les résultats de recherche : ouvrez d'abord un dossier"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This device can only be read"
+msgstr "Cet appareil est en lecture seule"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11121,6 +11158,18 @@ msgstr "{} fonctionne dans les résultats de recherche"
 #, fuzzy
 msgid "can't be undone"
 msgstr "ne peut pas être annulé"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the phone?"
+msgstr "Supprimer {} du téléphone ?"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+#, fuzzy
+msgid "This cannot be undone."
+msgstr "Cette action est irréversible."
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -11185,12 +11234,6 @@ msgstr "Corbeille"
 #, fuzzy
 msgid "Delete {} permanently?"
 msgstr "Supprimer {} définitivement ?"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-#, fuzzy
-msgid "This cannot be undone."
-msgstr "Cette action est irréversible."
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11561,6 +11604,11 @@ msgstr "pdfium ne se charge pas sur ce système : {}"
 #, fuzzy
 msgid "Could not load pdfium: {}"
 msgstr "Impossible de charger pdfium : {}"
+
+#: crates/gezik/src/phones.rs
+#, fuzzy
+msgid "{} was disconnected"
+msgstr "{} a été déconnecté"
 
 #: crates/gezik/src/places.rs
 #, fuzzy
@@ -12125,6 +12173,11 @@ msgstr "Ouvrez une recherche pour l'enregistrer"
 #, fuzzy
 msgid "Flat view works in folders"
 msgstr "La vue à plat fonctionne dans les dossiers"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
+msgid "Phones are not searched"
+msgstr "La recherche ne porte pas sur les téléphones"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
@@ -15828,6 +15881,18 @@ msgstr "Délai"
 msgctxt "setting:git.timeout"
 msgid "Seconds a status may take"
 msgstr "Secondes que peut prendre une requête d'état"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "Téléphones"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "Afficher les téléphones Android (MTP) branchés ; false : Gezik ne les cherche pas"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

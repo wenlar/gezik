@@ -108,9 +108,8 @@ pub fn watch_phones(window: &impl HasWindowHandle, on_change: impl Fn() + 'stati
         ..Default::default()
     };
     // Kept for the window's life: Windows drops it with the window.
-    let registered = unsafe {
-        RegisterDeviceNotificationW(HANDLE(hwnd.0), (&raw const filter).cast(), DEVICE_NOTIFY_WINDOW_HANDLE)
-    };
+    let registered =
+        unsafe { RegisterDeviceNotificationW(HANDLE(hwnd.0), (&raw const filter).cast(), DEVICE_NOTIFY_WINDOW_HANDLE) };
     if registered.is_err() {
         return false;
     }

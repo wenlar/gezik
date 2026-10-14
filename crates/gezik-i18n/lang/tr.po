@@ -5231,6 +5231,10 @@ msgstr "Gezik'in tanımadığı bir etiket kaydı; dokunulmadı"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Bir dosya için çok fazla etiket ve çok uzun bir yorum"
 
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phone"
+msgstr "Telefon"
+
 #: crates/gezik-platform/src/network.rs
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
 msgstr "Bir sunucu adresi yazın, örn. \\\\server\\share ya da smb://server/share"
@@ -5360,6 +5364,19 @@ msgstr "Siliniyor: {0} ({1})"
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Updating {} in the archive"
 msgstr "Arşivde güncelleniyor: {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "{n} öğe zaten telefonda"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Replace on the phone?"
+msgstr "Telefondaki değiştirilsin mi?"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "The old file is deleted before the new one is written"
+msgstr "Yenisi yazılmadan önce eski dosya silinir"
 
 #: crates/gezik/src/actions.rs
 msgid "Commands run on files and folders"
@@ -8886,8 +8903,16 @@ msgid_plural "Reading {}: {n} items"
 msgstr[0] "Okunuyor: {} ({n} öğe)"
 
 #: crates/gezik/src/navigation.rs
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "Telefonun kilidini açın ve USB bildiriminde Dosya aktarımı'nı seçin"
+
+#: crates/gezik/src/navigation.rs
 msgid "{} no longer exists"
 msgstr "{} artık yok"
+
+#: crates/gezik/src/navigation.rs
+msgid "{} is not connected"
+msgstr "{} bağlı değil"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -8983,6 +9008,10 @@ msgstr "Bu adda bir dosya zaten var"
 msgid "Not in search results: open a folder first"
 msgstr "Arama sonuçlarında olmaz: önce bir klasör açın"
 
+#: crates/gezik/src/operations.rs
+msgid "This device can only be read"
+msgstr "Bu aygıt yalnız okunabilir"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 msgid "{} works in search results"
@@ -8991,6 +9020,16 @@ msgstr "{} arama sonuçlarında çalışır"
 #: crates/gezik/src/operations.rs
 msgid "can't be undone"
 msgstr "geri alınamaz"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+msgid "Delete {} from the phone?"
+msgstr "{} telefondan silinsin mi?"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+msgid "This cannot be undone."
+msgstr "Bu işlem geri alınamaz."
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -9041,11 +9080,6 @@ msgstr "Çöpe at"
 #: crates/gezik/src/operations.rs
 msgid "Delete {} permanently?"
 msgstr "{} kalıcı olarak silinsin mi?"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-msgid "This cannot be undone."
-msgstr "Bu işlem geri alınamaz."
 
 #: crates/gezik/src/operations.rs
 msgid "Cannot duplicate a drive"
@@ -9335,6 +9369,10 @@ msgstr "pdfium bu sistemde yüklenmiyor: {}"
 #: crates/gezik/src/pdf.rs
 msgid "Could not load pdfium: {}"
 msgstr "pdfium yüklenemedi: {}"
+
+#: crates/gezik/src/phones.rs
+msgid "{} was disconnected"
+msgstr "{} çıkarıldı"
 
 #: crates/gezik/src/places.rs
 msgid "{} (all files)"
@@ -9778,6 +9816,10 @@ msgstr "Kaydetmek için bir arama açın"
 #: crates/gezik/src/search.rs
 msgid "Flat view works in folders"
 msgstr "Düz görünüm klasörlerde çalışır"
+
+#: crates/gezik/src/search.rs
+msgid "Phones are not searched"
+msgstr "Telefonlarda arama yapılmaz"
 
 #: crates/gezik/src/search.rs
 msgid "Inside an archive only names, sizes, dates and types are searched"
@@ -12740,6 +12782,16 @@ msgstr "Zaman aşımı"
 msgctxt "setting:git.timeout"
 msgid "Seconds a status may take"
 msgstr "Bir durum sorgusunun sürebileceği saniye"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "Telefonlar"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "Takılınca Android telefonları (MTP) göster; false: Gezik onları aramaz"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:convert.ffmpeg"

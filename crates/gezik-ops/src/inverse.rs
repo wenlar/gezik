@@ -83,7 +83,9 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     for outcome in flat.iter().rev() {
         let (root, edit) = match outcome {
             Outcome::VfsCreated { at } => (&at.root, Edit::Delete(at.inner.clone())),
-            Outcome::VfsRenamed { from, to } => (&to.root, Edit::Rename { from: to.inner.clone(), to: from.inner.clone() }),
+            Outcome::VfsRenamed { from, to } => {
+                (&to.root, Edit::Rename { from: to.inner.clone(), to: from.inner.clone() })
+            }
             _ => continue,
         };
         match places.iter_mut().find(|(r, _)| r == root) {
@@ -395,10 +397,7 @@ mod tests {
             assert_eq!(root.name(), "P");
             assert_eq!(
                 edits,
-                [
-                    Edit::Rename { from: "S/b.txt".into(), to: "S/a.txt".into() },
-                    Edit::Delete("S/new".into()),
-                ],
+                [Edit::Rename { from: "S/b.txt".into(), to: "S/a.txt".into() }, Edit::Delete("S/new".into()),],
                 "the last change first"
             );
             Arc::new(crate::testing::AskingTask)

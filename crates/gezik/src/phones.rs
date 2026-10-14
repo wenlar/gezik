@@ -74,7 +74,7 @@ fn arrived(phones: Vec<Device>) {
         for p in crate::panes::everywhere() {
             p.nav.leave_device(&gone.id);
         }
-        crate::panes::with_active(|p| p.nav.status(gezik_i18n::t!("{} was disconnected", gone.name).into_owned()));
+        crate::panes::with_active(|p| p.nav.status(gezik_i18n::t!("{} was disconnected", gone.name)));
     }
     crate::windows::for_each(|_| crate::sidebar::with_current(crate::sidebar::Sidebar::phones_changed));
 }
@@ -94,7 +94,8 @@ mod tests {
 
     #[test]
     fn a_phone_gone_is_one_no_longer_listed() {
-        let gone = gone(&[phone("a"), phone("b")], &[phone("b"), phone("c")]);
+        let before = [phone("a"), phone("b")];
+        let gone = gone(&before, &[phone("b"), phone("c")]);
         assert_eq!(gone, [&phone("a")]);
     }
 }

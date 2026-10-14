@@ -1022,10 +1022,18 @@ mod tests {
                 1
             }
             fn resources(&self) -> crate::task::Resources {
-                crate::task::Resources { paths: Vec::new(), work: crate::task::Work::Disk, vfs_roots: vec![self.0.into()] }
+                crate::task::Resources {
+                    paths: Vec::new(),
+                    work: crate::task::Work::Disk,
+                    vfs_roots: vec![self.0.into()],
+                }
             }
             fn plan(&self, _: &mut dyn crate::task::ScanSink) {}
-            fn run(&self, _: &crate::task::PlanItem, _: &crate::task::RunCx<'_>) -> std::io::Result<crate::task::Outcome> {
+            fn run(
+                &self,
+                _: &crate::task::PlanItem,
+                _: &crate::task::RunCx<'_>,
+            ) -> std::io::Result<crate::task::Outcome> {
                 Ok(crate::task::Outcome::Nothing)
             }
         }
@@ -1314,7 +1322,11 @@ mod tests {
             1
         }
         fn resources(&self) -> crate::task::Resources {
-            crate::task::Resources { paths: vec![self.target.clone()], work: crate::task::Work::Disk, vfs_roots: Vec::new() }
+            crate::task::Resources {
+                paths: vec![self.target.clone()],
+                work: crate::task::Work::Disk,
+                vfs_roots: Vec::new(),
+            }
         }
         fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
             let facts = gezik_core::ops::conflict::Facts { is_dir: false, size: 1, modified: None };
@@ -1355,7 +1367,11 @@ mod tests {
             1
         }
         fn resources(&self) -> crate::task::Resources {
-            crate::task::Resources { paths: vec![self.target.clone()], work: crate::task::Work::External, vfs_roots: Vec::new() }
+            crate::task::Resources {
+                paths: vec![self.target.clone()],
+                work: crate::task::Work::External,
+                vfs_roots: Vec::new(),
+            }
         }
         fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
             let facts = gezik_core::ops::conflict::Facts { is_dir: false, size: 4, modified: None };

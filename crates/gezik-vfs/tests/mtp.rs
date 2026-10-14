@@ -248,10 +248,7 @@ fn browsing_shows_storages_and_tells_repeated_names_apart() {
     assert_eq!(top, ["Internal"]);
     let names: Vec<(String, bool, u64)> =
         vfs.list("Internal/DCIM").unwrap().into_iter().map(|e| (e.name, e.is_dir, e.size)).collect();
-    assert_eq!(
-        names,
-        [("a.jpg".into(), false, 5), ("a (2).jpg".into(), false, 6), ("b.txt".into(), false, 3)]
-    );
+    assert_eq!(names, [("a.jpg".into(), false, 5), ("a (2).jpg".into(), false, 6), ("b.txt".into(), false, 3)]);
     assert!(vfs.is_dir("Internal/DCIM") && vfs.is_file("Internal/DCIM/a (2).jpg"));
     assert!(vfs.list("Internal/nothing").is_none());
 }
@@ -304,7 +301,8 @@ fn a_new_folder_and_a_rename_are_undone_and_a_delete_stays() {
     let engine = engine(&d);
     let dcim_id = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
     let root = top.root.clone();
-    let (report, _) = run(&engine, VfsEditTask::new(root.clone(), vec![Edit::MakeDir("Internal/DCIM/New".into())]), &[]);
+    let (report, _) =
+        run(&engine, VfsEditTask::new(root.clone(), vec![Edit::MakeDir("Internal/DCIM/New".into())]), &[]);
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert!(phone.names(&dcim_id).contains(&"New".to_owned()));
     undo(&engine);

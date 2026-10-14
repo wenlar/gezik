@@ -122,10 +122,12 @@ mod tests {
 
     #[test]
     fn drives_are_left_out_and_repeated_names_numbered() {
-        let stick = r"\\?\swd#wpdbusenum#_??_usbstor#disk&ven_vendorc&prod_productcode#{6ac27878-a6fa-4155-ba85-f98f491d4f33}";
+        let stick =
+            r"\\?\swd#wpdbusenum#_??_usbstor#disk&ven_vendorc&prod_productcode#{6ac27878-a6fa-4155-ba85-f98f491d4f33}";
         let phone = r"\\?\usb#vid_18d1&pid_4ee1#serial#{6ac27878-a6fa-4155-ba85-f98f491d4f33}";
         assert!(has_drive_letter(stick) && !has_drive_letter(phone));
-        let found = named(vec![("a".into(), "Pixel 8".into()), ("b".into(), "pixel 8".into()), ("c".into(), " ".into())]);
+        let found =
+            named(vec![("a".into(), "Pixel 8".into()), ("b".into(), "pixel 8".into()), ("c".into(), " ".into())]);
         let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["Pixel 8", "pixel 8 (2)", "Phone"]);
     }

@@ -255,13 +255,17 @@ mod tests {
     #[test]
     fn a_phone_address_gives_its_name_and_place() {
         let split = |text: &str| split_device(Path::new(text));
-        assert_eq!(split("mtp://Pixel 8/Internal shared storage/DCIM"), Some(("Pixel 8".into(), "Internal shared storage/DCIM".into())));
+        assert_eq!(
+            split("mtp://Pixel 8/Internal shared storage/DCIM"),
+            Some(("Pixel 8".into(), "Internal shared storage/DCIM".into()))
+        );
         assert_eq!(split(r"MTP:\\Pixel 8\a\..\b\"), Some(("Pixel 8".into(), "b".into())), "either slash, any case");
         assert_eq!(split("mtp://Pixel 8"), Some(("Pixel 8".into(), String::new())));
         assert_eq!(split("mtp://"), None);
         assert_eq!(split("/w/mtp://x"), None);
         assert_eq!(split("mt"), None);
-        let at = VfsPath { root: VfsRoot::Device { id: "usb#1".into(), name: "Pixel 8".into() }, inner: "S/DCIM".into() };
+        let at =
+            VfsPath { root: VfsRoot::Device { id: "usb#1".into(), name: "Pixel 8".into() }, inner: "S/DCIM".into() };
         assert_eq!(split(&at.text()), Some(("Pixel 8".into(), "S/DCIM".into())), "its own text");
     }
 

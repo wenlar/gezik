@@ -1947,7 +1947,8 @@ impl Menus {
         if section == crate::sidebar::SECTION_PHONES {
             let Some(place) = self.sidebar.location_of(section, index) else { return };
             *self.subject.borrow_mut() = Some(Subject::Phone(place));
-            return self.open_slint(&[(OPEN, tx!("Open")), (OPEN_IN_NEW_TAB, tx!("Open in new tab"))], Anchor::point(x, y));
+            return self
+                .open_slint(&[(OPEN, tx!("Open")), (OPEN_IN_NEW_TAB, tx!("Open in new tab"))], Anchor::point(x, y));
         }
         let Some(Location::Path(path)) = self.sidebar.location_of(section, index) else { return };
         let pinned_section = section == SECTION_PINNED;

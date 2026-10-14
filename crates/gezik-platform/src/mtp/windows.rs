@@ -7,9 +7,9 @@ use std::io;
 use std::time::{Duration, SystemTime};
 
 use windows::Win32::Devices::DeviceAndDriverInstallation::{
-    CM_GET_DEVICE_INTERFACE_LIST_PRESENT, CM_Get_DevNode_PropertyW, CM_Get_Device_Interface_ListW,
-    CM_Get_Device_Interface_List_SizeW, CM_Get_Device_Interface_PropertyW, CM_LOCATE_DEVNODE_NORMAL,
-    CM_Locate_DevNodeW, CR_BUFFER_SMALL, CR_SUCCESS,
+    CM_GET_DEVICE_INTERFACE_LIST_PRESENT, CM_Get_DevNode_PropertyW, CM_Get_Device_Interface_List_SizeW,
+    CM_Get_Device_Interface_ListW, CM_Get_Device_Interface_PropertyW, CM_LOCATE_DEVNODE_NORMAL, CM_Locate_DevNodeW,
+    CR_BUFFER_SMALL, CR_SUCCESS,
 };
 use windows::Win32::Devices::PortableDevices::{
     GUID_DEVINTERFACE_WPD, IPortableDevice, IPortableDeviceContent, IPortableDeviceDataStream,
@@ -19,10 +19,10 @@ use windows::Win32::Devices::PortableDevices::{
     PortableDevicePropVariantCollection, PortableDeviceValues, WPD_CLIENT_DESIRED_ACCESS, WPD_CLIENT_MAJOR_VERSION,
     WPD_CLIENT_MINOR_VERSION, WPD_CLIENT_NAME, WPD_CLIENT_REVISION, WPD_CONTENT_TYPE_FOLDER,
     WPD_CONTENT_TYPE_FUNCTIONAL_OBJECT, WPD_CONTENT_TYPE_GENERIC_FILE, WPD_DEVICE_OBJECT_ID,
-    WPD_FUNCTIONAL_CATEGORY_STORAGE, WPD_FUNCTIONAL_OBJECT_CATEGORY, WPD_OBJECT_CONTENT_TYPE,
-    WPD_OBJECT_DATE_MODIFIED, WPD_OBJECT_FORMAT, WPD_OBJECT_FORMAT_PROPERTIES_ONLY, WPD_OBJECT_FORMAT_UNSPECIFIED,
-    WPD_OBJECT_NAME, WPD_OBJECT_ORIGINAL_FILE_NAME, WPD_OBJECT_PARENT_ID, WPD_OBJECT_SIZE,
-    WPD_PROPERTY_ATTRIBUTE_CAN_WRITE, WPD_RESOURCE_DEFAULT, WPD_STORAGE_ACCESS_CAPABILITY,
+    WPD_FUNCTIONAL_CATEGORY_STORAGE, WPD_FUNCTIONAL_OBJECT_CATEGORY, WPD_OBJECT_CONTENT_TYPE, WPD_OBJECT_DATE_MODIFIED,
+    WPD_OBJECT_FORMAT, WPD_OBJECT_FORMAT_PROPERTIES_ONLY, WPD_OBJECT_FORMAT_UNSPECIFIED, WPD_OBJECT_NAME,
+    WPD_OBJECT_ORIGINAL_FILE_NAME, WPD_OBJECT_PARENT_ID, WPD_OBJECT_SIZE, WPD_PROPERTY_ATTRIBUTE_CAN_WRITE,
+    WPD_RESOURCE_DEFAULT, WPD_STORAGE_ACCESS_CAPABILITY,
 };
 use windows::Win32::Devices::Properties::{
     DEVPKEY_Device_DeviceDesc, DEVPKEY_Device_FriendlyName, DEVPKEY_Device_InstanceId,
@@ -307,7 +307,8 @@ impl Wpd {
             (*value.Anonymous.Anonymous).vt = VT_LPWSTR;
             (*value.Anonymous.Anonymous).Anonymous.pwszVal = PWSTR(text.as_mut_ptr());
             ids.Add(&value)?;
-            let how = if recursion { PORTABLE_DEVICE_DELETE_WITH_RECURSION } else { PORTABLE_DEVICE_DELETE_NO_RECURSION };
+            let how =
+                if recursion { PORTABLE_DEVICE_DELETE_WITH_RECURSION } else { PORTABLE_DEVICE_DELETE_NO_RECURSION };
             self.com().content.Delete(how.0 as u32, &ids, std::ptr::null_mut())?;
             Ok(())
         }

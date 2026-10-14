@@ -35,7 +35,10 @@ impl IdCache {
         self.0.retain(|path, _| parent(path) != dir);
         let mut shown: Vec<Object> = Vec::with_capacity(objects.len());
         // shortcut: a name with a slash, or `.`/`..`, cannot be a path part and is not shown; rename it on the phone.
-        for mut object in objects.into_iter().filter(|o| !o.name.is_empty() && !o.name.contains(['/', '\\']) && o.name != "." && o.name != "..") {
+        for mut object in objects
+            .into_iter()
+            .filter(|o| !o.name.is_empty() && !o.name.contains(['/', '\\']) && o.name != "." && o.name != "..")
+        {
             let taken = |name: &str| shown.iter().any(|o| o.name.eq_ignore_ascii_case(name));
             if taken(&object.name) {
                 object.name = gezik_core::ops::names::next_free(&object.name, object.is_dir, taken);
