@@ -75,7 +75,7 @@ impl Task for LinkTask {
     fn resources(&self) -> Resources {
         let mut paths = self.sources();
         paths.extend(self.pairs.iter().filter_map(|(_, at)| at.parent().map(Path::to_path_buf)));
-        Resources { paths, work: Work::Disk }
+        Resources { paths, work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

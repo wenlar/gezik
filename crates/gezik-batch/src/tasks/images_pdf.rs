@@ -45,7 +45,7 @@ impl Task for ImagesToPdfTask {
     fn resources(&self) -> Resources {
         let mut paths = self.pictures.clone();
         paths.push(self.output.clone());
-        Resources { paths, work: Work::Cpu }
+        Resources { paths, work: Work::Cpu, vfs_roots: Vec::new() }
     }
 
     fn workers(&self) -> Option<usize> {

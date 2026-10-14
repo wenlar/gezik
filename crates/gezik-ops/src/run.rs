@@ -37,6 +37,7 @@ pub(crate) fn run_job(shared: &Shared, job: &Arc<Job>) {
             }
         }
     }
+    ids.extend(crate::engine::vfs_keys(&job.tasks));
     shared.publish_drives(job, DriveSet::new(ids));
     if shared.wait_turn(job) {
         for task in &job.tasks {

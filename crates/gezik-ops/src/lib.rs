@@ -20,6 +20,7 @@ pub use engine::{
     move_next_to,
 };
 pub use gezik_core::ops::conflict::{ConflictKind, Decision, Facts};
+pub use inverse::{VfsUndo, set_vfs_undo};
 pub use pending::PendingDeletes;
 pub use task::{
     Answer, ChangedSince, NoTrash, Outcome, PlanItem, Question, Resources, Restart, RunCx, ScanSink, Stage, Task,

@@ -16,8 +16,9 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DBT_DEVICEQUERYREMOVE, DBT_DEVTYP_HANDLE, DEV_BROADCAST_HANDLE, DEV_BROADCAST_HDR, DEVICE_NOTIFY_WINDOW_HANDLE,
-    HDEVNOTIFY, RegisterDeviceNotificationW, UnregisterDeviceNotification, WM_DEVICECHANGE,
+    DBT_DEVICEARRIVAL, DBT_DEVICEQUERYREMOVE, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_DEVICEINTERFACE, DBT_DEVTYP_HANDLE,
+    DEV_BROADCAST_DEVICEINTERFACE_W, DEV_BROADCAST_HANDLE, DEV_BROADCAST_HDR, DEVICE_NOTIFY_WINDOW_HANDLE, HDEVNOTIFY,
+    RegisterDeviceNotificationW, UnregisterDeviceNotification, WM_DEVICECHANGE,
 };
 
 use crate::fs::verbatim;
@@ -29,6 +30,8 @@ type Callback = Rc<dyn Fn()>;
 thread_local! {
     /// The callbacks of the live watches, by the handle Windows names in its message.
     static WATCHES: RefCell<HashMap<isize, Callback>> = RefCell::new(HashMap::new());
+    /// Told when a phone (a WPD device) comes or goes (spec 16 §10.2).
+    static PHONES: RefCell<Option<Callback>> = const { RefCell::new(None) };
     /// The windows whose messages are seen already.
     static WINDOWS: RefCell<Vec<isize>> = const { RefCell::new(Vec::new()) };
 }
@@ -90,6 +93,31 @@ pub fn watch_removal(
     }
 }
 
+/// Calls `on_change` (on this, the window's thread) whenever a portable device (a phone, a
+/// camera) is plugged in or out, for as long as the window lives. An event of the system, no
+/// polling; nothing of WPD is loaded. Call once, after the first frame, on the UI thread.
+pub fn watch_phones(window: &impl HasWindowHandle, on_change: impl Fn() + 'static) -> bool {
+    let Ok(handle) = window.window_handle() else { return false };
+    let RawWindowHandle::Win32(raw) = handle.as_raw() else { return false };
+    let hwnd = HWND(raw.hwnd.get() as *mut _);
+    see_messages(hwnd);
+    let filter = DEV_BROADCAST_DEVICEINTERFACE_W {
+        dbcc_size: size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32,
+        dbcc_devicetype: DBT_DEVTYP_DEVICEINTERFACE.0,
+        dbcc_classguid: windows::Win32::Devices::PortableDevices::GUID_DEVINTERFACE_WPD,
+        ..Default::default()
+    };
+    // Kept for the window's life: Windows drops it with the window.
+    let registered = unsafe {
+        RegisterDeviceNotificationW(HANDLE(hwnd.0), (&raw const filter).cast(), DEVICE_NOTIFY_WINDOW_HANDLE)
+    };
+    if registered.is_err() {
+        return false;
+    }
+    PHONES.with(|p| *p.borrow_mut() = Some(Rc::new(on_change)));
+    true
+}
+
 /// Lets `device_messages` see the window's WM_DEVICECHANGE, once per window.
 fn see_messages(hwnd: HWND) {
     let new = WINDOWS.with(|w| {
@@ -127,6 +155,14 @@ unsafe extern "system" fn device_messages(
         }
         // TRUE: Gezik does not object.
         return LRESULT(1);
+    }
+    if msg == WM_DEVICECHANGE
+        && matches!(wparam.0 as u32, DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE)
+        && lparam.0 != 0
+        && unsafe { &*(lparam.0 as *const DEV_BROADCAST_HDR) }.dbch_devicetype == DBT_DEVTYP_DEVICEINTERFACE
+        && let Some(callback) = PHONES.with(|p| p.borrow().clone())
+    {
+        callback();
     }
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }

@@ -117,7 +117,7 @@ impl Task for RenameTask {
 
     fn resources(&self) -> Resources {
         let paths = self.pairs.iter().filter_map(|(source, _)| source.parent().map(Path::to_path_buf)).collect();
-        Resources { paths, work: Work::Disk }
+        Resources { paths, work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

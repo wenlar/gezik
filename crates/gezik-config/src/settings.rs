@@ -185,6 +185,19 @@ impl Default for GitSettings {
     }
 }
 
+/// `[devices]` (spec 16 §10): phones plugged in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DevicesSettings {
+    /// Phones (MTP) show in the sidebar when plugged in.
+    pub phones: bool,
+}
+
+impl Default for DevicesSettings {
+    fn default() -> Self {
+        DevicesSettings { phones: true }
+    }
+}
+
 /// What Space shows on macOS (`[system] quick-look`, spec 9 §4.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuickLookMode {
@@ -442,6 +455,7 @@ pub struct Settings {
     pub archives: ArchivesSettings,
     pub command_line: CommandLineSettings,
     pub git: GitSettings,
+    pub devices: DevicesSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
     /// User commands (`[[commands]]`); invalid ones are left out.
@@ -493,6 +507,7 @@ impl Default for Settings {
             archives: ArchivesSettings::default(),
             command_line: CommandLineSettings::default(),
             git: GitSettings::default(),
+            devices: DevicesSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
             commands: Vec::new(),
@@ -685,6 +700,23 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(git) => settings.git = parse_git(git, file, warnings),
                 None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "git", value))),
+            },
+        }
+        match table.get("devices") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(devices) => {
+                    if let Some(value) = devices.get("phones") {
+                        match value.as_bool() {
+                            Some(on) => settings.devices.phones = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: expected true or false, got {1}", "devices.phones", value),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "devices", value))),
             },
         }
         match table.get("tools") {
@@ -4305,6 +4337,15 @@ history = [1, \" \", \"dir\"]
             ["dir"]
         );
         assert!(!State::default().to_toml().contains("command-line"), "nothing written while empty");
+    }
+
+    #[test]
+    fn reads_devices() {
+        assert!(Settings::default().devices.phones);
+        let (settings, warnings) = parse("[devices]\nphones = false\n");
+        assert!(!settings.devices.phones && warnings.is_empty(), "{warnings:?}");
+        let (settings, warnings) = parse("[devices]\nphones = 1\n");
+        assert!(settings.devices.phones && warnings.len() == 1);
     }
 
     #[test]

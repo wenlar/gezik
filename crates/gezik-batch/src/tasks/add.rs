@@ -109,7 +109,7 @@ impl Task for AddToArchiveTask {
     fn resources(&self) -> Resources {
         let mut paths = vec![self.archive.clone()];
         paths.extend(put_sources(&self.edits));
-        Resources { paths, work: Work::Cpu }
+        Resources { paths, work: Work::Cpu, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

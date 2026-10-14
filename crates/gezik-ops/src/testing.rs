@@ -173,7 +173,7 @@ impl Task for FakeTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: self.paths.clone(), work: Work::Disk }
+        Resources { paths: self.paths.clone(), work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
@@ -253,7 +253,7 @@ impl Task for AskingTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: Vec::new(), work: Work::Cpu }
+        Resources { paths: Vec::new(), work: Work::Cpu, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
@@ -291,7 +291,7 @@ impl Task for StagingTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.0.clone()], work: Work::Disk }
+        Resources { paths: vec![self.0.clone()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

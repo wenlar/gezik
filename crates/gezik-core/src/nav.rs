@@ -486,6 +486,20 @@ impl Tabs {
         }
         active
     }
+    /// The phone `id` was unplugged (spec 16 §10.1): its tabs go to This PC. Whether the active
+    /// tab was one of them.
+    pub fn leave_device(&mut self, id: &str) -> bool {
+        let mut active = false;
+        for (i, history) in self.tabs.iter_mut().enumerate() {
+            if let Location::Vfs(at) = history.location()
+                && matches!(&at.root, VfsRoot::Device { id: on, .. } if on == id)
+            {
+                history.navigate(Location::Drives);
+                active |= i == self.active;
+            }
+        }
+        active
+    }
     /// The saved search `old` is now called `new` (renamed, or replaced under another spelling):
     /// the tabs showing it, and their back and forward steps, take the new title. Whether any did.
     pub fn rename_search(&mut self, old: &str, new: &str) -> bool {
@@ -945,6 +959,21 @@ mod tests {
         let mut once = Tabs::new(p(other));
         assert!(!once.leave(Path::new(root)), "nothing on it");
         assert_eq!(*once.active().location(), p(other));
+    }
+
+    #[test]
+    fn an_unplugged_phone_sends_its_tabs_to_this_pc() {
+        let phone = |id: &str, inner: &str| {
+            Location::Vfs(VfsPath { root: VfsRoot::Device { id: id.into(), name: "P".into() }, inner: inner.into() })
+        };
+        let mut tabs = Tabs::new(phone("a", "Storage/DCIM"));
+        tabs.open(phone("b", ""), false);
+        tabs.open(phone("a", ""), false);
+        assert!(!tabs.leave_device("b"), "the active tab is on the other phone");
+        let on = |l: Location| tabs.iter().filter(|h| *h.location() == l).count();
+        assert_eq!((on(Location::Drives), on(phone("a", ""))), (1, 1));
+        assert!(tabs.leave_device("a"));
+        assert_eq!(tabs.iter().filter(|h| *h.location() == Location::Drives).count(), 3);
     }
 
     // ---- History ----
