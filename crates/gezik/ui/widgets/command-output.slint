@@ -23,10 +23,13 @@ export component CommandOutput inherits Rectangle {
     in-out property <length> panel-height: 180px;
     // Bumped by each run: the list starts at its end and follows it.
     in property <int> run;
-    // Lines dropped from the start in this run so far.
-    in property <int> dropped-lines;
+    // While the list does not follow: what came since ("1,204 new lines · End"), or "".
+    in property <string> new-lines;
     // 0 Stop, 1 Run Again, 2 Copy Output, 3 Close.
     callback button(int);
+    // The list starts or stops following its end: while it does not, Rust leaves its rows as
+    // they are (nothing added or dropped under the reader) and counts what comes instead.
+    callback follow-changed(bool);
     // Where the list is scrolled, and where its end is (the last line whole at the bottom): the
     // tests' (`CommandOutputProbe`).
     out property <length> view-y: list.content-y;
@@ -48,18 +51,16 @@ export component CommandOutput inherits Rectangle {
             root.to-end();
         }
     }
+    changed follow => { root.follow-changed(self.follow); }
     changed run => {
         root.follow = true;
         root.to-end();
     }
-    // Lines dropped from the start while the user looks higher up: the list moves with them,
-    // so the same lines stay on screen (up to the top, if those lines themselves went).
-    property <int> seen-dropped;
-    changed dropped-lines => {
-        if !root.follow && root.dropped-lines > root.seen-dropped {
-            list.content-y = min(0px, list.content-y + (root.dropped-lines - root.seen-dropped) * root.line-height);
-        }
-        root.seen-dropped = root.dropped-lines;
+    // End, or the new-lines bar: the rows come up to date, the list goes to its end and follows.
+    function follow-end() {
+        root.follow = true;
+        root.follow-changed(true);
+        root.to-end();
     }
     // The user scrolled to `y`.
     function scroll-to(y: length) {
@@ -160,7 +161,7 @@ export component CommandOutput inherits Rectangle {
                 } else if event.text == Key.Home {
                     root.scroll-to(0px);
                 } else if event.text == Key.End {
-                    root.scroll-to(root.end);
+                    root.follow-end();
                 } else {
                     return reject;
                 }
@@ -201,6 +202,28 @@ export component CommandOutput inherits Rectangle {
                 scroll-event(event) => {
                     root.scroll-to(list.content-y + event.delta-y);
                     accept
+                }
+            }
+            // What came while the list did not follow: a click goes there.
+            if !root.follow && root.new-lines != "": Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: parent.height - self.height - 4px;
+                width: new-text.preferred-width + Theme.spacing * 2;
+                height: root.line-height + 4px;
+                border-radius: Theme.radius;
+                background: Theme.accent;
+                accessible-role: AccessibleRole.button;
+                accessible-label: root.new-lines;
+                accessible-action-default => { root.follow-end(); }
+                new-text := Text {
+                    text: root.new-lines;
+                    color: Theme.accent-foreground;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.follow-end(); }
                 }
             }
             // Its ring while it has the keyboard.

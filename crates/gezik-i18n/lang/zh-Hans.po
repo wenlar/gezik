@@ -7275,6 +7275,13 @@ msgstr "退出代码 {0} · {1}"
 msgid "Ended by a signal · {}"
 msgstr "被信号结束 · {}"
 
+#. a bar under the command output while it is scrolled up; End goes there
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "{n} new line · End"
+msgid_plural "{n} new lines · End"
+msgstr[0] "{n} 行新输出 · End"
+
 #: crates/gezik/src/compare.rs
 #, fuzzy
 msgid "Subfolders"

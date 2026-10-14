@@ -323,14 +323,17 @@ impl Output {
 }
 
 /// The panel's rows: the output itself, told to the list as lines come and go (lines dropped
-/// from the start are one removal, never a rebuild).
+/// from the start are one removal, never a rebuild). While the list does not follow its end
+/// (the user scrolled up) the rows are frozen: a copy of the output as it was then, nothing
+/// added or dropped under the reader; the output goes on (capped) and the lines that came are
+/// counted. Following again, the rows are the output once more (one reset).
 #[derive(Default)]
 pub struct OutputModel {
     output: RefCell<Output>,
     notify: ModelNotify,
-    /// Lines dropped from the start since the run began: the panel keeps a scrolled-up view
-    /// on the same lines.
-    dropped_total: Cell<i32>,
+    frozen: RefCell<Option<Vec<Line>>>,
+    /// Lines that came while frozen.
+    new_lines: Cell<usize>,
 }
 
 impl OutputModel {
@@ -342,7 +345,10 @@ impl OutputModel {
         let added = lines.len();
         let before = self.output.borrow().len();
         let dropped = self.output.borrow_mut().push_all(lines);
-        self.dropped_total.set(self.dropped_total.get().saturating_add(i32::try_from(dropped).unwrap_or(i32::MAX)));
+        if self.frozen.borrow().is_some() {
+            self.new_lines.set(self.new_lines.get() + added);
+            return;
+        }
         if dropped >= before {
             self.notify.reset();
             return;
@@ -353,9 +359,22 @@ impl OutputModel {
         self.notify.row_added(before - dropped, added);
     }
 
+    /// The list stops (`false`) or starts following its end.
+    fn set_following(&self, on: bool) {
+        let frozen = self.frozen.borrow().is_some();
+        if on && frozen {
+            self.frozen.take();
+            self.new_lines.set(0);
+            self.notify.reset();
+        } else if !on && !frozen {
+            *self.frozen.borrow_mut() = Some(self.output.borrow().lines.iter().cloned().collect());
+        }
+    }
+
     fn clear(&self) {
         *self.output.borrow_mut() = Output::default();
-        self.dropped_total.set(0);
+        self.frozen.take();
+        self.new_lines.set(0);
         self.notify.reset();
     }
 }
@@ -364,12 +383,18 @@ impl Model for OutputModel {
     type Data = CmdLine;
 
     fn row_count(&self) -> usize {
-        self.output.borrow().len()
+        match &*self.frozen.borrow() {
+            Some(rows) => rows.len(),
+            None => self.output.borrow().len(),
+        }
     }
 
     fn row_data(&self, row: usize) -> Option<CmdLine> {
-        let output = self.output.borrow();
-        output.lines.get(row).map(|line| CmdLine { text: line.text.as_str().into(), err: line.err })
+        let row_of = |line: &Line| CmdLine { text: line.text.as_str().into(), err: line.err };
+        match &*self.frozen.borrow() {
+            Some(rows) => rows.get(row).map(row_of),
+            None => self.output.borrow().lines.get(row).map(row_of),
+        }
     }
 
     fn model_tracker(&self) -> &dyn ModelTracker {
@@ -576,6 +601,10 @@ struct State {
     stopped: bool,
     /// The status written last ("Running… 3 s"), so it is written only when it changes.
     status: String,
+    /// The new-lines bar's text written last, and when: it changes at most twice a second
+    /// (each write makes the pane look at its row again).
+    new_text: String,
+    new_at: Option<Instant>,
 }
 
 impl State {
@@ -616,6 +645,12 @@ impl CommandLine {
 
     /// The window's panel buttons, for every pane (once).
     pub fn connect(window: &crate::AppWindow) {
+        window.on_command_follow(|pane, on| {
+            if let Some(p) = crate::panes::at(pane) {
+                p.command.0.model.set_following(on);
+                p.command.show();
+            }
+        });
         window.on_command_button(|pane, which| {
             if let Some(p) = crate::pick(pane) {
                 match which {
@@ -951,7 +986,20 @@ impl CommandLine {
             (state.open, format!("> {}", state.command), folder, status, code, state.run)
         };
         let dropped = self.0.model.output.borrow().dropped;
-        let dropped_lines = self.0.model.dropped_total.get();
+        let new_lines = {
+            let mut state = self.0.state.borrow_mut();
+            let n = self.0.model.new_lines.get();
+            let due = state.new_at.is_none_or(|at| at.elapsed() >= Duration::from_millis(500));
+            if n == 0 || state.new_text.is_empty() || due {
+                state.new_text = match n {
+                    0 => String::new(),
+                    // TRANSLATORS: a bar under the command output while it is scrolled up; End goes there
+                    n => gezik_i18n::tn!("{n} new line · End" | "{n} new lines · End", n),
+                };
+                state.new_at = Some(Instant::now());
+            }
+            state.new_text.clone()
+        };
         let model = ModelRc::from(self.0.model.clone());
         crate::panes::edit(self.0.id, |d| {
             d.cmd_open = open;
@@ -962,7 +1010,7 @@ impl CommandLine {
             d.cmd_state = state_code;
             d.cmd_dropped = dropped;
             d.cmd_run = run;
-            d.cmd_dropped_lines = dropped_lines;
+            d.cmd_new_lines = new_lines.into();
         });
     }
 }
@@ -1281,6 +1329,10 @@ mod tests {
         probe.show().unwrap();
         let model = Rc::new(OutputModel::default());
         probe.set_lines(ModelRc::from(model.clone()));
+        probe.on_follow_changed({
+            let model = model.clone();
+            move |on| model.set_following(on)
+        });
         let settle = || {
             for _ in 0..4 {
                 std::thread::sleep(Duration::from_millis(60));
@@ -1345,8 +1397,8 @@ mod tests {
         at_end("a new run");
     }
 
-    /// While the cap drops the oldest lines (`dir /s C:\\Windows`): scrolled up, the same
-    /// lines stay on screen; End goes to the end at once and follows, frame after frame.
+    /// While the cap drops the oldest lines (`dir /s C:\\Windows`): scrolled up, the rows stay
+    /// as they are (counted lines wait); End brings the end within a frame and follows.
     #[test]
     fn the_output_panel_keeps_its_place_while_lines_are_dropped() {
         use slint::ComponentHandle;
@@ -1356,20 +1408,24 @@ mod tests {
         probe.show().unwrap();
         let model = Rc::new(OutputModel::default());
         probe.set_lines(ModelRc::from(model.clone()));
+        // As the app's `command-follow`.
+        probe.on_follow_changed({
+            let model = model.clone();
+            move |on| model.set_following(on)
+        });
         let frame = || {
             let started = Instant::now();
             crate::windows::tests::frame((-1.0, -1.0));
             started.elapsed()
         };
         let next = Cell::new(0usize);
-        // A tick's worth of 200-character lines, the drops told to the panel as the app does.
+        // A tick's worth of 200-character lines.
         let tick = || {
             let from = next.get();
             next.set(from + LINES_PER_TICK);
             model.push_all(
                 (from..from + LINES_PER_TICK).map(|i| Line { text: format!("{i:0>200}"), err: false }).collect(),
             );
-            probe.set_dropped_lines(model.dropped_total.get());
             // A frame makes only the rows on screen (a list that made every row froze).
             let took = frame();
             assert!(took < Duration::from_millis(500), "a frame took {took:?}");
@@ -1403,23 +1459,22 @@ mod tests {
         frame();
         assert!(!at_end());
         let shown = first_shown();
+        let (rows, y) = (model.row_count(), probe.get_view_y());
         assert!(!shown.is_empty());
-        // Lines dropped above it: the list moves with them (within a line: the list's own
-        // layout nudges it), so the same line stays at the top of the view.
-        let number = |text: String| text.trim_start_matches('0').parse::<i64>().unwrap_or(0);
-        for _ in 0..2 {
+        // Lines come and old ones are dropped: the rows on screen do not change, the new ones
+        // are counted.
+        for n in 1..=3 {
             tick();
             frame();
-            assert!((number(first_shown()) - number(shown.clone())).abs() <= 1, "{} for {shown}", first_shown());
+            assert_eq!((first_shown(), model.row_count(), probe.get_view_y()), (shown.clone(), rows, y));
+            assert_eq!(model.new_lines.get(), n * LINES_PER_TICK);
         }
-        // Once the lines it showed are gone too, it waits at the top.
-        tick();
-        frame();
-        assert_eq!(probe.get_view_y(), 0.0);
-        // End: at the end within two frames, and it follows while lines are dropped.
+        assert!(model.output.borrow().len() < rows + 3 * LINES_PER_TICK, "the output stayed capped");
+        // End: the rows are the output again, at their end within a frame, and they follow.
         key(Key::End);
         frame();
-        frame();
+        assert_eq!(model.new_lines.get(), 0);
+        assert_eq!(model.row_count(), model.output.borrow().len());
         assert!(at_end(), "End reached the end: {} vs {}", probe.get_view_y(), probe.get_view_end());
         for _ in 0..4 {
             tick();

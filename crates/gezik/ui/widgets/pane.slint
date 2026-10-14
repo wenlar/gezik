@@ -104,8 +104,8 @@ export struct PaneData {
     cmd-dropped: bool,
     // Bumped by each run (the list starts at its end).
     cmd-run: int,
-    // Lines dropped from the start in this run (a scrolled-up view moves with them).
-    cmd-dropped-lines: int,
+    // What came while the list did not follow ("1,204 new lines · End"), or "".
+    cmd-new-lines: string,
 }
 
 // Where the pane's parts are in the window and how big its lines are (drag.rs, sidebar.rs,
@@ -271,8 +271,10 @@ export component PaneView inherits Rectangle {
     callback column-middle(int, int, int);
     callback column-scrolled(int, int, length);
     callback columns-shown(int, int, int);
-    // The command panel's button `int` (CommandOutput's `button`).
+    // The command panel's button `int` (CommandOutput's `button`), and its list starting or
+    // stopping to follow its end.
     callback command-button(int, int);
+    callback command-follow(int, bool);
 
     // What lives here and Rust only hears of (callbacks above) or asks for (`data` requests).
     property <length> list-scroll;
@@ -801,7 +803,8 @@ export component PaneView inherits Rectangle {
                     state: root.data.cmd-state;
                     dropped: root.data.cmd-dropped;
                     run: root.data.cmd-run;
-                    dropped-lines: root.data.cmd-dropped-lines;
+                    new-lines: root.data.cmd-new-lines;
+                    follow-changed(on) => { root.command-follow(root.index, on); }
                     mono-font: root.mono-font;
                     button(which) => { root.command-button(root.index, which); }
                 }
