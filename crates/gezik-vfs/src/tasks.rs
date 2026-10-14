@@ -179,6 +179,7 @@ impl VfsEditTask {
                 Edit::Put { to: name, .. }
                 | Edit::MakeDir(name)
                 | Edit::Delete(name)
+                | Edit::Unmake { path: name, .. }
                 | Edit::Rename { from: name, .. } => last(name).to_owned(),
             })
             .collect();
@@ -227,8 +228,16 @@ impl VfsEditTask {
     }
 
     /// Entries of a place copied (`moving`: moved) into folder `dir`; within one archive a
-    /// move is a rename.
+    /// move is a rename. A move leaves out what is `dir` itself or holds it, and what is in
+    /// `dir` already (`movable`).
     pub fn copy_in(items: &[VfsPath], dir: &VfsPath, moving: bool) -> VfsEditTask {
+        let kept;
+        let items = if moving {
+            kept = movable(items, dir);
+            kept.as_slice()
+        } else {
+            items
+        };
         let names: Vec<String> = items.iter().map(|item| last(&item.inner).to_owned()).collect();
         let from = items.first().map(|item| item.root.clone());
         let mut task = match from {
@@ -296,6 +305,12 @@ impl VfsEditTask {
                 return Ok(None);
             };
             let applied = vfs.apply(&edits, replace, &cx)?;
+            // Stopped early: what was done stays undoable; a phone gone is a failure row.
+            if let Some(err) = &applied.ended
+                && err.kind() != io::ErrorKind::Interrupted
+            {
+                run.fail(Path::new(&root.text()), err);
+            }
             let done = gezik_batch::tasks::Rewritten { sources: applied.sources, seen: (0, None) };
             return Ok(Some((Outcome::Several(applied.outcomes), done)));
         }
@@ -491,7 +506,13 @@ fn settle_on_device(
     let names: Vec<&str> = clashes.iter().map(|&i| last(edit_name(&edits[i]))).collect();
     let title = gezik_i18n::tn!("{n} item already on the phone" | "{n} items already on the phone", names.len());
     let buttons = [t("Replace"), t("Skip"), t("Keep both"), t("Cancel")].to_vec();
-    match run.ask(Question::Confirm { title, message: names.join("\n"), buttons }) {
+    let mut message = names.join("\n");
+    // A file put where a folder is: Replace deletes the folder with what it holds.
+    if clashes.iter().any(|&i| vfs.is_dir(edit_name(&edits[i]))) {
+        message.push_str("\n\n");
+        message.push_str(&gezik_i18n::t!("Replace deletes a folder of that name with everything in it."));
+    }
+    match run.ask(Question::Confirm { title, message, buttons }) {
         Answer::Button(0) => {
             if clashes.iter().any(|&i| !vfs.can_rename(edit_name(&edits[i]))) {
                 let title = gezik_i18n::t!("Replace on the phone?").into_owned();
@@ -536,10 +557,35 @@ fn flatten(outcome: Outcome, into: &mut Vec<Outcome>) {
     }
 }
 
+/// The items a move into folder `dir` may take: in one place, not `dir` nor a folder holding
+/// it (it would go into itself), nor what is in `dir` already (it would replace itself).
+pub fn movable(items: &[VfsPath], dir: &VfsPath) -> Vec<VfsPath> {
+    items
+        .iter()
+        .filter(|item| {
+            if !crate::same_root(&item.root, &dir.root) {
+                return true;
+            }
+            let fold = |s: &str| {
+                if cfg!(windows) || crate::queue_key(&item.root).is_some() { s.to_lowercase() } else { s.to_owned() }
+            };
+            let (item_key, dir_key) = (fold(&item.inner), fold(&dir.inner));
+            let into_itself = dir_key == item_key || dir_key.starts_with(&format!("{item_key}/"));
+            let parent = item_key.rsplit_once('/').map_or("", |(up, _)| up);
+            !into_itself && parent != dir_key
+        })
+        .cloned()
+        .collect()
+}
+
 /// The name an edit acts on.
 fn edit_name(edit: &Edit) -> &str {
     match edit {
-        Edit::Put { to: name, .. } | Edit::MakeDir(name) | Edit::Delete(name) | Edit::Rename { from: name, .. } => name,
+        Edit::Put { to: name, .. }
+        | Edit::MakeDir(name)
+        | Edit::Delete(name)
+        | Edit::Unmake { path: name, .. }
+        | Edit::Rename { from: name, .. } => name,
     }
 }
 

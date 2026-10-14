@@ -35,6 +35,12 @@ struct Phone {
     moved: AtomicU64,
     slow: Mutex<Duration>,
     no_rename: AtomicBool,
+    /// Reads give half of each file and say nothing.
+    short: AtomicBool,
+    /// Deleting these ids fails.
+    fail_delete: Mutex<Vec<String>>,
+    /// The next this many puts fail.
+    fail_puts: AtomicU64,
 }
 
 const PIECE: usize = 4;
@@ -109,7 +115,10 @@ impl Session for Fake {
 
     fn read_to(&self, id: &str, out: &mut dyn io::Write, more: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
         self.0.check()?;
-        let data = self.0.objects.lock().unwrap().iter().find(|o| o.id == id).map(|o| o.data.clone()).unwrap();
+        let mut data = self.0.objects.lock().unwrap().iter().find(|o| o.id == id).map(|o| o.data.clone()).unwrap();
+        if self.0.short.load(Ordering::SeqCst) {
+            data.truncate(data.len() / 2);
+        }
         for piece in data.chunks(PIECE) {
             self.0.piece(piece.len())?;
             out.write_all(piece)?;
@@ -129,6 +138,10 @@ impl Session for Fake {
         more: &mut dyn FnMut(u64) -> bool,
     ) -> io::Result<Object> {
         self.0.check()?;
+        if self.0.fail_puts.load(Ordering::SeqCst) > 0 {
+            self.0.fail_puts.fetch_sub(1, Ordering::SeqCst);
+            return Err(io::Error::other("the phone refused the file"));
+        }
         let mut data = Vec::new();
         let mut piece = [0u8; PIECE];
         loop {
@@ -155,6 +168,9 @@ impl Session for Fake {
 
     fn delete(&self, id: &str) -> io::Result<()> {
         self.0.check()?;
+        if self.0.fail_delete.lock().unwrap().iter().any(|f| f == id) {
+            return Err(io::Error::other("the phone refused to delete it"));
+        }
         let mut objects = self.0.objects.lock().unwrap();
         let mut gone = vec![id.to_owned()];
         while let Some(at) = gone.pop() {
@@ -412,5 +428,176 @@ fn a_move_between_folders_on_the_phone_is_a_copy_and_a_delete() {
     assert!(report.failures.is_empty(), "{:?}", report.failures);
     assert_eq!(phone.names(&phone.id(&storage, "Music")), ["b.txt"]);
     assert_eq!(phone.names(&phone.id(&storage, "DCIM")), ["a.jpg", "a.jpg"]);
+    drop(vfs);
+}
+
+// ---- Regressions found in review (each failed before its fix) ----
+
+/// Names in folder `path` (parts by name) on the phone.
+fn names_at(phone: &Phone, path: &[&str]) -> Vec<String> {
+    let mut id = "DEVICE".to_owned();
+    for part in path {
+        id = phone.id(&id, part);
+    }
+    phone.names(&id)
+}
+
+#[test]
+fn a_storage_is_never_deleted_or_renamed() {
+    let (phone, vfs, top) = phone("storage");
+    let d = dir("storage");
+    let engine = engine(&d);
+    let root = top.root.clone();
+    let (report, _) = run(&engine, VfsEditTask::new(root.clone(), vec![Edit::Delete("Internal".into())]), &[]);
+    assert!(!report.failures.is_empty());
+    let rename = Edit::Rename { from: "Internal".into(), to: "Other".into() };
+    let (report, _) = run(&engine, VfsEditTask::new(root, vec![rename]), &[]);
+    assert!(!report.failures.is_empty());
+    assert_eq!(phone.names("DEVICE"), ["Internal"]);
+    assert_eq!(names_at(&phone, &["Internal"]), ["DCIM"], "the phone keeps what it holds");
+    drop(vfs);
+}
+
+#[test]
+fn a_moved_folder_with_a_name_no_path_holds_stays_on_the_phone() {
+    let (phone, vfs, top) = phone("odd-name");
+    let d = dir("odd-name");
+    let dcim = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
+    phone.add(&dcim, "a/b.txt", Some(b"odd"));
+    vfs.list("Internal");
+    let (tasks, _) = gezik_vfs::tasks::move_out(&[top.join("Internal/DCIM")], d.clone());
+    let engine = engine(&d);
+    let job = engine.submit_chain(tasks, None);
+    let (report, _) = wait(&engine, job, &[]);
+    assert!(!report.failures.is_empty(), "the odd name is a failure");
+    assert!(names_at(&phone, &["Internal", "DCIM"]).contains(&"a/b.txt".to_owned()), "nothing deleted");
+    drop(vfs);
+}
+
+#[test]
+fn a_move_into_itself_or_onto_itself_deletes_nothing() {
+    let (phone, vfs, top) = phone("itself");
+    let d = dir("itself");
+    let engine = engine(&d);
+    let dcim_id = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
+    phone.add(&dcim_id, "sub", None);
+    vfs.list("Internal/DCIM");
+    let dcim = top.join("Internal/DCIM");
+    run(&engine, VfsEditTask::copy_in(std::slice::from_ref(&dcim), &dcim.join("sub"), true), &[Answer::Button(0)]);
+    run(&engine, VfsEditTask::copy_in(&[dcim.join("b.txt")], &dcim, true), &[Answer::Button(0)]);
+    assert_eq!(names_at(&phone, &["Internal"]), ["DCIM"]);
+    assert_eq!(phone.names(&dcim_id), ["a.jpg", "a.jpg", "b.txt", "sub"]);
+    assert_eq!(phone.data(&dcim_id, "b.txt"), b"bee");
+    // The same guard holds in archives.
+    let zip = VfsPath::archive("/w/a.zip".into());
+    assert!(gezik_vfs::tasks::movable(&[zip.join("a")], &zip.join("a/b")).is_empty());
+    assert!(gezik_vfs::tasks::movable(&[zip.join("a/x")], &zip.join("a")).is_empty());
+    assert_eq!(gezik_vfs::tasks::movable(&[zip.join("a/x")], &zip.join("b")).len(), 1);
+    drop(vfs);
+}
+
+#[test]
+fn undo_leaves_what_took_a_made_things_place_and_a_folder_with_more_in_it() {
+    let (phone, vfs, top) = phone("undo-id");
+    let d = dir("undo-id");
+    std::fs::write(d.join("new.txt"), b"mine").unwrap();
+    std::fs::create_dir(d.join("album")).unwrap();
+    std::fs::write(d.join("album/p.jpg"), b"pic").unwrap();
+    let engine = engine(&d);
+    let dcim = top.join("Internal/DCIM");
+    run(&engine, VfsEditTask::put(&dcim, vec![d.join("new.txt"), d.join("album")], false), &[]);
+    let dcim_id = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
+    // Another program replaces new.txt and adds a file to the album.
+    let old = phone.id(&dcim_id, "new.txt");
+    phone.objects.lock().unwrap().retain(|o| o.id != old);
+    phone.add(&dcim_id, "new.txt", Some(b"theirs"));
+    phone.add(&phone.id(&dcim_id, "album"), "theirs.jpg", Some(b"t"));
+    undo(&engine);
+    assert_eq!(phone.data(&dcim_id, "new.txt"), b"theirs", "not the object undo made");
+    assert_eq!(names_at(&phone, &["Internal", "DCIM", "album"]), ["theirs.jpg"], "only what undo made went");
+    drop(vfs);
+}
+
+#[test]
+fn one_put_failing_does_not_stop_the_others_or_lose_their_undo() {
+    let (phone, vfs, top) = phone("partial");
+    let d = dir("partial");
+    std::fs::write(d.join("real.txt"), b"real").unwrap();
+    let engine = engine(&d);
+    let dcim = top.join("Internal/DCIM");
+    let (report, _) =
+        run(&engine, VfsEditTask::put(&dcim, vec![d.join("missing.txt"), d.join("real.txt")], false), &[]);
+    assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+    let dcim_id = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
+    assert!(phone.names(&dcim_id).contains(&"real.txt".to_owned()));
+    undo(&engine);
+    assert!(!phone.names(&dcim_id).contains(&"real.txt".to_owned()));
+    drop(vfs);
+}
+
+#[test]
+fn a_replace_that_fails_leaves_no_temporary_file_and_keeps_the_old_one() {
+    let (phone, vfs, top) = phone("replace-fail");
+    let d = dir("replace-fail");
+    std::fs::write(d.join("b.txt"), b"newer").unwrap();
+    let dcim = top.join("Internal/DCIM");
+    let dcim_id = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
+    let engine = engine(&d);
+    // The old one cannot be deleted: the temporary copy goes again.
+    phone.fail_delete.lock().unwrap().push(phone.id(&dcim_id, "b.txt"));
+    let (report, _) = run(&engine, VfsEditTask::put(&dcim, vec![d.join("b.txt")], false), &[Answer::Button(0)]);
+    assert!(!report.failures.is_empty());
+    assert_eq!(phone.names(&dcim_id), ["a.jpg", "a.jpg", "b.txt"]);
+    assert_eq!(phone.data(&dcim_id, "b.txt"), b"bee");
+    phone.fail_delete.lock().unwrap().clear();
+    // No renaming, and the new one does not go in: the old one is put back.
+    phone.no_rename.store(true, Ordering::SeqCst);
+    phone.fail_puts.store(1, Ordering::SeqCst);
+    let answers = [Answer::Button(0), Answer::Button(0)];
+    let (report, _) = run(&engine, VfsEditTask::put(&dcim, vec![d.join("b.txt")], false), &answers);
+    assert!(!report.failures.is_empty());
+    assert_eq!(phone.data(&dcim_id, "b.txt"), b"bee", "the old file is back");
+    drop(vfs);
+}
+
+#[test]
+fn a_file_that_comes_short_is_a_failure_and_a_move_keeps_it() {
+    let (phone, vfs, top) = phone("short");
+    let d = dir("short");
+    vfs.list("Internal/DCIM");
+    phone.short.store(true, Ordering::SeqCst);
+    let (tasks, _) = gezik_vfs::tasks::move_out(&[top.join("Internal/DCIM/b.txt")], d.clone());
+    let engine = engine(&d);
+    let job = engine.submit_chain(tasks, None);
+    let (report, _) = wait(&engine, job, &[]);
+    assert!(!report.failures.is_empty());
+    assert!(!d.join("b.txt").exists());
+    let dcim_id = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
+    assert_eq!(phone.data(&dcim_id, "b.txt"), b"bee", "the original stays");
+    drop(vfs);
+}
+
+#[test]
+fn a_phone_plugged_in_again_gets_a_new_session() {
+    let (phone, vfs, _) = phone("replug");
+    assert!(vfs.unchanged());
+    phone.gone.store(true, Ordering::SeqCst);
+    assert!(!vfs.unchanged());
+    phone.gone.store(false, Ordering::SeqCst);
+    assert!(!vfs.unchanged(), "the old session is not used again");
+    drop(vfs);
+}
+
+#[test]
+fn a_folder_read_again_forgets_what_was_under_it() {
+    let (phone, vfs, _) = phone("subtree");
+    let dcim_id = phone.id(&phone.id("DEVICE", "Internal"), "DCIM");
+    let sub = phone.add(&dcim_id, "sub", None);
+    phone.add(&sub, "x.txt", Some(b"x"));
+    vfs.list("Internal/DCIM/sub");
+    assert!(vfs.is_file("Internal/DCIM/sub/x.txt"));
+    phone.objects.lock().unwrap().retain(|o| o.id != sub && o.parent != sub);
+    vfs.list("Internal/DCIM");
+    assert!(!vfs.is_file("Internal/DCIM/sub/x.txt"), "gone with its folder");
     drop(vfs);
 }

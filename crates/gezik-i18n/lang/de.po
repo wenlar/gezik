@@ -409,6 +409,7 @@ msgstr "Kein verwendbarer Name: {}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "Ein Ordner kann nicht in sich selbst verschoben werden"
@@ -6442,6 +6443,12 @@ msgstr "Zu viele Tags und zu langer Kommentar für eine Datei"
 msgid "Phone"
 msgstr "Telefon"
 
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "Ein Speicher des Telefons kann nicht gelöscht werden"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6570,6 +6577,41 @@ msgstr "Einige Elemente konnten nicht aus dem Archiv geholt werden"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "Archive, die tiefer als {} Ebenen verschachtelt sind, werden nicht geöffnet"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "Ein Name, den kein Pfad aufnehmen kann"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "Die Datei kam unvollständig vom Telefon"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}; die neue Datei bleibt auf dem Telefon als {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}; die alte Datei konnte nicht zurückgelegt werden: {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "Ein Speicher des Telefons kann nicht geändert werden"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "Es hat sich seitdem geändert"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "Es ist nicht leer"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6610,6 +6652,11 @@ msgid "{n} item already on the phone"
 msgid_plural "{n} items already on the phone"
 msgstr[0] "{n} Element schon auf dem Telefon"
 msgstr[1] "{n} Elemente schon auf dem Telefon"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "Ersetzen löscht einen Ordner dieses Namens mit seinem gesamten Inhalt."
 
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy

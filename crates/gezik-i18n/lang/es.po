@@ -409,6 +409,7 @@ msgstr "Nombre no válido: {}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "No se puede mover una carpeta dentro de sí misma"
@@ -6442,6 +6443,12 @@ msgstr "Demasiadas etiquetas y un comentario demasiado largo para un archivo"
 msgid "Phone"
 msgstr "Teléfono"
 
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "No se puede eliminar un almacenamiento del teléfono"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6570,6 +6577,41 @@ msgstr "No se pudieron sacar algunos elementos del archivo comprimido"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "No se abren archivos comprimidos anidados a más de {} niveles"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "Un nombre que ninguna ruta puede contener"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "El archivo llegó incompleto del teléfono"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}; el archivo nuevo queda en el teléfono como {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}; no se pudo devolver el archivo antiguo: {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "No se puede cambiar un almacenamiento del teléfono"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "Ha cambiado desde entonces"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "No está vacío"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6610,6 +6652,11 @@ msgid "{n} item already on the phone"
 msgid_plural "{n} items already on the phone"
 msgstr[0] "{n} elemento ya está en el teléfono"
 msgstr[1] "{n} elementos ya están en el teléfono"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "Reemplazar elimina una carpeta con ese nombre y todo su contenido."
 
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy

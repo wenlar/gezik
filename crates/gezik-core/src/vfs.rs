@@ -41,6 +41,12 @@ pub enum Edit {
     MakeDir(String),
     /// The entry, a folder with what it holds.
     Delete(String),
+    /// The undo of what was made on a phone: deleted only while it is still the object `id`, a
+    /// folder only once empty.
+    Unmake {
+        path: String,
+        id: String,
+    },
     Rename {
         from: String,
         to: String,

@@ -15,6 +15,8 @@ thread_local! {
     static LIST: RefCell<Vec<Device>> = const { RefCell::new(Vec::new()) };
     static ON: Cell<bool> = const { Cell::new(true) };
     static WATCHING: Cell<bool> = const { Cell::new(false) };
+    /// The latest read asked for: an older one coming back later is dropped.
+    static ASKED: Cell<u64> = const { Cell::new(0) };
 }
 
 /// The phones plugged in, as last read.
@@ -36,8 +38,14 @@ pub fn place_of(name: &str, inner: String) -> Option<Location> {
 
 /// `[devices] phones`: turned on, they are looked for (once watching started); off, none show.
 pub fn set_settings(on: bool) {
-    if ON.replace(on) != on && WATCHING.get() {
+    if ON.replace(on) == on {
+        return;
+    }
+    if WATCHING.get() {
         read();
+    } else if on {
+        // Turned on while running: the watch starts now, no restart needed.
+        crate::windows::with_focused(start);
     }
 }
 
@@ -58,9 +66,15 @@ pub fn start(window: &AppWindow) {
 /// Reads the phones on a worker.
 fn read() {
     let on = ON.get();
+    let asked = ASKED.with(|a| a.get() + 1);
+    ASKED.with(|a| a.set(asked));
     std::thread::spawn(move || {
         let phones = if on { gezik_platform::mtp::devices() } else { Vec::new() };
-        let _ = slint::invoke_from_event_loop(move || arrived(phones));
+        let _ = slint::invoke_from_event_loop(move || {
+            if ASKED.with(Cell::get) == asked {
+                arrived(phones);
+            }
+        });
     });
 }
 
@@ -71,6 +85,11 @@ fn arrived(phones: Vec<Device>) {
         return;
     }
     for gone in gone(&before, &phones) {
+        // Its session is done with, even if it comes back: the next visit opens a new one.
+        let root = VfsRoot::Device { id: gone.id.clone(), name: gone.name.clone() };
+        if let Some(vfs) = gezik_vfs::mounted(&root) {
+            vfs.lost();
+        }
         for p in crate::panes::everywhere() {
             p.nav.leave_device(&gone.id);
         }

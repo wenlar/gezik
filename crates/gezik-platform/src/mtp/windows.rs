@@ -39,8 +39,8 @@ use windows::core::{GUID, Interface, PCWSTR, PWSTR};
 
 use super::{Object, Session};
 
-/// The WPD interfaces present now: (interface path, name).
-pub(super) fn interfaces() -> Vec<(String, String)> {
+/// The WPD interfaces present now (their paths; nothing of the devices is read).
+pub(super) fn interfaces() -> Vec<String> {
     // The list may grow between asking its size and reading it: try again.
     for _ in 0..3 {
         let mut len = 0u32;
@@ -70,21 +70,13 @@ pub(super) fn interfaces() -> Vec<(String, String)> {
         if read != CR_SUCCESS {
             return Vec::new();
         }
-        return buffer
-            .split(|&c| c == 0)
-            .filter(|id| !id.is_empty())
-            .map(|id| {
-                let id = String::from_utf16_lossy(id);
-                let name = name_of(&id);
-                (id, name)
-            })
-            .collect();
+        return buffer.split(|&c| c == 0).filter(|id| !id.is_empty()).map(String::from_utf16_lossy).collect();
     }
     Vec::new()
 }
 
 /// The device's name: the interface's own, else its device's (as Explorer shows it).
-fn name_of(id: &str) -> String {
+pub(super) fn name_of(id: &str) -> String {
     let wide = wide(id);
     let interface = |key: &DEVPROPKEY| {
         property(|ty, buffer, size| unsafe {
@@ -324,7 +316,8 @@ fn date(mut value: PROPVARIANT) -> Option<SystemTime> {
     };
     let _ = unsafe { PropVariantClear(&mut value) };
     let seconds = (days? - 25_569.0) * 86_400.0;
-    (seconds.is_finite() && seconds >= 0.0).then(|| SystemTime::UNIX_EPOCH + Duration::from_secs_f64(seconds))
+    let since = Duration::try_from_secs_f64(seconds).ok()?;
+    SystemTime::UNIX_EPOCH.checked_add(since)
 }
 
 const PIECE: usize = 256 * 1024;
@@ -335,7 +328,16 @@ impl Session for Wpd {
     }
 
     fn list(&self, parent: &str) -> io::Result<Vec<Object>> {
-        self.children(parent)?.iter().map(|id| self.read(id).map(|read| read.object)).collect()
+        let mut rows = Vec::new();
+        for id in self.children(parent)? {
+            match self.read(&id) {
+                Ok(read) => rows.push(read.object),
+                // One object the device cannot describe does not hide the folder.
+                Err(err) if super::present(&self.id) => eprintln!("gezik: a phone's object {id} left out: {err}"),
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(rows)
     }
 
     fn read_to(&self, id: &str, out: &mut dyn io::Write, more: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
@@ -399,6 +401,9 @@ impl Session for Wpd {
                 }
                 let mut done = 0u32;
                 unsafe { stream.Write(buffer.as_ptr().cast(), n as u32, Some(&mut done)) }.ok()?;
+                if done as usize != n {
+                    return Err(io::ErrorKind::WriteZero.into());
+                }
                 if !more(n as u64) {
                     return Err(io::ErrorKind::Interrupted.into());
                 }
@@ -433,14 +438,25 @@ impl Session for Wpd {
     }
 
     fn delete(&self, id: &str) -> io::Result<()> {
-        if self.delete_one(id, true).is_ok() {
-            return Ok(());
+        let kind = self.read(id)?.kind;
+        // A storage (or the device) is never deleted, nor what it holds through it.
+        if kind == WPD_CONTENT_TYPE_FUNCTIONAL_OBJECT {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                gezik_i18n::t!("A storage of the phone cannot be deleted").into_owned(),
+            ));
         }
-        // Some devices delete only empty folders: what it holds first, deepest first.
-        for child in self.children(id).unwrap_or_default() {
-            self.delete(&child)?;
+        match self.delete_one(id, true) {
+            Ok(()) => Ok(()),
+            // Some devices delete only empty folders: what it holds first, deepest first.
+            Err(_) if kind == WPD_CONTENT_TYPE_FOLDER => {
+                for child in self.children(id)? {
+                    self.delete(&child)?;
+                }
+                self.delete_one(id, false)
+            }
+            Err(err) => Err(err),
         }
-        self.delete_one(id, false)
     }
 
     fn rename(&self, id: &str, name: &str) -> io::Result<()> {
@@ -481,11 +497,12 @@ impl Session for Wpd {
 mod tests {
     use super::*;
 
-    /// Lists what WPD offers here, read only (a USB stick shows as one): run by hand.
+    /// Lists the phones plugged in, read only (never a device with a drive letter): run by hand
+    /// with a phone.
     #[test]
     #[ignore]
-    fn lists_portable_devices_read_only() {
-        for (id, name) in interfaces() {
+    fn lists_phones_read_only() {
+        for super::super::Device { id, name } in super::super::devices() {
             println!("{name}: {id}");
             let Ok(session) = open(&id) else { continue };
             for storage in session.storages().unwrap_or_default() {

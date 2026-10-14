@@ -82,7 +82,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut places: Vec<(VfsRoot, Vec<Edit>)> = Vec::new();
     for outcome in flat.iter().rev() {
         let (root, edit) = match outcome {
-            Outcome::VfsCreated { at } => (&at.root, Edit::Delete(at.inner.clone())),
+            Outcome::VfsCreated { at, id } => (&at.root, Edit::Unmake { path: at.inner.clone(), id: id.clone() }),
             Outcome::VfsRenamed { from, to } => {
                 (&to.root, Edit::Rename { from: to.inner.clone(), to: from.inner.clone() })
             }
@@ -397,7 +397,10 @@ mod tests {
             assert_eq!(root.name(), "P");
             assert_eq!(
                 edits,
-                [Edit::Rename { from: "S/b.txt".into(), to: "S/a.txt".into() }, Edit::Delete("S/new".into()),],
+                [
+                    Edit::Rename { from: "S/b.txt".into(), to: "S/a.txt".into() },
+                    Edit::Unmake { path: "S/new".into(), id: "7".into() },
+                ],
                 "the last change first"
             );
             Arc::new(crate::testing::AskingTask)
@@ -405,7 +408,7 @@ mod tests {
         set_vfs_undo(maker);
         let top = VfsPath { root: VfsRoot::Device { id: "1".into(), name: "P".into() }, inner: "S".into() };
         let outcomes = vec![Outcome::Several(vec![
-            Outcome::VfsCreated { at: top.join("new") },
+            Outcome::VfsCreated { at: top.join("new"), id: "7".into() },
             Outcome::VfsRenamed { from: top.join("a.txt"), to: top.join("b.txt") },
         ])];
         assert_eq!(build(&outcomes).len(), 1, "one task for one phone");

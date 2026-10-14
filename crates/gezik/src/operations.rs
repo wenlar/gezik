@@ -177,6 +177,11 @@ pub const NOT_HERE: &str = tx!("Not in search results: open a folder first");
 /// A change inside an archive Gezik only reads (spec 16 §6.1); shown with `t`.
 pub const READ_ONLY: &str = tx!("This kind of archive can only be read");
 
+/// Whether `at` is a phone's storage (its top level): never deleted, cut or renamed.
+fn is_storage(at: &VfsPath) -> bool {
+    gezik_vfs::queue_key(&at.root).is_some() && !at.inner.contains('/')
+}
+
 /// Why a place cannot be changed: an archive Gezik only reads, or a phone that lets nothing
 /// change (an iPhone's photos).
 fn read_only_note(root: &gezik_core::vfs::VfsRoot) -> String {
@@ -1031,6 +1036,11 @@ impl Operations {
         if !writable(&dir.root) || (moving && items.first().is_some_and(|item| !writable(&item.root))) {
             return crate::panes::active_view().note(read_only_note(&dir.root));
         }
+        // Not into itself, nor onto itself (a cut pasted where it is).
+        let items = if moving { gezik_vfs::tasks::movable(&items, &dir) } else { items };
+        if items.is_empty() {
+            return crate::panes::active_view().note(t!("Cannot move a folder into itself").into_owned());
+        }
         let names = items.iter().map(VfsPath::name).collect();
         self.edit_inside(VfsEditTask::copy_in(&items, &dir, moving), names, After::Select);
     }
@@ -1042,6 +1052,9 @@ impl Operations {
         let Some(first) = items.first() else { return };
         if !writable(&first.root) {
             return view.note(read_only_note(&first.root));
+        }
+        if items.iter().any(is_storage) {
+            return view.note(t!("A storage of the phone cannot be deleted").into_owned());
         }
         let what = match items.as_slice() {
             [one] => one.name(),
@@ -1089,6 +1102,9 @@ impl Operations {
         let Some(first) = items.first() else { return };
         if cut && !writable(&first.root) {
             return view.note(read_only_note(&first.root));
+        }
+        if cut && items.iter().any(is_storage) {
+            return view.note(t!("A storage of the phone cannot be deleted").into_owned());
         }
         let text: Vec<String> = items.iter().map(VfsPath::text).collect();
         if let Err(ClipboardError::Failed(why)) = clipboard::write_text(&text.join("\n")) {
