@@ -1,11 +1,16 @@
 //! Highlight rules (spec 12 §9): `[[highlight-rules]]` color and embolden rows, the first rule
 //! that matches a row wins (Total Commander's color rules). Pure: the rules are compiled once
 //! when the settings load (gezik-config), a row is tried with what its entry already holds
-//! and, only for rules with a tag, rating or comment condition, its meta.
+//! and, only for rules with a tag, rating or comment condition, its meta, and only for rules
+//! with a `where`, its fields (spec 13 §9.3).
 
+use std::cell::LazyCell;
+use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use crate::Entry;
+use crate::field_filter::{self, FieldTerm};
+use crate::fields::{FieldSet, Fields};
 use crate::file_filter::FileFilter;
 use crate::meta::{Meta, TagColor};
 use crate::meta_filter::{TagTerm, matches};
@@ -84,7 +89,7 @@ impl Style {
 }
 
 /// One rule: every condition it has must hold (and); one it lacks holds for every row.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Rule {
     pub name: Option<FileFilter>,
     pub kind: Option<KindFilter>,
@@ -99,12 +104,18 @@ pub struct Rule {
     pub terms: Vec<TagTerm>,
     /// `comment = "any"`.
     pub commented: bool,
+    /// `where`: property words, as the filter bar's.
+    pub fields: Vec<FieldTerm>,
     pub style: Style,
 }
 
 impl Rule {
     pub fn needs_meta(&self) -> bool {
         !self.terms.is_empty() || self.commented
+    }
+
+    pub fn needs_fields(&self) -> bool {
+        !self.fields.is_empty()
     }
 
     /// Whether `e` passes the conditions its entry answers.
@@ -136,7 +147,7 @@ pub enum RowMeta<'a> {
 }
 
 /// The rules in effect, compiled.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Highlights {
     rules: Vec<Rule>,
 }
@@ -163,14 +174,35 @@ impl Highlights {
         self.rules.iter().any(Rule::needs_meta)
     }
 
-    /// The first rule matching `e` (its index), `now` the time the row is drawn; `None` when
-    /// none does or one waits for the meta.
-    pub fn first(&self, e: &Entry, now: SystemTime, meta: RowMeta) -> Option<usize> {
+    /// The fields some rule's `where` needs: only these are read for rows, and none when no
+    /// rule has one.
+    pub fn fields_needed(&self) -> FieldSet {
+        self.rules.iter().fold(FieldSet::NONE, |set, r| set.with(field_filter::needed(&r.fields)))
+    }
+
+    /// The first rule matching `e` (its index), `now` the time the row is drawn, `fields` the
+    /// row's fields (`None`: not read yet), asked for only when a `where` rule's other
+    /// conditions hold; `None` when none does or one waits for the meta or the fields.
+    pub fn first(
+        &self,
+        e: &Entry,
+        now: SystemTime,
+        meta: RowMeta,
+        fields: impl FnOnce() -> Option<Rc<Fields>>,
+    ) -> Option<usize> {
+        let fields = LazyCell::new(fields);
         for (i, rule) in self.rules.iter().enumerate() {
             #[cfg(test)]
             TRIED.with(|c| c.set(c.get() + 1));
             if !rule.entry_matches(e, now) {
                 continue;
+            }
+            if rule.needs_fields() {
+                match &*fields {
+                    None => return None,
+                    Some(values) if !field_filter::matches(&rule.fields, values) => continue,
+                    Some(_) => {}
+                }
             }
             if !rule.needs_meta() {
                 return Some(i);
@@ -240,7 +272,7 @@ mod tests {
     }
 
     fn hit(rules: &Highlights, e: &Entry) -> bool {
-        rules.first(e, now(), RowMeta::Never).is_some()
+        rules.first(e, now(), RowMeta::Never, || None).is_some()
     }
 
     #[test]
@@ -279,7 +311,8 @@ mod tests {
     fn meta_conditions() {
         let tagged = Meta { tags: vec![Tag::new("Red", TagColor::Red)], rating: 3, comment: "Needs REVIEW".into() };
         let none = Meta::default();
-        let check = |rule: Rule, meta: &Meta| one(rule).first(&file("a", 1, 0), now(), RowMeta::Known(meta)).is_some();
+        let check =
+            |rule: Rule, meta: &Meta| one(rule).first(&file("a", 1, 0), now(), RowMeta::Known(meta), || None).is_some();
         let terms = |t: Vec<TagTerm>| Rule { terms: t, ..Rule::default() };
         assert!(check(terms(vec![TagTerm::Named("red".into())]), &tagged));
         assert!(!check(terms(vec![TagTerm::Named("Blue".into())]), &tagged));
@@ -300,8 +333,8 @@ mod tests {
             Rule { kind: Some(KindFilter::Pictures), style: red(true), ..Rule::default() },
             Rule { style: Style { color: Some(Hue::Rgb([1, 2, 3])), ..Style::default() }, ..Rule::default() },
         ]);
-        assert_eq!(rules.first(&file("a.png", 1, 0), now(), RowMeta::Never), Some(0));
-        assert_eq!(rules.first(&file("a.txt", 1, 0), now(), RowMeta::Never), Some(1));
+        assert_eq!(rules.first(&file("a.png", 1, 0), now(), RowMeta::Never, || None), Some(0));
+        assert_eq!(rules.first(&file("a.txt", 1, 0), now(), RowMeta::Never, || None), Some(1));
         let style = rules.rules()[0].style;
         assert!(style.bold && style.rgb(false).is_some(), "both from the one rule");
     }
@@ -314,12 +347,47 @@ mod tests {
         ]);
         assert!(rules.needs_meta());
         let e = file("a", 1, 0);
-        assert_eq!(rules.first(&e, now(), RowMeta::Pending), None, "no later color meanwhile");
-        assert_eq!(rules.first(&e, now(), RowMeta::Never), Some(1));
-        assert_eq!(rules.first(&e, now(), RowMeta::Known(&Meta::default())), Some(1));
+        assert_eq!(rules.first(&e, now(), RowMeta::Pending, || None), None, "no later color meanwhile");
+        assert_eq!(rules.first(&e, now(), RowMeta::Never, || None), Some(1));
+        assert_eq!(rules.first(&e, now(), RowMeta::Known(&Meta::default()), || None), Some(1));
         let no_meta = Highlights::new(vec![Rule { style: red(false), ..Rule::default() }]);
         assert!(!no_meta.needs_meta() && !Highlights::default().needs_meta());
-        assert_eq!(no_meta.first(&e, now(), RowMeta::Pending), Some(0), "a rule without meta does not wait");
+        assert_eq!(no_meta.first(&e, now(), RowMeta::Pending, || None), Some(0), "a rule without meta does not wait");
+    }
+
+    #[test]
+    fn a_where_rule_matches_its_fields_and_waits_for_them() {
+        use crate::fields::{ARTIST, DURATION, Value};
+        let rules = Highlights::new(vec![
+            Rule { fields: field_filter::parse_where("duration>3m").unwrap(), style: red(false), ..Rule::default() },
+            Rule { style: red(true), ..Rule::default() },
+        ]);
+        assert_eq!(rules.fields_needed(), FieldSet::of(&[DURATION]));
+        assert!(!rules.needs_meta(), "fields are not meta");
+        let e = file("a.mp3", 1, 0);
+        let long = Fields::new(vec![(DURATION, Value::Duration(200_000)), (ARTIST, Value::Text("x".into()))]);
+        let short = Fields::new(vec![(DURATION, Value::Duration(60_000))]);
+        assert_eq!(rules.first(&e, now(), RowMeta::Never, || Some(Rc::new(long.clone()))), Some(0));
+        assert_eq!(rules.first(&e, now(), RowMeta::Never, || Some(Rc::new(short.clone()))), Some(1));
+        assert_eq!(rules.first(&e, now(), RowMeta::Never, || Some(Rc::default())), Some(1), "no value: no match");
+        assert_eq!(rules.first(&e, now(), RowMeta::Never, || None), None, "not read yet: no later color meanwhile");
+        // Anded with the other conditions: a name that fails is passed without waiting.
+        let named = Highlights::new(vec![Rule {
+            name: Some(FileFilter::parse("*.mp3", false).unwrap()),
+            fields: field_filter::parse_where("duration>3m").unwrap(),
+            style: red(false),
+            ..Rule::default()
+        }]);
+        let asked = Cell::new(false);
+        let ask = || {
+            asked.set(true);
+            None
+        };
+        assert_eq!(named.first(&file("a.txt", 1, 0), now(), RowMeta::Never, ask), None);
+        assert!(!asked.get(), "a row no where rule can take is not read");
+        assert_eq!(named.first(&e, now(), RowMeta::Never, || Some(Rc::new(long.clone()))), Some(0));
+        assert!(Highlights::new(vec![Rule { style: red(false), ..Rule::default() }]).fields_needed().is_empty());
+        assert!(Highlights::default().fields_needed().is_empty(), "no where: nothing read");
     }
 
     #[test]
@@ -335,7 +403,7 @@ mod tests {
         assert_eq!(rules.rules().len(), MAX_RULES);
         let compiled = COMPILED.with(Cell::get);
         TRIED.with(|c| c.set(0));
-        assert_eq!(rules.first(&file("x2", 1, 0), now(), RowMeta::Never), Some(2));
+        assert_eq!(rules.first(&file("x2", 1, 0), now(), RowMeta::Never, || None), Some(2));
         assert_eq!(TRIED.with(Cell::get), 3, "stops at the first match");
         assert_eq!(COMPILED.with(Cell::get), compiled, "nothing compiled while drawing");
     }
@@ -344,21 +412,28 @@ mod tests {
     fn a_row_takes_well_under_a_microsecond_per_rule_set() {
         let rules: Vec<Rule> = (0..MAX_RULES)
             .map(|i| Rule {
-                name: Some(FileFilter::parse(&format!("*.x{i}"), false).unwrap()),
+                // Half the rules take the row by its name and fail on a `where` (spec 13 §9.3).
+                name: Some(FileFilter::parse(if i % 2 == 0 { "*.txt" } else { "*.x" }, false).unwrap()),
                 kind: Some(KindFilter::Files),
                 min_size: Some(1),
+                fields: if i % 2 == 0 {
+                    field_filter::parse_where("duration>1h year<2000").unwrap()
+                } else {
+                    Vec::new()
+                },
                 style: red(false),
                 ..Rule::default()
             })
             .collect();
         let rules = Highlights::new(rules);
         let e = file("some_long_file_name_2026.txt", 10, 0);
+        let values = Rc::new(Fields::new(vec![(crate::fields::DURATION, crate::fields::Value::Duration(60_000))]));
         // The best of five batches: a shared CI runner stalls now and then.
         let per_row = (0..5)
             .map(|_| {
                 let start = std::time::Instant::now();
                 for _ in 0..200 {
-                    assert_eq!(rules.first(&e, now(), RowMeta::Never), None);
+                    assert_eq!(rules.first(&e, now(), RowMeta::Never, || Some(values.clone())), None);
                 }
                 start.elapsed() / 200
             })

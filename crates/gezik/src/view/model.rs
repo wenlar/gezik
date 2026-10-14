@@ -253,7 +253,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
                 (None, true) => RowMeta::Pending,
                 (None, false) => RowMeta::Never,
             };
-            crate::tags::highlight_of(e, now, known, selected)
+            crate::tags::highlight_of(e, now, known, || where_fields(data, i), selected)
         }
         None => Default::default(),
     };
@@ -439,7 +439,7 @@ fn field_cells(data: &ViewData, i: usize) -> ModelRc<slint::SharedString> {
     if data.field_columns.is_empty() || data.mode != ViewMode::List {
         return ModelRc::default();
     }
-    let values = row_fields(data, i, true);
+    let values = row_fields(data, i, FieldSet::of(&data.field_columns), true).map(|(values, _)| values);
     let cells: Vec<slint::SharedString> = data
         .field_columns
         .iter()
@@ -456,34 +456,47 @@ pub fn known_field(data: &ViewData, i: usize, id: FieldId) -> String {
 /// `known_field`, with English numbers if `english`.
 pub fn known_field_in(data: &ViewData, i: usize, id: FieldId, english: bool) -> String {
     let number = if english { gezik_i18n::Number::ENGLISH } else { gezik_i18n::number() };
-    row_fields(data, i, false).and_then(|v| v.text_in(id, number)).unwrap_or_default()
+    let want = FieldSet::of(&data.field_columns);
+    row_fields(data, i, want, false).and_then(|(v, _)| v.text_in(id, number)).unwrap_or_default()
 }
 
-/// Entry `i`'s field values as far as known: from the folder read whole, else from the rows'
-/// cache; with `ask`, the fields of the columns its readers give and not read yet are asked for
-/// (a `.txt` asks nothing). Folders have none.
-fn row_fields(data: &ViewData, i: usize, ask: bool) -> Option<Rc<Fields>> {
+/// Entry `i`'s fields for the highlight rules' `where` (spec 13 §9.3): asked for only here, so
+/// only for rows on screen; `None` until all of them its readers give is read. Folders and rows
+/// not on disk (inside an archive) have none.
+fn where_fields(data: &ViewData, i: usize) -> Option<Rc<Fields>> {
+    if data.listing.is_dir(i) || data.listing.path_at(i).is_none() {
+        return Some(Rc::default());
+    }
+    let want = crate::tags::highlight_fields();
+    row_fields(data, i, want, true).filter(|(_, done)| done.covers(want)).map(|(values, _)| values)
+}
+
+/// Entry `i`'s values of `want` as far as known and the fields they answer for: from the folder
+/// read whole, else from the rows' cache (an older listing's until read again); with `ask`, the
+/// fields its readers give and not read yet are asked for (a `.txt` asks nothing, and answers
+/// for every field). Folders have none.
+fn row_fields(data: &ViewData, i: usize, want: FieldSet, ask: bool) -> Option<(Rc<Fields>, FieldSet)> {
     if matches!(data.listing, Listing::Drives(_)) || data.listing.is_dir(i) {
         return None;
     }
-    let want = FieldSet::of(&data.field_columns);
     if let (Listing::Files(dir, entries), Some(f)) = (&data.listing, &data.folder_fields)
         && f.dir == *dir
         && f.read.covers(want)
         && let Some(values) = entries.get(i).and_then(|e| f.of(&e.name))
     {
-        return Some(values);
+        return Some((values, f.read));
     }
     let (path, _) = data.listing.path_at(i)?;
     if !ask {
-        return data.media.known_fields(&path);
+        return data.media.known_fields(&path).map(|values| (values, FieldSet::NONE));
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
-    let want = want.and(gezik_core::fields::provided(&ext));
-    if want.is_empty() {
-        return None;
+    let provided = gezik_core::fields::provided(&ext);
+    let unread = want.without(provided);
+    if want.and(provided).is_empty() {
+        return Some((Rc::default(), unread));
     }
-    data.media.fields(path, want, i)
+    data.media.fields(path, want.and(provided), i).map(|(values, read)| (values, read.with(unread)))
 }
 
 /// The cloud state of entry `i` when its folder is under a cloud root (spec 9 §7.3): from the
@@ -1157,5 +1170,57 @@ mod tests {
         assert_eq!(known_field(&data, 0, ARTIST), "Tarkan");
         data.mode = ViewMode::Grid;
         assert_eq!(file_row(&data, 2).fields.row_count(), 0, "the grid has no columns");
+    }
+
+    #[test]
+    fn a_where_rule_reads_the_rows_drawn_and_waits_for_their_fields() {
+        use gezik_config::theme::ThemeColors;
+        use gezik_core::fields::{DURATION, Value};
+        use gezik_core::highlight::{Highlights, Hue, Rule, Style};
+        let entries: Vec<Entry> = ["a.mp3", "b.mp3", "c.txt", "d"]
+            .iter()
+            .map(|n| Entry { name: (*n).into(), is_dir: *n == "d", flags: 0, size: 1, modified: None, created: None })
+            .collect();
+        let dir = PathBuf::from(if cfg!(windows) { r"C:\w" } else { "/w" });
+        let data = ViewData {
+            listing: Listing::Files(dir.clone(), Rc::new(entries)),
+            media: Media::idle(),
+            ..ViewData::default()
+        };
+        let light =
+            ThemeColors { background: gezik_config::Color::parse("#ffffff").unwrap(), ..ThemeColors::default() };
+        let none = slint::Color::from_argb_u8(0, 0, 0, 0);
+        let style = |rgb: [u8; 3]| Style { color: Some(Hue::Rgb(rgb)), dark: None, bold: false };
+        // A rule without `where`: nothing read for it.
+        crate::tags::set_highlights(
+            Highlights::new(vec![Rule { style: style([4, 5, 6]), ..Rule::default() }]),
+            Some(&light),
+        );
+        (0..4).for_each(|i| drop(file_row(&data, i)));
+        let others = data.media.pending();
+        assert_eq!(file_row(&data, 0).tint, slint::Color::from_rgb_u8(4, 5, 6));
+        assert_eq!(data.media.pending(), others, "no where: no field read");
+        // `where` first: the row waits (no later color), a folder or a .txt has no value.
+        let long = Rule {
+            fields: gezik_core::field_filter::parse_where("duration>3s").unwrap(),
+            style: style([1, 2, 3]),
+            ..Rule::default()
+        };
+        let rules = Highlights::new(vec![long, Rule { style: style([4, 5, 6]), ..Rule::default() }]);
+        crate::tags::set_highlights(rules, Some(&light));
+        assert_eq!(file_row(&data, 0).tint, none, "waits for the fields");
+        assert_eq!(file_row(&data, 2).tint, slint::Color::from_rgb_u8(4, 5, 6));
+        assert_eq!(file_row(&data, 3).tint, slint::Color::from_rgb_u8(4, 5, 6));
+        assert_eq!(data.media.pending(), others + 1, "only the .mp3 drawn is read");
+        let read = |name: &str, ms: u64| {
+            let key = MediaKey::Fields { path: dir.join(name), want: FieldSet::of(&[DURATION]) };
+            let values = Fields::new(vec![(DURATION, Value::Duration(ms))]);
+            data.media.finish(&std::sync::atomic::AtomicBool::new(true), key, crate::media::Outcome::Fields(values));
+        };
+        read("a.mp3", 5_000);
+        read("b.mp3", 1_000);
+        assert_eq!(file_row(&data, 0).tint, slint::Color::from_rgb_u8(1, 2, 3));
+        assert_eq!(file_row(&data, 1).tint, slint::Color::from_rgb_u8(4, 5, 6));
+        crate::tags::set_highlights(Highlights::default(), Some(&light));
     }
 }
