@@ -4,6 +4,7 @@
 #   & scripts/gui/gui.ps1 place [<width> <height>]       moves it onto the primary monitor at (40,40)
 #   & scripts/gui/gui.ps1 click <x> <y> [right|double]   screen coordinates
 #   & scripts/gui/gui.ps1 drag <x1> <y1> <x2> <y2> [shift|ctrl]
+#   & scripts/gui/gui.ps1 wheel <x> <y> <notches>       positive scrolls up, negative down
 #   & scripts/gui/gui.ps1 key <key> [<key>...]          names: enter esc tab f2 up down ctrl+c shift+f10 …
 #   & scripts/gui/gui.ps1 hold <key> <times>            key-downs with auto-repeat, then one key-up
 #   & scripts/gui/gui.ps1 paste <text>                  puts text on the clipboard and sends Ctrl+V
@@ -128,6 +129,12 @@ switch ($Verb) {
         Start-Sleep -Milliseconds 300; [GuiIn]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)
         if ($mod) { Up $mod }
         Mark
+    }
+    'wheel' {
+        # wheel <x> <y> <notches>: positive scrolls up, negative down (120 per notch).
+        Guard; [GuiIn]::SetCursorPos([int]$Rest[0], [int]$Rest[1]) | Out-Null; Start-Sleep -Milliseconds 80
+        [GuiIn]::mouse_event(0x0800, 0, 0, [uint32]([int]$Rest[2] * 120), [UIntPtr]::Zero)
+        Mark; Start-Sleep -Milliseconds 150
     }
     'key' { foreach ($k in $Rest) { Press $k } }
     'hold' {
