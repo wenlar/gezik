@@ -133,7 +133,8 @@ switch ($Verb) {
     'wheel' {
         # wheel <x> <y> <notches>: positive scrolls up, negative down (120 per notch).
         Guard; [GuiIn]::SetCursorPos([int]$Rest[0], [int]$Rest[1]) | Out-Null; Start-Sleep -Milliseconds 80
-        [GuiIn]::mouse_event(0x0800, 0, 0, [uint32]([int]$Rest[2] * 120), [UIntPtr]::Zero)
+        $delta = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int32]([int]$Rest[2] * 120)), 0)  # negative = down
+        [GuiIn]::mouse_event(0x0800, 0, 0, $delta, [UIntPtr]::Zero)
         Mark; Start-Sleep -Milliseconds 150
     }
     'key' { foreach ($k in $Rest) { Press $k } }
