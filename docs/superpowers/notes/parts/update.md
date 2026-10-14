@@ -24,17 +24,30 @@ Spec: `../../specs/2026-10-14-guncelleme-design.md`. Dal: `feat/auto-update`.
 5. **"Updates" satırı** yedekleme satırlarının (`backup::Row::Updates`) düzeneğiyle: Genel sayfasında alanlardan sonra; arama her sayfadan bulur. Seçim düğmesi ("Check Now" bir seçenek), diğer eylem satırları gibi.
 6. **"Updated to" notu** ilk açılıştan 10 s sonra gelir (denetimle aynı iş parçacığı; açılışta dosya işi yok).
 7. **Bekleme ortam değişkeni** (`GEZIK_RESTARTED_FROM`): spec'te yoktu; Şimdi yeniden başlat'ın yeni Gezik'i ölen sürecin kanalına teslim etmemesi için gerekli.
+8. **Yalnız release paketleri kendini değiştirir**: `release.yml` derlemeye `GEZIK_RELEASE_BUILD=1` verir (`option_env!`); kaynaktan derlenen, `cargo install` ya da paket yöneticisinin derlediği Gezik yalnız "is out" der (spec §8: paket yöneticilerine karışılmaz). Ekran testi derlemeleri (`GEZIK_UPDATE_FEED` ile) de kurabilir.
+9. **Unix'te tek dosya**: `.old` sabit bağlantı (hard link) olur, yeni dosya `rename` ile üstüne gelir: programın hiç olmadığı an yok. Windows ve macOS bundle'ı iki adımlı ad değişimiyle.
 
 ## Bilinen sınırlar
 
 - Kendi imzamız yok (spec §8): SHA-256 dosyanın Release'teki hâli olduğunu gösterir, kimin koyduğunu değil.
 - Güncelleyici rc.3 ile başlar; öncekiler bir kez elle güncellenir.
 - Windows oturum kapanışında (`save_on_session_end`) kurulum yapılmaz; sonraki kapanışta yapılır.
-- İki süreç aynı anda denetlerse aynı klasöre iki indirme olabilir (nadir; SHA-256 yanlış dosyayı yakalar).
+- İki süreç aynı anda denetlerse (tek örneği atlayan dbus/arka plan başlatmaları) aynı `update/<sürüm>/` klasörünü paylaşabilir; kilit yok (nadir). `prepare` başta `ready`'yi siler: yarıda kalan açma hazır görünmez.
+- Bir release etiketi `release.yml`'in kabul edip `Version::parse`'ın reddettiği biçimdeyse (`1.0.0-rc..1`) hiç önerilmez.
+
+## İnceleme (ayrı alt ajan) ve düzeltmeler
+
+1. `$APPIMAGE` her AppImage'ın başlattığına geçer: tar kurulumu bir AppImage terminalinden açılınca o başka AppImage'ı değiştirebilirdi → yalnız `APPDIR` altındaki exe için kabul.
+2. Kaynaktan derlenen Gezik kendini release ile değiştirirdi → sapma 8.
+3. "Şimdi yeniden başlat" sonrası çalışan iş sorusunda "Keep open" seçilince yeniden başlatma bayrağı kalıyordu → soru önce soruluyor, bayrak yalnız çıkış gerçekten olursa.
+4. Önceki denemenin `ready` işareti yarım açmayı hazır gösterebilirdi → `prepare` başta siler.
+5. Veri klasörü yokken Check Now "Checking…"de kalıyordu → hata söylenir.
+6. Unix'te iki `rename` arasında program yoktu → sapma 9.
+7. Saat geri alınınca otomatik denetim durabilirdi → `abs_diff`.
 
 ## Boyut
 
-Release exe (Windows, `cargo build --release -j 4 -p gezik`): master 31,837,696 B → SIZE_AFTER B, **SIZE_DELTA B** (bütçe +262,144 B). `serde` + `serde_json` (artık normal bağımlılık) bunun bir parçası.
+Release exe (Windows, `cargo build --release -j 4 -p gezik`): master 31,837,696 B → 31,996,928 B, **+159,232 B** (bütçe +262,144 B). `serde` + `serde_json` (artık normal bağımlılık) bunun bir parçası.
 
 ## Testler
 
@@ -58,5 +71,7 @@ Release exe (Windows, `cargo build --release -j 4 -p gezik`): master 31,837,696 
 | 7 | Ayarlar ▸ Genel (paletten) | ✅ Check (kutucuk), Channel (auto), Updates satırı: "Gezik 0.1.0-rc.99 is out", "Gezik 0.1.0-rc.2. Last check: 2026-10-14 13:39" |
 | 8 | Notun düzeni | İlk derlemede bağlantılar arasında boşluk vardı (iç düzen esniyordu): `horizontal-stretch: 0` ile düzeldi, yeniden bakıldı ✅ |
 | 9 | ✕ ile notu kapatmak | ⏭️ Atlandı: kullanıcı o an başka bir uygulamada yazıyordu, girdi gönderilmedi; test Gezik'i durduruldu |
+
+Ekran testi incelemeden önceki derlemeyle yapıldı; inceleme düzeltmeleri (aşağıda) Windows yolunda yalnız Restart now'ın soru sırasını ve `install_target`'ın derleme işaretini değiştirdi (testte `GEZIK_UPDATE_FEED` kurulumu açık tutar), birim testleri yeniden geçti.
 
 Bu turda düzeltilenler: düzen (8); elle denetimde "Checking for updates…" notunun sonuç notu gelince kalması (artık siliniyor).

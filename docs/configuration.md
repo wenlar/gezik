@@ -267,6 +267,8 @@ channel = "auto"          # auto | stable | pre
 - **Where Gezik can't write** (Program Files, `/usr`, `/opt`, macOS run from the disk image
   or from a quarantined copy in Downloads), nothing is downloaded: the status bar only says
   "Gezik 0.2.0 is out · Download".
+- **Which Gezik updates itself:** the packages from the releases page. A Gezik built from the
+  source, or installed by a package manager, only says that a new version is out.
 - **What is checked.** The SHA-256 shows that the file is the one on the release; it does not
   show who made the release (Gezik has no signature of its own yet).
 
