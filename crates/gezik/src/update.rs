@@ -208,6 +208,10 @@ fn found(outcome: Outcome, asked: bool) {
     if let Some((version, note)) = told
         && (asked || with(|s| s.told.as_ref() != Some(&version)))
     {
+        // Asked: the note replaces "Checking for updates…".
+        if asked {
+            crate::windows::with_focused(|_| crate::panes::with_active(|p| p.view.clear_note()));
+        }
         show(note);
         with(|s| s.told = Some(version.clone()));
         save(move |state| state.update_told = Some(version));

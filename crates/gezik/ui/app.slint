@@ -1600,6 +1600,8 @@ export component AppWindow inherits Window {
                         }
                     }
                     if root.update-text != "": HorizontalLayout {
+                        // Its own width only: the notice after it takes the rest.
+                        horizontal-stretch: 0;
                         spacing: Theme.spacing;
                         Text {
                             text: root.update-text;
