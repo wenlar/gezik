@@ -150,7 +150,8 @@ jobs:
           scripts/macos/make-app.sh stage/gezik "$VERSION" stage/dmg
           cp LICENSE.md THIRD-PARTY.md README.md stage/dmg/
           ln -s /Applications stage/dmg/Applications
-      # Before the dmg and the update tarball, so both carry the stapled ticket.
+      # Before the dmg and the update tarball, so both carry the stapled ticket. Usually minutes;
+      # a new team's first submissions can take hours, then the run fails within the job limit.
       - name: Notarize
         if: env.MACOS_CERT_P12 != ''
         env:
@@ -160,7 +161,7 @@ jobs:
         run: |
           printf '%s' "$APPLE_API_KEY" > "$RUNNER_TEMP/key.p8"
           ditto -c -k --keepParent stage/dmg/Gezik.app "$RUNNER_TEMP/Gezik.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/Gezik.zip" --wait \
+          xcrun notarytool submit "$RUNNER_TEMP/Gezik.zip" --wait --timeout 75m \
             --key "$RUNNER_TEMP/key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
           rm "$RUNNER_TEMP/key.p8"
           # Fails when Apple refused it: there is no ticket to staple.
