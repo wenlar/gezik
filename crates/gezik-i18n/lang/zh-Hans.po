@@ -347,6 +347,7 @@ msgstr "更改"
 #: crates/gezik/src/saved_searches.rs
 #: crates/gezik/src/search.rs
 #: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/sidebar.rs
 #: crates/gezik/src/tab_sets.rs
@@ -358,6 +359,7 @@ msgstr "更改"
 #: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/set-dates.slint
 #: crates/gezik/ui/widgets/settings.slint
 #, fuzzy
 msgid "Cancel"
@@ -5037,11 +5039,13 @@ msgstr "昨天 {}"
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Modified"
 msgstr "修改日期"
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Created"
 msgstr "创建日期"
@@ -5278,6 +5282,12 @@ msgstr[0] "同步 {n} 个项目"
 msgid "Change tags of {n} item"
 msgid_plural "Change tags of {n} items"
 msgstr[0] "更改 {n} 个项目的标签"
+
+#: crates/gezik-ops/src/task.rs
+#, fuzzy
+msgid "Set dates of {n} item"
+msgid_plural "Set dates of {n} items"
+msgstr[0] "设置 {n} 个项目的日期"
 
 #: crates/gezik-ops/src/task.rs
 #, fuzzy
@@ -5697,6 +5707,16 @@ msgstr "无标签存储"
 #, fuzzy
 msgid "Kept in Gezik's tag store: {}"
 msgstr "保存在 Gezik 的标签存储中：{}"
+
+#: crates/gezik-ops/src/tasks/times.rs
+#, fuzzy
+msgid "Setting the dates of {}"
+msgstr "正在设置 {} 的日期"
+
+#: crates/gezik-ops/src/tasks/times.rs
+#, fuzzy
+msgid "No date taken"
+msgstr "没有拍摄日期"
 
 #: crates/gezik-ops/src/tasks/trash.rs
 #, fuzzy
@@ -8626,6 +8646,12 @@ msgid "Export list…"
 msgstr "导出列表…"
 
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/info.slint
+#, fuzzy
+msgid "Set Dates…"
+msgstr "设置日期…"
+
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Tools"
@@ -9385,6 +9411,7 @@ msgid "Convert to"
 msgstr "转换为"
 
 #: crates/gezik/src/convert.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
 msgid "Choose"
@@ -12330,6 +12357,42 @@ msgstr "按模式取消选择"
 #, fuzzy
 msgid "Deselect"
 msgstr "取消选择"
+
+#. the Set Dates dialog's title; {} is a file name or "3 items"
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Set Dates of {}"
+msgstr "设置日期：{}"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "From file"
+msgstr "来自文件"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "File:"
+msgstr "文件："
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "No such file: {}"
+msgstr "没有此文件：{}"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Choose at least one date"
+msgstr "请至少选择一个日期"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Enter the date as YYYY-MM-DD and the time as HH:MM:SS"
+msgstr "请按 YYYY-MM-DD 输入日期，按 HH:MM:SS 输入时间"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Choose a file first"
+msgstr "请先选择一个文件"
 
 #: crates/gezik/src/settings_backup.rs
 #: crates/gezik/src/settings_window.rs
@@ -15366,6 +15429,51 @@ msgstr "{} 至 {}"
 #, fuzzy
 msgid "Reset to rules"
 msgstr "重置为规则结果"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Accessed"
+msgstr "访问日期"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Date and time"
+msgstr "日期和时间"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Now"
+msgstr "现在"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Date taken (EXIF)"
+msgstr "拍摄日期 (EXIF)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "From file…"
+msgstr "来自文件…"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Date (YYYY-MM-DD)"
+msgstr "日期 (YYYY-MM-DD)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Time (HH:MM:SS)"
+msgstr "时间 (HH:MM:SS)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Local time: YYYY-MM-DD and HH:MM:SS"
+msgstr "本地时间：YYYY-MM-DD 和 HH:MM:SS"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Set"
+msgstr "设置"
 
 #: crates/gezik/ui/widgets/settings.slint
 #, fuzzy

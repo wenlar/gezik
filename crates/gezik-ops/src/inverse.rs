@@ -14,7 +14,7 @@ use gezik_core::vfs::{Edit, VfsRoot};
 
 use crate::task::{Outcome, Task};
 use crate::tasks::{
-    ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, SwapBackTask, TagsTask, TrashTask,
+    ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, SetTimesTask, SwapBackTask, TagsTask, TrashTask,
 };
 
 /// Makes the task that applies `edits` to a place that is no folder on disk (a phone). Set by
@@ -74,6 +74,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut attrs: Vec<Wanted> = Vec::new();
     let mut metas = Vec::new();
+    let mut times = Vec::new();
     let mut admin = Vec::new();
     let mut flat = Vec::new();
     flatten(outcomes, &mut flat);
@@ -161,6 +162,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
                 attrs.push(Wanted { path: path.clone(), id: *id, from: *after, to: *before })
             }
             Outcome::MetaChanged { path, before, after } => metas.push((path.clone(), after.clone(), before.clone())),
+            Outcome::TimesChanged { path, old } => times.push((path.clone(), *old)),
             Outcome::AsAdmin { undo } => admin.push(undo.clone()),
             Outcome::Deleted { .. }
             | Outcome::VfsCreated { .. }
@@ -240,6 +242,9 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     // A job of its own too: tags back to what they were where they are still as it left them.
     if !metas.is_empty() {
         tasks.push(Arc::new(TagsTask::restore(metas)));
+    }
+    if !times.is_empty() {
+        tasks.push(Arc::new(SetTimesTask::restore(times)));
     }
     // The administrator's list goes back as one list, last first, behind one new prompt.
     if !admin.is_empty() {

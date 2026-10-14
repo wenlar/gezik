@@ -24,6 +24,7 @@ import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
 import { CmdLine, CommandOutput } from "widgets/command-output.slint";
 import { GitCommit } from "widgets/git-commit.slint";
+import { SetDates } from "widgets/set-dates.slint";
 import { ColumnItem } from "widgets/column-view.slint";
 import { SettingsWindow, SettingItem } from "widgets/settings.slint";
 
@@ -411,6 +412,21 @@ export component AppWindow inherits Window {
     in-out property <string> gc-message;
     in-out property <bool> gc-all;
     callback gc-chosen(bool);
+    // Set Dates… (set-dates.slint, set_dates.rs).
+    in property <bool> sd-open;
+    property <int> sd-focus-seq;
+    in property <string> sd-title;
+    in-out property <bool> sd-modified;
+    in-out property <bool> sd-created;
+    in-out property <bool> sd-accessed;
+    in property <bool> sd-has-created;
+    in-out property <int> sd-source;
+    in-out property <string> sd-date;
+    in-out property <string> sd-time;
+    in property <string> sd-from;
+    in property <string> sd-error;
+    callback sd-choose-file();
+    callback sd-chosen(bool);
     // An update's note in the status bar (update.rs; "" none): its text, Restart Now ("" none)
     // and its link (What's new, Download). Chosen: 0 Restart Now, 1 the link, 2 closed.
     in property <string> update-text;
@@ -828,6 +844,7 @@ export component AppWindow inherits Window {
     callback info-change-all();
     callback info-as-admin();
     callback info-close();
+    callback info-set-dates();
 
     // The file compare (diff.rs, spec 11 §6).
     in property <bool> df-open;
@@ -945,6 +962,8 @@ export component AppWindow inherits Window {
         if root.dialog-open || root.gc-open {
         } else if root.conflicts-open {
             root.conflict-focus-seq += 1;
+        } else if root.sd-open {
+            root.sd-focus-seq += 1;
         } else if root.rb-open {
             root.rb-focus-seq += 1;
         } else if root.cp-open {
@@ -1860,6 +1879,7 @@ export component AppWindow inherits Window {
             change-all => { root.info-change-all(); }
             as-admin => { root.info-as-admin(); }
             close => { root.info-close(); }
+            set-dates => { root.info-set-dates(); }
         }
         if root.df-open: DiffLayer {
             x: 0;
@@ -1923,6 +1943,26 @@ export component AppWindow inherits Window {
             all <=> root.gc-all;
             mono-font: root.mono-font;
             chosen(commit) => { root.gc-chosen(commit); }
+        }
+        if root.sd-open: SetDates {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            title: root.sd-title;
+            dialog-open: root.dialog-open;
+            focus-request: root.sd-focus-seq;
+            modified <=> root.sd-modified;
+            created <=> root.sd-created;
+            accessed <=> root.sd-accessed;
+            has-created: root.sd-has-created;
+            source <=> root.sd-source;
+            date <=> root.sd-date;
+            time <=> root.sd-time;
+            from: root.sd-from;
+            error: root.sd-error;
+            choose-file => { root.sd-choose-file(); }
+            chosen(ok) => { root.sd-chosen(ok); }
         }
         if root.dialog-open: Dialog {
             x: 0;

@@ -440,6 +440,10 @@ limit and the queue (under [File operations](#file-operations)); and the
 - **Size Map** shows the selected folder (or the one shown) as tiles sized by what they
   take up. The scan runs in the background and stops when the map closes; F5 reads it again.
   A tile's right-click opens it, shows it in the pane, moves it to the trash or copies its path.
+- **Set Dates…** (Tools ▸ on files and folders; on macOS and Linux also a click on the dates in
+  the Info window) sets Modified, Created (not on Linux) and Accessed from a typed local date
+  and time, now, each photo's date taken (EXIF; files without one are skipped and counted) or
+  another file's dates. One job, one Ctrl+Z (⌘Z) for all of it.
 
 ## Export list
 
@@ -611,7 +615,7 @@ also lists as a portable device is left out (it is a drive already).
 - **Get Info** (Alt+Enter, ⌘I on macOS): on Windows the system's Properties; on macOS and
   Linux Gezik's Info window with owner, group and permissions (each change is one Ctrl+Z,
   **Apply to enclosed items…** for folders). On macOS also the Hidden and Locked flags and
-  the app that opens the file (**Change All…**).
+  the app that opens the file (**Change All…**). A click on the dates opens **Set Dates…**.
 - **Updates**: Gezik looks for a newer published release once a day at most (one request to
   `api.github.com`), downloads it in the background, checks its SHA-256 and installs it when it
   closes; **Restart now** in the status bar installs it at once. **Check for Updates**

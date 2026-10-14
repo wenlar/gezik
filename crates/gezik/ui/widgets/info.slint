@@ -7,8 +7,10 @@ import { PropRow, PropRows } from "preview-pane.slint";
 // What the Info window shows (info.rs fills it).
 export struct InfoView {
     title: string,
-    // Kind, size, where and dates, a line each.
+    // Kind, size and where, a line each.
     general: string,
+    // One item's dates, a line each; a click opens Set Dates.
+    dates: string,
     // One file's metadata under their group headings (spec 13 §7.4), as the preview shows them.
     properties: [PropRow],
     // Read, write, execute of the owner, the group, everyone: 0 off, 1 on, 2 mixed, box `i` in
@@ -71,6 +73,7 @@ export component InfoLayer inherits Rectangle {
     callback change-all();
     callback as-admin();
     callback close();
+    callback set-dates();
 
     property <string> menu-arrow: "M 1 2.5 L 4 5.5 L 7 2.5";
 
@@ -122,6 +125,18 @@ export component InfoLayer inherits Rectangle {
                     text: root.view.general;
                     wrap: word-wrap;
                     color: Theme.foreground-muted;
+                }
+                if root.view.dates != "": Text {
+                    text: root.view.dates;
+                    wrap: word-wrap;
+                    color: Theme.foreground-muted;
+                    accessible-role: button;
+                    accessible-label: @tr("Set Dates…");
+                    accessible-action-default => { root.set-dates(); }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.set-dates(); }
+                    }
                 }
                 PropRows {
                     rows: root.view.properties;

@@ -284,6 +284,7 @@ msgstr ""
 #: crates/gezik/src/saved_searches.rs
 #: crates/gezik/src/search.rs
 #: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/sidebar.rs
 #: crates/gezik/src/tab_sets.rs
@@ -295,6 +296,7 @@ msgstr ""
 #: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/set-dates.slint
 #: crates/gezik/ui/widgets/settings.slint
 msgid "Cancel"
 msgstr ""
@@ -4164,10 +4166,12 @@ msgstr ""
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 msgid "Modified"
 msgstr ""
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 msgid "Created"
 msgstr ""
 
@@ -4384,6 +4388,12 @@ msgstr[1] ""
 #: crates/gezik-ops/src/task.rs
 msgid "Change tags of {n} item"
 msgid_plural "Change tags of {n} items"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik-ops/src/task.rs
+msgid "Set dates of {n} item"
+msgid_plural "Set dates of {n} items"
 msgstr[0] ""
 msgstr[1] ""
 
@@ -4729,6 +4739,14 @@ msgstr ""
 
 #: crates/gezik-ops/src/tasks/tags.rs
 msgid "Kept in Gezik's tag store: {}"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/times.rs
+msgid "Setting the dates of {}"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/times.rs
+msgid "No date taken"
 msgstr ""
 
 #: crates/gezik-ops/src/tasks/trash.rs
@@ -7140,6 +7158,11 @@ msgid "Export list…"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/info.slint
+msgid "Set Dates…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Tools"
 msgstr ""
@@ -7764,6 +7787,7 @@ msgid "Convert to"
 msgstr ""
 
 #: crates/gezik/src/convert.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Choose"
 msgstr ""
@@ -10185,6 +10209,35 @@ msgstr ""
 
 #: crates/gezik/src/select_tools.rs
 msgid "Deselect"
+msgstr ""
+
+#. the Set Dates dialog's title; {} is a file name or "3 items"
+#: crates/gezik/src/set_dates.rs
+msgid "Set Dates of {}"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "From file"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "File:"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "No such file: {}"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "Choose at least one date"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "Enter the date as YYYY-MM-DD and the time as HH:MM:SS"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "Choose a file first"
 msgstr ""
 
 #: crates/gezik/src/settings_backup.rs
@@ -12685,6 +12738,42 @@ msgstr ""
 
 #: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Reset to rules"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Accessed"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date and time"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Now"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date taken (EXIF)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "From file…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date (YYYY-MM-DD)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Time (HH:MM:SS)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Local time: YYYY-MM-DD and HH:MM:SS"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Set"
 msgstr ""
 
 #: crates/gezik/ui/widgets/settings.slint
