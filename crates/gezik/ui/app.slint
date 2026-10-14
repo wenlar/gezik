@@ -346,6 +346,10 @@ export component AppWindow inherits Window {
                 activated => { root.menu-command("window:" + entry.id); }
             }
         }
+        Menu {
+            title: @tr("Help");
+            MenuItem { title: @tr("Check for Updates"); activated => { root.menu-command("check-updates"); } }
+        }
     }
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;
@@ -407,6 +411,12 @@ export component AppWindow inherits Window {
     in-out property <string> gc-message;
     in-out property <bool> gc-all;
     callback gc-chosen(bool);
+    // An update's note in the status bar (update.rs; "" none): its text, Restart Now ("" none)
+    // and its link (What's new, Download). Chosen: 0 Restart Now, 1 the link, 2 closed.
+    in property <string> update-text;
+    in property <string> update-act;
+    in property <string> update-link;
+    callback update-chosen(int);
     // Settings/theme problems, shown on the right of the status bar.
     in property <string> notice;
     // The active tab is locked (the menu bar's Lock/Unlock Tab).
@@ -1586,6 +1596,53 @@ export component AppWindow inherits Window {
                             close-touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { root.tool-chip-close(); }
+                            }
+                        }
+                    }
+                    if root.update-text != "": HorizontalLayout {
+                        // Its own width only: the notice after it takes the rest.
+                        horizontal-stretch: 0;
+                        spacing: Theme.spacing;
+                        Text {
+                            text: root.update-text;
+                            font-size: Theme.font-size-small;
+                            vertical-alignment: center;
+                            color: Theme.foreground;
+                        }
+                        for link[i] in [root.update-act, root.update-link]: Text {
+                            visible: link != "";
+                            text: link;
+                            font-size: Theme.font-size-small;
+                            vertical-alignment: center;
+                            color: Theme.accent;
+                            accessible-role: button;
+                            accessible-label: link;
+                            accessible-action-default => { root.update-chosen(i); }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.update-chosen(i); }
+                            }
+                        }
+                        Rectangle {
+                            width: 16px;
+                            accessible-role: button;
+                            accessible-label: @tr("Close");
+                            accessible-action-default => { root.update-chosen(2); }
+                            Path {
+                                x: (parent.width - 8px) / 2;
+                                y: (parent.height - 8px) / 2;
+                                width: 8px;
+                                height: 8px;
+                                viewbox-width: 8;
+                                viewbox-height: 8;
+                                commands: Glyph.close;
+                                stroke: update-close.has-hover ? Theme.foreground : Theme.foreground-muted;
+                                stroke-width: 1.2px;
+                                stroke-line-cap: round;
+                            }
+                            update-close := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.update-chosen(2); }
                             }
                         }
                     }

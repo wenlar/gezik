@@ -1,0 +1,185 @@
+[
+  {
+    "url": "https://api.github.com/repos/wenlar/gezik/releases/412113938",
+    "html_url": "https://github.com/wenlar/gezik/releases/tag/v0.1.0-rc.2",
+    "id": 412113938,
+    "tag_name": "v0.1.0-rc.2",
+    "target_commitish": "master",
+    "name": "Gezik 0.1.0-rc.2",
+    "draft": false,
+    "immutable": false,
+    "prerelease": true,
+    "created_at": "2026-10-13T20:45:47Z",
+    "published_at": "2026-10-13T21:36:12Z",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/638268077",
+        "id": 638268077,
+        "name": "gezik-0.1.0-rc.2-linux-x64.AppImage",
+        "label": "",
+        "content_type": "application/vnd.appimage",
+        "state": "uploaded",
+        "size": 15792632,
+        "digest": "sha256:48cca5616d11c40e96829e21751477c40fdf457f86ce4a113bfac441d416954b",
+        "download_count": 0,
+        "created_at": "2026-10-13T21:11:44Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.2/gezik-0.1.0-rc.2-linux-x64.AppImage"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/638268065",
+        "id": 638268065,
+        "name": "gezik-0.1.0-rc.2-linux-x64.tar.gz",
+        "label": "",
+        "content_type": "application/x-gtar",
+        "state": "uploaded",
+        "size": 16276490,
+        "digest": "sha256:e798e881b6087d1e719f8b06f2f10e7e28df2863d8c28e2c7c63e64598a4f95d",
+        "download_count": 0,
+        "created_at": "2026-10-13T21:11:43Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.2/gezik-0.1.0-rc.2-linux-x64.tar.gz"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/638268057",
+        "id": 638268057,
+        "name": "gezik-0.1.0-rc.2-macos-universal.dmg",
+        "label": "",
+        "content_type": "application/x-apple-diskimage",
+        "state": "uploaded",
+        "size": 29212680,
+        "digest": "sha256:2a07d34cbcbdc18039426792fee3f3b1192bb4229495c42e2f09aadb718b9a8b",
+        "download_count": 0,
+        "created_at": "2026-10-13T21:11:43Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.2/gezik-0.1.0-rc.2-macos-universal.dmg"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/638268058",
+        "id": 638268058,
+        "name": "gezik-0.1.0-rc.2-windows-x64-portable.zip",
+        "label": "",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 14134075,
+        "digest": "sha256:b54fefdbae5f3a61e5e119a142b5229e5eedff7f02cadc491047bbb26c265341",
+        "download_count": 1,
+        "created_at": "2026-10-13T21:11:43Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.2/gezik-0.1.0-rc.2-windows-x64-portable.zip"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/638268107",
+        "id": 638268107,
+        "name": "gezik-0.1.0-rc.2-windows-x64.zip",
+        "label": "",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 14133823,
+        "digest": "sha256:1a6917c175f9465abb34ed18a32dc6d99605aa8e1d884f82758c4aac0bc2f7ab",
+        "download_count": 1,
+        "created_at": "2026-10-13T21:11:44Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.2/gezik-0.1.0-rc.2-windows-x64.zip"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/638268044",
+        "id": 638268044,
+        "name": "SHA256SUMS.txt",
+        "label": "",
+        "content_type": "text/plain; charset=utf-8",
+        "state": "uploaded",
+        "size": 512,
+        "digest": "sha256:a475bd1b8ae6a1ed3089363dcf1ad341d332ffa550b18d2f4bbafb9bc04a6f55",
+        "download_count": 0,
+        "created_at": "2026-10-13T21:11:43Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.2/SHA256SUMS.txt"
+      }
+    ],
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 41898282
+    },
+    "body": "> [!WARNING]\n> **These builds are not signed yet.** Your system will warn you the first time you open Gezik. The files are the ones built by this repository's GitHub Actions; check them against `SHA25"
+  },
+  {
+    "url": "https://api.github.com/repos/wenlar/gezik/releases/411562201",
+    "html_url": "https://github.com/wenlar/gezik/releases/tag/v0.1.0-rc.1",
+    "id": 411562201,
+    "tag_name": "v0.1.0-rc.1",
+    "target_commitish": "master",
+    "name": "Gezik 0.1.0-rc.1",
+    "draft": false,
+    "immutable": false,
+    "prerelease": true,
+    "created_at": "2026-10-13T10:21:26Z",
+    "published_at": "2026-10-13T10:50:52Z",
+    "assets": [
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/636706010",
+        "id": 636706010,
+        "name": "gezik-0.1.0-rc.1-linux-x64.tar.gz",
+        "label": "",
+        "content_type": "application/x-gtar",
+        "state": "uploaded",
+        "size": 15635672,
+        "digest": "sha256:afd4ec00457198e9d1fc523c8c98e922348eb701ec64c5af1226e569fb4cd9e8",
+        "download_count": 0,
+        "created_at": "2026-10-13T10:40:33Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.1/gezik-0.1.0-rc.1-linux-x64.tar.gz"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/636706007",
+        "id": 636706007,
+        "name": "gezik-0.1.0-rc.1-macos-universal.dmg",
+        "label": "",
+        "content_type": "application/x-apple-diskimage",
+        "state": "uploaded",
+        "size": 27902170,
+        "digest": "sha256:9dc4532750c852f5326282d0e5aaf002a65b7a3538558093dbc78aa4dfb101b2",
+        "download_count": 0,
+        "created_at": "2026-10-13T10:40:33Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.1/gezik-0.1.0-rc.1-macos-universal.dmg"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/636706011",
+        "id": 636706011,
+        "name": "gezik-0.1.0-rc.1-windows-x64-portable.zip",
+        "label": "",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 13541035,
+        "digest": "sha256:bc7e0a6b9f0c01b47f53186f381afd2a997d4f5aaedf2ed6a8961e04096c3db2",
+        "download_count": 1,
+        "created_at": "2026-10-13T10:40:33Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.1/gezik-0.1.0-rc.1-windows-x64-portable.zip"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/636706012",
+        "id": 636706012,
+        "name": "gezik-0.1.0-rc.1-windows-x64.zip",
+        "label": "",
+        "content_type": "application/zip",
+        "state": "uploaded",
+        "size": 13540783,
+        "digest": "sha256:8a6ddbdd2d77b83ab7fd524e2bffbe040308989e77a12adfc6e425a2d1ff2e91",
+        "download_count": 1,
+        "created_at": "2026-10-13T10:40:33Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.1/gezik-0.1.0-rc.1-windows-x64.zip"
+      },
+      {
+        "url": "https://api.github.com/repos/wenlar/gezik/releases/assets/636706004",
+        "id": 636706004,
+        "name": "SHA256SUMS.txt",
+        "label": "",
+        "content_type": "text/plain; charset=utf-8",
+        "state": "uploaded",
+        "size": 410,
+        "digest": "sha256:65b41bb1ebd714d4e7469730f958d54483e0dc7f92ccb7e7be41fab8977bd6c6",
+        "download_count": 0,
+        "created_at": "2026-10-13T10:40:33Z",
+        "browser_download_url": "https://github.com/wenlar/gezik/releases/download/v0.1.0-rc.1/SHA256SUMS.txt"
+      }
+    ],
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 41898282
+    },
+    "body": "> [!WARNING]\n> **These builds are not signed yet.** Your system will warn you the first time you open Gezik. The files are the ones built by this repository's GitHub Actions; check them against `SHA25"
+  }
+]

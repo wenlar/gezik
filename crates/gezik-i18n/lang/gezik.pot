@@ -518,6 +518,7 @@ msgid "its output folder could not be made"
 msgstr ""
 
 #: crates/gezik-batch/src/tasks/download.rs
+#: crates/gezik/src/update.rs
 msgid "{} is not in the download"
 msgstr ""
 
@@ -967,6 +968,21 @@ msgid "auto"
 msgstr ""
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:update.channel"
+msgid "auto"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:update.channel"
+msgid "stable"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:update.channel"
+msgid "pre"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:layout.sidebar"
 msgid "left"
 msgstr ""
@@ -1380,6 +1396,10 @@ msgstr ""
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected \"jump\" or \"filter\", got {1}"
+msgstr ""
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected \"auto\", \"stable\" or \"pre\", got {1}"
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
@@ -2408,6 +2428,12 @@ msgstr ""
 #: crates/gezik/src/git_commands.rs
 #: crates/gezik/ui/app.slint
 msgid "Compare with HEAD"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/settings_window/themes.rs
+#: crates/gezik/ui/app.slint
+msgid "Check for Updates"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
@@ -4527,6 +4553,7 @@ msgstr[1] ""
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/preview/media.rs
 #: crates/gezik/src/preview/pdf.rs
+#: crates/gezik/src/update.rs
 msgid "Download"
 msgstr ""
 
@@ -5564,6 +5591,7 @@ msgstr ""
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -10579,6 +10607,10 @@ msgid "Other copy"
 msgstr ""
 
 #: crates/gezik/src/settings_window/backup.rs
+msgid "Check Now"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
 msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
 msgstr ""
 
@@ -10588,6 +10620,10 @@ msgstr ""
 
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Portable: settings are kept in {}"
+msgstr ""
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Updates"
 msgstr ""
 
 #: crates/gezik/src/settings_window/backup.rs
@@ -10846,10 +10882,6 @@ msgstr ""
 
 #: crates/gezik/src/settings_window/themes.rs
 msgid "Use Now"
-msgstr ""
-
-#: crates/gezik/src/settings_window/themes.rs
-msgid "Check for Updates"
 msgstr ""
 
 #: crates/gezik/src/settings_window/themes.rs
@@ -11663,6 +11695,86 @@ msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] ""
 msgstr[1] ""
 
+#: crates/gezik/src/update.rs
+msgid "Already checking for updates"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Checking for updates…"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Gezik has no data folder to download into"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Updated to {}"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "What's new"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Gezik is up to date"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Up to date"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Could not check for updates: {}"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Could not check: {}"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {} is ready — installs when you close it"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {} is out"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Restart now"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Checking…"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Not checked since Gezik started"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {}. Last check: {}"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {}. Not checked yet"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "GitHub's answer could not be read"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "the downloaded Gezik does not start here or is not {}"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "{} is not in SHA256SUMS.txt"
+msgstr ""
+
+#: crates/gezik/src/update.rs
+msgid "{} does not match its SHA-256"
+msgstr ""
+
 #. {} is a file opened from inside an archive and saved by its app
 #: crates/gezik/src/vfs_mounts.rs
 msgid "{} changed"
@@ -11845,6 +11957,10 @@ msgstr ""
 
 #: crates/gezik/ui/app.slint
 msgid "Open Tab Set"
+msgstr ""
+
+#: crates/gezik/ui/app.slint
+msgid "Help"
 msgstr ""
 
 #: crates/gezik/ui/app.slint
@@ -12755,6 +12871,26 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:files.max-speed"
 msgid "The most a copy or move may take, as \"20 MB/s\", \"500 KB/s\" or \"1.5 GB/s\" (1 MB = 1,000,000 bytes); empty = no limit. Each job can change it in its ... menu."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.check"
+msgid "Check"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.check"
+msgid "Gezik looks for a newer published release on GitHub by itself: at most once a day, one request to api.github.com. A newer one is downloaded in the background, checked against the release's SHA256SUMS.txt and installed when Gezik closes. false: only Check for Updates looks."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.channel"
+msgid "Channel"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.channel"
+msgid "auto (pre-releases while this is one) | stable | pre"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

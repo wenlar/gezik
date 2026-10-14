@@ -44,6 +44,8 @@ jobs:
     timeout-minutes: 90
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Marks the packages that replace themselves on an update (crates/gezik/src/update.rs).
+      GEZIK_RELEASE_BUILD: "1"
     steps:
       - uses: actions/checkout@v7.0.1
       # dtolnay/rust-toolchain has no release tags: pinned to the `stable` branch's commit.
@@ -80,6 +82,8 @@ jobs:
     timeout-minutes: 120
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Marks the packages that replace themselves on an update (crates/gezik/src/update.rs).
+      GEZIK_RELEASE_BUILD: "1"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -112,6 +116,12 @@ jobs:
             [ $i = 3 ] && exit 1; sleep 10
           done
           hdiutil verify "dist/gezik-$VERSION-macos-universal.dmg"
+      # The same Gezik.app for the automatic update (docs/releasing.md): a tarball Gezik unpacks
+      # itself, no disk image to mount. No AppleDouble files or extended attributes in it.
+      - name: Update package
+        run: |
+          COPYFILE_DISABLE=1 tar --no-mac-metadata -C stage/dmg -czf "dist/gezik-$VERSION-macos-universal.app.tar.gz" Gezik.app
+          tar -tzf "dist/gezik-$VERSION-macos-universal.app.tar.gz" | grep -qx 'Gezik.app/Contents/MacOS/gezik'
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: macos
@@ -129,6 +139,8 @@ jobs:
     timeout-minutes: 90
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Marks the packages that replace themselves on an update (crates/gezik/src/update.rs).
+      GEZIK_RELEASE_BUILD: "1"
     steps:
       - name: Install Linux packages
         # scripts/linux/Dockerfile's build libraries plus Xvfb and xdotool for package.sh's

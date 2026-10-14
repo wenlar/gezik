@@ -29,6 +29,7 @@ next to Gezik keeps everything next to it instead (see [Portable mode](#portable
   computer's id, with the computer's name inside.
 - `tools/` — programs Gezik downloaded on your command (7-Zip, ffmpeg, pdfium). In portable mode
   one folder per system, `tools/<os>-<arch>/` (say `windows-x86_64`), so one drive serves three.
+- `update/` — a downloaded update until it is installed (see [Updates](#updates)).
 - `lang/*.po` — interface languages you add or fix (see [Translating Gezik](translating.md)):
   `lang/pl.po` adds Polish, `lang/tr.po` corrects the built-in Turkish. Gezik reloads one when
   it is saved and lists its problems (with line numbers) in the status bar's notices.
@@ -237,6 +238,39 @@ runs as a separate instance next to an installed one. Settings ▸ Sync and Back
   read-only copy (App Translocation), where the marker cannot be seen; Gezik then uses the usual
   folder and says "Move Gezik.app out of Downloads (or open it once from Finder after moving) to
   use portable mode".
+
+## Updates
+
+Gezik updates itself from its [GitHub Releases](https://github.com/wenlar/gezik/releases):
+
+```toml
+[update]
+check = true              # false: Gezik never asks by itself
+channel = "auto"          # auto | stable | pre
+```
+
+- **One request a day.** At most once every 20 hours, 10 seconds after start, Gezik asks
+  `api.github.com` for the list of published releases (no account, nothing about you or your
+  files is sent; GitHub sees your IP address and `Gezik` as the program). The time of the last
+  check is kept in `state.toml`. `check = false` turns it off; **Check for Updates** (command
+  palette, macOS Help menu, or Settings ▸ General ▸ Updates ▸ Check Now) still asks when you
+  choose it.
+- **Channel.** `auto` takes pre-releases (`0.2.0-rc.1`) while you run one, otherwise only
+  releases; `stable` only releases; `pre` both. Gezik never goes to a lower version.
+- **Download and install.** A newer version is downloaded in the background into `update/` in
+  the config folder (`gezik-data/update/` in portable mode), checked against the release's
+  `SHA256SUMS.txt`, unpacked and started once with `--version`. The status bar then says
+  "Gezik 0.2.0 is ready — installs when you close it · Restart now · What's new" (once). When
+  Gezik closes (with the tray icon on: when you quit it), the old program is renamed to
+  `.old`, the new one put in its place, and the next start says "Updated to 0.2.0" and removes
+  the `.old`. A download or install cut short leaves the old Gezik as it was.
+- **Where Gezik can't write** (Program Files, `/usr`, `/opt`, macOS run from the disk image
+  or from a quarantined copy in Downloads), nothing is downloaded: the status bar only says
+  "Gezik 0.2.0 is out · Download".
+- **Which Gezik updates itself:** the packages from the releases page. A Gezik built from the
+  source, or installed by a package manager, only says that a new version is out.
+- **What is checked.** The SHA-256 shows that the file is the one on the release; it does not
+  show who made the release (Gezik has no signature of its own yet).
 
 ## Views
 

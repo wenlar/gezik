@@ -192,6 +192,13 @@ dots = "auto"
 # length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read.
 properties = true
 
+[update]
+# Gezik looks for a newer published release on GitHub by itself: at most once a day, one
+# request to api.github.com. A newer one is downloaded in the background, checked against the
+# release's SHA256SUMS.txt and installed when Gezik closes. false: only Check for Updates looks.
+check = true
+channel = "auto"          # auto (pre-releases while this is one) | stable | pre
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E.
@@ -313,6 +320,7 @@ properties = true
 # git-discard = ""        # Git: Discard Changes…, the files go to the trash first (Ctrl+Z brings them back)
 # git-compare-head = ""   # Git: Compare with HEAD, the selected file beside its committed version
 # settings = "mod+,"      # Settings…: this file in a window (macOS: ⌘,)
+# check-updates = ""      # Check for Updates: looks for a newer Gezik now, also with [update] check = false
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

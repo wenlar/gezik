@@ -18,7 +18,8 @@ see [What users see](#what-users-see-without-signing).
    GitHub Release with all of them and generated notes.
 4. Download the packages from the draft and try them on each system (for macOS the
    [release checklist](superpowers/notes/checklists/release-macos.md)). Edit the notes, then
-   publish the draft.
+   publish the draft. **Publishing sends the update to every Gezik** (see
+   [Automatic updates](#automatic-updates)): don't publish packages you have not tried.
 
 To build the packages without a tag or a release (a test run), start the workflow by hand:
 `gh workflow run release.yml --ref <branch> -f version=0.1.0`. The packages are then the run's
@@ -31,6 +32,7 @@ artifacts (Actions ▸ the run ▸ Artifacts).
 | `gezik-<v>-windows-x64.zip` | `gezik.exe`, `LICENSE.md`, `THIRD-PARTY.md`, `README.md`. Settings in `%APPDATA%\gezik`. |
 | `gezik-<v>-windows-x64-portable.zip` | The same plus an empty `gezik-portable` file: settings go to `gezik-data\` next to `gezik.exe` (a USB stick, say). |
 | `gezik-<v>-macos-universal.dmg` | `Gezik.app` (arm64 + x86_64, ad-hoc signed), the licence files and a link to Applications. |
+| `gezik-<v>-macos-universal.app.tar.gz` | The same `Gezik.app` alone, for the automatic update (simpler to unpack than a disk image). |
 | `gezik-<v>-linux-x64.tar.gz` | `gezik`, the licence files and `README-linux.txt` (what it needs). Built on Debian trixie by `scripts/linux/package.sh`, which also starts it under Xvfb. |
 | `gezik-<v>-linux-x64.AppImage` | The same binary as one file, made by `scripts/linux/appimage.sh` with pinned `appimagetool` 1.9.1 and type2 runtime 20251108 (SHA-256 checked). Needs FUSE 2 or 3 to start (`--appimage-extract-and-run` works without). |
 | `SHA256SUMS.txt` | SHA-256 of every file above. |
@@ -41,6 +43,27 @@ artifacts (Actions ▸ the run ▸ Artifacts).
 
 Portable mode for the AppImage: put a `gezik-portable` file next to the `.AppImage`. Its icon is
 `crates/gezik/icons/gezik-256.png`, a 256 px render of `gezik.svg`.
+
+## Automatic updates
+
+Gezik looks at `https://api.github.com/repos/wenlar/gezik/releases` at most once a day and
+installs a newer release by itself (`[update]` in settings.toml; see
+[Configuration](configuration.md#updates)). Only a **published** release counts: a pushed tag
+or a draft reaches no one. Gezik takes the file of its own kind (the zip, the portable zip,
+`.app.tar.gz`, the AppImage or the tarball), checks it against `SHA256SUMS.txt` and runs it with
+`--version` before it swaps it in at exit. So:
+
+- **Publishing the draft sends the update to everyone** on that channel (a pre-release to those
+  running a pre-release, a release to everyone). Try the packages first.
+- To withdraw a release, delete it or turn it back into a draft. A Gezik that has not
+  downloaded it yet never will; one that has installs it when it closes.
+- To undo a release, publish a newer one (a higher version number). The updater never goes to
+  a lower version.
+- The file names above are what Gezik looks for: renaming a package, or leaving one or
+  `SHA256SUMS.txt` out, stops the update for that kind of install (those users only see that a
+  new version is out).
+- Updates start with the first release that has the updater (0.1.0-rc.3): older ones are
+  updated by hand once.
 
 ## What users see without signing
 

@@ -131,6 +131,7 @@ impl Shown {
             _ => self.got.rows(query),
         };
         self.backup_rows = match query {
+            "" if page == Page::General => vec![backup::Row::Updates],
             "" if page != Page::SyncAndBackup => Vec::new(),
             _ => self.backup.rows(query),
         };
@@ -503,6 +504,13 @@ pub fn refresh(files: &ConfigFiles) {
     with_settings(|settings| open.shown.borrow_mut().read(files, settings));
     open.shown.borrow_mut().pick_rows();
     show_rows(&open, false);
+}
+
+/// An update check started or ended: the Updates row follows.
+pub fn refresh_updates() {
+    if let Some(open) = current() {
+        show_rows(&open, false);
+    }
 }
 
 /// The theme shown changed: this window too.
@@ -1030,6 +1038,13 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
     let mut shown = open.shown.borrow_mut();
     let state = &mut shown.backup;
     match row {
+        Row::Updates => {
+            drop(shown);
+            if text == backup::CHECK_NOW {
+                crate::update::check_now();
+            }
+            return show_rows(open, false);
+        }
         Row::Portable => {
             if text == backup::OPEN_DATA {
                 drop(shown);

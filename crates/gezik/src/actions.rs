@@ -167,6 +167,7 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::InstallTheme => crate::settings_window::open_themes(),
         Action::ExportSettings => crate::settings_window::open_backup(false),
         Action::ImportSettings => crate::settings_window::open_backup(true),
+        Action::CheckUpdates => crate::update::check_now(),
         Action::GitStage
         | Action::GitUnstage
         | Action::GitCommit
