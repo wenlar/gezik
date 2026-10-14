@@ -124,7 +124,7 @@ pub fn start(store: ConfigStore, checked: Option<u64>, told: Option<String>) {
     with(|s| (s.store, s.checked, s.told) = (Some(store), checked, told));
     slint::Timer::single_shot(AFTER_START, || {
         let wanted = crate::windows::loaded().map(|l| l.settings.update).unwrap_or_default();
-        let due = wanted.check && with(|s| s.checked).is_none_or(|at| now().saturating_sub(at) >= EVERY);
+        let due = wanted.check && with(|s| s.checked).is_none_or(|at| now().abs_diff(at) >= EVERY);
         run(due.then_some(wanted.channel), false);
     });
 }
@@ -141,7 +141,13 @@ pub fn check_now() {
 
 /// On a thread: tidies the update folder, then checks on `channel` (none: only tidies).
 fn run(channel: Option<Channel>, asked: bool) {
-    let Some(dir) = with(|s| s.store.as_ref().map(|store| store.local_dir().join("update"))) else { return };
+    let Some(dir) = with(|s| s.store.as_ref().map(|store| store.local_dir().join("update"))) else {
+        // No data folder to write (a read-only portable one, a second process): nothing to wait for.
+        if asked {
+            found(Outcome::Failed(t!("Gezik has no data folder to download into").into_owned()), true);
+        }
+        return;
+    };
     if channel.is_some() {
         let at = now();
         with(|s| (s.checking, s.checked) = (true, Some(at)));
@@ -255,8 +261,16 @@ pub fn install(window: &AppWindow) {
     apply(window);
     window.on_update_chosen(|what| match what {
         0 => {
-            with(|s| s.restart = true);
-            crate::resident::quit();
+            // Running jobs are asked about first: a "Keep open" leaves no restart behind.
+            let restart = || {
+                with(|s| s.restart = true);
+                crate::resident::quit();
+            };
+            let mut asking = false;
+            crate::operations::with_current(|ops| asking = ops.confirm_close(restart));
+            if !asking {
+                restart();
+            }
         }
         1 => {
             let page = with(|s| s.note.as_ref().map(|n| n.page.clone())).unwrap_or_default();
@@ -316,6 +330,11 @@ pub fn finish() {
 /// What this Gezik is and the file (or `Gezik.app`) an update replaces; `None` when it is none
 /// of the release's packages (a build run from the source, macOS outside a bundle).
 fn install_target() -> Option<(Package, PathBuf)> {
+    // Only the release workflow's packages replace themselves (a build from the source, cargo
+    // install or a package manager's only hears of a new version); and screen tests' builds.
+    if option_env!("GEZIK_RELEASE_BUILD").is_none() && local_feed().is_none() {
+        return None;
+    }
     let exe = gezik_platform::system::exe().ok()?;
     if cfg!(windows) {
         let portable = gezik_config::paths::location().dirs.as_ref().is_some_and(|d| d.portable);
@@ -328,7 +347,9 @@ fn install_target() -> Option<(Package, PathBuf)> {
     }
     if cfg!(target_os = "linux") {
         // The AppImage's runtime says where the file is; its binary runs from a mount.
-        return match std::env::var_os("APPIMAGE").map(PathBuf::from).filter(|p| p.is_absolute()) {
+        // Only this AppImage's: the variable is passed on to whatever an AppImage starts.
+        let ours = std::env::var_os("APPDIR").is_some_and(|dir| exe.starts_with(dir));
+        return match std::env::var_os("APPIMAGE").map(PathBuf::from).filter(|p| ours && p.is_absolute()) {
             Some(image) => Some((Package::AppImage, image)),
             None => Some((Package::LinuxTar, exe)),
         };
@@ -424,6 +445,8 @@ fn prepare(
     sums: &Asset,
     local: bool,
 ) -> Result<PathBuf, String> {
+    // A cut unpack of an earlier try must not look ready.
+    let _ = fs::remove_file(folder.join(READY));
     let file = download(folder, asset, sums, local)?;
     let new = unpack(folder, package, &file)?;
     let program = if package == Package::MacApp { new.join("Contents/MacOS/gezik") } else { new.clone() };
@@ -576,6 +599,17 @@ fn swap(new: &Path, target: &Path) -> io::Result<()> {
     if let Err(err) = copy_any(new, &staged) {
         let _ = remove_any(&staged);
         return Err(err);
+    }
+    // A file on Unix: the old one is linked as `.old` and the new one renamed over it, so there
+    // is no moment without a program.
+    #[cfg(unix)]
+    if fs::symlink_metadata(target).is_ok_and(|m| m.is_file()) {
+        let replaced =
+            remove_any(&old).and_then(|()| fs::hard_link(target, &old)).and_then(|()| fs::rename(&staged, target));
+        if replaced.is_err() {
+            let _ = remove_any(&staged);
+        }
+        return replaced;
     }
     // An earlier update's, whose Gezik never started (or still runs: then this waits).
     if let Err(err) = remove_any(&old).and_then(|()| fs::rename(target, &old)) {

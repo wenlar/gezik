@@ -1,7 +1,7 @@
 # Otomatik güncelleme — Tasarım
 
 - **Tarih:** 2026-10-14
-- **Durum:** Onaylandı (kullanıcı 2026-10-14). Kapsam kullanıcı kararı (§2), ayrıntılar bu spec'in (§9). Plan önceden onaylıdır.
+- **Durum:** Onaylandı (kullanıcı 2026-10-14). `feat/auto-update` dalında uygulandı (notlar: `notes/parts/update.md`). Kapsam kullanıcı kararı (§2), ayrıntılar bu spec'in (§9). Plan önceden onaylıdır.
 - **Taban:** `master` fbec30ed (sürüm `0.1.0-rc.2`). Denetim listeleri macOS 425'te, Linux 309'da biter; bu iş macOS **426'dan**, Linux **310'dan** sürer.
 
 ## 1. Amaç

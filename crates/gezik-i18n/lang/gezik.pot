@@ -11704,6 +11704,10 @@ msgid "Checking for updates…"
 msgstr ""
 
 #: crates/gezik/src/update.rs
+msgid "Gezik has no data folder to download into"
+msgstr ""
+
+#: crates/gezik/src/update.rs
 msgid "Updated to {}"
 msgstr ""
 

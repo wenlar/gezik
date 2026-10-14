@@ -11548,6 +11548,10 @@ msgid "Checking for updates…"
 msgstr "Güncellemeler denetleniyor…"
 
 #: crates/gezik/src/update.rs
+msgid "Gezik has no data folder to download into"
+msgstr "Gezik'in indirme yapacağı bir veri klasörü yok"
+
+#: crates/gezik/src/update.rs
 msgid "Updated to {}"
 msgstr "{} sürümüne güncellendi"
 

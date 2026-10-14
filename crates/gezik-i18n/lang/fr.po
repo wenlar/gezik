@@ -14363,6 +14363,11 @@ msgstr "Recherche de mises à jour…"
 
 #: crates/gezik/src/update.rs
 #, fuzzy
+msgid "Gezik has no data folder to download into"
+msgstr "Gezik n'a pas de dossier de données où télécharger"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
 msgid "Updated to {}"
 msgstr "Mis à jour vers {}"
 

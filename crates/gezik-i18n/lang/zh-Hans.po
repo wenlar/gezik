@@ -14153,6 +14153,11 @@ msgstr "正在检查更新…"
 
 #: crates/gezik/src/update.rs
 #, fuzzy
+msgid "Gezik has no data folder to download into"
+msgstr "Gezik 没有可供下载的数据文件夹"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
 msgid "Updated to {}"
 msgstr "已更新到 {}"
 

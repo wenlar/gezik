@@ -44,6 +44,8 @@ jobs:
     timeout-minutes: 90
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Marks the packages that replace themselves on an update (crates/gezik/src/update.rs).
+      GEZIK_RELEASE_BUILD: "1"
     steps:
       - uses: actions/checkout@v7.0.1
       # dtolnay/rust-toolchain has no release tags: pinned to the `stable` branch's commit.
@@ -80,6 +82,8 @@ jobs:
     timeout-minutes: 120
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Marks the packages that replace themselves on an update (crates/gezik/src/update.rs).
+      GEZIK_RELEASE_BUILD: "1"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -135,6 +139,8 @@ jobs:
     timeout-minutes: 90
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      # Marks the packages that replace themselves on an update (crates/gezik/src/update.rs).
+      GEZIK_RELEASE_BUILD: "1"
     steps:
       - name: Install Linux packages
         # scripts/linux/Dockerfile's build libraries plus Xvfb and xdotool for package.sh's
