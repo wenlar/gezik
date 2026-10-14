@@ -407,7 +407,7 @@ pub struct BatchRenameState {
     pub rules: Vec<gezik_core::batch::rules::RuleEntry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub theme: ThemeChoice,
     pub theme_light: String,

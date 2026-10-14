@@ -448,7 +448,7 @@ Tools ▸ Export list… (right-click a row or the background; the palette's `Ex
 - **Tags, ratings and comments** live in the files themselves (NTFS streams on Windows, Finder's and Dolphin's extended attributes on macOS and Linux), so Finder and Dolphin see them; drives that keep none (FAT, exFAT) use Gezik's own store. Copies, moves and undo carry them.
 - **Tagging:** Ctrl+Shift+L (⌃⌘L) opens the picker for the selection (tags, stars, `Comment…`); Alt+Shift+1…7 (⌃1…⌃7) toggle the first seven tags of `[tags] list`. Tag dots beside names, Tags, Rating and Comment columns, sorting and grouping by tag or rating.
 - **Finding:** `tag:Red`, `rating:4`, `comment:review` in the filter bar and the search bar; the sidebar's TAGS section searches a tag (Spotlight on macOS), takes dropped files and manages the list.
-- **Highlight rules:** `[[highlight-rules]]` in settings.toml color rows and make names bold by name pattern, kind, age, size, hidden, tag, rating or comment; the first matching rule wins. Tags are read for them only while a rule asks. Commented examples are in settings.toml.
+- **Highlight rules:** `[[highlight-rules]]` in settings.toml color rows and make names bold by name pattern, kind, age, size, hidden, tag, rating, comment or property words (`where = "duration>1h"`, as in the filter bar); the first matching rule wins. Tags and properties are read for them only while a rule asks, and only for the rows on screen. Commented examples are in settings.toml.
 
 ## Git
 

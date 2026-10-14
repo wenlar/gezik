@@ -88,7 +88,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 63 | Otomatik görünüm kuralları | 1/8 | Kısmen | ✅ Var | 10f (#60): `[[view-rules]]` |
 | 64 | Kilitli sekmeler | 2/8 | Yok | ✅ Var | 6a (#13); kilit oturumla gelir (7a) |
 | 65 | Taşınabilir mod | 4/8 | Kısmen (`GEZIK_CONFIG_DIR`) | ✅ Var | 14e (#110): exe yanındaki `gezik-portable` işareti → `gezik-data/`; makine başına sistem günlüğü. Hazır taşınabilir paket Yayın hazırlığında |
-| 66 | Meta veri alanlarını her yerde kullanma | 2/8 | Kısmen (EXIF tarihi adda) | 🟡 Kısmen | 13e/13f (#102, #103): sütun, süzgeç, arama (`artist:… duration>3m`), ad şablonu (`{track:02} {artist}`). Eksik: vurgulama kuralında `where`, etiketlerin alan kaydına bağlanması |
+| 66 | Meta veri alanlarını her yerde kullanma | 2/8 | Kısmen (EXIF tarihi adda) | 🟡 Kısmen | 13e/13f (#102, #103): sütun, süzgeç, arama (`artist:… duration>3m`), ad şablonu (`{track:02} {artist}`), vurgulama kuralında `where` (`duration>1h`). Eksik: etiketlerin alan kaydına bağlanması |
 
 ### Önerilmeyenler (rakip özeti §1 ve §6)
 

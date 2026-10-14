@@ -1,6 +1,8 @@
-//! `[[highlight-rules]]` in settings.toml (spec 12 §9.1), compiled once as they load. A rule
+//! `[[highlight-rules]]` in settings.toml (spec 12 §9.1, `where` spec 13 §9.3), compiled once
+//! as they load. A rule
 //! with a mistake is left out with a warning (`highlight-rules[2]: …`); the others stay.
 
+use gezik_core::field_filter::parse_where;
 use gezik_core::file_filter::FileFilter;
 use gezik_core::highlight::{Highlights, Hue, MAX_RULES, Rule, Style, parse_age};
 use gezik_core::meta_filter::TagTerm;
@@ -9,7 +11,7 @@ use gezik_i18n::t;
 
 use crate::Warning;
 
-const KEYS: [&str; 13] = [
+const KEYS: [&str; 14] = [
     "name",
     "kind",
     "newer-than",
@@ -20,6 +22,7 @@ const KEYS: [&str; 13] = [
     "tag",
     "rating",
     "comment",
+    "where",
     "color",
     "dark-color",
     "bold",
@@ -75,6 +78,7 @@ fn parse_rule(value: &toml::Value) -> Result<Rule, String> {
             .get("hidden")
             .map(|v| v.as_bool().ok_or_else(|| t!("{0}: expected true or false, got {1}", "hidden", v)))
             .transpose()?,
+        fields: text("where")?.map(|t| parse_where(t).map_err(|e| field("where", e))).transpose()?.unwrap_or_default(),
         style: Style {
             color: hue("color")?,
             dark: hue("dark-color")?,
@@ -151,10 +155,12 @@ mod tests {
             "[[highlight-rules]]\nname = \"*.tmp *.bak ~*\"\ncolor = \"gray\"\n\n\
              [[highlight-rules]]\ntag = \"Red\"\nbold = true\n\n\
              [[highlight-rules]]\nkind = \"folder\"\nnewer-than = \"1d\"\ncolor = \"#2e7d32\"\ndark-color = \"#81c784\"\n\n\
-             [[highlight-rules]]\nmin-size = \"1 GB\"\nrating = 0\ncolor = \"orange\"\n",
+             [[highlight-rules]]\nmin-size = \"1 GB\"\nrating = 0\ncolor = \"orange\"\n\n\
+             [[highlight-rules]]\nwhere = \"duration>1h\"\ncolor = \"blue\"\n",
         );
         assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(rules.rules().len(), 4);
+        assert_eq!(rules.rules().len(), 5);
+        assert_eq!(rules.fields_needed(), gezik_core::fields::FieldSet::of(&[gezik_core::fields::DURATION]));
         assert!(rules.needs_meta());
         let now = SystemTime::now();
         let entry = |name: &str, is_dir: bool, size: u64| Entry {
@@ -166,7 +172,7 @@ mod tests {
             created: None,
         };
         let none = Meta::default();
-        let first = |e: &Entry| rules.first(e, now, RowMeta::Known(&none));
+        let first = |e: &Entry| rules.first(e, now, RowMeta::Known(&none), || Some(Default::default()));
         assert_eq!(first(&entry("a.bak", false, 1)), Some(0));
         assert_eq!(first(&entry("new", true, 0)), Some(2));
         assert_eq!(first(&entry("big.iso", false, 2 << 30)), Some(3));
@@ -184,7 +190,9 @@ mod tests {
              [[highlight-rules]]\nkind = \"pictures\"\n\n\
              [[highlight-rules]]\ncolour = \"red\"\n\n\
              [[highlight-rules]]\nrating = 9\nbold = true\n\n\
-             [[highlight-rules]]\ncolor = \"pink\"\n",
+             [[highlight-rules]]\ncolor = \"pink\"\n\n\
+             [[highlight-rules]]\nwhere = \"duration>3x\"\ncolor = \"red\"\n\n\
+             [[highlight-rules]]\nwhere = \"*.mp3\"\ncolor = \"red\"\n",
         );
         assert_eq!(rules.rules().len(), 1);
         assert!(warnings[0].starts_with("highlight-rules[1]: min-size: expected a size like"), "{warnings:?}");
@@ -192,7 +200,9 @@ mod tests {
         assert!(warnings[2].starts_with("highlight-rules[4]: unknown key \"colour\""), "{warnings:?}");
         assert!(warnings[3].starts_with("highlight-rules[5]: rating:"), "{warnings:?}");
         assert!(warnings[4].starts_with("highlight-rules[6]: color:"), "{warnings:?}");
-        assert_eq!(warnings.len(), 5);
+        assert!(warnings[5].starts_with("highlight-rules[7]: where: duration>3x: "), "{warnings:?}");
+        assert!(warnings[6].starts_with("highlight-rules[8]: where: \"*.mp3\" is not a property word"), "{warnings:?}");
+        assert_eq!(warnings.len(), 7);
     }
 
     #[test]

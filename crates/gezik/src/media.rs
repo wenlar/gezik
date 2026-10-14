@@ -446,8 +446,8 @@ impl Media {
 
     /// `path`'s values of `want` as far as read: those of an older generation, or of fewer
     /// fields, until the read asked for here (only the missing fields) lands and redraws entry
-    /// `entry`. `None` while nothing was read.
-    pub fn fields(&self, path: PathBuf, want: FieldSet, entry: usize) -> Option<Rc<Fields>> {
+    /// `entry`. `None` while nothing was read; with the values, the fields they were read for.
+    pub fn fields(&self, path: PathBuf, want: FieldSet, entry: usize) -> Option<(Rc<Fields>, FieldSet)> {
         let found = self.shared.fields.borrow().get(&path).cloned();
         let generation = self.shared.fields_generation.get();
         let missing = match &found {
@@ -457,7 +457,7 @@ impl Media {
         if !missing.is_empty() {
             self.request(MediaKey::Fields { path, want: missing }, Some(entry));
         }
-        found.map(|(_, _, values)| values)
+        found.map(|(_, read, values)| (values, read))
     }
 
     /// Only what is already known; asks for nothing (an export).

@@ -321,6 +321,8 @@ pub fn forget_rows() {
 struct Highlighting {
     rules: gezik_core::highlight::Highlights,
     tints: Vec<(Color, bool)>,
+    /// What the rules' `where` reads, kept: asked for by every row drawn.
+    fields: gezik_core::fields::FieldSet,
     /// The theme's background and selection (kept when a theme fails to load).
     theme: Option<(gezik_config::Color, gezik_config::Color)>,
 }
@@ -337,7 +339,7 @@ pub fn set_highlights(rules: gezik_core::highlight::Highlights, theme: Option<&g
         let theme = theme.map(|c| (c.background, c.selection)).or(h.theme);
         let tints = tints_of(&rules, theme);
         let changed = h.rules != rules || h.tints != tints;
-        *h = Highlighting { rules, tints, theme };
+        *h = Highlighting { fields: rules.fields_needed(), rules, tints, theme };
         changed
     });
     if changed {
@@ -371,12 +373,18 @@ pub fn highlight_needs_meta() -> bool {
     HIGHLIGHT.with(|h| h.borrow().rules.needs_meta())
 }
 
+/// The fields the highlight rules' `where` asks rows for (spec 13 §9.3); none: none is read.
+pub fn highlight_fields() -> gezik_core::fields::FieldSet {
+    HIGHLIGHT.with(|h| h.borrow().fields)
+}
+
 /// A row's text color (transparent: the theme's) and boldness by the first rule matching it. A
 /// selected row keeps the color only where it reads on the selection.
 pub fn highlight_of(
     e: &gezik_core::Entry,
     now: std::time::SystemTime,
     meta: gezik_core::highlight::RowMeta,
+    fields: impl FnOnce() -> Option<std::rc::Rc<gezik_core::fields::Fields>>,
     selected: bool,
 ) -> (Color, bool) {
     HIGHLIGHT.with(|h| {
@@ -385,7 +393,7 @@ pub fn highlight_of(
         if h.rules.is_empty() {
             return none;
         }
-        let Some(i) = h.rules.first(e, now, meta) else { return none };
+        let Some(i) = h.rules.first(e, now, meta, fields) else { return none };
         let (tint, keeps) = h.tints[i];
         let bold = h.rules.rules()[i].style.bold;
         (if selected && !keeps { none.0 } else { tint }, bold)
