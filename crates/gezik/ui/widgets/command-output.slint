@@ -23,6 +23,8 @@ export component CommandOutput inherits Rectangle {
     in-out property <length> panel-height: 180px;
     // Bumped by each run: the list starts at its end and follows it.
     in property <int> run;
+    // Lines dropped from the start in this run so far.
+    in property <int> dropped-lines;
     // 0 Stop, 1 Run Again, 2 Copy Output, 3 Close.
     callback button(int);
     // Where the list is scrolled, and where its end is (the last line whole at the bottom): the
@@ -49,6 +51,15 @@ export component CommandOutput inherits Rectangle {
     changed run => {
         root.follow = true;
         root.to-end();
+    }
+    // Lines dropped from the start while the user looks higher up: the list moves with them,
+    // so the same lines stay on screen (up to the top, if those lines themselves went).
+    property <int> seen-dropped;
+    changed dropped-lines => {
+        if !root.follow && root.dropped-lines > root.seen-dropped {
+            list.content-y = min(0px, list.content-y + (root.dropped-lines - root.seen-dropped) * root.line-height);
+        }
+        root.seen-dropped = root.dropped-lines;
     }
     // The user scrolled to `y`.
     function scroll-to(y: length) {
@@ -159,8 +170,8 @@ export component CommandOutput inherits Rectangle {
                 width: parent.width;
                 height: parent.height;
                 accessible-label: @tr("Output");
-                // Every line is one height: the list's own estimate came a line short at the end.
-                content-height: root.lines.length * root.line-height;
+                // Its height is the list's own (from the rows it made): set from the line count
+                // the list made every row at once, and a flood of output froze the window.
                 // Taking lines off the top moves the list (after `end` changed): back to the end.
                 changed content-y => {
                     if root.follow && self.content-y != root.end {

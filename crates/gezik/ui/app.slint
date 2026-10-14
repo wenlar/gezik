@@ -34,6 +34,7 @@ export component CommandOutputProbe inherits Window {
     in property <int> state;
     in property <int> run;
     in property <bool> dropped;
+    in property <int> dropped-lines;
     out property <length> view-y: panel.view-y;
     out property <length> view-end: panel.view-end;
     out property <length> line-step: panel.line-step;
@@ -46,6 +47,7 @@ export component CommandOutputProbe inherits Window {
         state: root.state;
         run: root.run;
         dropped: root.dropped;
+        dropped-lines: root.dropped-lines;
     }
 }
 

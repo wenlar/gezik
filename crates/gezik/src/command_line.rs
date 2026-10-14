@@ -328,6 +328,9 @@ impl Output {
 pub struct OutputModel {
     output: RefCell<Output>,
     notify: ModelNotify,
+    /// Lines dropped from the start since the run began: the panel keeps a scrolled-up view
+    /// on the same lines.
+    dropped_total: Cell<i32>,
 }
 
 impl OutputModel {
@@ -339,6 +342,7 @@ impl OutputModel {
         let added = lines.len();
         let before = self.output.borrow().len();
         let dropped = self.output.borrow_mut().push_all(lines);
+        self.dropped_total.set(self.dropped_total.get().saturating_add(i32::try_from(dropped).unwrap_or(i32::MAX)));
         if dropped >= before {
             self.notify.reset();
             return;
@@ -351,6 +355,7 @@ impl OutputModel {
 
     fn clear(&self) {
         *self.output.borrow_mut() = Output::default();
+        self.dropped_total.set(0);
         self.notify.reset();
     }
 }
@@ -946,6 +951,7 @@ impl CommandLine {
             (state.open, format!("> {}", state.command), folder, status, code, state.run)
         };
         let dropped = self.0.model.output.borrow().dropped;
+        let dropped_lines = self.0.model.dropped_total.get();
         let model = ModelRc::from(self.0.model.clone());
         crate::panes::edit(self.0.id, |d| {
             d.cmd_open = open;
@@ -956,6 +962,7 @@ impl CommandLine {
             d.cmd_state = state_code;
             d.cmd_dropped = dropped;
             d.cmd_run = run;
+            d.cmd_dropped_lines = dropped_lines;
         });
     }
 }
@@ -1336,6 +1343,89 @@ mod tests {
         add(3000, 50);
         settle();
         at_end("a new run");
+    }
+
+    /// While the cap drops the oldest lines (`dir /s C:\\Windows`): scrolled up, the same
+    /// lines stay on screen; End goes to the end at once and follows, frame after frame.
+    #[test]
+    fn the_output_panel_keeps_its_place_while_lines_are_dropped() {
+        use slint::ComponentHandle;
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        crate::windows::tests::platform();
+        let probe = crate::CommandOutputProbe::new().unwrap();
+        probe.show().unwrap();
+        let model = Rc::new(OutputModel::default());
+        probe.set_lines(ModelRc::from(model.clone()));
+        let frame = || {
+            let started = Instant::now();
+            crate::windows::tests::frame((-1.0, -1.0));
+            started.elapsed()
+        };
+        let next = Cell::new(0usize);
+        // A tick's worth of 200-character lines, the drops told to the panel as the app does.
+        let tick = || {
+            let from = next.get();
+            next.set(from + LINES_PER_TICK);
+            model.push_all(
+                (from..from + LINES_PER_TICK).map(|i| Line { text: format!("{i:0>200}"), err: false }).collect(),
+            );
+            probe.set_dropped_lines(model.dropped_total.get());
+            // A frame makes only the rows on screen (a list that made every row froze).
+            let took = frame();
+            assert!(took < Duration::from_millis(500), "a frame took {took:?}");
+        };
+        let step = probe.get_line_step();
+        let first_shown = || {
+            let row = (-probe.get_view_y() / step).round() as usize;
+            model.row_data(row).map(|line| line.text.to_string()).unwrap_or_default()
+        };
+        let at_end = || (probe.get_view_y() - probe.get_view_end()).abs() < 1.0;
+        let key = |key: Key| {
+            let text: slint::SharedString = key.into();
+            probe.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+            probe.window().dispatch_event(WindowEvent::KeyReleased { text });
+        };
+        // The first frame loads the fonts.
+        frame();
+        // Following until the cap drops lines.
+        for _ in 0..6 {
+            tick();
+            frame();
+            assert!(at_end(), "follows");
+        }
+        assert!(model.output.borrow().dropped);
+        // A click gives the output the keyboard; PageUp leaves the end.
+        let at = slint::LogicalPosition::new(200.0, 200.0);
+        let button = PointerEventButton::Left;
+        probe.window().dispatch_event(WindowEvent::PointerPressed { position: at, button });
+        probe.window().dispatch_event(WindowEvent::PointerReleased { position: at, button });
+        key(Key::PageUp);
+        frame();
+        assert!(!at_end());
+        let shown = first_shown();
+        assert!(!shown.is_empty());
+        // Lines dropped above it: the list moves with them (within a line: the list's own
+        // layout nudges it), so the same line stays at the top of the view.
+        let number = |text: String| text.trim_start_matches('0').parse::<i64>().unwrap_or(0);
+        for _ in 0..2 {
+            tick();
+            frame();
+            assert!((number(first_shown()) - number(shown.clone())).abs() <= 1, "{} for {shown}", first_shown());
+        }
+        // Once the lines it showed are gone too, it waits at the top.
+        tick();
+        frame();
+        assert_eq!(probe.get_view_y(), 0.0);
+        // End: at the end within two frames, and it follows while lines are dropped.
+        key(Key::End);
+        frame();
+        frame();
+        assert!(at_end(), "End reached the end: {} vs {}", probe.get_view_y(), probe.get_view_end());
+        for _ in 0..4 {
+            tick();
+            frame();
+            assert!(at_end(), "follows after End: {} vs {}", probe.get_view_y(), probe.get_view_end());
+        }
     }
 
     #[test]
