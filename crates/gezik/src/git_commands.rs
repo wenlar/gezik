@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use slint::ComponentHandle;
 
@@ -38,7 +38,12 @@ const MAX_DELETED: usize = 20;
 pub enum Cmd {
     Stage(Vec<String>),
     Unstage(Vec<String>),
-    Commit { all: bool, message: String },
+    /// Unstage before the first commit (no HEAD to restore from): `git rm --cached`.
+    UnstageNew(Vec<String>),
+    Commit {
+        all: bool,
+        message: String,
+    },
     Push,
     Pull,
     Fetch,
@@ -52,13 +57,15 @@ impl Cmd {
         match self {
             Cmd::Stage(paths) => with_paths(&["add"], paths),
             Cmd::Unstage(paths) => with_paths(&["restore", "--staged"], paths),
+            Cmd::UnstageNew(paths) => with_paths(&["rm", "--cached", "-r", "-q"], paths),
             // Git's own cleanup of the message (no `--cleanup`): as `git commit -F`.
             Cmd::Commit { all: true, message } => (words(&["commit", "-a", "-F", "-"]), Some(message.clone().into())),
             Cmd::Commit { all: false, message } => (words(&["commit", "-F", "-"]), Some(message.clone().into())),
             Cmd::Push => (words(&["push"]), None),
             Cmd::Pull => (words(&["pull"]), None),
             Cmd::Fetch => (words(&["fetch"]), None),
-            Cmd::Switch(branch) => (words(&["switch", branch]), None),
+            // A branch named `-x` is no option.
+            Cmd::Switch(branch) => (words(&["switch", "--end-of-options", branch]), None),
         }
     }
 
@@ -69,16 +76,27 @@ impl Cmd {
             Cmd::Commit { .. } => Trust::Hooks,
             Cmd::Push => Trust::HooksNetwork,
             Cmd::Pull | Cmd::Fetch => Trust::Network,
-            Cmd::Stage(_) | Cmd::Unstage(_) | Cmd::Switch(_) => Trust::Local,
+            Cmd::Stage(_) | Cmd::Unstage(_) | Cmd::UnstageNew(_) | Cmd::Switch(_) => Trust::Local,
         }
     }
 
     /// The short ones open the panel only if they fail.
     fn quiet(&self) -> bool {
-        matches!(self, Cmd::Stage(_) | Cmd::Unstage(_) | Cmd::Switch(_))
+        matches!(self, Cmd::Stage(_) | Cmd::Unstage(_) | Cmd::UnstageNew(_) | Cmd::Switch(_))
     }
 
-    /// The panel's title, and what Open in Terminal puts on the clipboard.
+    /// What Open in Terminal puts on the clipboard: only for the commands that reach the
+    /// network (the ones a password stops), a fixed line nothing of a repository goes into.
+    fn copy(&self) -> Option<String> {
+        match self {
+            Cmd::Push => Some("git push".to_owned()),
+            Cmd::Pull => Some("git pull".to_owned()),
+            Cmd::Fetch => Some("git fetch".to_owned()),
+            _ => None,
+        }
+    }
+
+    /// The panel's title.
     fn title(&self) -> String {
         let (args, input) = self.args();
         let mut text = String::from("git");
@@ -90,7 +108,7 @@ impl Cmd {
                 break;
             }
         }
-        if input.is_some() && matches!(self, Cmd::Stage(_) | Cmd::Unstage(_)) {
+        if input.is_some() && matches!(self, Cmd::Stage(_) | Cmd::Unstage(_) | Cmd::UnstageNew(_)) {
             text.push_str(" < …");
         }
         text
@@ -115,6 +133,17 @@ fn with_paths(head: &[&str], paths: &[String]) -> (Vec<OsString>, Option<Vec<u8>
     (args, None)
 }
 
+/// The lock file git's output says is in its way (`Unable to create '…/index.lock': File
+/// exists`): a git that was ended may have left it.
+pub fn lock_file(output: &str) -> Option<&str> {
+    output.lines().find_map(|line| {
+        let start = line.find("Unable to create '")? + "Unable to create '".len();
+        let path = &line[start..];
+        let path = &path[..path.find('\'')?];
+        path.ends_with(".lock").then_some(path)
+    })
+}
+
 /// Whether git's output says it needed a password or key it could not ask for (spec 16 §9.4).
 pub fn auth_failed(output: &str) -> bool {
     const SIGNS: [&str; 6] = [
@@ -129,7 +158,7 @@ pub fn auth_failed(output: &str) -> bool {
     SIGNS.iter().any(|sign| lower.contains(sign))
 }
 
-/// The local branches from `git for-each-ref --format=%(HEAD)%(refname:short)` (`*` before the
+/// The local branches from `git for-each-ref --format=%(HEAD)%(refname:lstrip=2)` (`*` before the
 /// one checked out), at most [`MAX_BRANCHES`]; and which one is checked out.
 pub fn parse_branches(out: &[u8]) -> (Vec<String>, Option<usize>) {
     let mut names = Vec::new();
@@ -283,9 +312,30 @@ thread_local! {
     static DRAFTS: RefCell<HashMap<PathBuf, String>> = RefCell::default();
 }
 
-/// Whether a git command runs in the repository at `root` (its status waits).
+/// The repositories a git command or a discard holds: one at a time in each (spec 16 §9.4).
+/// Shared with the engine's thread, where a discard runs.
+static HELD: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether a git command or a discard runs in the repository at `root` (its status waits).
 pub fn busy(root: &Path) -> bool {
-    RUNNING.with(|r| r.borrow().iter().any(|job| same_path(&job.root, root)))
+    gezik_config::lock(&HELD).iter().any(|r| same_path(r, root))
+}
+
+/// Holds the repository at `root` if nothing does; whether it did.
+fn try_hold(root: &Path) -> bool {
+    let mut held = gezik_config::lock(&HELD);
+    let free = !held.iter().any(|r| same_path(r, root));
+    if free {
+        held.push(root.to_path_buf());
+    }
+    free
+}
+
+fn release(root: &Path) {
+    let mut held = gezik_config::lock(&HELD);
+    if let Some(at) = held.iter().position(|r| same_path(r, root)) {
+        held.remove(at);
+    }
 }
 
 /// Runs `cmd` in `root` from `pane`: at once, or after the command running in the repository
@@ -329,7 +379,7 @@ fn pump() {
             let mut queue = q.borrow_mut();
             let running: Vec<(PaneId, PathBuf)> =
                 RUNNING.with(|r| r.borrow().iter().map(|j| (j.pane, j.root.clone())).collect());
-            let free = |job: &Job| may_start(&running, job.pane, &job.root);
+            let free = |job: &Job| may_start(&running, job.pane, &job.root) && !busy(&job.root);
             let at = queue.iter().position(free)?;
             queue.remove(at)
         });
@@ -347,25 +397,39 @@ fn may_start(running: &[(PaneId, PathBuf)], pane: PaneId, root: &Path) -> bool {
     running.iter().all(|(p, r)| *p != pane && !same_path(r, root))
 }
 
+/// `cmd` as it runs in `root`: Unstage before the first commit is `git rm --cached` (there is
+/// no HEAD to restore from). Blocking.
+fn resolved(cmd: Cmd, root: &Path) -> Cmd {
+    match cmd {
+        Cmd::Unstage(paths)
+            if crate::git::read(&["rev-parse", "--verify", "-q", "HEAD"], root, Trust::Local).is_err() =>
+        {
+            Cmd::UnstageNew(paths)
+        }
+        cmd => cmd,
+    }
+}
+
 /// Makes the command on a thread (16d's safe path looks at the repository's config first),
 /// then runs it in the pane's panel.
 fn prepare(job: Job) {
-    let (args, input) = job.cmd.args();
-    let (id, root, trust) = (job.id, job.root.clone(), job.cmd.trust());
+    let (id, root, cmd) = (job.id, job.root.clone(), job.cmd.clone());
+    try_hold(&root);
     RUNNING.with(|r| r.borrow_mut().push(job));
     let window = crate::windows::current();
     let spawned = std::thread::Builder::new().name("gezik-git-command".into()).spawn(move || {
-        let made = crate::git::prepared(&args, &root, trust, &AtomicBool::new(false));
-        crate::windows::post(window, move || launch(id, made, input));
+        let cmd = resolved(cmd, &root);
+        let (args, input) = cmd.args();
+        let made = crate::git::prepared(&args, &root, cmd.trust(), &AtomicBool::new(false));
+        crate::windows::post(window, move || launch(id, made, input, cmd));
     });
     if spawned.is_err() {
         finished(id, false);
     }
 }
 
-fn launch(id: u64, made: Result<std::process::Command, Ran>, input: Option<Vec<u8>>) {
-    let Some((pane, root, cmd)) =
-        RUNNING.with(|r| r.borrow().iter().find(|j| j.id == id).map(|j| (j.pane, j.root.clone(), j.cmd.clone())))
+fn launch(id: u64, made: Result<std::process::Command, Ran>, input: Option<Vec<u8>>, cmd: Cmd) {
+    let Some((pane, root)) = RUNNING.with(|r| r.borrow().iter().find(|j| j.id == id).map(|j| (j.pane, j.root.clone())))
     else {
         return;
     };
@@ -389,8 +453,14 @@ fn launch(id: u64, made: Result<std::process::Command, Ran>, input: Option<Vec<u
         command,
         input,
         quiet: cmd.quiet(),
+        copy: cmd.copy(),
         again: Some(again),
         on_end: Some(Box::new(move |ok, output| {
+            if !ok && let Some(file) = lock_file(output) {
+                // TRANSLATORS: {} is a lock file of git's (…/.git/index.lock)
+                let note = t!("Git left {} behind: delete it only if no git is running", file);
+                crate::panes::with_id(pane, |p| p.view.note(note));
+            }
             finished(id, ok);
             !ok && auth_failed(output)
         })),
@@ -420,6 +490,7 @@ fn finished(id: u64, ok: bool) {
     }) else {
         return;
     };
+    release(&job.root);
     if let Some(after) = job.after {
         after(ok);
     }
@@ -494,7 +565,8 @@ fn branches(pane: PaneId, root: PathBuf) {
     let window = crate::windows::current();
     let _ = std::thread::Builder::new().name("gezik-git-branches".into()).spawn(move || {
         let count = format!("--count={MAX_BRANCHES}");
-        let args = ["for-each-ref", &count, "--sort=-committerdate", "--format=%(HEAD)%(refname:short)", "refs/heads/"];
+        let args =
+            ["for-each-ref", &count, "--sort=-committerdate", "--format=%(HEAD)%(refname:lstrip=2)", "refs/heads/"];
         let out = crate::git::read(&args, &root, Trust::Local);
         crate::windows::post(window, move || match out {
             Ok(out) => {
@@ -535,15 +607,24 @@ fn open_commit(pane: &Pane, root: PathBuf) {
     let window = crate::windows::current();
     let id = pane.id;
     let _ = std::thread::Builder::new().name("gezik-git-staged".into()).spawn(move || {
-        let out = crate::git::read(&["diff", "--cached", "--name-only", "-z"], &root, Trust::Local);
-        crate::windows::post(window, move || match out {
-            Ok(out) => {
-                let files: Vec<String> = out
-                    .split(|b| *b == 0)
+        let names = |args: &[&str]| {
+            crate::git::read(args, &root, Trust::Local).map(|out| {
+                out.split(|b| *b == 0)
                     .filter(|f| !f.is_empty())
                     .map(|f| String::from_utf8_lossy(f).into_owned())
-                    .collect();
-                show_commit(id, root, files);
+                    .collect::<Vec<String>>()
+            })
+        };
+        // The staged files, and what "Stage all changes first" (`-a`) adds: tracked files
+        // changed in the work tree.
+        let staged = names(&["diff", "--cached", "--name-only", "--no-renames", "-z"]);
+        let changed = names(&["diff", "--name-only", "--no-renames", "--no-ext-diff", "-z"]);
+        let out = staged.and_then(|staged| changed.map(|changed| (staged, changed)));
+        crate::windows::post(window, move || match out {
+            Ok((staged, changed)) => {
+                let mut all = staged.clone();
+                all.extend(changed.into_iter().filter(|f| !staged.contains(f)));
+                show_commit(id, root, staged, all);
             }
             Err(why) => crate::panes::with_id(id, |p| p.view.note(t!("Git: {}", why))).unwrap_or_default(),
         });
@@ -555,12 +636,12 @@ thread_local! {
     static COMMIT: RefCell<Option<(PaneId, PathBuf)>> = const { RefCell::new(None) };
 }
 
-fn show_commit(pane: PaneId, root: PathBuf, files: Vec<String>) {
+fn show_commit(pane: PaneId, root: PathBuf, files: Vec<String>, all: Vec<String>) {
     let draft = DRAFTS.with(|d| d.borrow().get(&root).cloned().unwrap_or_default());
     let title = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     crate::windows::with_window(crate::windows::current(), |w| {
-        let files: Vec<slint::SharedString> = files.into_iter().map(Into::into).collect();
-        w.set_gc_files(slint::ModelRc::new(slint::VecModel::from(files)));
+        w.set_gc_files(files.join("\n").into());
+        w.set_gc_all_files(all.join("\n").into());
         // TRANSLATORS: the commit dialog's title; {} is the repository's folder name
         w.set_gc_title(t!("Commit to {}", title).into());
         w.set_gc_message(draft.into());
@@ -576,8 +657,8 @@ pub fn connect(window: &crate::AppWindow) {
     window.on_gc_chosen(move |commit| {
         let Some(w) = weak.upgrade() else { return };
         let (message, all) = (w.get_gc_message().to_string(), w.get_gc_all());
-        let has_files = slint::Model::row_count(&w.get_gc_files()) > 0;
-        if commit && (message.is_empty() || !(has_files || all)) {
+        let shown = if all { w.get_gc_all_files() } else { w.get_gc_files() };
+        if commit && (message.is_empty() || shown.is_empty()) {
             return;
         }
         w.set_gc_open(false);
@@ -610,7 +691,15 @@ fn discard(view: &View, root: PathBuf, rows: &[(PathBuf, bool)]) {
     if targets.is_empty() {
         return view.note(t!("No changes to discard (staged changes stay: unstage them first)").into_owned());
     }
-    let items: Vec<(PathBuf, bool)> = targets.iter().map(|(p, tracked)| (root.join(p), *tracked)).collect();
+    // A changed folder that git tracks is a submodule: never discarded from here.
+    let items: Vec<(PathBuf, bool)> = targets
+        .iter()
+        .map(|(p, tracked)| (from_git(&root, p), *tracked))
+        .filter(|(path, tracked)| !(*tracked && path.is_dir()))
+        .collect();
+    if items.is_empty() {
+        return view.note(t!("No changes to discard (staged changes stay: unstage them first)").into_owned());
+    }
     let count = items.len();
     let message = tn!(
         "Discard changes to {n} file? It goes to the trash first, so you can undo."
@@ -626,7 +715,7 @@ fn discard(view: &View, root: PathBuf, rows: &[(PathBuf, bool)]) {
         }
         ops.dialogs().ask(t!("Discard Changes"), message, &[&t!("Discard"), &t!("Cancel")], move |choice| {
             if choice == Some(0) {
-                let task = DiscardTask { root, items };
+                let task = DiscardTask::new(root, items, Some(crate::windows::current()));
                 crate::operations::with_current(|ops| {
                     ops.submit_chain(vec![Box::new(task)], Some(label), None, crate::operations::After::Nothing);
                 });
@@ -637,11 +726,103 @@ fn discard(view: &View, root: PathBuf, rows: &[(PathBuf, bool)]) {
 
 /// Discard Changes as one job (spec 16 §9.3): each file goes to the trash, then a tracked one
 /// is written anew by `git restore --worktree` (from the index: staged changes stay). Undo sees
-/// a file replaced in place and brings the trashed one back over git's.
+/// a file replaced in place and brings the trashed one back over git's. It holds the
+/// repository (no git command runs meanwhile), and looks at each file's status again first: one
+/// that changed since the list was shown is left alone. An untracked folder gives only its
+/// untracked files git does not ignore (no ignored file, no repository inside it).
 struct DiscardTask {
     root: PathBuf,
     /// (path, tracked).
     items: Vec<(PathBuf, bool)>,
+    held: AtomicBool,
+    /// Where the panes look again once it ended.
+    window: Option<crate::windows::WindowId>,
+}
+
+impl DiscardTask {
+    fn new(root: PathBuf, items: Vec<(PathBuf, bool)>, window: Option<crate::windows::WindowId>) -> DiscardTask {
+        DiscardTask { root, items, held: AtomicBool::new(false), window }
+    }
+
+    /// Waits until the repository is free and holds it (once for the job).
+    fn hold(&self, cx: &RunCx<'_>) -> io::Result<()> {
+        while !self.held.load(Ordering::Relaxed) {
+            if try_hold(&self.root) {
+                self.held.store(true, Ordering::Relaxed);
+            } else if cx.stopped() {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, t!("cancelled")));
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `rel` still has the change it was chosen for (`tracked`: changed in the work tree;
+    /// else untracked).
+    fn still_changed(&self, rel: &str, tracked: bool) -> io::Result<bool> {
+        let args = [
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=normal",
+            "--ignore-submodules=dirty",
+            "--",
+            rel,
+        ];
+        let out = crate::git::read(&args, &self.root, Trust::Local).map_err(io::Error::other)?;
+        let status = gezik_core::git::parse_status(&out);
+        let mark = status.entries.iter().find(|(path, _)| path == rel).map(|(_, mark)| *mark);
+        Ok(match mark {
+            Some(GitMark::Modified | GitMark::StagedModified) => tracked,
+            Some(GitMark::Untracked) => !tracked,
+            _ => false,
+        })
+    }
+
+    /// An untracked folder's files to trash: untracked and not ignored, none in a repository
+    /// inside it (git lists such a one as `dir/` and does not go in).
+    fn untracked_files(&self, rel: &str) -> io::Result<Vec<String>> {
+        let args = ["ls-files", "-o", "--exclude-standard", "-z", "--", rel];
+        let out = crate::git::read(&args, &self.root, Trust::Local).map_err(io::Error::other)?;
+        Ok(out
+            .split(|b| *b == 0)
+            .filter(|f| !f.is_empty() && !f.ends_with(b"/"))
+            .map(|f| String::from_utf8_lossy(f).into_owned())
+            .collect())
+    }
+}
+
+/// A path git gives (from the root, with `/`) on this system.
+fn from_git(root: &Path, rel: &str) -> PathBuf {
+    rel.split('/').fold(root.to_path_buf(), |path, part| path.join(part))
+}
+
+/// Moves `path` to the trash, then (`tracked`) has git write it as the index has it. A restore
+/// that fails puts the file back; if that fails too, the error says where it is in the trash.
+fn discard_one(root: &Path, path: &Path, tracked: bool) -> io::Result<Outcome> {
+    let trashed = gezik_ops::trash_path(path)?;
+    let gone = Outcome::Trashed { original: path.to_path_buf(), trashed: trashed.clone() };
+    if !tracked {
+        return Ok(gone);
+    }
+    let rel = crate::git::prefix(root, path);
+    match crate::git::read(&["restore", "--worktree", "--", &rel], root, Trust::Local) {
+        Ok(_) => {
+            let facts = gezik_ops::facts_after(path, false);
+            Ok(Outcome::Several(vec![gone, Outcome::Created { path: path.to_path_buf(), facts, from: None }]))
+        }
+        Err(why) => match gezik_platform::fs::restore(&trashed, path) {
+            Ok(()) => Err(io::Error::other(why)),
+            Err(err) => Err(io::Error::other(t!(
+                "{0}; the file is still in the trash at {1} ({2})",
+                why,
+                trashed.display(),
+                err
+            ))),
+        },
+    }
 }
 
 impl Task for DiscardTask {
@@ -687,22 +868,40 @@ impl Task for DiscardTask {
         if !cx.has_trash(path) {
             return Err(gezik_ops::no_trash());
         }
-        let trashed = gezik_ops::trash_path(path)?;
-        let gone = Outcome::Trashed { original: path.clone(), trashed: trashed.clone() };
-        if !tracked {
-            return Ok(gone);
-        }
+        self.hold(cx)?;
         let rel = crate::git::prefix(&self.root, path);
-        match crate::git::read(&["restore", "--worktree", "--", &rel], &self.root, Trust::Local) {
-            Ok(_) => {
-                let facts = gezik_ops::facts_after(path, false);
-                Ok(Outcome::Several(vec![gone, Outcome::Created { path: path.clone(), facts, from: None }]))
+        let dir = path.is_dir();
+        if (tracked && dir) || !self.still_changed(&rel, tracked)? {
+            cx.skip(path, &io::Error::other(t!("changed since: left as it is")));
+            return Ok(Outcome::Nothing);
+        }
+        if !dir {
+            return discard_one(&self.root, path, tracked);
+        }
+        let mut done = Vec::new();
+        for file in self.untracked_files(&rel)? {
+            if cx.stopped() {
+                break;
             }
-            Err(why) => {
-                // The file comes back as it was.
-                let _ = gezik_platform::fs::restore(&trashed, path);
-                Err(io::Error::other(why))
+            let path = from_git(&self.root, &file);
+            match discard_one(&self.root, &path, false) {
+                Ok(outcome) => done.push(outcome),
+                Err(err) => cx.fail(&path, &err),
             }
+        }
+        Ok(Outcome::Several(done))
+    }
+
+    fn done(&self, _cancelled: bool) {
+        if self.held.swap(false, Ordering::Relaxed) {
+            release(&self.root);
+        }
+        if let Some(window) = self.window {
+            let root = self.root.clone();
+            crate::windows::post(window, move || {
+                refresh(&root);
+                pump();
+            });
         }
     }
 }
@@ -754,7 +953,11 @@ mod tests {
         assert_eq!(strings(&Cmd::Push.args().0), ["push"]);
         assert_eq!(strings(&Cmd::Pull.args().0), ["pull"]);
         assert_eq!(strings(&Cmd::Fetch.args().0), ["fetch"]);
-        assert_eq!(strings(&Cmd::Switch("dev".into()).args().0), ["switch", "dev"]);
+        assert_eq!(strings(&Cmd::Switch("-dev".into()).args().0), ["switch", "--end-of-options", "-dev"]);
+        assert_eq!(strings(&Cmd::UnstageNew(vec!["a".into()]).args().0), ["rm", "--cached", "-r", "-q", "--", "a"]);
+        assert_eq!(Cmd::Push.copy().as_deref(), Some("git push"));
+        assert_eq!(Cmd::Stage(vec!["a; rm -rf ~".into()]).copy(), None, "Open in Terminal: network commands only");
+        assert_eq!(Cmd::Commit { all: false, message: "x".into() }.copy(), None);
         assert_eq!(Cmd::Push.trust(), Trust::HooksNetwork);
         assert_eq!(Cmd::Stage(Vec::new()).trust(), Trust::Local);
         assert!(Cmd::Switch("x".into()).quiet() && !Cmd::Fetch.quiet());
@@ -929,7 +1132,7 @@ mod tests {
         // trash; one undo brings both back.
         std::fs::write(a.join("x.txt"), "dirty").unwrap();
         let engine = gezik_ops::Engine::new(gezik_ops::Settings::default(), || {});
-        let task = DiscardTask { root: a.clone(), items: vec![(a.join("x.txt"), true), (a.join("y.txt"), false)] };
+        let task = DiscardTask::new(a.clone(), vec![(a.join("x.txt"), true), (a.join("y.txt"), false)], None);
         engine.submit(Box::new(task));
         assert!(engine.wait_idle(std::time::Duration::from_secs(120)));
         assert_eq!(std::fs::read_to_string(a.join("x.txt")).unwrap(), "two", "as HEAD has it");
@@ -939,5 +1142,243 @@ mod tests {
         assert_eq!(std::fs::read_to_string(a.join("x.txt")).unwrap(), "dirty", "undone");
         assert_eq!(std::fs::read_to_string(a.join("y.txt")).unwrap(), "y");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A test folder of the real git's (none: `None`), with `sh` for plain git commands there
+    /// (no Gezik safety: the control runs) and a marker command writing `marker`.
+    struct Lab {
+        git: PathBuf,
+        base: PathBuf,
+    }
+
+    impl Lab {
+        fn new(name: &str) -> Option<Lab> {
+            crate::git::set_settings(gezik_config::settings::GitSettings::default());
+            let git = crate::git::program().ok()?;
+            let base = std::env::temp_dir().join(format!("gezik-16e-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&base);
+            std::fs::create_dir_all(&base).unwrap();
+            gezik_platform::trash::purge_at_thread_end(&base);
+            Some(Lab { git, base })
+        }
+
+        fn sh(&self, dir: &Path, args: &[&str]) -> std::process::Output {
+            let mut command = std::process::Command::new(&self.git);
+            command.args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.autocrlf=false"]);
+            command.args(args).current_dir(dir).output().unwrap()
+        }
+
+        fn ok(&self, dir: &Path, args: &[&str]) -> String {
+            let out = self.sh(dir, args);
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        }
+
+        /// A shell command (git runs config commands with `sh`) that writes `marker`.
+        fn writes(marker: &Path) -> String {
+            format!("echo x > \"{}\"", marker.display()).replace('\\', "/")
+        }
+
+        /// A repository `name` with one commit of `f.txt`.
+        fn repo(&self, name: &str) -> PathBuf {
+            let dir = self.base.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            self.ok(&dir, &["init", "-q", "-b", "main"]);
+            for (key, value) in [("user.name", "t"), ("user.email", "t@t"), ("core.autocrlf", "false")] {
+                self.ok(&dir, &["config", key, value]);
+            }
+            std::fs::write(dir.join("f.txt"), "1\n2\n3\n").unwrap();
+            self.ok(&dir, &["add", "f.txt"]);
+            self.ok(&dir, &["commit", "-q", "-m", "one"]);
+            dir
+        }
+
+        /// A folder of hooks whose `name` hook writes `marker`.
+        fn hooks(&self, name: &str, marker: &Path) -> PathBuf {
+            let dir = self.base.join("hooks");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(name), format!("#!/bin/sh\n{}\n", Lab::writes(marker))).unwrap();
+            #[cfg(unix)]
+            std::fs::set_permissions(dir.join(name), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            dir
+        }
+    }
+
+    /// Switch and Compare with HEAD in a hostile repository: its smudge filter and its
+    /// post-checkout hook (through its own `core.hooksPath`) run for plain git, never for Gezik.
+    #[test]
+    fn switch_and_head_run_no_smudge_filter_or_hook_of_the_repository() {
+        let Some(lab) = Lab::new("switch") else { return };
+        let r = lab.repo("r");
+        lab.ok(&r, &["branch", "other"]);
+        lab.ok(&r, &["switch", "-q", "other"]);
+        std::fs::write(r.join("f.txt"), "other\n").unwrap();
+        lab.ok(&r, &["commit", "-q", "-am", "other"]);
+        lab.ok(&r, &["switch", "-q", "main"]);
+        let (smudged, hooked) = (lab.base.join("smudged"), lab.base.join("hooked"));
+        lab.ok(&r, &["config", "filter.evil.smudge", &Lab::writes(&smudged)]);
+        std::fs::write(r.join(".git/info/attributes"), "* filter=evil\n").unwrap();
+        let hooks = lab.hooks("post-checkout", &hooked);
+        lab.ok(&r, &["config", "core.hooksPath", &hooks.to_string_lossy()]);
+        // The control: plain git runs both.
+        lab.sh(&r, &["switch", "-q", "other"]);
+        assert!(smudged.exists() && hooked.exists(), "the hostile repository is not hostile");
+        lab.sh(&r, &["switch", "-q", "main"]);
+        let _ = (std::fs::remove_file(&smudged), std::fs::remove_file(&hooked));
+        let (ok, errors) = run_cmd(&Cmd::Switch("other".into()), &r);
+        assert!(ok, "{errors}");
+        assert!(!smudged.exists(), "the repository's smudge filter ran on switch");
+        assert!(!hooked.exists(), "the repository's post-checkout hook ran on switch");
+        assert_eq!(lab.ok(&r, &["branch", "--show-current"]).trim(), "other");
+        let head = crate::git::read(&["cat-file", "--filters", "HEAD:f.txt"], &r, Trust::Local).unwrap();
+        assert_eq!(head, b"other\n");
+        assert!(!smudged.exists(), "the smudge filter ran for Compare with HEAD");
+    }
+
+    /// Fetch from a `file` remote whose upload-pack the repository sets to a command, and from an
+    /// ssh remote with the repository's own `core.sshCommand`: plain git runs them, Gezik
+    /// fetches with git's own upload-pack and ssh.
+    #[test]
+    fn fetch_runs_no_upload_pack_or_ssh_command_of_the_repository() {
+        let Some(lab) = Lab::new("fetch") else { return };
+        let a = lab.repo("a");
+        lab.ok(&lab.base, &["clone", "-q", &a.to_string_lossy(), "b"]);
+        let b = lab.base.join("b");
+        let marker = lab.base.join("ran");
+        lab.ok(&b, &["config", "remote.origin.uploadpack", &Lab::writes(&marker)]);
+        lab.sh(&b, &["fetch", "-q", "origin"]);
+        assert!(marker.exists(), "control: plain git runs the upload-pack setting");
+        std::fs::remove_file(&marker).unwrap();
+        let (ok, errors) = run_cmd(&Cmd::Fetch, &b);
+        assert!(ok, "git's own upload-pack: {errors}");
+        assert!(!marker.exists(), "the repository's upload-pack ran");
+
+        lab.ok(&b, &["remote", "add", "evilssh", "ssh://127.0.0.1:1/x.git"]);
+        lab.ok(&b, &["config", "core.sshCommand", &Lab::writes(&marker)]);
+        lab.sh(&b, &["fetch", "-q", "evilssh"]);
+        assert!(marker.exists(), "control: plain git runs core.sshCommand");
+        std::fs::remove_file(&marker).unwrap();
+        let fetch =
+            crate::git::prepared(&["fetch".into(), "evilssh".into()], &b, Trust::Network, &AtomicBool::new(false));
+        let out = fetch.unwrap().stdin(std::process::Stdio::null()).output().unwrap();
+        assert!(!out.status.success() && !marker.exists(), "the repository's ssh command ran");
+    }
+
+    /// Pull merging with the repository's own merge driver and post-merge hook: plain git runs
+    /// both; Gezik merges with git's own three-way merge and runs no hook.
+    #[test]
+    fn pull_runs_no_merge_driver_or_hook_of_the_repository() {
+        let Some(lab) = Lab::new("pull") else { return };
+        let a = lab.repo("a");
+        let (driver, hooked) = (lab.base.join("driver"), lab.base.join("hooked"));
+        let hooks = lab.hooks("post-merge", &hooked);
+        let mut clones = Vec::new();
+        for name in ["b1", "b2"] {
+            lab.ok(&lab.base, &["clone", "-q", &a.to_string_lossy(), name]);
+            let b = lab.base.join(name);
+            for (key, value) in [("user.name", "t"), ("user.email", "t@t"), ("pull.rebase", "false")] {
+                lab.ok(&b, &["config", key, value]);
+            }
+            lab.ok(&b, &["config", "merge.evil.driver", &Lab::writes(&driver)]);
+            lab.ok(&b, &["config", "core.hooksPath", &hooks.to_string_lossy()]);
+            std::fs::write(b.join(".git/info/attributes"), "* merge=evil\n").unwrap();
+            std::fs::write(b.join("f.txt"), "1\n2\nthree\n").unwrap();
+            lab.ok(&b, &["commit", "-q", "-am", "mine"]);
+            clones.push(b);
+        }
+        std::fs::write(a.join("f.txt"), "one\n2\n3\n").unwrap();
+        lab.ok(&a, &["commit", "-q", "-am", "theirs"]);
+        lab.sh(&clones[0], &["pull", "-q", "--no-edit"]);
+        assert!(driver.exists() && hooked.exists(), "control: plain git runs the merge driver and the hook");
+        let _ = (std::fs::remove_file(&driver), std::fs::remove_file(&hooked));
+        let (ok, errors) = run_cmd(&Cmd::Pull, &clones[1]);
+        assert!(ok, "{errors}");
+        assert!(!driver.exists(), "the repository's merge driver ran on pull");
+        assert!(!hooked.exists(), "a hook ran on pull");
+        let merged = std::fs::read_to_string(clones[1].join("f.txt")).unwrap().replace("\r\n", "\n");
+        assert_eq!(merged, "one\n2\nthree\n", "git's own merge");
+    }
+
+    /// A branch named like an option is switched to, listed by its whole name; Unstage works
+    /// before the first commit.
+    #[test]
+    fn odd_branches_and_a_repository_without_commits() {
+        let Some(lab) = Lab::new("odd") else { return };
+        let r = lab.repo("r");
+        lab.ok(&r, &["update-ref", "refs/heads/-evil", "HEAD"]);
+        let out =
+            crate::git::read(&["for-each-ref", "--format=%(HEAD)%(refname:lstrip=2)", "refs/heads/"], &r, Trust::Local)
+                .unwrap();
+        assert!(parse_branches(&out).0.contains(&"-evil".to_owned()));
+        let (ok, errors) = run_cmd(&Cmd::Switch("-evil".into()), &r);
+        assert!(ok, "{errors}");
+        assert_eq!(lab.ok(&r, &["branch", "--show-current"]).trim(), "-evil");
+
+        let fresh = lab.base.join("fresh");
+        std::fs::create_dir_all(&fresh).unwrap();
+        lab.ok(&fresh, &["init", "-q"]);
+        std::fs::write(fresh.join("n.txt"), "n").unwrap();
+        lab.ok(&fresh, &["add", "n.txt"]);
+        let plain = Cmd::Unstage(vec!["n.txt".into()]);
+        assert!(!run_cmd(&plain, &fresh).0, "control: restore --staged needs a HEAD");
+        let (ok, errors) = run_cmd(&resolved(plain, &fresh), &fresh);
+        assert!(ok, "{errors}");
+        assert_eq!(lab.ok(&fresh, &["status", "--porcelain"]).trim(), "?? n.txt");
+    }
+
+    fn discard(root: &Path, items: Vec<(PathBuf, bool)>) -> gezik_ops::Engine {
+        let engine = gezik_ops::Engine::new(gezik_ops::Settings::default(), || {});
+        engine.submit(Box::new(DiscardTask::new(root.to_path_buf(), items, None)));
+        engine
+    }
+
+    /// Discard of an untracked folder takes only its untracked, not ignored files (no ignored
+    /// file, no repository inside it); a file whose state changed since is left alone; it waits
+    /// while a git command holds the repository.
+    #[test]
+    fn discard_keeps_ignored_files_nested_repositories_and_changed_states() {
+        let Some(lab) = Lab::new("discard") else { return };
+        let r = lab.repo("r");
+        std::fs::write(r.join(".gitignore"), "*.log\n").unwrap();
+        lab.ok(&r, &["add", ".gitignore"]);
+        lab.ok(&r, &["commit", "-q", "-m", "ignore"]);
+        let new = r.join("new");
+        std::fs::create_dir_all(new.join("deep")).unwrap();
+        std::fs::write(new.join("a.txt"), "a").unwrap();
+        std::fs::write(new.join("deep/b.txt"), "b").unwrap();
+        std::fs::write(new.join("keep.log"), "log").unwrap();
+        std::fs::create_dir_all(new.join("inner")).unwrap();
+        lab.ok(&new.join("inner"), &["init", "-q"]);
+        std::fs::write(new.join("inner/precious.txt"), "p").unwrap();
+        let engine = discard(&r, vec![(new.clone(), false)]);
+        assert!(engine.wait_idle(std::time::Duration::from_secs(120)));
+        assert!(!new.join("a.txt").exists() && !new.join("deep/b.txt").exists(), "untracked files: trashed");
+        assert!(new.join("keep.log").exists(), "an ignored file went to the trash");
+        assert!(new.join("inner/precious.txt").exists() && new.join("inner/.git").exists(), "a nested repository");
+
+        // Chosen as untracked, staged since: left alone.
+        std::fs::write(r.join("s.txt"), "s").unwrap();
+        lab.ok(&r, &["add", "s.txt"]);
+        let engine = discard(&r, vec![(r.join("s.txt"), false)]);
+        assert!(engine.wait_idle(std::time::Duration::from_secs(120)));
+        assert!(r.join("s.txt").exists(), "a file staged since was discarded");
+
+        // A command holds the repository: the discard waits for it.
+        std::fs::write(r.join("f.txt"), "dirty\n").unwrap();
+        assert!(try_hold(&r));
+        let engine = discard(&r, vec![(r.join("f.txt"), true)]);
+        assert!(!engine.wait_idle(std::time::Duration::from_millis(600)), "it ran beside a git command");
+        assert_eq!(std::fs::read_to_string(r.join("f.txt")).unwrap(), "dirty\n");
+        release(&r);
+        assert!(engine.wait_idle(std::time::Duration::from_secs(120)));
+        assert_eq!(std::fs::read_to_string(r.join("f.txt")).unwrap(), "1\n2\n3\n");
+        assert!(!busy(&r), "the discard let the repository go");
+    }
+
+    #[test]
+    fn a_left_lock_file_is_named() {
+        let out = "fatal: Unable to create 'C:/w/r/.git/index.lock': File exists.\n\nAnother git process seems";
+        assert_eq!(lock_file(out), Some("C:/w/r/.git/index.lock"));
+        assert_eq!(lock_file("error: failed to push some refs"), None);
     }
 }

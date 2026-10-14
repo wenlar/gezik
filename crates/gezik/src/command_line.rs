@@ -582,6 +582,10 @@ struct State {
     on_end: Option<OnEnd>,
     /// Open in Terminal is offered (a git command that needed a password).
     terminal: bool,
+    /// What Open in Terminal puts on the clipboard.
+    copy: Option<String>,
+    /// Stop asked it to stop by itself once already.
+    interrupted: bool,
 }
 
 /// What a program of Gezik's own is told when it ended: whether it succeeded, and its output;
@@ -597,6 +601,8 @@ pub struct Process {
     /// Written to its input (a commit message, a list of paths).
     pub input: Option<Vec<u8>>,
     pub quiet: bool,
+    /// The command line Open in Terminal puts on the clipboard (none: never offered).
+    pub copy: Option<String>,
     pub again: Option<Rc<dyn Fn()>>,
     pub on_end: Option<OnEnd>,
 }
@@ -753,12 +759,21 @@ impl CommandLine {
     /// Runs `process`, a program of Gezik's own, in the panel (no shell, nothing kept in the
     /// history).
     pub fn run_process(&self, process: Process) {
-        let Process { title, dir, command, input, quiet, again, on_end } = process;
+        let Process { title, dir, command, input, quiet, copy, again, on_end } = process;
         let program = command.get_program().to_string_lossy().into_owned();
         let started = ChildProcess::spawn_piped_input(command, input);
         let selection = Selection { dir, ..Selection::default() };
-        let state =
-            State { open: !quiet, command: title, selection, own: true, quiet, again, on_end, ..State::default() };
+        let state = State {
+            open: !quiet,
+            command: title,
+            selection,
+            own: true,
+            quiet,
+            copy,
+            again,
+            on_end,
+            ..State::default()
+        };
         self.begin(state, Vec::new(), started, &program);
     }
 
@@ -898,6 +913,20 @@ impl CommandLine {
             if !state.running {
                 return;
             }
+            // git first gets a second to stop by itself and take its lock files away (Unix).
+            if state.own && !state.interrupted {
+                state.interrupted = true;
+                if state.child.as_mut().is_some_and(ChildProcess::interrupt) {
+                    let id = self.0.id;
+                    slint::Timer::single_shot(
+                        Duration::from_secs(1),
+                        crate::windows::bind(move || {
+                            crate::panes::with_id(id, |p| p.command.stop());
+                        }),
+                    );
+                    return;
+                }
+            }
             if let Some(child) = state.child.as_mut() {
                 child.kill_tree();
             }
@@ -930,7 +959,8 @@ impl CommandLine {
         if let Some(on_end) = on_end {
             let text = self.0.model.output.borrow().text();
             let terminal = on_end(ok, &text);
-            self.0.state.borrow_mut().terminal = terminal;
+            let mut state = self.0.state.borrow_mut();
+            state.terminal = terminal && state.copy.is_some();
         }
     }
 
@@ -939,7 +969,7 @@ impl CommandLine {
     fn open_terminal(&self) {
         let (dir, command) = {
             let state = self.0.state.borrow();
-            (state.selection.dir.clone(), state.command.clone())
+            (state.selection.dir.clone(), state.copy.clone().unwrap_or_default())
         };
         crate::terminal::open_in(dir, false);
         if gezik_platform::clipboard::write_text(&command).is_ok() {

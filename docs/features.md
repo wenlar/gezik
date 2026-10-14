@@ -519,10 +519,17 @@ Linux).
   terminal in the repository with the command on the clipboard.
 - **The status bar's Git menu** also lists the files deleted under the folder shown (they
   have no row).
-- **Safety of commands**: as for the status, except that commit and push run the repository's
-  hooks (as git does), and push, pull and fetch may use the network by `http`, `https`, `ssh`,
-  `git` and `file` only (never `ext::`, which runs a command). Paths go to git as they are
-  (no wildcards), after `--` or, for a long list, through its input.
+- **Safety of commands**: no program the repository's own config names ever runs (filters,
+  merge and diff drivers, ssh and proxy commands, credential helpers, a remote's upload-pack):
+  your own global settings for them are used instead, or git's defaults. Only commit and push
+  run the repository's hooks (as git does); the other commands, pull included, run none. Push,
+  pull and fetch may use the network by `http`, `https`, `ssh`, `git` and `file` only (never
+  `ext::`, which runs a command), and ssh never waits for a passphrase. Paths go to git as
+  they are (no wildcards), after `--` or, for a long list, through its input. Discard re-reads
+  each file's state first and leaves alone one that changed since. On macOS and Linux Stop
+  lets git end by itself for a second before it is killed.
+- **Changes in sub-folders** of the folder shown, made by another program, show when Gezik's
+  window comes back to the front (or with F5).
 
 ```toml
 [git]

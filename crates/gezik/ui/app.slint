@@ -395,7 +395,9 @@ export component AppWindow inherits Window {
     // The commit dialog (git-commit.slint, git_commands.rs).
     in property <bool> gc-open;
     in property <string> gc-title;
-    in property <[string]> gc-files;
+    in property <string> gc-files;
+    // The files a commit with "Stage all changes first" takes (staged and changed tracked ones).
+    in property <string> gc-all-files;
     in-out property <string> gc-message;
     in-out property <bool> gc-all;
     callback gc-chosen(bool);
@@ -1851,6 +1853,7 @@ export component AppWindow inherits Window {
             height: root.height;
             title: root.gc-title;
             files: root.gc-files;
+            all-files: root.gc-all-files;
             message <=> root.gc-message;
             all <=> root.gc-all;
             mono-font: root.mono-font;
