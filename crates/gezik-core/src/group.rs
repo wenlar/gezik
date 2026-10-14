@@ -28,14 +28,16 @@ pub enum GroupBy {
     Rating,
     /// A metadata field's value (spec 13 §8.2): only `groupable` fields, `taken` by year.
     Field(crate::fields::FieldId),
+    /// Each row's Git mark (spec 16 §8.4): conflicts first, unchanged then ignored last.
+    Git,
     /// Duplicate files' groups (spec 11 §9.3): only a duplicates search's results, never a
     /// setting or a menu item (not in `ALL`).
     Duplicates,
 }
 
 impl GroupBy {
-    pub const ALL: [GroupBy; 6] =
-        [GroupBy::None, GroupBy::Type, GroupBy::Date, GroupBy::Size, GroupBy::Tag, GroupBy::Rating];
+    pub const ALL: [GroupBy; 7] =
+        [GroupBy::None, GroupBy::Type, GroupBy::Date, GroupBy::Size, GroupBy::Tag, GroupBy::Rating, GroupBy::Git];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -46,6 +48,7 @@ impl GroupBy {
             GroupBy::Tag => "tag",
             GroupBy::Rating => "rating",
             GroupBy::Field(id) => id.def().key,
+            GroupBy::Git => "git",
             GroupBy::Duplicates => "duplicates",
         }
     }
@@ -68,6 +71,7 @@ impl GroupBy {
             GroupBy::Tag => gezik_i18n::tx!("Tag"),
             GroupBy::Rating => gezik_i18n::tx!("Rating"),
             GroupBy::Field(id) => id.def().label,
+            GroupBy::Git => gezik_i18n::tx!("Git"),
             GroupBy::Duplicates => gezik_i18n::tx!("Duplicates"),
         }
     }
@@ -113,6 +117,8 @@ pub enum GroupKey {
     /// Stars (0: not rated); `None` while on their way.
     Rating(Option<u8>),
     Field(FieldGroup),
+    /// A Git mark; `None`: unchanged.
+    Git(Option<crate::git::GitMark>),
     /// A group of duplicate files: its place (most bytes to free first) and each file's size.
     Duplicates {
         id: u32,
@@ -167,6 +173,8 @@ impl GroupKey {
             GroupKey::Rating(Some(0)) => t!("Not Rated").into_owned(),
             GroupKey::Rating(Some(stars)) => "★".repeat(usize::from(*stars)),
             GroupKey::Rating(None) => TagKey::Pending.label(),
+            GroupKey::Git(None) => t!("git" => "Unchanged").into_owned(),
+            GroupKey::Git(mark) => crate::git::label(*mark),
             GroupKey::Duplicates { size, .. } => crate::format_size(*size),
         }
     }
@@ -321,7 +329,13 @@ pub struct Grouping<'a> {
     pub rating: Option<&'a RatingKey>,
     /// A row's field (spec 13 §8.2): `None` while on its way, `Some(None)` without a value.
     pub field: Option<&'a FieldLook<'a>>,
+    /// A row's Git mark (spec 16 §8.4), for `GroupBy::Git` and `SortKey::Git`; `None`: none
+    /// known (every row unchanged).
+    pub git: Option<&'a GitKey>,
 }
+
+/// A row's Git mark (`None`: unchanged).
+pub type GitKey = dyn Fn(&Entry) -> Option<crate::git::GitMark>;
 
 /// A row's stars (`None`: not read yet).
 pub type RatingKey = dyn Fn(&Entry) -> Option<u8>;
@@ -355,6 +369,7 @@ impl Grouping<'_> {
                 Some(None) => FieldGroup::Missing(id),
                 None => FieldGroup::Pending,
             }),
+            GroupBy::Git => GroupKey::Git(self.git.and_then(|key| key(e))),
             GroupBy::Duplicates => return None,
         })
     }
@@ -395,6 +410,7 @@ impl Grouping<'_> {
                 | GroupKey::Tag(_)
                 | GroupKey::Rating(_)
                 | GroupKey::Field(_)
+                | GroupKey::Git(_)
                 | GroupKey::Duplicates { .. } => false,
             }
     }
@@ -428,6 +444,7 @@ impl Grouping<'_> {
                 // way (`TAIL` below, never turned round).
                 GroupKey::Field(FieldGroup::Missing(_)) => (TAIL, false),
                 GroupKey::Field(FieldGroup::Pending) => (TAIL + 1, false),
+                GroupKey::Git(mark) => (u32::from(crate::git::rank(mark)), false),
                 GroupKey::Duplicates { id, .. } => (id, false),
             };
             rows.push((pinned, place, named));
@@ -623,6 +640,7 @@ mod tests {
             tags: None,
             rating: None,
             field: None,
+            git: None,
         };
         let mut v = entries.to_vec();
         crate::sort::sort_entries_grouped(&mut v, spec, folders_first, type_name, Some(&grouping));
@@ -709,6 +727,7 @@ mod tests {
             tags: None,
             rating: None,
             field: None,
+            git: None,
         };
         let rows = [file("a.png", 1, None), file("b.png", 1, None), file("c.txt", 1, None)];
         let closed = GroupKey::Type("TXT File".into());
@@ -748,6 +767,7 @@ mod tests {
                 tags: None,
                 rating: None,
                 field: None,
+                git: None,
             };
             let order = crate::sort::sort_rows_grouped(
                 4,
@@ -776,6 +796,7 @@ mod tests {
             tags: None,
             rating: None,
             field: None,
+            git: None,
         };
         let (spans, keys) = spans(4, &|i| rows.get(i).map(Cow::Borrowed), &grouping, &|_| false);
         assert_eq!(spans.iter().map(|s| (s.start, s.len)).collect::<Vec<_>>(), [(0, 2), (2, 2)]);
@@ -831,6 +852,7 @@ mod tests {
                         tags: None,
                         rating: None,
                         field: None,
+                        git: None,
                     };
                     let start = std::time::Instant::now();
                     crate::sort::sort_entries_grouped(
@@ -896,6 +918,7 @@ mod tests {
                 tags: None,
                 rating: None,
                 field: Some(&look),
+                git: None,
             };
             let order = crate::sort::sort_rows_grouped(
                 rows.len(),
@@ -971,6 +994,7 @@ mod tests {
             tags: None,
             rating: None,
             field: Some(&look),
+            git: None,
         };
         let order = crate::sort::sort_rows_grouped(
             rows.len(),
@@ -1018,6 +1042,7 @@ mod tests {
             tags: Some(&tag_fn),
             rating: None,
             field: None,
+            git: None,
         };
         let mut v = rows.to_vec();
         crate::sort::sort_entries_grouped(&mut v, spec, folders_first, type_name, Some(&grouping));
@@ -1100,6 +1125,7 @@ mod tests {
             tags: None,
             rating: Some(&rate),
             field: None,
+            git: None,
         };
         let mut v = rows.to_vec();
         crate::sort::sort_entries_grouped(&mut v, spec, false, type_name, Some(&grouping));
@@ -1142,7 +1168,47 @@ mod tests {
             tags: None,
             rating: None,
             field: None,
+            git: None,
         };
         assert_eq!(none.key(&rows[0]), Some(GroupKey::Rating(Some(0))), "nothing known: not rated");
+    }
+
+    #[test]
+    fn rows_sort_and_group_by_their_git_mark() {
+        use crate::git::GitMark;
+        let mark = |e: &Entry| match e.name.as_str() {
+            "c" => Some(GitMark::Conflict),
+            "m" => Some(GitMark::Modified),
+            "u" => Some(GitMark::Untracked),
+            "i" => Some(GitMark::Ignored),
+            _ => None,
+        };
+        let rows = [file("i", 0, None), file("x", 0, None), file("u", 0, None), file("m", 0, None), file("c", 0, None)];
+        let dates = DateBounds::default();
+        let type_name = |_: &Entry| String::new();
+        let run = |by, key| {
+            let spec = SortSpec { key, dir: SortDir::Asc };
+            let grouping = Grouping {
+                by,
+                spec,
+                folders_first: false,
+                dates: &dates,
+                type_name: &type_name,
+                row: None,
+                tags: None,
+                rating: None,
+                field: None,
+                git: Some(&mark),
+            };
+            let mut v = rows.to_vec();
+            crate::sort::sort_entries_grouped(&mut v, spec, false, type_name, Some(&grouping));
+            let (spans, keys) = spans(v.len(), &|i| v.get(i).map(Cow::Borrowed), &grouping, &|_| false);
+            let headers: Vec<String> = keys.iter().zip(&spans).map(|(k, s)| k.header(s.len)).collect();
+            (v.into_iter().map(|e| e.name).collect::<Vec<_>>(), headers)
+        };
+        assert_eq!(run(GroupBy::None, SortKey::Git).0, ["c", "m", "u", "x", "i"]);
+        let (names, headers) = run(GroupBy::Git, SortKey::Name);
+        assert_eq!(names, ["c", "m", "u", "x", "i"]);
+        assert_eq!(headers, ["Conflict (1)", "Modified (1)", "Untracked (1)", "Unchanged (1)", "Ignored (1)"]);
     }
 }

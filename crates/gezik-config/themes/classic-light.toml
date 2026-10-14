@@ -50,6 +50,10 @@ syntax-string = "#166534"
 syntax-number = "#9a3412"
 syntax-comment = "#57606a"
 syntax-tag = "#b42318"
+git-modified = "#c2620a"
+git-staged = "#1f8a3e"
+git-untracked = "#6b7280"
+git-conflict = "#c62828"
 
 [metrics]
 font-family = ""

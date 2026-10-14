@@ -417,6 +417,7 @@ fn meta_column_id(key: ColumnKey) -> Option<u32> {
         ColumnKey::Rating => Some(RATING_COLUMN),
         ColumnKey::Comment => Some(COMMENT_COLUMN),
         ColumnKey::Packed => Some(PACKED_COLUMN),
+        ColumnKey::Git => Some(GIT_COLUMN),
         _ => None,
     }
 }
@@ -454,6 +455,8 @@ pub fn header_items(columns: &[ColumnState]) -> Vec<(u32, String)> {
                 (ColumnKey::Comment, false) => tx!("Show Comment"),
                 (ColumnKey::Packed, true) => tx!("Hide Packed"),
                 (ColumnKey::Packed, false) => tx!("Show Packed"),
+                (ColumnKey::Git, true) => tx!("Hide Git"),
+                (ColumnKey::Git, false) => tx!("Show Git"),
                 (ColumnKey::Field(_), _) => "",
             };
             (id, t("", title).into_owned())
@@ -872,6 +875,11 @@ pub const OPEN_SYSTEM_APP: u32 = 3201;
 pub const PACKED_COLUMN: u32 = 3202;
 /// A folder's row inside an archive: in a new tab.
 pub const INSIDE_NEW_TAB: u32 = 3230;
+// Git (spec 16 §11.3): 3250–3299.
+/// The header menu's Git column, offered only in a repository.
+pub const GIT_COLUMN: u32 = 3250;
+/// Group by ▸ Git.
+pub const GROUP_BY_GIT: u32 = 3251;
 /// Rows inside an archive: Copy To….
 pub const INSIDE_COPY_TO: u32 = 3231;
 /// Rows inside an archive (else the place shown): their address as text.
@@ -1257,16 +1265,17 @@ pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
 /// place `at`.
 pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
     let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
-    let items = [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG, GROUP_BY_RATING]
-        .into_iter()
-        .zip(GroupBy::ALL)
-        .map(|(id, by)| (id, mark(by == current, &t("", by.title())), true))
-        .chain(
-            groupable_fields()
-                .zip(GROUP_BY_FIELD_FIRST..)
-                .map(|(field, id)| (id, mark(current == GroupBy::Field(field), &t("", field.def().label)), true)),
-        )
-        .collect();
+    let items =
+        [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG, GROUP_BY_RATING, GROUP_BY_GIT]
+            .into_iter()
+            .zip(GroupBy::ALL)
+            .map(|(id, by)| (id, mark(by == current, &t("", by.title())), true))
+            .chain(
+                groupable_fields()
+                    .zip(GROUP_BY_FIELD_FIRST..)
+                    .map(|(field, id)| (id, mark(current == GroupBy::Field(field), &t("", field.def().label)), true)),
+            )
+            .collect();
     Submenu { title: t!("Group by").into_owned(), at, items }
 }
 
@@ -1959,11 +1968,12 @@ impl Menus {
                 .map(|(id, t)| (id, t, true))
                 .collect()
         } else {
-            // Packed only inside an archive (spec 16 §5.2).
+            // Packed only inside an archive (spec 16 §5.2), Git only in a repository (§8.4).
             let vfs = crate::panes::active_view().shows_vfs();
+            let git = crate::panes::active_view().in_repo();
             header_items(&crate::panes::active_view().columns_shown())
                 .into_iter()
-                .filter(|(id, _)| vfs || *id != PACKED_COLUMN)
+                .filter(|(id, _)| (vfs || *id != PACKED_COLUMN) && (git || *id != GIT_COLUMN))
                 .map(|(id, t)| (id, t, true))
                 .collect()
         };
@@ -2408,6 +2418,7 @@ impl Menus {
             }
             (GROUP_BY_TAG, _) => crate::panes::active_view().set_group(GroupBy::Tag),
             (GROUP_BY_RATING, _) => crate::panes::active_view().set_group(GroupBy::Rating),
+            (GROUP_BY_GIT, _) => crate::panes::active_view().set_group(GroupBy::Git),
             (SORT_BY_TAGS, Subject::View) => crate::panes::active_view()
                 .set_sort(SortSpec { key: SortKey::Tags, dir: crate::panes::active_view().sort().dir }),
             (SORT_BY_RATING, Subject::View) => crate::panes::active_view()
@@ -2416,6 +2427,7 @@ impl Menus {
             (RATING_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Rating),
             (COMMENT_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Comment),
             (PACKED_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Packed),
+            (GIT_COLUMN, Subject::Header) => crate::panes::active_view().toggle_column(ColumnKey::Git),
             (COLLAPSE_GROUPS, _) => crate::panes::active_view().collapse_all(true),
             (EXPAND_GROUPS, _) => crate::panes::active_view().collapse_all(false),
             (id, Subject::TagRow(name)) => crate::tags::row_menu_chosen(id, &name),
@@ -2982,6 +2994,7 @@ fn from_submenu(id: u32) -> bool {
         || (TEMPLATE_FIELD_FIRST..=TEMPLATE_FIELD_LAST).contains(&id)
         || id == GROUP_BY_TAG
         || id == GROUP_BY_RATING
+        || id == GROUP_BY_GIT
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
@@ -3127,7 +3140,16 @@ mod tests {
             [OPEN, CUT, COPY, INSIDE_COPY_TO, INSIDE_MOVE_TO, RENAME, TRASH, INSIDE_COPY_PATH]
         );
         assert!(!ids(false, false, true).contains(&RENAME), "several: no rename in place");
-        let ids = [BROWSE_ARCHIVE, OPEN_SYSTEM_APP, PACKED_COLUMN, INSIDE_NEW_TAB, INSIDE_COPY_TO, INSIDE_COPY_PATH];
+        let ids = [
+            BROWSE_ARCHIVE,
+            OPEN_SYSTEM_APP,
+            PACKED_COLUMN,
+            INSIDE_NEW_TAB,
+            INSIDE_COPY_TO,
+            INSIDE_COPY_PATH,
+            GIT_COLUMN,
+            GROUP_BY_GIT,
+        ];
         for id in ids.into_iter().chain([INSIDE_MOVE_TO]) {
             assert!((3200..3600).contains(&id) && id < GEZIK_IDS_END, "{id}: step 16's ids");
         }
@@ -3400,8 +3422,9 @@ mod tests {
             &ids[..6],
             [GROUP_BY_NONE, GROUP_BY_TYPE, GROUP_BY_DATE, GROUP_BY_SIZE, GROUP_BY_TAG, GROUP_BY_RATING]
         );
-        assert_eq!(ids.len(), 6 + groupable_fields().count(), "then the fields that group (spec 13 §8.2)");
-        assert_eq!(sub.items[6].1, "    Date Taken");
+        assert_eq!(ids[6], GROUP_BY_GIT);
+        assert_eq!(ids.len(), 7 + groupable_fields().count(), "then the fields that group (spec 13 §8.2)");
+        assert_eq!(sub.items[7].1, "    Date Taken");
         let artist = group_by_sub(GroupBy::Field(gezik_core::fields::ARTIST), 0);
         assert!(artist.items.iter().any(|(id, t, _)| *id >= GROUP_BY_FIELD_FIRST && t == "• Artist"));
         let marked: Vec<&str> =
@@ -3921,6 +3944,7 @@ mod tests {
                 (TAGS_COLUMN, "Show Tags"),
                 (RATING_COLUMN, "Show Rating"),
                 (COMMENT_COLUMN, "Show Comment"),
+                (GIT_COLUMN, "Show Git"),
                 // `header` leaves it out outside archives.
                 (PACKED_COLUMN, "Show Packed"),
                 (COLUMNS_MORE, "More Columns…"),

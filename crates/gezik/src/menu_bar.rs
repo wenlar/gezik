@@ -100,6 +100,9 @@ fn chosen(window: &AppWindow, name: &str, ops: &Operations) {
             if name == "group-rating" {
                 return crate::panes::active_view().set_group(gezik_core::group::GroupBy::Rating);
             }
+            if name == "group-git" {
+                return crate::panes::active_view().set_group(gezik_core::group::GroupBy::Git);
+            }
             if let Some(stars) = name.strip_prefix("rating:").and_then(|n| n.parse::<u8>().ok()) {
                 return crate::tags::rate(stars, &crate::panes::active_view());
             }

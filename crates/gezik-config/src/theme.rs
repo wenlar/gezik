@@ -41,7 +41,7 @@ pub(crate) fn builtin_source(id: &str) -> Option<&'static str> {
 macro_rules! theme_colors {
     ($($(#[$doc:meta])* $field:ident = $key:literal,)*) => {
         /// Every color a theme can set, as written in `[colors]`.
-        pub const COLOR_KEYS: [&str; 49] = [$($key),*];
+        pub const COLOR_KEYS: [&str; 53] = [$($key),*];
 
         #[derive(Debug, Clone, Default, PartialEq)]
         pub struct ThemeColors {
@@ -134,6 +134,12 @@ theme_colors! {
     syntax_number = "syntax-number",
     syntax_comment = "syntax-comment",
     syntax_tag = "syntax-tag",
+    /// Git marks on rows (spec 16 §8.3): modified, staged (and added, renamed), untracked,
+    /// conflict.
+    git_modified = "git-modified",
+    git_staged = "git-staged",
+    git_untracked = "git-untracked",
+    git_conflict = "git-conflict",
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -464,7 +470,7 @@ file-icon = \"blue\"
             let theme = theme.unwrap();
             assert!(warnings.is_empty(), "{id}: {warnings:?}");
             assert_eq!(theme.colors.len(), COLOR_KEYS.len(), "{id}");
-            assert_eq!(COLOR_KEYS.len(), 49);
+            assert_eq!(COLOR_KEYS.len(), 53);
             assert_eq!(theme.numbers.len(), METRIC_RANGES.len(), "{id}");
             assert!(theme.font_family.is_some(), "{id}");
             assert!(theme.base.is_none(), "{id}");

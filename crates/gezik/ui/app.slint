@@ -195,6 +195,7 @@ export component AppWindow inherits Window {
                 MenuItem { title: @tr("Size"); activated => { root.menu-command("group-size"); } }
                 MenuItem { title: @tr("Tag"); activated => { root.menu-command("group-tag"); } }
                 MenuItem { title: @tr("Rating"); activated => { root.menu-command("group-rating"); } }
+                MenuItem { title: @tr("Git"); activated => { root.menu-command("group-git"); } }
                 MenuItem { title: @tr("Property…"); activated => { root.menu-command("group-property"); } }
             }
             MenuItem { title: @tr("Sort by Property…"); activated => { root.menu-command("sort-property"); } }
@@ -372,6 +373,8 @@ export component AppWindow inherits Window {
     // menu that opens under a button (the menu flips above it or to its right edge).
     callback view-menu(int, length, length, length, length);
     in property <string> status;
+    // The Git part (spec 16 §8.4): `⎇ main ↑2 · 5 changed` in a repository, else empty.
+    in property <string> git-status;
     // Settings/theme problems, shown on the right of the status bar.
     in property <string> notice;
     // The active tab is locked (the menu bar's Lock/Unlock Tab).
@@ -521,6 +524,7 @@ export component AppWindow inherits Window {
     in-out property <length> col-rating;
     in-out property <length> col-comment;
     in-out property <length> col-packed;
+    in-out property <length> col-git;
     callback header-clicked(int, int);
     // Right-click on the column header, at a window position.
     callback header-menu(int, length, length);
@@ -1109,6 +1113,7 @@ export component AppWindow inherits Window {
                             col-rating <=> root.col-rating;
                             col-comment <=> root.col-comment;
                             col-packed <=> root.col-packed;
+                            col-git <=> root.col-git;
                             sheet-x: sheet-place.x;
                             sheet-y: sheet-place.y;
                             sheet-width: sheet-place.width;
@@ -1413,6 +1418,12 @@ export component AppWindow inherits Window {
                     spacing: Theme.spacing * 2;
                     Text {
                         text: root.status;
+                        font-size: Theme.font-size-small;
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                    if root.git-status != "": Text {
+                        text: root.git-status;
                         font-size: Theme.font-size-small;
                         vertical-alignment: center;
                         color: Theme.foreground-muted;

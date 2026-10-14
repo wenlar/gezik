@@ -260,11 +260,13 @@ pub enum ColumnKey {
     Field(crate::fields::FieldId),
     /// What an entry takes packed (spec 16 §5.2): shown only inside an archive.
     Packed,
+    /// The row's Git mark (spec 16 §8.4): empty outside a repository.
+    Git,
 }
 
 impl ColumnKey {
     /// A folder's columns.
-    pub const ALL: [ColumnKey; 8] = [
+    pub const ALL: [ColumnKey; 9] = [
         ColumnKey::Modified,
         ColumnKey::Created,
         ColumnKey::Type,
@@ -272,6 +274,7 @@ impl ColumnKey {
         ColumnKey::Tags,
         ColumnKey::Rating,
         ColumnKey::Comment,
+        ColumnKey::Git,
         ColumnKey::Packed,
     ];
     /// The search results' and the flat view's columns, in display order.
@@ -299,6 +302,7 @@ impl ColumnKey {
             ColumnKey::Rating => "rating",
             ColumnKey::Comment => "comment",
             ColumnKey::Packed => "packed",
+            ColumnKey::Git => "git",
             ColumnKey::Field(id) => id.def().key,
         }
     }
@@ -307,7 +311,7 @@ impl ColumnKey {
     pub fn parse(text: &str) -> Option<ColumnKey> {
         ColumnKey::RESULTS
             .into_iter()
-            .chain([ColumnKey::Packed])
+            .chain([ColumnKey::Packed, ColumnKey::Git])
             .find(|k| k.as_str() == text)
             .or_else(|| crate::fields::by_key(text).map(ColumnKey::Field))
     }
@@ -324,6 +328,7 @@ impl ColumnKey {
             ColumnKey::Rating => gezik_i18n::tx!("Rating"),
             ColumnKey::Comment => gezik_i18n::tx!("Comment"),
             ColumnKey::Packed => gezik_i18n::tx!("Packed"),
+            ColumnKey::Git => gezik_i18n::tx!("Git"),
             ColumnKey::Field(id) => id.def().label,
         }
     }
@@ -340,12 +345,13 @@ impl ColumnKey {
             ColumnKey::Match | ColumnKey::Comment | ColumnKey::Packed => SortKey::Name,
             ColumnKey::Tags => SortKey::Tags,
             ColumnKey::Rating => SortKey::Rating,
+            ColumnKey::Git => SortKey::Git,
             ColumnKey::Field(id) => SortKey::Field(id),
         }
     }
 
     /// The column's number in the UI: 0 is Name, then 1–4 the folder columns, 5 Folder, 6 Match,
-    /// 7 Tags, 8 Rating, 9 Comment, a field [`FIELD_INDEX`] + its place in the registry.
+    /// 7 Tags, 8 Rating, 9 Comment, 10 Packed, 11 Git, a field [`FIELD_INDEX`] + its place in the registry.
     pub fn index(self) -> i32 {
         match self {
             ColumnKey::Modified => 1,
@@ -358,6 +364,7 @@ impl ColumnKey {
             ColumnKey::Rating => 8,
             ColumnKey::Comment => 9,
             ColumnKey::Packed => 10,
+            ColumnKey::Git => 11,
             ColumnKey::Field(id) => FIELD_INDEX + id.number(),
         }
     }
@@ -372,6 +379,7 @@ impl ColumnKey {
             ColumnKey::Tags => 160,
             ColumnKey::Rating => 90,
             ColumnKey::Comment => 200,
+            ColumnKey::Git => 110,
             ColumnKey::Field(id) => u32::from(id.def().width),
         }
     }
@@ -394,7 +402,7 @@ pub struct ColumnState {
     pub width: u32,
 }
 
-/// Modified, Type and Size shown; Created, Tags, Rating, Comment and Packed hidden.
+/// Modified, Type and Size shown; Created, Tags, Rating, Comment, Packed and Git hidden.
 pub fn default_columns() -> Vec<ColumnState> {
     ColumnKey::ALL
         .into_iter()
@@ -402,7 +410,12 @@ pub fn default_columns() -> Vec<ColumnState> {
             key,
             visible: !matches!(
                 key,
-                ColumnKey::Created | ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment | ColumnKey::Packed
+                ColumnKey::Created
+                    | ColumnKey::Tags
+                    | ColumnKey::Rating
+                    | ColumnKey::Comment
+                    | ColumnKey::Packed
+                    | ColumnKey::Git
             ),
             width: key.default_width(),
         })

@@ -373,6 +373,7 @@ mod tests {
             &gezik_core::pattern::Pattern::default(),
             &[],
             &terms,
+            &[],
         );
         assert_eq!(listing.len(), 2, "not read yet: shown");
         assert!(view.0.data.borrow().folder_fields.as_ref().unwrap().faint.get());

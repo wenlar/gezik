@@ -39,10 +39,10 @@ reduce-motion = false
 # How folders look. A folder you change keeps its own view; "Apply to all folders"
 # in the View menu writes mode, sort, sort-dir, grid-size and group here.
 mode = "list"          # list | grid | columns
-sort = "name"          # name | modified | created | type | size | tags | rating
+sort = "name"          # name | modified | created | type | size | tags | rating | git
 sort-dir = "asc"       # asc | desc
 grid-size = "medium"   # small | medium | large
-group = "none"         # none | type | date | size | tag | rating: the list's groups when a folder has no view of its own
+group = "none"         # none | type | date | size | tag | rating | git: the list's groups when a folder has no view of its own
 icons = "system"       # system | gezik (Gezik's own icons, colored by the theme)
 folder-sizes = "off"      # sizes of the folders shown: off (only when asked) | local (not on network folders) | all
 thumbnails = true      # pictures and videos show a preview in the grid
@@ -79,6 +79,16 @@ preview-limit = 64        # MB: files inside an archive up to this size are extr
 # "pwsh"; or a full path, given shell-args then the command.
 shell = ""
 shell-args = []           # arguments before the command, for a full path (["-c"])
+
+[git]
+# Marks for changed, staged, untracked and ignored files in Git repositories, the branch in
+# the status bar. Gezik runs the system's git only while a repository folder is shown, never
+# outside one.
+status = true
+program = ""              # path to git; empty = PATH (macOS: not the /usr/bin stub without Command Line Tools)
+ignored = true            # also mark ignored files (drawn faint)
+network = false           # also look for repositories on network drives
+timeout = 10              # seconds a status may take
 
 [convert]
 ffmpeg = ""               # path to ffmpeg; empty = Gezik's download, then PATH

@@ -11,6 +11,7 @@
 - [Tools](#tools)
 - [Export list](#export-list)
 - [Tags](#tags)
+- [Git](#git)
 - [System integration](#system-integration)
 
 ## File operations
@@ -445,6 +446,50 @@ Tools ▸ Export list… (right-click a row or the background; the palette's `Ex
 - **Tagging:** Ctrl+Shift+L (⌃⌘L) opens the picker for the selection (tags, stars, `Comment…`); Alt+Shift+1…7 (⌃1…⌃7) toggle the first seven tags of `[tags] list`. Tag dots beside names, Tags, Rating and Comment columns, sorting and grouping by tag or rating.
 - **Finding:** `tag:Red`, `rating:4`, `comment:review` in the filter bar and the search bar; the sidebar's TAGS section searches a tag (Spotlight on macOS), takes dropped files and manages the list.
 - **Highlight rules:** `[[highlight-rules]]` in settings.toml color rows and make names bold by name pattern, kind, age, size, hidden, tag, rating or comment; the first matching rule wins. Tags are read for them only while a rule asks. Commented examples are in settings.toml.
+
+## Git
+
+In a Git repository the list shows what changed, with the system's own `git` (Git for
+Windows, Xcode's Command Line Tools or Homebrew on macOS, the distribution's on Linux).
+
+- **Marks** beside each row's icon: an orange dot for modified, a green dot for staged, half
+  of each for staged and modified again, a green `+` for added, a green `→` for renamed, a
+  grey `?` for untracked, a red `!` for a conflict; ignored files are drawn faint. A folder
+  shows the most important mark inside it (conflict, then modified, staged, added,
+  untracked); a folder ignored as a whole is faint. Colors come from the theme
+  (`git-modified`, `git-staged`, `git-untracked`, `git-conflict`).
+- **Git column** (column header menu, only in a repository): Modified, Staged, Untracked…;
+  click its header to sort, conflicts first. **Group by ▸ Git** groups the rows by mark.
+- **Filter words**: `git:changed` (any change), `git:modified`, `git:staged`,
+  `git:untracked`, `git:conflict`, `git:ignored`; `-git:ignored` leaves ignored rows out. A
+  folder counts with its mark.
+- **Status bar**: `⎇ main ↑2 ↓1 · 5 changed · 1 deleted` (ahead and behind the upstream as of
+  the last fetch; nothing goes to the network), `⎇ (a1b2c3d)` on a detached HEAD.
+- **When git runs**: only while a folder of a repository is shown. Opening a folder looks for
+  `.git` in it and the folders above (up to your home folder) on the thread that reads it;
+  outside a repository nothing else happens. One `git status` for the folder shown runs
+  then, and again when the folder or the repository's `.git` (HEAD, index, branches)
+  changes, 300 ms after the change; a change during a run makes one more. A new folder, a
+  closed pane or `[git] timeout` stops it. Nothing runs or waits while idle. Not on network
+  drives (`[git] network`), not inside archives, search results or the trash.
+- **Safety**: a repository's own settings never run a program through Gezik (one you
+  downloaded with its `.git`): status runs with `core.fsmonitor` off, the repository's own
+  filter drivers emptied, no network transport and no fetching on demand, submodules looked at
+  by their commit only, and nothing written (`--no-optional-locks`). git is started by its
+  full path, never from the folder shown. A repository git does not trust (another user's,
+  `safe.directory`) shows git's message once in the status bar, as does a missing git
+  ("Install Git to see repository status"). On macOS `/usr/bin/git` is used only when the
+  Command Line Tools are installed (otherwise it would open an install window); Homebrew's git
+  is the next choice.
+
+```toml
+[git]
+status = true             # false: no marks, git never runs
+program = ""              # path to git; empty = PATH
+ignored = true            # also mark ignored files (drawn faint)
+network = false           # also look for repositories on network drives
+timeout = 10              # seconds a status may take
+```
 
 ## System integration
 

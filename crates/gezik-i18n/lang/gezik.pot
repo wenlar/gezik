@@ -1079,6 +1079,11 @@ msgid "rating"
 msgstr ""
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "git"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:view.sort-dir"
 msgid "asc"
 msgstr ""
@@ -1131,6 +1136,11 @@ msgstr ""
 #: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:view.group"
 msgid "rating"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "git"
 msgstr ""
 
 #: crates/gezik-config/src/schema/table.rs
@@ -1415,6 +1425,10 @@ msgstr ""
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected a number from 1 to 4096, got {1}"
+msgstr ""
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected a number from 1 to 600, got {1}"
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
@@ -3357,6 +3371,64 @@ msgstr ""
 msgid "\"{}\": a folder pattern is one name, like thumbs\\"
 msgstr ""
 
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Ignored"
+msgstr ""
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Untracked"
+msgstr ""
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Added"
+msgstr ""
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Renamed"
+msgstr ""
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Staged"
+msgstr ""
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Modified"
+msgstr ""
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Staged, modified"
+msgstr ""
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Conflict"
+msgstr ""
+
+#. the status bar in a Git repository: changes under the folder shown.
+#: crates/gezik-core/src/git.rs
+msgid "{n} changed"
+msgid_plural "{n} changed"
+msgstr[0] ""
+msgstr[1] ""
+
+#. the status bar in a Git repository: files deleted under the folder shown.
+#: crates/gezik-core/src/git.rs
+msgid "{n} deleted"
+msgid_plural "{n} deleted"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik-core/src/git.rs
+msgid "Install Git to see repository status"
+msgstr ""
+
 #: crates/gezik-core/src/group.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
@@ -3396,6 +3468,12 @@ msgstr ""
 #: crates/gezik/src/tags.rs
 #: crates/gezik/ui/app.slint
 msgid "Rating"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "Git"
 msgstr ""
 
 #: crates/gezik-core/src/group.rs
@@ -3493,6 +3571,11 @@ msgstr ""
 
 #: crates/gezik-core/src/group.rs
 msgid "Not Rated"
+msgstr ""
+
+#: crates/gezik-core/src/group.rs
+msgctxt "git"
+msgid "Unchanged"
 msgstr ""
 
 #. a group of duplicate files: how many, each one's size, the space deleting all but one frees.
@@ -6748,6 +6831,14 @@ msgstr ""
 
 #: crates/gezik/src/context_menu.rs
 msgid "Show Packed"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Git"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Git"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
@@ -11283,6 +11374,15 @@ msgstr ""
 msgid "Reading properties… {} of {}"
 msgstr ""
 
+#. {} is git's own message (not translated).
+#: crates/gezik/src/view/folder_git.rs
+msgid "Git: {}"
+msgstr ""
+
+#: crates/gezik/src/view/folder_git.rs
+msgid "Git status took too long ([git] timeout)"
+msgstr ""
+
 #: crates/gezik/src/view/folder_tags.rs
 msgid "Tags could not be read (no thread to read them)"
 msgstr ""
@@ -11786,6 +11886,11 @@ msgstr ""
 #: crates/gezik/ui/widgets/file-view.slint
 msgctxt "column"
 msgid "Comment"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Git"
 msgstr ""
 
 #: crates/gezik/ui/widgets/file-view.slint
@@ -12435,7 +12540,7 @@ msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.sort"
-msgid "name | modified | created | type | size | tags | rating"
+msgid "name | modified | created | type | size | tags | rating | git"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
@@ -12465,7 +12570,7 @@ msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.group"
-msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
+msgid "none | type | date | size | tag | rating | git: the list's groups when a folder has no view of its own"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
@@ -12576,6 +12681,56 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:command-line.shell"
 msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.status"
+msgid "Status"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.status"
+msgid "Marks for changed, staged, untracked and ignored files in Git repositories, the branch in the status bar. Gezik runs the system's git only while a repository folder is shown, never outside one."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.program"
+msgid "Program"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.program"
+msgid "Path to git; empty = PATH (macOS: not the /usr/bin stub without Command Line Tools)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.ignored"
+msgid "Ignored"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.ignored"
+msgid "Also mark ignored files (drawn faint)"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.network"
+msgid "Network"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.network"
+msgid "Also look for repositories on network drives"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.timeout"
+msgid "Timeout"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.timeout"
+msgid "Seconds a status may take"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

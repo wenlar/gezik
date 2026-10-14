@@ -1070,6 +1070,11 @@ msgid "rating"
 msgstr "puan"
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.sort"
+msgid "git"
+msgstr "git"
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:view.sort-dir"
 msgid "asc"
 msgstr "artan"
@@ -1123,6 +1128,11 @@ msgstr "etiket"
 msgctxt "choice:view.group"
 msgid "rating"
 msgstr "puan"
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:view.group"
+msgid "git"
+msgstr "git"
 
 #: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:view.folder-sizes"
@@ -1407,6 +1417,10 @@ msgstr "{0}: \"browse\", \"system\" ya da \"extract-here\" bekleniyordu, gelen: 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected a number from 1 to 4096, got {1}"
 msgstr "{0}: 1 ile 4096 arası bir sayı bekleniyordu, gelen: {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected a number from 1 to 600, got {1}"
+msgstr "{0}: 1 ile 600 arası bir sayı bekleniyordu, gelen: {1}"
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: \"{1}\" must be a full path (it is ignored)"
@@ -3341,6 +3355,62 @@ msgstr "\">\" işaretinin iki yanına da bir desen yazın: *.jpg>*.cr2"
 msgid "\"{}\": a folder pattern is one name, like thumbs\\"
 msgstr "\"{}\": klasör deseni tek bir addır, örn. thumbs\\"
 
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Ignored"
+msgstr "Yok sayıldı"
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Untracked"
+msgstr "İzlenmiyor"
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Added"
+msgstr "Eklendi"
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Renamed"
+msgstr "Yeniden adlandırıldı"
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Staged"
+msgstr "Hazırlandı"
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Modified"
+msgstr "Değişti"
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Staged, modified"
+msgstr "Hazırlandı, değişti"
+
+#: crates/gezik-core/src/git.rs
+msgctxt "git"
+msgid "Conflict"
+msgstr "Çakışma"
+
+#. the status bar in a Git repository: changes under the folder shown.
+#: crates/gezik-core/src/git.rs
+msgid "{n} changed"
+msgid_plural "{n} changed"
+msgstr[0] "{n} değişiklik"
+
+#. the status bar in a Git repository: files deleted under the folder shown.
+#: crates/gezik-core/src/git.rs
+msgid "{n} deleted"
+msgid_plural "{n} deleted"
+msgstr[0] "{n} silindi"
+
+#: crates/gezik-core/src/git.rs
+msgid "Install Git to see repository status"
+msgstr "Depo durumunu görmek için Git'i kurun"
+
 #: crates/gezik-core/src/group.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
@@ -3381,6 +3451,12 @@ msgstr "Etiket"
 #: crates/gezik/ui/app.slint
 msgid "Rating"
 msgstr "Puan"
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+msgid "Git"
+msgstr "Git"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/search.rs
@@ -3478,6 +3554,11 @@ msgstr "Klasörler"
 #: crates/gezik-core/src/group.rs
 msgid "Not Rated"
 msgstr "Puanlanmamış"
+
+#: crates/gezik-core/src/group.rs
+msgctxt "git"
+msgid "Unchanged"
+msgstr "Değişmedi"
 
 #. a group of duplicate files: how many, each one's size, the space deleting all but one frees.
 #: crates/gezik-core/src/group.rs
@@ -6672,6 +6753,14 @@ msgstr "Sıkıştırılmış boyutu gizle"
 #: crates/gezik/src/context_menu.rs
 msgid "Show Packed"
 msgstr "Sıkıştırılmış boyutu göster"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hide Git"
+msgstr "Git'i gizle"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Show Git"
+msgstr "Git'i göster"
 
 #: crates/gezik/src/context_menu.rs
 msgid "Connect to {}"
@@ -11136,6 +11225,15 @@ msgstr "Özellikler okunamadı (okuyacak iş parçacığı yok)"
 msgid "Reading properties… {} of {}"
 msgstr "Özellikler okunuyor… {} / {}"
 
+#. {} is git's own message (not translated).
+#: crates/gezik/src/view/folder_git.rs
+msgid "Git: {}"
+msgstr "Git: {}"
+
+#: crates/gezik/src/view/folder_git.rs
+msgid "Git status took too long ([git] timeout)"
+msgstr "Git durumu çok uzun sürdü ([git] timeout)"
+
 #: crates/gezik/src/view/folder_tags.rs
 msgid "Tags could not be read (no thread to read them)"
 msgstr "Etiketler okunamadı (okuyacak iş parçacığı yok)"
@@ -11637,6 +11735,11 @@ msgstr "Puan"
 msgctxt "column"
 msgid "Comment"
 msgstr "Yorum"
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
+msgid "Git"
+msgstr "Git"
 
 #: crates/gezik/ui/widgets/file-view.slint
 msgctxt "column"
@@ -12284,8 +12387,8 @@ msgstr "Sıralama"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.sort"
-msgid "name | modified | created | type | size | tags | rating"
-msgstr "name | modified | created | type | size | tags | rating"
+msgid "name | modified | created | type | size | tags | rating | git"
+msgstr "name | modified | created | type | size | tags | rating | git"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.sort-dir"
@@ -12314,8 +12417,8 @@ msgstr "Grup"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.group"
-msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
-msgstr "none | type | date | size | tag | rating: klasörün kendi görünümü yoksa listenin grupları"
+msgid "none | type | date | size | tag | rating | git: the list's groups when a folder has no view of its own"
+msgstr "none | type | date | size | tag | rating | git: klasörün kendi görünümü yoksa listenin grupları"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:view.folders-first"
@@ -12426,6 +12529,56 @@ msgstr "Kabuk"
 msgctxt "setting:command-line.shell"
 msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
 msgstr "Adres çubuğunda \">\" ile yazılan komutun gösterilen klasörde çalıştığı kabuk (yalnız Enter ile): \"\" Windows'ta cmd, başka yerde $SHELL (yoksa /bin/sh); \"powershell\" ya da \"pwsh\"; ya da tam yol, önce shell-args sonra komut verilir."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.status"
+msgid "Status"
+msgstr "Durum"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.status"
+msgid "Marks for changed, staged, untracked and ignored files in Git repositories, the branch in the status bar. Gezik runs the system's git only while a repository folder is shown, never outside one."
+msgstr "Git depolarında değişen, hazırlanan, izlenmeyen ve yok sayılan dosyalar için işaretler, durum çubuğunda dal. Gezik sistemin git'ini yalnız bir depo klasörü gösterilirken çalıştırır, depo dışında asla."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.program"
+msgid "Program"
+msgstr "Program"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.program"
+msgid "Path to git; empty = PATH (macOS: not the /usr/bin stub without Command Line Tools)"
+msgstr "git'in yolu; boş = PATH (macOS: Command Line Tools yoksa /usr/bin'deki kabuk değil)"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.ignored"
+msgid "Ignored"
+msgstr "Yok sayılanlar"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.ignored"
+msgid "Also mark ignored files (drawn faint)"
+msgstr "Yok sayılan dosyaları da işaretle (soluk çizilir)"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.network"
+msgid "Network"
+msgstr "Ağ"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.network"
+msgid "Also look for repositories on network drives"
+msgstr "Ağ sürücülerinde de depo ara"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.timeout"
+msgid "Timeout"
+msgstr "Zaman aşımı"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:git.timeout"
+msgid "Seconds a status may take"
+msgstr "Bir durum sorgusunun sürebileceği saniye"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:convert.ffmpeg"
@@ -12682,6 +12835,12 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Komutlar"
 
+#~ msgctxt "setting:view.sort"
+#~ msgid "name | modified | created | type | size | tags | rating"
+#~ msgstr "name | modified | created | type | size | tags | rating"
+#~ msgctxt "setting:view.group"
+#~ msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
+#~ msgstr "none | type | date | size | tag | rating: klasörün kendi görünümü yoksa listenin grupları"
 #~ msgctxt "setting:history.remember"
 #~ msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."
 #~ msgstr "Açtığınız klasörleri adres çubuğunun Son kullanılanlar ve Sık kullanılanlar listeleri için hatırla (state.toml'da). false bunları da unutur; \"clear-history\" (varsayılan tuşu yok) listeyi boşaltır."
