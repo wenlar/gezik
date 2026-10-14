@@ -35,9 +35,13 @@ export component CommandOutputProbe inherits Window {
     in property <int> state;
     in property <int> run;
     in property <bool> dropped;
+    in property <string> new-lines;
+    callback follow-changed(bool);
     out property <length> view-y: panel.view-y;
     out property <length> view-end: panel.view-end;
     out property <length> line-step: panel.line-step;
+    out property <length> bar-x: panel.bar-x;
+    out property <length> bar-bottom: panel.bar-bottom;
     width: 600px;
     height: 300px;
     panel := CommandOutput {
@@ -47,6 +51,8 @@ export component CommandOutputProbe inherits Window {
         state: root.state;
         run: root.run;
         dropped: root.dropped;
+        new-lines: root.new-lines;
+        follow-changed(on) => { root.follow-changed(on); }
     }
 }
 
@@ -418,6 +424,7 @@ export component AppWindow inherits Window {
     callback path-editing-changed(int, bool);
     // A pane's command panel button (command_line.rs): pane, 0 Stop, 1 Run Again, 2 Copy, 3 Close.
     callback command-button(int, int);
+    callback command-follow(int, bool);
     callback filter-edited(int, string);
     // The saved filters' button, with its box (as `view-menu`).
     callback filter-menu(int, length, length, length, length);
@@ -1165,6 +1172,7 @@ export component AppWindow inherits Window {
                             crumb-span(p, c, x, w) => { root.crumb-span(p, c, x, w); }
                             path-edited(p, text) => { root.path-edited(p, text); }
                             command-button(p, which) => { root.command-button(p, which); }
+                            command-follow(p, on) => { root.command-follow(p, on); }
                             tab-activate(p, t) => { root.tab-activate(p, t); }
                             tab-close(p, t) => { root.tab-close(p, t); }
                             tab-new(p) => { root.tab-new(p); }

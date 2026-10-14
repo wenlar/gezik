@@ -323,11 +323,17 @@ impl Output {
 }
 
 /// The panel's rows: the output itself, told to the list as lines come and go (lines dropped
-/// from the start are one removal, never a rebuild).
+/// from the start are one removal, never a rebuild). While the list does not follow its end
+/// (the user scrolled up) the rows are frozen: a copy of the output as it was then, nothing
+/// added or dropped under the reader; the output goes on (capped) and the lines that came are
+/// counted. Following again, the rows are the output once more (one reset).
 #[derive(Default)]
 pub struct OutputModel {
     output: RefCell<Output>,
     notify: ModelNotify,
+    frozen: RefCell<Option<Vec<Line>>>,
+    /// Lines that came while frozen.
+    new_lines: Cell<usize>,
 }
 
 impl OutputModel {
@@ -339,6 +345,10 @@ impl OutputModel {
         let added = lines.len();
         let before = self.output.borrow().len();
         let dropped = self.output.borrow_mut().push_all(lines);
+        if self.frozen.borrow().is_some() {
+            self.new_lines.set(self.new_lines.get() + added);
+            return;
+        }
         if dropped >= before {
             self.notify.reset();
             return;
@@ -349,8 +359,22 @@ impl OutputModel {
         self.notify.row_added(before - dropped, added);
     }
 
+    /// The list stops (`false`) or starts following its end.
+    fn set_following(&self, on: bool) {
+        let frozen = self.frozen.borrow().is_some();
+        if on && frozen {
+            self.frozen.take();
+            self.new_lines.set(0);
+            self.notify.reset();
+        } else if !on && !frozen {
+            *self.frozen.borrow_mut() = Some(self.output.borrow().lines.iter().cloned().collect());
+        }
+    }
+
     fn clear(&self) {
         *self.output.borrow_mut() = Output::default();
+        self.frozen.take();
+        self.new_lines.set(0);
         self.notify.reset();
     }
 }
@@ -359,12 +383,18 @@ impl Model for OutputModel {
     type Data = CmdLine;
 
     fn row_count(&self) -> usize {
-        self.output.borrow().len()
+        match &*self.frozen.borrow() {
+            Some(rows) => rows.len(),
+            None => self.output.borrow().len(),
+        }
     }
 
     fn row_data(&self, row: usize) -> Option<CmdLine> {
-        let output = self.output.borrow();
-        output.lines.get(row).map(|line| CmdLine { text: line.text.as_str().into(), err: line.err })
+        let row_of = |line: &Line| CmdLine { text: line.text.as_str().into(), err: line.err };
+        match &*self.frozen.borrow() {
+            Some(rows) => rows.get(row).map(row_of),
+            None => self.output.borrow().lines.get(row).map(row_of),
+        }
     }
 
     fn model_tracker(&self) -> &dyn ModelTracker {
@@ -586,6 +616,10 @@ struct State {
     copy: Option<String>,
     /// Stop asked it to stop by itself once already.
     interrupted: bool,
+    /// The new-lines bar's text written last, and when: it changes at most twice a second
+    /// (each write makes the pane look at its row again).
+    new_text: String,
+    new_at: Option<Instant>,
 }
 
 /// What a program of Gezik's own is told when it ended: whether it succeeded, and its output;
@@ -645,6 +679,12 @@ impl CommandLine {
 
     /// The window's panel buttons, for every pane (once).
     pub fn connect(window: &crate::AppWindow) {
+        window.on_command_follow(|pane, on| {
+            if let Some(p) = crate::panes::at(pane) {
+                p.command.0.model.set_following(on);
+                p.command.show();
+            }
+        });
         window.on_command_button(|pane, which| {
             if let Some(p) = crate::pick(pane) {
                 match which {
@@ -1079,6 +1119,20 @@ impl CommandLine {
             (state.open, title, folder, status, code, state.run, state.terminal && !state.running)
         };
         let dropped = self.0.model.output.borrow().dropped;
+        let new_lines = {
+            let mut state = self.0.state.borrow_mut();
+            let n = self.0.model.new_lines.get();
+            let due = state.new_at.is_none_or(|at| at.elapsed() >= Duration::from_millis(500));
+            if n == 0 || state.new_text.is_empty() || due {
+                state.new_text = match n {
+                    0 => String::new(),
+                    // TRANSLATORS: a bar under the command output while it is scrolled up; End goes there
+                    n => gezik_i18n::tn!("{n} new line · End" | "{n} new lines · End", n),
+                };
+                state.new_at = Some(Instant::now());
+            }
+            state.new_text.clone()
+        };
         let model = ModelRc::from(self.0.model.clone());
         crate::panes::edit(self.0.id, |d| {
             d.cmd_open = open;
@@ -1090,6 +1144,7 @@ impl CommandLine {
             d.cmd_dropped = dropped;
             d.cmd_run = run;
             d.cmd_terminal = terminal;
+            d.cmd_new_lines = new_lines.into();
         });
     }
 }
@@ -1408,6 +1463,10 @@ mod tests {
         probe.show().unwrap();
         let model = Rc::new(OutputModel::default());
         probe.set_lines(ModelRc::from(model.clone()));
+        probe.on_follow_changed({
+            let model = model.clone();
+            move |on| model.set_following(on)
+        });
         let settle = || {
             for _ in 0..4 {
                 std::thread::sleep(Duration::from_millis(60));
@@ -1470,6 +1529,151 @@ mod tests {
         add(3000, 50);
         settle();
         at_end("a new run");
+    }
+
+    /// While the cap drops the oldest lines (`dir /s C:\\Windows`): scrolled up, the rows stay
+    /// as they are (counted lines wait); End brings the end within a frame and follows.
+    #[test]
+    fn the_output_panel_keeps_its_place_while_lines_are_dropped() {
+        use slint::ComponentHandle;
+        use slint::platform::{Key, PointerEventButton, WindowEvent};
+        crate::windows::tests::platform();
+        let probe = crate::CommandOutputProbe::new().unwrap();
+        probe.show().unwrap();
+        let model = Rc::new(OutputModel::default());
+        probe.set_lines(ModelRc::from(model.clone()));
+        // As the app's `command-follow`.
+        probe.on_follow_changed({
+            let model = model.clone();
+            move |on| model.set_following(on)
+        });
+        let frame = || {
+            let started = Instant::now();
+            crate::windows::tests::frame((-1.0, -1.0));
+            started.elapsed()
+        };
+        let next = Cell::new(0usize);
+        // A tick's worth of 200-character lines.
+        let tick = || {
+            let from = next.get();
+            next.set(from + LINES_PER_TICK);
+            model.push_all(
+                (from..from + LINES_PER_TICK).map(|i| Line { text: format!("{i:0>200}"), err: false }).collect(),
+            );
+            // The bar's text, as `show` writes it.
+            let n = model.new_lines.get();
+            probe.set_new_lines(if n == 0 { "".into() } else { format!("{n} new lines · End").into() });
+            // A frame makes only the rows on screen (a list that made every row froze).
+            let took = frame();
+            assert!(took < Duration::from_millis(500), "a frame took {took:?}");
+        };
+        let step = probe.get_line_step();
+        let first_shown = || {
+            let row = (-probe.get_view_y() / step).round() as usize;
+            model.row_data(row).map(|line| line.text.to_string()).unwrap_or_default()
+        };
+        let at_end = || (probe.get_view_y() - probe.get_view_end()).abs() < 1.0;
+        let key = |key: Key| {
+            let text: slint::SharedString = key.into();
+            probe.window().dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+            probe.window().dispatch_event(WindowEvent::KeyReleased { text });
+        };
+        // A real window's scale (fractional positions).
+        probe.window().dispatch_event(WindowEvent::ScaleFactorChanged { scale_factor: 1.25 });
+        // The first frame loads the fonts.
+        frame();
+        // Following until the cap drops lines.
+        for _ in 0..6 {
+            tick();
+            frame();
+            assert!(at_end(), "follows");
+        }
+        assert!(model.output.borrow().dropped);
+        // A click gives the output the keyboard; PageUp leaves the end.
+        let at = slint::LogicalPosition::new(200.0, 200.0);
+        let button = PointerEventButton::Left;
+        probe.window().dispatch_event(WindowEvent::PointerPressed { position: at, button });
+        probe.window().dispatch_event(WindowEvent::PointerReleased { position: at, button });
+        key(Key::PageUp);
+        frame();
+        assert!(!at_end());
+        let shown = first_shown();
+        let (rows, y) = (model.row_count(), probe.get_view_y());
+        assert!(!shown.is_empty());
+        // Lines come and old ones are dropped: the rows on screen do not change, the new ones
+        // are counted.
+        for n in 1..=3 {
+            tick();
+            frame();
+            assert_eq!((first_shown(), model.row_count(), probe.get_view_y()), (shown.clone(), rows, y));
+            assert_eq!(model.new_lines.get(), n * LINES_PER_TICK);
+        }
+        assert!(model.output.borrow().len() < rows + 3 * LINES_PER_TICK, "the output stayed capped");
+        // End: the rows are the output again, at their end within a frame, and they follow.
+        key(Key::End);
+        frame();
+        assert_eq!(model.new_lines.get(), 0);
+        assert_eq!(model.row_count(), model.output.borrow().len());
+        assert!(at_end(), "End reached the end: {} vs {}", probe.get_view_y(), probe.get_view_end());
+        for _ in 0..4 {
+            tick();
+            frame();
+            assert!(at_end(), "follows after End: {} vs {}", probe.get_view_y(), probe.get_view_end());
+        }
+        // Reaching the frozen rows' own end follows again, as End does: by the wheel, by the
+        // keys, and by the scroll bar's thumb dragged down.
+        let following_bottom = probe.get_bar_bottom();
+        let frozen = |how: &str| {
+            key(Key::PageUp);
+            frame();
+            tick();
+            frame();
+            assert!(model.new_lines.get() > 0, "{how}: frozen");
+            assert!(!at_end(), "{how}: up from the end");
+            // The new-lines bar has a row of its own: the list ends above it.
+            assert!(probe.get_bar_bottom() < following_bottom - step, "{how}: the bar covers the list");
+        };
+        let resumed = |how: &str| {
+            tick();
+            frame();
+            frame();
+            assert_eq!(model.new_lines.get(), 0, "{how}: following again");
+            assert_eq!(model.row_count(), model.output.borrow().len(), "{how}");
+            assert!(at_end(), "{how}: at {} vs {}", probe.get_view_y(), probe.get_view_end());
+        };
+        frozen("wheel");
+        probe.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: at,
+            delta_x: 0.0,
+            delta_y: -step * 3.0,
+        });
+        frame();
+        probe.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: at,
+            delta_x: 0.0,
+            delta_y: -step * 300.0,
+        });
+        resumed("wheel");
+        frozen("PageDown");
+        key(Key::PageDown);
+        frame();
+        key(Key::PageDown);
+        resumed("PageDown");
+        frozen("Down");
+        for _ in 0..40 {
+            key(Key::DownArrow);
+        }
+        resumed("Down");
+        // The thumb: grabbed at the bottom of the bar (where it sits after a page up in a long
+        // output) and dragged below it.
+        frozen("thumb");
+        let (x, bottom) = (probe.get_bar_x(), probe.get_bar_bottom());
+        let grab = slint::LogicalPosition::new(x, bottom - 4.0);
+        let below = slint::LogicalPosition::new(x, bottom + 40.0);
+        probe.window().dispatch_event(WindowEvent::PointerPressed { position: grab, button });
+        probe.window().dispatch_event(WindowEvent::PointerMoved { position: below });
+        probe.window().dispatch_event(WindowEvent::PointerReleased { position: below, button });
+        resumed("thumb");
     }
 
     #[test]

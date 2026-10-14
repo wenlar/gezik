@@ -6109,6 +6109,12 @@ msgstr "Çıkış kodu {0} · {1}"
 msgid "Ended by a signal · {}"
 msgstr "Bir sinyalle bitti · {}"
 
+#. a bar under the command output while it is scrolled up; End goes there
+#: crates/gezik/src/command_line.rs
+msgid "{n} new line · End"
+msgid_plural "{n} new lines · End"
+msgstr[0] "{n} yeni satır · End"
+
 #: crates/gezik/src/compare.rs
 msgid "Subfolders"
 msgstr "Alt klasörler"
