@@ -5968,6 +5968,14 @@ msgid "Stop and Run"
 msgstr ""
 
 #: crates/gezik/src/command_line.rs
+msgid "The selection is too long for GEZIK_FILES: GEZIK_FILES_LIST names a file with it"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
+msgid "The selection is too long for GEZIK_FILES and its list was not written: {}"
+msgstr ""
+
+#: crates/gezik/src/command_line.rs
 msgid "cmd cannot run in a network folder; set [command-line] shell = \"powershell\""
 msgstr ""
 

@@ -21,16 +21,24 @@ use gezik_config::settings::{COMMANDS_MAX, CommandLineSettings};
 use gezik_config::store::ConfigStore;
 use gezik_i18n::t;
 use gezik_platform::ChildProcess;
-use slint::{ModelRc, VecModel};
+use slint::{Model, ModelNotify, ModelRc, ModelTracker};
 
 use crate::CmdLine;
 use crate::panes::{Pane, PaneId};
 
-/// The most output kept (spec 16 §7.3); past it the oldest lines go.
+/// The most output kept (spec 16 §7.3), counting each line's text and [`LINE_COST`]; past it
+/// the oldest lines go.
 pub const MAX_OUTPUT: usize = 2 * 1024 * 1024;
 /// What is kept once the output went past [`MAX_OUTPUT`]: lines go in batches, not one by one.
 const KEPT_AFTER_DROP: usize = MAX_OUTPUT / 4 * 3;
-/// The longest line passed on; a longer one is cut into lines of this length.
+/// What a line costs in memory besides its text (its `String`, its row).
+const LINE_COST: usize = 64;
+/// The most read and not yet shown: past it the readers drop the oldest (a flood never
+/// grows memory, and the pipes never stall the program).
+const MAX_PENDING: usize = 2 * 1024 * 1024;
+/// The most lines the panel takes in one tick (the rest come in the next ones).
+const LINES_PER_TICK: usize = 2_000;
+/// The longest line passed on; a longer one is cut into lines of about this length.
 const MAX_LINE: usize = 16 * 1024;
 /// How often the panel takes the new lines while a command runs (at most 30 times a second).
 const TICK: Duration = Duration::from_millis(33);
@@ -70,43 +78,44 @@ pub fn pick_shell(settings: &CommandLineSettings, env_shell: Option<OsString>, w
     }
 }
 
-/// A program to start and its arguments; `raw` goes on Windows' command line as it is, after
-/// them (cmd reads its own command line, not the C runtime's quoting).
+/// A program to start, its arguments and environment variables of its own; `raw` goes on
+/// Windows' command line as it is, after them (cmd reads its own command line, not the C
+/// runtime's quoting).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Invocation {
     pub program: OsString,
     pub args: Vec<OsString>,
     pub raw: Option<String>,
+    pub env: Vec<(&'static str, OsString)>,
 }
 
-/// What PowerShell runs before the command: its output in UTF-8, so nothing is lost to the
-/// console's code page.
-/// (Its progress bars would come as CLIXML on the error output: they are off.)
-const POWERSHELL_UTF8: &str =
-    "[Console]::OutputEncoding=[Text.UTF8Encoding]::new();$ProgressPreference='SilentlyContinue';";
+/// What PowerShell runs: its output in UTF-8 (nothing lost to the console's code page), its
+/// progress bars off, then the command, which comes base64-encoded (UTF-8) in `GEZIK_COMMAND`
+/// so that no quoting can break it. Not `-EncodedCommand`: with it Windows PowerShell writes
+/// its errors as CLIXML once the error output is a pipe.
+const POWERSHELL_RUN: &str = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new();\
+    $ProgressPreference='SilentlyContinue';\
+    & ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:GEZIK_COMMAND))))";
 
 /// How `shell` runs `command`, as typed. cmd gets `/s /c "<command>"`: it takes off the outer
 /// quotes and runs the rest exactly as typed, `"`, `%`, `^` and all; PowerShell gets it in
-/// base64 (UTF-16), which no quoting can break; a POSIX shell gets it as one argument.
-/// `comspec` is `%ComSpec%`, cmd's own path.
+/// base64, which no quoting can break; a POSIX shell gets it as one argument. `comspec` is
+/// `%ComSpec%`, cmd's own path.
 pub fn invocation(shell: &Shell, command: &str, comspec: Option<OsString>) -> Invocation {
-    let plain = |program: OsString, args: Vec<OsString>| Invocation { program, args, raw: None };
+    let plain = |program: OsString, args: Vec<OsString>| Invocation { program, args, raw: None, env: Vec::new() };
     match shell {
         Shell::Cmd => Invocation {
             program: comspec.filter(|c| !c.is_empty()).unwrap_or_else(|| "cmd.exe".into()),
             args: ["/d", "/s", "/c"].map(OsString::from).to_vec(),
             raw: Some(format!("\"{command}\"")),
+            env: Vec::new(),
         },
-        Shell::Pwsh(program) => {
-            let script: Vec<u8> =
-                format!("{POWERSHELL_UTF8}{command}").encode_utf16().flat_map(u16::to_le_bytes).collect();
-            let args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"]
-                .map(OsString::from)
-                .into_iter()
-                .chain([base64(&script).into()])
-                .collect();
-            plain(program.into(), args)
-        }
+        Shell::Pwsh(program) => Invocation {
+            program: program.into(),
+            args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_RUN].map(OsString::from).to_vec(),
+            raw: None,
+            env: vec![("GEZIK_COMMAND", base64(command.as_bytes()).into())],
+        },
         Shell::Posix(program) => plain(program.clone(), vec!["-c".into(), command.into()]),
         Shell::Custom(program, args) => {
             plain(program.into(), args.iter().map(OsString::from).chain([command.into()]).collect())
@@ -120,7 +129,7 @@ pub fn is_network(dir: &Path) -> bool {
     text.starts_with(r"\\?\UNC\") || (text.starts_with(r"\\") || text.starts_with("//")) && !text.starts_with(r"\\?\")
 }
 
-/// Standard base64 with padding (PowerShell's `-EncodedCommand`).
+/// Standard base64 with padding (PowerShell's command).
 fn base64(bytes: &[u8]) -> String {
     const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -133,22 +142,67 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
-/// The environment a command gets (spec 16 §7.1, §7.2): the focused item, the selected ones
-/// (a path per line) and the folder, and what keeps programs from waiting on a terminal or
-/// drawing colors.
-pub fn environment(file: Option<&Path>, files: &[PathBuf], dir: &Path) -> Vec<(&'static str, OsString)> {
-    let mut list = OsString::new();
-    for (i, path) in files.iter().enumerate() {
-        if i > 0 {
-            list.push("\n");
-        }
-        list.push(path);
+/// What a command is given of the pane: the focused item, the selected ones and the folder.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Selection {
+    pub file: Option<PathBuf>,
+    pub files: Vec<PathBuf>,
+    pub dir: PathBuf,
+}
+
+/// How long `GEZIK_FILES` may get for `shell`: cmd's command line holds 8,191 characters once
+/// variables are put in; a Windows variable 32,767; Linux one environment string 128 KiB.
+pub fn files_limit(shell: &Shell, windows: bool) -> usize {
+    match shell {
+        Shell::Cmd => 7_000,
+        _ if windows => 30_000,
+        _ => 100 * 1024,
     }
-    let mut env = vec![
-        ("GEZIK_FILE", file.map_or_else(OsString::new, |f| f.as_os_str().to_owned())),
-        ("GEZIK_FILES", list),
-        ("GEZIK_DIR", dir.as_os_str().to_owned()),
-    ];
+}
+
+/// `path` in double quotes (cmd: no Windows name holds `"`, so `&`, `|`, `^`, `(`, `<` in a
+/// name stay text where `%GEZIK_FILE%` is put in).
+fn quoted(path: &Path) -> OsString {
+    let mut text = OsString::from("\"");
+    text.push(path);
+    text.push("\"");
+    text
+}
+
+/// The selected paths one per line (the list file's bytes).
+fn list_bytes(files: &[PathBuf]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for path in files {
+        #[cfg(unix)]
+        bytes.extend_from_slice(std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()));
+        #[cfg(not(unix))]
+        bytes.extend_from_slice(path.to_string_lossy().as_bytes());
+        bytes.push(b'\n');
+    }
+    bytes
+}
+
+/// The environment a command gets (spec 16 §7.1, §7.2): `GEZIK_FILE`, `GEZIK_FILES`,
+/// `GEZIK_DIR`, and what keeps programs from waiting on a terminal or drawing colors. For cmd
+/// (`cmd`) every path comes in double quotes and `GEZIK_FILES` is `"a" "b"`: cmd puts
+/// `%VAR%` in before it reads the line, so a bare `&` in a name would start a command. Other
+/// shells get the paths as they are, `GEZIK_FILES` one per line. A list longer than `limit`
+/// is left out: the bytes for a list file come back instead (`GEZIK_FILES_LIST`).
+pub fn environment(sel: &Selection, cmd: bool, limit: usize) -> (Vec<(&'static str, OsString)>, Option<Vec<u8>>) {
+    let shown = |path: &Path| if cmd { quoted(path) } else { path.as_os_str().to_owned() };
+    let mut list = OsString::new();
+    for (i, path) in sel.files.iter().enumerate() {
+        if i > 0 {
+            list.push(if cmd { " " } else { "\n" });
+        }
+        list.push(shown(path));
+    }
+    let mut env =
+        vec![("GEZIK_FILE", sel.file.as_deref().map_or_else(OsString::new, shown)), ("GEZIK_DIR", shown(&sel.dir))];
+    let long = list.len() > limit;
+    if !long {
+        env.push(("GEZIK_FILES", list));
+    }
     for (key, value) in [
         ("TERM", "dumb"),
         ("NO_COLOR", "1"),
@@ -159,7 +213,22 @@ pub fn environment(file: Option<&Path>, files: &[PathBuf], dir: &Path) -> Vec<(&
     ] {
         env.push((key, value.into()));
     }
-    env
+    (env, long.then(|| list_bytes(&sel.files)))
+}
+
+/// Writes the selection's list to a file only this user can read; its path.
+fn write_list(bytes: &[u8]) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("gezik-files-{}-{n}.txt", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&path)?;
+    file.write_all(bytes)?;
+    Ok(path)
 }
 
 /// One line of output as shown: the end of a line rewritten in place (`\r`) only, UTF-8 or
@@ -181,7 +250,26 @@ pub struct Line {
     pub err: bool,
 }
 
-/// The output kept: at most [`MAX_OUTPUT`] bytes, the oldest lines dropped past it.
+impl Line {
+    /// What it costs in memory.
+    fn cost(&self) -> usize {
+        self.text.len() + LINE_COST
+    }
+}
+
+/// Where a line over [`MAX_LINE`] bytes is cut: after the last byte below `@` in its last
+/// kilobyte (space, digit, punctuation: whole characters in UTF-8 and in every OEM code page,
+/// whose second bytes are `@` or above), else before a UTF-8 character's first byte.
+pub fn cut_at(line: &[u8]) -> usize {
+    let start = line.len().saturating_sub(1024);
+    if let Some(i) = line[start..].iter().rposition(|&b| b < b'@') {
+        return start + i + 1;
+    }
+    (1..line.len()).rev().find(|&i| line[i] & 0xC0 != 0x80).unwrap_or(line.len())
+}
+
+/// The output kept: at most [`MAX_OUTPUT`] (with each line's [`LINE_COST`]), the oldest
+/// lines dropped past it.
 #[derive(Debug, Default)]
 pub struct Output {
     lines: VecDeque<Line>,
@@ -191,30 +279,87 @@ pub struct Output {
 }
 
 impl Output {
-    /// Adds `line`; the number of lines dropped from the start to make room (down to three
+    /// Adds `lines`; the number of lines dropped from the start to make room (down to three
     /// quarters of the limit at once).
-    pub fn push(&mut self, line: Line) -> usize {
-        self.bytes += line.text.len() + 1;
-        self.lines.push_back(line);
+    pub fn push_all(&mut self, lines: Vec<Line>) -> usize {
+        for line in lines {
+            self.bytes += line.cost();
+            self.lines.push_back(line);
+        }
         if self.bytes <= MAX_OUTPUT {
             return 0;
         }
         let mut dropped = 0;
         while self.bytes > KEPT_AFTER_DROP && self.lines.len() > 1 {
             let line = self.lines.pop_front().expect("more than one line");
-            self.bytes -= line.text.len() + 1;
+            self.bytes -= line.cost();
             dropped += 1;
         }
         self.dropped = true;
         dropped
     }
 
+    fn len(&self) -> usize {
+        self.lines.len()
+    }
+
+    #[cfg(test)]
     pub fn lines(&self) -> impl Iterator<Item = &Line> {
         self.lines.iter()
     }
 
     pub fn text(&self) -> String {
         self.lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>().join("\n")
+    }
+}
+
+/// The panel's rows: the output itself, told to the list as lines come and go (lines dropped
+/// from the start are one removal, never a rebuild).
+#[derive(Default)]
+pub struct OutputModel {
+    output: RefCell<Output>,
+    notify: ModelNotify,
+}
+
+impl OutputModel {
+    /// Adds `lines`, dropping the oldest past the limit.
+    fn push_all(&self, lines: Vec<Line>) {
+        if lines.is_empty() {
+            return;
+        }
+        let added = lines.len();
+        let before = self.output.borrow().len();
+        let dropped = self.output.borrow_mut().push_all(lines);
+        if dropped >= before {
+            self.notify.reset();
+            return;
+        }
+        if dropped > 0 {
+            self.notify.row_removed(0, dropped);
+        }
+        self.notify.row_added(before - dropped, added);
+    }
+
+    fn clear(&self) {
+        *self.output.borrow_mut() = Output::default();
+        self.notify.reset();
+    }
+}
+
+impl Model for OutputModel {
+    type Data = CmdLine;
+
+    fn row_count(&self) -> usize {
+        self.output.borrow().len()
+    }
+
+    fn row_data(&self, row: usize) -> Option<CmdLine> {
+        let output = self.output.borrow();
+        output.lines.get(row).map(|line| CmdLine { text: line.text.as_str().into(), err: line.err })
+    }
+
+    fn model_tracker(&self) -> &dyn ModelTracker {
+        &self.notify
     }
 }
 
@@ -299,10 +444,40 @@ pub fn history_for(typed: &str) -> Vec<String> {
     HISTORY.with(|h| matching(&h.borrow(), typed).into_iter().map(str::to_owned).collect())
 }
 
-/// Lines read and not shown yet, and how many of the two streams are still open.
+/// Lines read and not shown yet (at most [`MAX_PENDING`], the oldest dropped past it), how
+/// many of the two streams are still open, and whether the panel stopped reading.
+#[derive(Default)]
 struct Pending {
-    lines: Vec<Line>,
+    lines: VecDeque<Line>,
+    bytes: usize,
     open: u8,
+    /// Lines were dropped before the panel took them.
+    dropped: bool,
+    /// The run ended while something the shell started still holds the pipes: what it writes
+    /// is read and dropped.
+    orphaned: bool,
+}
+
+impl Pending {
+    fn push(&mut self, line: Line) {
+        if self.orphaned {
+            return;
+        }
+        self.bytes += line.cost();
+        self.lines.push_back(line);
+        while self.bytes > MAX_PENDING && self.lines.len() > 1 {
+            let line = self.lines.pop_front().expect("more than one line");
+            self.bytes -= line.cost();
+            self.dropped = true;
+        }
+    }
+
+    /// The first `max` lines.
+    fn take(&mut self, max: usize) -> Vec<Line> {
+        let lines: Vec<Line> = self.lines.drain(..max.min(self.lines.len())).collect();
+        self.bytes -= lines.iter().map(Line::cost).sum::<usize>();
+        lines
+    }
 }
 
 type Shared = Arc<Mutex<Pending>>;
@@ -311,24 +486,25 @@ fn lock(shared: &Shared) -> std::sync::MutexGuard<'_, Pending> {
     shared.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Reads `pipe` into `shared` line by line until it closes.
+/// Reads `pipe` into `shared` line by line until it closes (a line over [`MAX_LINE`] bytes is
+/// cut where [`cut_at`] says).
 fn read_stream(mut pipe: impl Read, err: bool, shared: &Shared) {
     let mut buf = [0u8; 8192];
     let mut line = Vec::new();
-    let send = |line: &mut Vec<u8>| {
-        lock(shared).lines.push(Line { text: decode_line(line), err });
-        line.clear();
-    };
+    let send = |bytes: &[u8]| lock(shared).push(Line { text: decode_line(bytes), err });
     loop {
         match pipe.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 for &byte in &buf[..n] {
                     if byte == b'\n' {
-                        send(&mut line);
+                        send(&line);
+                        line.clear();
                     } else {
                         if line.len() >= MAX_LINE {
-                            send(&mut line);
+                            let at = cut_at(&line);
+                            send(&line[..at]);
+                            line.drain(..at);
                         }
                         line.push(byte);
                     }
@@ -339,9 +515,15 @@ fn read_stream(mut pipe: impl Read, err: bool, shared: &Shared) {
         }
     }
     if !line.is_empty() {
-        send(&mut line);
+        send(&line);
     }
     lock(shared).open -= 1;
+}
+
+/// Whether a key press is a held Enter in the address field: it neither runs a `>` command
+/// again nor runs one just chosen from the history (only a fresh press does).
+pub fn held_enter(repeat: bool, enter: bool, editing: bool) -> bool {
+    repeat && enter && editing
 }
 
 /// The command shown in a pane's panel.
@@ -349,26 +531,40 @@ fn read_stream(mut pipe: impl Read, err: bool, shared: &Shared) {
 struct State {
     open: bool,
     command: String,
-    dir: PathBuf,
-    env: Vec<(&'static str, OsString)>,
-    /// The shell, kept after it ended until the next command or the panel closes (on Windows
-    /// what it left running ends then, with its job object).
+    selection: Selection,
+    /// The shell, kept while what it started may still be stopped.
     child: Option<ChildProcess>,
     shared: Option<Shared>,
+    /// The selection's list when it was too long for `GEZIK_FILES`; removed when the run ends.
+    list_file: Option<PathBuf>,
     started: Option<Instant>,
     /// It ended: when, and its exit code (none: ended by a signal).
     exited: Option<(Instant, Option<i32>)>,
     running: bool,
     stopped: bool,
-    output: Output,
     /// The status written last ("Running… 3 s"), so it is written only when it changes.
     status: String,
+}
+
+impl State {
+    /// The run is over: the readers drop what still comes, the list file goes.
+    fn let_go(&mut self) {
+        if let Some(shared) = &self.shared {
+            let mut pending = lock(shared);
+            pending.orphaned = true;
+            pending.lines.clear();
+            pending.bytes = 0;
+        }
+        if let Some(file) = self.list_file.take() {
+            let _ = std::fs::remove_file(file);
+        }
+    }
 }
 
 struct Inner {
     id: PaneId,
     state: RefCell<State>,
-    model: Rc<VecModel<CmdLine>>,
+    model: Rc<OutputModel>,
     timer: slint::Timer,
 }
 
@@ -381,7 +577,7 @@ impl CommandLine {
         CommandLine(Rc::new(Inner {
             id,
             state: RefCell::default(),
-            model: Rc::new(VecModel::default()),
+            model: Rc::new(OutputModel::default()),
             timer: slint::Timer::default(),
         }))
     }
@@ -426,53 +622,74 @@ impl CommandLine {
         let view = &pane.view;
         let file = view.focus().and_then(|i| view.entry_path(i)).map(|(path, _)| path);
         let files: Vec<PathBuf> = view.selected_items().into_iter().map(|(path, _)| path).collect();
-        let env = environment(file.as_deref(), &files, &dir);
-        self.start_or_ask(command.to_owned(), dir, env);
+        self.start_or_ask(command.to_owned(), Selection { file, files, dir });
     }
 
     /// Runs the command shown again, in its folder.
     fn run_again(&self) {
-        let (command, dir, env) = {
+        let (command, selection) = {
             let state = self.0.state.borrow();
-            (state.command.clone(), state.dir.clone(), state.env.clone())
+            (state.command.clone(), state.selection.clone())
         };
         if !command.is_empty() {
-            self.start_or_ask(command, dir, env);
+            self.start_or_ask(command, selection);
         }
     }
 
-    /// Starts `command`; while another runs, asks first whether to stop it.
-    fn start_or_ask(&self, command: String, dir: PathBuf, env: Vec<(&'static str, OsString)>) {
+    /// Starts `command`; while another runs, asks first whether to stop it (Enter and Esc
+    /// both keep it running).
+    fn start_or_ask(&self, command: String, selection: Selection) {
         if !self.is_running() {
-            return self.start(command, dir, env);
+            return self.start(command, selection);
         }
         let this = self.clone();
         crate::operations::with_current(|ops| {
-            ops.dialogs().ask(
+            ops.dialogs().ask_escape(
                 t!("Run Command"),
                 t!("A command is still running. Stop it?"),
-                &[&t!("Stop and Run"), &t!("Cancel")],
+                &[&t!("Cancel"), &t!("Stop and Run")],
+                0,
                 move |choice| {
-                    if choice == Some(0) {
+                    if choice == Some(1) {
                         this.stop();
-                        this.start(command, dir, env);
+                        this.start(command, selection);
                     }
                 },
             );
         });
     }
 
-    fn start(&self, command: String, dir: PathBuf, env: Vec<(&'static str, OsString)>) {
+    fn start(&self, command: String, selection: Selection) {
         let shell = SETTINGS.with(|s| pick_shell(&s.borrow(), std::env::var_os("SHELL"), cfg!(windows)));
         let call = invocation(&shell, &command, std::env::var_os("ComSpec"));
+        let cmd = shell == Shell::Cmd;
+        let (mut env, list) = environment(&selection, cmd, files_limit(&shell, cfg!(windows)));
+        let mut notes = Vec::new();
+        let mut list_file = None;
+        if let Some(bytes) = list {
+            match write_list(&bytes) {
+                Ok(path) => {
+                    env.push(("GEZIK_FILES_LIST", if cmd { quoted(&path) } else { path.clone().into_os_string() }));
+                    list_file = Some(path);
+                    notes.push(
+                        t!("The selection is too long for GEZIK_FILES: GEZIK_FILES_LIST names a file with it")
+                            .into_owned(),
+                    );
+                }
+                Err(err) => {
+                    notes.push(t!("The selection is too long for GEZIK_FILES and its list was not written: {}", err))
+                }
+            }
+        }
         let mut process = std::process::Command::new(&call.program);
-        process.args(&call.args).current_dir(&dir).envs(env.iter().map(|(k, v)| (k, v)));
+        process.args(&call.args).current_dir(&selection.dir);
+        process.envs(env.iter().chain(&call.env).map(|(k, v)| (k, v)));
         #[cfg(windows)]
         if let Some(raw) = &call.raw {
             use std::os::windows::process::CommandExt;
             process.raw_arg(raw);
         }
-        let started = if shell == Shell::Cmd && is_network(&dir) {
+        let started = if cmd && is_network(&selection.dir) {
             // cmd would run it in the Windows folder instead, saying so only in its output.
             let why = t!("cmd cannot run in a network folder; set [command-line] shell = \"powershell\"");
             Err(std::io::Error::other(why.into_owned()))
@@ -481,13 +698,15 @@ impl CommandLine {
         };
         {
             let mut state = self.0.state.borrow_mut();
-            // What the last one left running ends now (Windows: its job object).
+            // What the last one left running ends now if it may still be stopped.
+            state.let_go();
             state.child = None;
-            *state = State { open: true, command: command.clone(), dir, env, ..State::default() };
-            self.0.model.set_vec(Vec::new());
+            *state = State { open: true, command: command.clone(), selection, list_file, ..State::default() };
+            self.0.model.clear();
+            self.0.model.push_all(notes.into_iter().map(|text| Line { text, err: false }).collect());
             match started {
                 Ok((child, stdout, stderr)) => {
-                    let shared: Shared = Arc::new(Mutex::new(Pending { lines: Vec::new(), open: 2 }));
+                    let shared: Shared = Arc::new(Mutex::new(Pending { open: 2, ..Pending::default() }));
                     for (pipe, err) in [(Box::new(stdout) as Box<dyn Read + Send>, false), (Box::new(stderr), true)] {
                         let shared_for = shared.clone();
                         let name = if err { "gezik-command-err" } else { "gezik-command-out" };
@@ -507,9 +726,9 @@ impl CommandLine {
                     let program = call.program.to_string_lossy();
                     // TRANSLATORS: {0} is a shell program, {1} why it did not start
                     let text = t!("Could not start {0}: {1}", program, err);
-                    state.output.push(Line { text: text.clone(), err: true });
-                    self.0.model.push(CmdLine { text: text.into(), err: true });
+                    self.0.model.push_all(vec![Line { text, err: true }]);
                     state.status = t!("Did not start").into_owned();
+                    state.let_go();
                 }
             }
         }
@@ -526,30 +745,42 @@ impl CommandLine {
         self.show();
     }
 
-    /// Takes the lines read so far, sees whether the shell ended, and once it did (and its
-    /// output closed, or half a second went by) ends the run.
+    /// Takes up to [`LINES_PER_TICK`] lines read so far, sees whether the shell ended, and
+    /// once it did and everything read was shown (its output closed, or half a second went
+    /// by) ends the run. What it left running may go on: it is let go.
     fn tick(&self) {
         let finished = {
             let mut state = self.0.state.borrow_mut();
             if !state.running {
                 return;
             }
-            let (lines, open) = match &state.shared {
+            let (lines, open, left, dropped) = match &state.shared {
                 Some(shared) => {
                     let mut pending = lock(shared);
-                    (std::mem::take(&mut pending.lines), pending.open)
+                    let lines = pending.take(LINES_PER_TICK);
+                    (lines, pending.open, pending.lines.len(), std::mem::take(&mut pending.dropped))
                 }
-                None => (Vec::new(), 0),
+                None => (Vec::new(), 0, 0, false),
             };
-            self.take(&mut state, lines);
+            self.0.model.push_all(lines);
+            if dropped {
+                self.0.model.output.borrow_mut().dropped = true;
+            }
             if state.exited.is_none()
                 && let Some(Ok(Some(status))) = state.child.as_mut().map(ChildProcess::try_wait)
             {
                 state.exited = Some((Instant::now(), status.code()));
             }
             match state.exited {
-                Some((at, _)) if open == 0 || at.elapsed() >= GRACE => {
+                Some((at, _)) if (open == 0 && left == 0) || at.elapsed() >= GRACE => {
+                    // What the grace left unshown (at most MAX_PENDING) comes now.
+                    let rest = state.shared.as_ref().map(|shared| lock(shared).take(usize::MAX)).unwrap_or_default();
+                    self.0.model.push_all(rest);
                     state.running = false;
+                    if let Some(mut child) = state.child.take() {
+                        child.let_go();
+                    }
+                    state.let_go();
                     true
                 }
                 _ => false,
@@ -564,26 +795,10 @@ impl CommandLine {
         }
     }
 
-    /// Adds `lines` to the output and the panel's rows.
-    fn take(&self, state: &mut State, lines: Vec<Line>) {
-        let mut dropped = 0;
-        for line in lines {
-            let row = CmdLine { text: line.text.as_str().into(), err: line.err };
-            dropped += state.output.push(line);
-            self.0.model.push(row);
-        }
-        if dropped > 0 {
-            // Rebuilt once rather than shifted row by row.
-            let rows: Vec<CmdLine> =
-                state.output.lines().map(|l| CmdLine { text: l.text.as_str().into(), err: l.err }).collect();
-            self.0.model.set_vec(rows);
-        }
-    }
-
     /// The folder the command ran in, read once more if the pane still shows it (its watcher
     /// does too).
     fn refresh_folder(&self) {
-        let dir = self.0.state.borrow().dir.clone();
+        let dir = self.0.state.borrow().selection.dir.clone();
         crate::panes::with_id(self.0.id, |p| {
             if p.nav.active_location().folder().is_some_and(|shown| gezik_core::ops::paths::same_path(shown, &dir)) {
                 p.nav.refresh_due();
@@ -591,9 +806,10 @@ impl CommandLine {
         });
     }
 
-    /// `Stop`: the shell and everything it started end now.
+    /// `Stop`: the shell and everything it started end now. A shell that had already ended
+    /// (its output still coming) keeps its exit code.
     pub fn stop(&self) {
-        let lines = {
+        {
             let mut state = self.0.state.borrow_mut();
             if !state.running {
                 return;
@@ -602,33 +818,36 @@ impl CommandLine {
                 child.kill_tree();
             }
             state.running = false;
-            state.stopped = true;
-            state.exited.get_or_insert((Instant::now(), None));
-            state.shared.as_ref().map(|shared| std::mem::take(&mut lock(shared).lines)).unwrap_or_default()
-        };
+            if state.exited.is_none() {
+                state.stopped = true;
+                state.exited = Some((Instant::now(), None));
+            }
+            let rest = state.shared.as_ref().map(|shared| lock(shared).take(usize::MAX)).unwrap_or_default();
+            self.0.model.push_all(rest);
+            state.child = None;
+            state.let_go();
+        }
         self.0.timer.stop();
-        let mut state = self.0.state.borrow_mut();
-        self.take(&mut state, lines);
-        drop(state);
         self.show();
     }
 
-    /// The pane closes (or its window): a running command ends, quietly.
+    /// The pane closes (or its window, or Gezik quits): a running command ends with what it
+    /// started, quietly; what an ended one left running goes on.
     pub fn end(&self) {
         self.0.timer.stop();
         let mut state = self.0.state.borrow_mut();
         state.running = false;
+        if let Some(child) = state.child.as_mut() {
+            child.kill_tree();
+        }
         state.child = None;
+        state.let_go();
     }
 
     /// `Close`: stops a running command and closes the panel.
     pub fn close(&self) {
         self.stop();
-        {
-            let mut state = self.0.state.borrow_mut();
-            state.open = false;
-            state.child = None;
-        }
+        self.0.state.borrow_mut().open = false;
         self.show();
         // The panel may have had the keyboard: the list gets it.
         crate::panes::with_id(self.0.id, |_| {
@@ -664,7 +883,7 @@ impl CommandLine {
     }
 
     fn copy_output(&self) {
-        let text = self.0.state.borrow().output.text();
+        let text = self.0.model.output.borrow().text();
         let note = match gezik_platform::clipboard::write_text(&text) {
             Ok(()) => t!("Output copied").into_owned(),
             Err(_) => t!("Could not copy the output").into_owned(),
@@ -674,7 +893,7 @@ impl CommandLine {
 
     /// Writes the panel's header to the pane (only what changed is written).
     fn show(&self) {
-        let (open, title, folder, status, state_code, dropped) = {
+        let (open, title, folder, status, state_code) = {
             let mut state = self.0.state.borrow_mut();
             let took = match (state.started, state.exited) {
                 (Some(started), Some((at, _))) => Some(at.duration_since(started)),
@@ -702,15 +921,9 @@ impl CommandLine {
             } else {
                 2
             };
-            (
-                state.open,
-                format!("> {}", state.command),
-                state.dir.display().to_string(),
-                status,
-                code,
-                state.output.dropped,
-            )
+            (state.open, format!("> {}", state.command), state.selection.dir.display().to_string(), status, code)
         };
+        let dropped = self.0.model.output.borrow().dropped;
         let model = ModelRc::from(self.0.model.clone());
         crate::panes::edit(self.0.id, |d| {
             d.cmd_open = open;
@@ -721,6 +934,14 @@ impl CommandLine {
             d.cmd_state = state_code;
             d.cmd_dropped = dropped;
         });
+    }
+}
+
+/// Gezik quits: running commands end with what they started (Unix process groups would
+/// outlive it); what ended commands left running in the background goes on, as on Windows.
+pub fn end_all() {
+    for pane in crate::panes::everywhere() {
+        pane.command.end();
     }
 }
 
@@ -795,13 +1016,12 @@ mod tests {
 
     #[test]
     fn powershell_gets_the_command_in_base64() {
-        let call = invocation(&Shell::Pwsh("pwsh".into()), "Write-Output 'ğ \"x\" %y%'", None);
+        let typed = "Write-Output 'ğ \"x\" %y%'";
+        let call = invocation(&Shell::Pwsh("pwsh".into()), typed, None);
         assert_eq!(call.program, "pwsh");
-        assert_eq!(&call.args[..4], ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand"]);
-        let script = format!("{POWERSHELL_UTF8}Write-Output 'ğ \"x\" %y%'");
-        let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
-        assert_eq!(call.args[4], OsString::from(base64(&bytes)));
-        assert!(call.args[4].to_str().unwrap().bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b)));
+        assert_eq!(call.args, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_RUN]);
+        assert!(!POWERSHELL_RUN.contains('"'), "the fixed script needs no quoting of its own");
+        assert_eq!(call.env, [("GEZIK_COMMAND", OsString::from(base64(typed.as_bytes())))]);
     }
 
     #[test]
@@ -835,19 +1055,61 @@ mod tests {
         assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
     }
 
+    fn get(env: &[(&'static str, OsString)], key: &str) -> Option<OsString> {
+        env.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())
+    }
+
+    fn selection(dir: &str, files: &[&str]) -> Selection {
+        let files: Vec<PathBuf> = files.iter().map(PathBuf::from).collect();
+        Selection { file: files.first().cloned(), files, dir: dir.into() }
+    }
+
     #[test]
     fn the_environment_names_the_selection() {
-        let dir = Path::new("/w");
-        let files = [PathBuf::from("/w/a b.txt"), PathBuf::from("/w/ç.rs")];
-        let env = environment(Some(&files[0]), &files, dir);
-        let get = |key: &str| env.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone()).unwrap();
-        assert_eq!(get("GEZIK_FILE"), "/w/a b.txt");
-        assert_eq!(get("GEZIK_FILES"), "/w/a b.txt\n/w/ç.rs");
-        assert_eq!(get("GEZIK_DIR"), "/w");
-        assert_eq!(get("TERM"), "dumb");
-        assert_eq!(get("GIT_TERMINAL_PROMPT"), "0");
-        let env = environment(None, &[], dir);
-        assert_eq!(env.iter().find(|(k, _)| *k == "GEZIK_FILE").unwrap().1, "");
+        let sel = selection("/w", &["/w/a b.txt", "/w/ç.rs"]);
+        let (env, list) = environment(&sel, false, 1000);
+        assert_eq!(get(&env, "GEZIK_FILE").unwrap(), "/w/a b.txt");
+        assert_eq!(get(&env, "GEZIK_FILES").unwrap(), "/w/a b.txt\n/w/ç.rs");
+        assert_eq!(get(&env, "GEZIK_DIR").unwrap(), "/w");
+        assert_eq!(get(&env, "TERM").unwrap(), "dumb");
+        assert_eq!(get(&env, "GIT_TERMINAL_PROMPT").unwrap(), "0");
+        assert_eq!(list, None);
+        let (env, _) = environment(&Selection { dir: "/w".into(), ..Selection::default() }, false, 1000);
+        assert_eq!(get(&env, "GEZIK_FILE").unwrap(), "");
+    }
+
+    #[test]
+    fn cmd_gets_every_path_in_quotes() {
+        let sel = selection(r"C:\w&x", &[r"C:\w\a&b.txt", r"C:\w\c (1)^.txt"]);
+        let (env, _) = environment(&sel, true, 1000);
+        assert_eq!(get(&env, "GEZIK_FILE").unwrap(), r#""C:\w\a&b.txt""#);
+        assert_eq!(get(&env, "GEZIK_FILES").unwrap(), r#""C:\w\a&b.txt" "C:\w\c (1)^.txt""#);
+        assert_eq!(get(&env, "GEZIK_DIR").unwrap(), r#""C:\w&x""#);
+    }
+
+    #[test]
+    fn a_long_selection_goes_to_a_list_file() {
+        let files: Vec<String> = (0..5_000).map(|i| format!("/w/a long name for file {i:05}.txt")).collect();
+        let names: Vec<&str> = files.iter().map(String::as_str).collect();
+        let sel = selection("/w", &names);
+        for shell in [Shell::Cmd, Shell::Pwsh("pwsh".into()), Shell::Posix("/bin/sh".into())] {
+            for windows in [true, false] {
+                let (env, list) = environment(&sel, shell == Shell::Cmd, files_limit(&shell, windows));
+                assert_eq!(get(&env, "GEZIK_FILES"), None, "left out");
+                let first = "/w/a long name for file 00000.txt";
+                let want = if shell == Shell::Cmd { format!("\"{first}\"") } else { first.to_owned() };
+                assert_eq!(get(&env, "GEZIK_FILE").unwrap(), want.as_str());
+                let list = String::from_utf8(list.expect("a list")).unwrap();
+                assert_eq!(list.lines().count(), 5_000);
+                assert!(list.ends_with("file 04999.txt\n"));
+            }
+        }
+        let (env, list) = environment(&selection("/w", &names[..10]), true, files_limit(&Shell::Cmd, true));
+        assert!(get(&env, "GEZIK_FILES").is_some() && list.is_none(), "a short one stays");
+        let path = write_list(b"/w/a\n").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"/w/a\n");
+        assert!(write_list(b"x").unwrap() != path, "a fresh file each time");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -868,19 +1130,82 @@ mod tests {
     }
 
     #[test]
-    fn output_keeps_two_megabytes() {
+    fn output_keeps_two_megabytes_counting_each_lines_cost() {
         let mut out = Output::default();
-        let line = "x".repeat(1023);
-        let mut dropped = 0;
-        for _ in 0..2048 {
-            dropped += out.push(Line { text: line.clone(), err: false });
-        }
-        assert_eq!((dropped, out.dropped), (0, false), "exactly 2 MB fits");
-        dropped += out.push(Line { text: "last".into(), err: true });
+        let fits = MAX_OUTPUT / (1000 + LINE_COST);
+        let line = || Line { text: "x".repeat(1000), err: false };
+        assert_eq!(out.push_all((0..fits).map(|_| line()).collect()), 0);
+        assert!(!out.dropped);
+        let dropped = out.push_all(vec![line(), Line { text: "last".into(), err: true }]);
         assert!(out.dropped && dropped > 0);
         assert!(out.bytes <= KEPT_AFTER_DROP);
-        assert_eq!(out.lines().count(), 2049 - dropped);
+        assert_eq!(out.len(), fits + 2 - dropped);
         assert_eq!(out.lines().last().map(|l| (l.text.as_str(), l.err)), Some(("last", true)));
+        // Empty lines count too: a million of them is no 64 KB.
+        let mut out = Output::default();
+        out.push_all((0..1_000_000).map(|_| Line { text: String::new(), err: false }).collect());
+        assert!(out.len() * LINE_COST <= MAX_OUTPUT);
+    }
+
+    #[test]
+    fn the_model_drops_from_the_front_without_a_rebuild() {
+        let model = OutputModel::default();
+        model.push_all(vec![Line { text: "a".into(), err: false }, Line { text: "b".into(), err: true }]);
+        assert_eq!(model.row_count(), 2);
+        assert_eq!(model.row_data(1).map(|r| (r.text.to_string(), r.err)), Some(("b".into(), true)));
+        let big = || Line { text: "y".repeat(100_000), err: false };
+        model.push_all((0..30).map(|_| big()).collect());
+        assert!(model.output.borrow().dropped);
+        assert!(model.row_count() < 32);
+        assert_eq!(model.row_data(0).map(|r| r.text.len()), Some(100_000), "the oldest went first");
+        model.clear();
+        assert_eq!(model.row_count(), 0);
+    }
+
+    #[test]
+    fn readers_hold_at_most_two_megabytes_and_drop_after_the_run() {
+        let mut pending = Pending::default();
+        for i in 0..100_000 {
+            pending.push(Line { text: format!("{i:0>100}"), err: false });
+        }
+        assert!(pending.bytes <= MAX_PENDING && pending.dropped);
+        let first = pending.take(LINES_PER_TICK);
+        assert_eq!(first.len(), LINES_PER_TICK);
+        assert_eq!(pending.bytes, pending.lines.iter().map(Line::cost).sum::<usize>());
+        assert_eq!(pending.lines.back().map(|l| l.text.as_str()), Some(format!("{:0>100}", 99_999).as_str()));
+        pending.orphaned = true;
+        let before = pending.lines.len();
+        pending.push(Line { text: "late".into(), err: false });
+        assert_eq!(pending.lines.len(), before, "an ended run reads and drops");
+    }
+
+    #[test]
+    fn long_lines_are_cut_between_characters() {
+        // A space in the last kilobyte: cut after it.
+        let mut line = "ğ".repeat(9000).into_bytes();
+        line.extend_from_slice(b" tail");
+        let at = cut_at(&line);
+        assert_eq!(&line[at - 1..at], b" ");
+        // None: before a UTF-8 character, never inside one.
+        let line = "ğ".repeat(9000).into_bytes();
+        let at = cut_at(&line);
+        assert!(std::str::from_utf8(&line[..at]).is_ok() && std::str::from_utf8(&line[at..]).is_ok());
+        assert!(at > line.len() - 4);
+        // Read through: every piece decodes whole.
+        let mut text = "ğüş".repeat(10_000);
+        text.push('\n');
+        let shared: Shared = Arc::new(Mutex::new(Pending { open: 1, ..Pending::default() }));
+        read_stream(text.as_bytes(), false, &shared);
+        let pieces: String = lock(&shared).lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(pieces, text.trim_end());
+    }
+
+    #[test]
+    fn a_held_enter_runs_nothing() {
+        assert!(held_enter(true, true, true));
+        assert!(!held_enter(false, true, true), "a fresh press runs");
+        assert!(!held_enter(true, false, true));
+        assert!(!held_enter(true, true, false), "not in the address field");
     }
 
     #[test]
@@ -926,20 +1251,20 @@ mod tests {
         while lock(&shared).open > 0 && Instant::now() < until {
             std::thread::sleep(Duration::from_millis(10));
         }
-        (std::mem::take(&mut lock(&shared).lines), code)
+        (lock(&shared).take(usize::MAX), code)
     }
 
     fn spawn(shell: &Shell, command: &str, dir: &Path, env: &[(&'static str, OsString)]) -> (ChildProcess, Shared) {
         let call = invocation(shell, command, std::env::var_os("ComSpec"));
         let mut process = std::process::Command::new(&call.program);
-        process.args(&call.args).current_dir(dir).envs(env.iter().map(|(k, v)| (k, v)));
+        process.args(&call.args).current_dir(dir).envs(env.iter().chain(&call.env).map(|(k, v)| (k, v)));
         #[cfg(windows)]
         if let Some(raw) = &call.raw {
             use std::os::windows::process::CommandExt;
             process.raw_arg(raw);
         }
         let (child, stdout, stderr) = ChildProcess::spawn_piped(process).unwrap();
-        let shared: Shared = Arc::new(Mutex::new(Pending { lines: Vec::new(), open: 2 }));
+        let shared: Shared = Arc::new(Mutex::new(Pending { open: 2, ..Pending::default() }));
         let (a, b) = (shared.clone(), shared.clone());
         std::thread::spawn(move || read_stream(stdout, false, &a));
         std::thread::spawn(move || read_stream(stderr, true, &b));
@@ -966,9 +1291,10 @@ mod tests {
         let dir = temp("run");
         std::fs::write(dir.join("ğ ü.txt"), "ok").unwrap();
         // cmd's echo writes in the OEM code page: the name echoed back is plain.
-        let env = environment(Some(&dir.join("a.txt")), &[dir.join("a.txt")], &dir);
+        let sel = Selection { file: Some(dir.join("a.txt")), files: vec![dir.join("a.txt")], dir: dir.clone() };
+        let (env, _) = environment(&sel, cfg!(windows), 1000);
         let command = if cfg!(windows) {
-            r#"type "ğ ü.txt" & echo. & echo "%GEZIK_FILE%" & echo a "b" 100%& echo err 1>&2 & exit /b 3"#
+            r#"type "ğ ü.txt" & echo. & echo %GEZIK_FILE% & echo a "b" 100%& echo err 1>&2 & exit /b 3"#
         } else {
             r#"cat 'ğ ü.txt'; echo; echo "\"$GEZIK_FILE\""; echo a "\"b\"" 100%; echo err >&2; exit 3"#
         };
@@ -1010,6 +1336,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A name with `&` in it is text, never a second command (cmd puts `%GEZIK_FILE%` in
+    /// before it reads the line).
+    #[cfg(windows)]
+    #[test]
+    fn a_selected_name_cannot_run_a_command() {
+        let dir = temp("inject");
+        let name = dir.join("a&echo INJECTED&rem .txt");
+        let sel =
+            Selection { file: Some(name.clone()), files: vec![name.clone(), dir.join("b|c.txt")], dir: dir.clone() };
+        let (env, _) = environment(&sel, true, 7_000);
+        let (lines, code) = run(&Shell::Cmd, "echo %GEZIK_FILE% & echo %GEZIK_FILES%", &dir, &env);
+        assert_eq!(code, Some(0));
+        let out: Vec<&str> = texts(&lines, false).iter().map(|l| l.trim_end()).collect();
+        assert_eq!(out[0], format!("\"{}\"", name.display()));
+        assert_eq!(out[1], format!("\"{}\" \"{}\"", name.display(), dir.join("b|c.txt").display()));
+        assert!(!out.contains(&"INJECTED"), "{out:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[cfg(windows)]
     #[test]
     fn cmd_output_in_the_oem_code_page_reads_right() {
@@ -1029,6 +1374,11 @@ mod tests {
         let (lines, code) =
             run(&Shell::Pwsh("powershell".into()), r#"Write-Output 'a "b" ğüş %x%'; exit 2"#, &dir, &[]);
         assert_eq!((texts(&lines, false), code), (vec![r#"a "b" ğüş %x%"#], Some(2)));
+        // Errors come as text, not CLIXML.
+        let (lines, _) = run(&Shell::Pwsh("powershell".into()), "Get-Item nope", &dir, &[]);
+        let errors = texts(&lines, true);
+        assert!(errors.iter().any(|l| l.contains("nope")), "{errors:?}");
+        assert!(!errors.iter().any(|l| l.contains("CLIXML") || l.contains("<Objs")), "{errors:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

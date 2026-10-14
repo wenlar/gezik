@@ -1525,6 +1525,11 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             let chord =
                 keys::chord_from_press(&text, press.physical, control, alt, m.shift, m.meta, Platform::current());
             let menu_key = keys::is_context_menu_key(&event.text, control, alt, m.shift, m.meta);
+            // A held Enter in the address field runs no `>` command (spec 16 §7.1: only a press).
+            let enter = chord.as_ref().is_some_and(|c| c.key == Key::Enter);
+            if crate::command_line::held_enter(event.repeat, enter, panes::mirror(pane.id).path_editing.get()) {
+                return press.swallowed(true);
+            }
             // Esc while dragging files drops nothing.
             if chord.as_ref().is_some_and(|c| c.key == Key::Escape) && drags.escape() {
                 return true;

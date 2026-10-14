@@ -7285,6 +7285,16 @@ msgstr "Detener y ejecutar"
 
 #: crates/gezik/src/command_line.rs
 #, fuzzy
+msgid "The selection is too long for GEZIK_FILES: GEZIK_FILES_LIST names a file with it"
+msgstr "La selección es demasiado larga para GEZIK_FILES: GEZIK_FILES_LIST indica un archivo con ella"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "The selection is too long for GEZIK_FILES and its list was not written: {}"
+msgstr "La selección es demasiado larga para GEZIK_FILES y no se escribió su lista: {}"
+
+#: crates/gezik/src/command_line.rs
+#, fuzzy
 msgid "cmd cannot run in a network folder; set [command-line] shell = \"powershell\""
 msgstr "cmd no puede ejecutarse en una carpeta de red; ponga [command-line] shell = \"powershell\""
 

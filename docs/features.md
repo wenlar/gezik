@@ -279,17 +279,25 @@ restore = true            # open the tabs of last time at start
   with the command, the folder, the time it runs and, once it ended, its exit code (green for
   0, red otherwise). **Stop** ends it with everything it started; **Run Again**, **Copy
   Output** and **Close** (Esc on the list once it ended) are there too; drag the panel's top
-  edge to size it. **Command Output** (palette) shows or hides it. Each pane has its own; it
-  ends with its pane.
+  edge to size it. **Command Output** (palette) shows or hides it. Each pane has its own; a
+  running command ends with its pane, and when Gezik quits. A program a command started in
+  the background (`start notepad`, `code .`, `gimp &`) goes on once the shell has ended.
 - The selection goes in as environment variables, the text you type is never changed:
-  `GEZIK_FILE` (the focused item), `GEZIK_FILES` (the selected ones, one per line) and
-  `GEZIK_DIR`: `>echo %GEZIK_FILES%` on Windows, `>echo "$GEZIK_FILES"` elsewhere.
+  `GEZIK_FILE` (the focused item), `GEZIK_FILES` (the selected ones) and `GEZIK_DIR`. With
+  cmd each path already comes in double quotes and `GEZIK_FILES` is `"a" "b"`, so write them
+  bare: `>copy %GEZIK_FILE% D:\backup` (a name with `&` or `|` stays a name; `"%GEZIK_FILE%"`
+  would undo that). In PowerShell and the Unix shells the paths come as they are, `GEZIK_FILES`
+  one per line: `>echo "$GEZIK_FILES"`, `>$env:GEZIK_FILES -split "`n"`. A selection too long
+  for one variable (cmd about 7,000 characters, other Windows shells 30,000, Unix 100 KB)
+  leaves `GEZIK_FILES` out: `GEZIK_FILES_LIST` names a temporary file with one path per
+  line, removed when the command ends (the panel says so).
 - No terminal: programs get no input (one that asks for some ends at once), colors and other
   escape codes are taken out, full-screen programs (vim, top, less) and password prompts (ssh,
   sudo) do not work; use **Open terminal** for those. `TERM=dumb`, `NO_COLOR=1`,
   `PAGER=cat`, `GIT_PAGER=cat` and `GIT_TERMINAL_PROMPT=0` are set. Commands run as you,
   never as administrator. On Windows output that is not UTF-8 is read in the console's code
-  page. At most 2 MB is kept ("Earlier output dropped" above it). cmd cannot work in a
+  page. At most 2 MB is kept ("Earlier output dropped" above it); a flood of output is shown
+  2,000 lines at a time and never holds up the program. cmd cannot work in a
   network folder (`\\server\share`): there Gezik does not start it (PowerShell can).
 - ↑ and ↓ after `>` go through the commands run before (newest first, no repeats, the last
   100, kept in `state.toml`); Enter or a click on one only writes it in the field. A command

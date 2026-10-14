@@ -5904,6 +5904,14 @@ msgid "Stop and Run"
 msgstr "Durdur ve çalıştır"
 
 #: crates/gezik/src/command_line.rs
+msgid "The selection is too long for GEZIK_FILES: GEZIK_FILES_LIST names a file with it"
+msgstr "Seçim GEZIK_FILES için çok uzun: listesi GEZIK_FILES_LIST'in gösterdiği dosyada"
+
+#: crates/gezik/src/command_line.rs
+msgid "The selection is too long for GEZIK_FILES and its list was not written: {}"
+msgstr "Seçim GEZIK_FILES için çok uzun ve listesi yazılamadı: {}"
+
+#: crates/gezik/src/command_line.rs
 msgid "cmd cannot run in a network folder; set [command-line] shell = \"powershell\""
 msgstr "cmd ağ klasöründe çalışamaz; [command-line] shell = \"powershell\" yapın"
 
