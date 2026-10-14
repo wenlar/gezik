@@ -67,14 +67,17 @@ function Guard {
     if ($sent -ne 0 -and $idle -lt 1500 -and $sinceOurs -gt $idle + 300) { throw "GUARD: someone else gave input $idle ms ago" }
 }
 function Mark { $s = Saved; Save ([int]$s[0]) $s[1] ([Environment]::TickCount) }
-function Down([byte]$vk) { [GuiIn]::keybd_event($vk, 0, 0, [UIntPtr]::Zero) }
-function Up([byte]$vk) { [GuiIn]::keybd_event($vk, 0, 2, [UIntPtr]::Zero) }
+# Navigation keys need the extended-key flag, or Windows reads them as the numpad's and drops Shift.
+$Extended = [byte[]](0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, 0x5D)
+function Flags([byte]$vk) { if ($Extended -contains $vk) { 1 } else { 0 } }
+function Down([byte]$vk) { [GuiIn]::keybd_event($vk, 0, (Flags $vk), [UIntPtr]::Zero) }
+function Up([byte]$vk) { [GuiIn]::keybd_event($vk, 0, (Flags $vk) -bor 2, [UIntPtr]::Zero) }
 $Named = @{ enter = 0x0D; esc = 0x1B; tab = 0x09; space = 0x20; back = 0x08; delete = 0x2E; home = 0x24; end = 0x23
     up = 0x26; down = 0x28; left = 0x25; right = 0x27; pageup = 0x21; pagedown = 0x22; apps = 0x5D; insert = 0x2D }
 1..12 | ForEach-Object { $Named["f$_"] = 0x6F + $_ }
 function Vk([string]$k) {
     if ($Named.ContainsKey($k)) { return [byte]$Named[$k] }
-    if ($k.Length -eq 1 -and $k -match '[a-z0-9]') { return [byte][char]$k.ToUpper() }
+    if ($k.Length -eq 1 -and $k -match '[a-z0-9]') { return [byte][char]$k.ToUpperInvariant() }
     throw "unknown key: $k"
 }
 function Press([string]$chord) {
@@ -133,7 +136,8 @@ switch ($Verb) {
     'wheel' {
         # wheel <x> <y> <notches>: positive scrolls up, negative down (120 per notch).
         Guard; [GuiIn]::SetCursorPos([int]$Rest[0], [int]$Rest[1]) | Out-Null; Start-Sleep -Milliseconds 80
-        [GuiIn]::mouse_event(0x0800, 0, 0, [uint32]([int]$Rest[2] * 120), [UIntPtr]::Zero)
+        $delta = [BitConverter]::ToUInt32([BitConverter]::GetBytes([int32]([int]$Rest[2] * 120)), 0)  # negative = down
+        [GuiIn]::mouse_event(0x0800, 0, 0, $delta, [UIntPtr]::Zero)
         Mark; Start-Sleep -Milliseconds 150
     }
     'key' { foreach ($k in $Rest) { Press $k } }
@@ -160,8 +164,12 @@ switch ($Verb) {
         "pid $($e.Current.ProcessId) type $($e.Current.ControlType.ProgrammaticName) name '$($e.Current.Name)' value '$v'"
     }
     'find' {
-        $w = [Windows.Automation.AutomationElement]::FromHandle((Window))
-        $all = $w.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+        # Every top-level window of the process: menus and popups open outside the main window.
+        $root = [Windows.Automation.AutomationElement]::RootElement
+        $mine = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), (GPid)
+        $all = foreach ($top in $root.FindAll([Windows.Automation.TreeScope]::Children, $mine)) {
+            $top; $top.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition)
+        }
         foreach ($e in $all) {
             if ($e.Current.Name -like "*$($Rest -join ' ')*" -and -not $e.Current.IsOffscreen) {
                 $b = $e.Current.BoundingRectangle
