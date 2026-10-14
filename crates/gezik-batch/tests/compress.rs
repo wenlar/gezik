@@ -1265,14 +1265,13 @@ fn the_old_archive_is_in_the_trash_under_its_own_name() {
     let d = dir("edit-bin-name");
     let src = d.join("src");
     make(&src, &[("a.txt", b"a")]);
-    let archive = d.join("named.zip");
+    // A name no other test trashes (see `trash::holds`).
+    let archive = d.join(format!("named-{}.zip", std::process::id()));
     write::write(&inputs(&children(&src)), &archive, &options(OutFormat::Zip, Level::Normal), 1, &W::default())
         .unwrap();
     let engine = engine(&d);
     let (report, _) = edit(&engine, &archive, vec![Edit::MakeDir("new".into())], None, None, nothing);
     assert!(report.failures.is_empty(), "{:?}", report.failures);
-    let in_bin =
-        gezik_platform::trash::list().items.into_iter().any(|item| item.original.as_deref() == Some(archive.as_path()));
-    assert!(in_bin, "Put Back brings it to its own place");
+    assert!(gezik_platform::trash::holds(&archive), "Put Back brings it to its own place");
     let _ = std::fs::remove_dir_all(&d);
 }
