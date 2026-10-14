@@ -64,6 +64,8 @@ struct Loaded {
     acl: bool,
     /// One item: created, modified, last opened.
     times: [Option<SystemTime>; 3],
+    /// One file: how many names (hard links) its data has.
+    links: u64,
     /// Read when the window opens, not on a reload.
     names: Option<Names>,
     /// macOS and Linux, one file: the apps that open it.
@@ -76,11 +78,11 @@ fn load(paths: &[PathBuf], names: bool) -> Loaded {
     let items: Vec<(PathBuf, Entry)> =
         paths.iter().filter_map(|path| gezik_platform::attrs::read(path).ok().map(|e| (path.clone(), e))).collect();
     let acl = items.iter().any(|(path, _)| gezik_platform::attrs::has_acl(path));
-    let times = match items.as_slice() {
-        [(path, _)] => std::fs::symlink_metadata(path)
-            .map(|m| [m.created().ok(), m.modified().ok(), m.accessed().ok()])
-            .unwrap_or_default(),
-        _ => [None; 3],
+    let (times, links) = match items.as_slice() {
+        [(path, e)] => std::fs::symlink_metadata(path)
+            .map(|m| ([m.created().ok(), m.modified().ok(), m.accessed().ok()], if e.is_dir { 1 } else { links(&m) }))
+            .unwrap_or(([None; 3], 1)),
+        _ => ([None; 3], 1),
     };
     let names = names.then(|| Names {
         users: gezik_platform::attrs::users(),
@@ -102,7 +104,18 @@ fn load(paths: &[PathBuf], names: bool) -> Loaded {
         [(path, e)] if !e.is_dir => gezik_batch::fields::read(path, gezik_core::fields::FieldSet::ALL, &|| false),
         _ => gezik_core::fields::Fields::default(),
     };
-    Loaded { unreadable: paths.len() - items.len(), items, acl, times, names, apps, fields }
+    Loaded { unreadable: paths.len() - items.len(), items, acl, times, links, names, apps, fields }
+}
+
+/// The names a file's data has. Windows: not asked (its Info is the system's Properties).
+#[cfg(unix)]
+fn links(meta: &std::fs::Metadata) -> u64 {
+    std::os::unix::fs::MetadataExt::nlink(meta)
+}
+
+#[cfg(not(unix))]
+fn links(_meta: &std::fs::Metadata) -> u64 {
+    1
 }
 
 struct State {
@@ -113,6 +126,7 @@ struct State {
     names: Names,
     acl: bool,
     times: [Option<SystemTime>; 3],
+    links: u64,
     apps: Vec<AppChoice>,
     fields: gezik_core::fields::Fields,
     size: String,
@@ -237,6 +251,7 @@ impl Info {
                 state.items = loaded.items;
                 state.acl = loaded.acl;
                 state.times = loaded.times;
+                state.links = loaded.links;
                 state.apps = loaded.apps;
                 state.fields = loaded.fields;
             }
@@ -251,6 +266,7 @@ impl Info {
             names,
             acl: loaded.acl,
             times: loaded.times,
+            links: loaded.links,
             apps: loaded.apps,
             fields: loaded.fields,
             size: t!("Size: calculating…").into_owned(),
@@ -285,7 +301,7 @@ impl Info {
         let perms = perm_digits(attrs::perm_states(&all));
         window.set_info_view(InfoView {
             title: title(&state.items).into(),
-            general: general_text(&state.items, state.times, &state.size).into(),
+            general: general_text(&state.items, state.times, state.links, &state.size).into(),
             properties: crate::preview::fields::model(crate::preview::fields::rows(&state.fields)),
             perms,
             perms_enabled,
@@ -623,8 +639,8 @@ fn title(items: &[(PathBuf, Entry)]) -> String {
     }
 }
 
-/// The General part: kind, size, where, and one item's dates, a line each.
-fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], size: &str) -> String {
+/// The General part: kind, size, where, one item's dates and a file's other names, a line each.
+fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], links: u64, size: &str) -> String {
     let mut lines = Vec::new();
     match items {
         [(_, entry)] if entry.is_link => lines.push(t!("Kind: Symbolic link").into_owned()),
@@ -651,6 +667,9 @@ fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], size
                 _ => t!("Last opened: {}", date),
             });
         }
+    }
+    if links > 1 {
+        lines.push(t!("Links: {}", links));
     }
     lines.join("\n")
 }
@@ -816,11 +835,16 @@ mod tests {
     fn general_lines_and_titles() {
         let e = |is_dir| Entry { is_dir, ..Entry::default() };
         let one = [(PathBuf::from("/d/rapor.pdf"), e(false))];
-        let text = general_text(&one, [None; 3], "Size: 1 KB in 1 file");
+        let text = general_text(&one, [None; 3], 1, "Size: 1 KB in 1 file");
         assert!(text.starts_with("Kind: "), "{text}");
         assert_eq!(text.lines().skip(1).collect::<Vec<_>>(), ["Size: 1 KB in 1 file", "Where: /d"]);
         let two = [(PathBuf::from("/d/a"), e(false)), (PathBuf::from("/e/b"), e(true))];
-        assert_eq!(general_text(&two, [None; 3], "Size: …"), "Kind: 2 items\nSize: …\nWhere: several folders");
+        assert!(general_text(&one, [None; 3], 3, "Size: …").ends_with(
+            "
+Where: /d
+Links: 3"
+        ));
+        assert_eq!(general_text(&two, [None; 3], 1, "Size: …"), "Kind: 2 items\nSize: …\nWhere: several folders");
         assert_eq!(title(&one), "rapor.pdf Info");
         assert_eq!(title(&two), "2 items");
         assert_eq!(unreadable_note(2), ("2 items could not be read and are not shown".to_owned(), true));

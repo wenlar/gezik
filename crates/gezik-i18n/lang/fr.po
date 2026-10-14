@@ -5561,6 +5561,16 @@ msgstr "Vérification de {}"
 
 #: crates/gezik-ops/src/tasks/link.rs
 #, fuzzy
+msgid "Hard links work only on files"
+msgstr "Les liens physiques ne fonctionnent que sur des fichiers"
+
+#: crates/gezik-ops/src/tasks/link.rs
+#, fuzzy
+msgid "Hard links must stay on the same drive"
+msgstr "Les liens physiques doivent rester sur le même lecteur"
+
+#: crates/gezik-ops/src/tasks/link.rs
+#, fuzzy
 msgid "Creating a link to {}"
 msgstr "Création d'un lien vers {}"
 
@@ -8871,6 +8881,11 @@ msgstr "Nouveau"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
+msgid "Create hard link"
+msgstr "Créer un lien physique"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
 msgid "Shortcut"
 msgstr "Raccourci"
 
@@ -8883,6 +8898,11 @@ msgstr "Jonction"
 #, fuzzy
 msgid "Symbolic link"
 msgstr "Lien symbolique"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Hard link"
+msgstr "Lien physique"
 
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
@@ -10364,6 +10384,11 @@ msgstr "Modification : {}"
 #, fuzzy
 msgid "Last opened: {}"
 msgstr "Dernière ouverture : {}"
+
+#: crates/gezik/src/info.rs
+#, fuzzy
+msgid "Links: {}"
+msgstr "Liens : {}"
 
 #: crates/gezik/src/info.rs
 #, fuzzy

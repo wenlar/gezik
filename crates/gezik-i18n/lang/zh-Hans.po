@@ -5507,6 +5507,16 @@ msgstr "正在验证 {}"
 
 #: crates/gezik-ops/src/tasks/link.rs
 #, fuzzy
+msgid "Hard links work only on files"
+msgstr "硬链接仅适用于文件"
+
+#: crates/gezik-ops/src/tasks/link.rs
+#, fuzzy
+msgid "Hard links must stay on the same drive"
+msgstr "硬链接必须位于同一驱动器"
+
+#: crates/gezik-ops/src/tasks/link.rs
+#, fuzzy
 msgid "Creating a link to {}"
 msgstr "正在创建指向 {} 的链接"
 
@@ -8778,6 +8788,11 @@ msgstr "新建"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
+msgid "Create hard link"
+msgstr "创建硬链接"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
 msgid "Shortcut"
 msgstr "快捷方式"
 
@@ -8790,6 +8805,11 @@ msgstr "联接点"
 #, fuzzy
 msgid "Symbolic link"
 msgstr "符号链接"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Hard link"
+msgstr "硬链接"
 
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
@@ -10250,6 +10270,11 @@ msgstr "修改日期：{}"
 #, fuzzy
 msgid "Last opened: {}"
 msgstr "上次打开：{}"
+
+#: crates/gezik/src/info.rs
+#, fuzzy
+msgid "Links: {}"
+msgstr "链接数：{}"
 
 #: crates/gezik/src/info.rs
 #, fuzzy

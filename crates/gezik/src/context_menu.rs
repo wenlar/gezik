@@ -601,6 +601,8 @@ pub const PASTE_AS_FILE: u32 = 1403;
 pub const LINK_SHORTCUT: u32 = 1404;
 pub const LINK_JUNCTION: u32 = 1405;
 pub const LINK_SYMLINK: u32 = 1406;
+/// 16i: Create link ▸ Hard link (elsewhere "Create hard link").
+pub const LINK_HARDLINK: u32 = 1460;
 pub const TEMPLATE_FIRST: u32 = 1410;
 /// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two; 9a2: Open With ▸ by place, Other…,
 /// Share… 1741, Quick Actions ▸ 1750-1779 by place; 9a3: Get Info 1742, the Info window's Group ▾ 1780-1795.
@@ -1076,8 +1078,9 @@ pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu {
 }
 
 /// Create link ▸ on Windows (Shortcut; Junction for local folders; Symbolic link when it can
-/// be made); elsewhere the one "Create link" (a symbolic link, spec 9.2), after Make Alias on
-/// macOS.
+/// be made; Hard link); elsewhere "Create link" (a symbolic link, spec 9.2) and "Create hard
+/// link", after Make Alias on macOS. A hard link is offered for folders too: the task refuses
+/// them with a reason.
 pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Vec<(u32, String, bool)> {
     if !windows {
         let mut out = Vec::new();
@@ -1085,6 +1088,7 @@ pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Ve
             out.push((MAKE_ALIAS, t!("Make Alias").into_owned(), true));
         }
         out.push((LINK_SYMLINK, t!("Create link").into_owned(), true));
+        out.push((LINK_HARDLINK, t!("Create hard link").into_owned(), true));
         return out;
     }
     let mut out = vec![(LINK_SHORTCUT, t!("Shortcut").into_owned(), true)];
@@ -1094,6 +1098,7 @@ pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Ve
     if symlink {
         out.push((LINK_SYMLINK, t!("Symbolic link").into_owned(), true));
     }
+    out.push((LINK_HARDLINK, t!("Hard link").into_owned(), true));
     out
 }
 
@@ -2862,10 +2867,10 @@ impl Menus {
             }
             (PASTE_AS_FILE, Subject::Background(dir)) => self.ops.paste_as_file(dir),
             (NEW_FOLDER_WITH_SELECTION, Subject::Rows(paths)) => self.ops.new_folder_with(paths),
-            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | MAKE_ALIAS, Subject::Row(path)) => {
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | LINK_HARDLINK | MAKE_ALIAS, Subject::Row(path)) => {
                 self.ops.create_links(vec![path], link_kind(id))
             }
-            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | MAKE_ALIAS, Subject::Rows(paths)) => {
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | LINK_HARDLINK | MAKE_ALIAS, Subject::Rows(paths)) => {
                 self.ops.create_links(paths, link_kind(id))
             }
             (SHOW_PACKAGE, Subject::Row(path)) => crate::panes::active_nav().go(Location::Path(path)),
@@ -3068,6 +3073,7 @@ fn link_kind(id: u32) -> LinkKind {
         LINK_SHORTCUT => LinkKind::Shortcut,
         LINK_JUNCTION => LinkKind::Junction,
         MAKE_ALIAS => LinkKind::Alias,
+        LINK_HARDLINK => LinkKind::Hard,
         _ => LinkKind::Symlink,
     }
 }
@@ -3109,7 +3115,14 @@ fn from_submenu(id: u32) -> bool {
         || (TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8).contains(&id)
         || matches!(
             id,
-            NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
+            NEW_FOLDER
+                | NEW_FILE
+                | NEW_MARKDOWN
+                | OPEN_TEMPLATES
+                | LINK_SHORTCUT
+                | LINK_JUNCTION
+                | LINK_SYMLINK
+                | LINK_HARDLINK
         )
 }
 
@@ -3593,6 +3606,7 @@ mod tests {
             LINK_SHORTCUT,
             LINK_JUNCTION,
             LINK_SYMLINK,
+            LINK_HARDLINK,
             MAKE_ALIAS,
             SHOW_PACKAGE,
             OPEN_WITH_FIRST,
@@ -3903,15 +3917,26 @@ mod tests {
     #[test]
     fn link_items_follow_the_system_and_what_can_be_made() {
         let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
-        assert_eq!(ids(link_items(true, false, true, true)), [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK]);
-        assert_eq!(ids(link_items(true, false, false, false)), [LINK_SHORTCUT]);
-        assert_eq!(link_items(false, false, false, true), [(LINK_SYMLINK, "Create link".to_owned(), true)]);
+        assert_eq!(
+            ids(link_items(true, false, true, true)),
+            [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK, LINK_HARDLINK]
+        );
+        assert_eq!(ids(link_items(true, false, false, false)), [LINK_SHORTCUT, LINK_HARDLINK]);
+        assert_eq!(
+            link_items(false, false, false, true),
+            [(LINK_SYMLINK, "Create link".to_owned(), true), (LINK_HARDLINK, "Create hard link".to_owned(), true)]
+        );
+        assert_eq!(link_kind(LINK_HARDLINK), LinkKind::Hard);
     }
 
     #[test]
     fn macos_rows_offer_aliases_and_package_contents() {
         let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
-        assert_eq!(ids(link_items(false, true, false, true)), [MAKE_ALIAS, LINK_SYMLINK], "macOS: Make Alias first");
+        assert_eq!(
+            ids(link_items(false, true, false, true)),
+            [MAKE_ALIAS, LINK_SYMLINK, LINK_HARDLINK],
+            "macOS: Make Alias first"
+        );
         let app = Path::new("/Applications/Safari.app");
         assert_eq!(package_item(app, true, true), Some((SHOW_PACKAGE, "Show Package Contents".to_owned())));
         assert_eq!(package_item(app, true, false), None, "not off macOS");

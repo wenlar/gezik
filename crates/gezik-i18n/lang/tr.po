@@ -4528,6 +4528,14 @@ msgid "Verifying {}"
 msgstr "Doğrulanıyor: {}"
 
 #: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links work only on files"
+msgstr "Sabit bağlantılar yalnız dosyalarda çalışır"
+
+#: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links must stay on the same drive"
+msgstr "Sabit bağlantılar aynı sürücüde kalmalı"
+
+#: crates/gezik-ops/src/tasks/link.rs
 msgid "Creating a link to {}"
 msgstr "Bağlantı oluşturuluyor: {}"
 
@@ -7180,6 +7188,10 @@ msgid "New"
 msgstr "Yeni"
 
 #: crates/gezik/src/context_menu.rs
+msgid "Create hard link"
+msgstr "Sabit bağlantı oluştur"
+
+#: crates/gezik/src/context_menu.rs
 msgid "Shortcut"
 msgstr "Kısayol"
 
@@ -7190,6 +7202,10 @@ msgstr "Dizin bağlantısı"
 #: crates/gezik/src/context_menu.rs
 msgid "Symbolic link"
 msgstr "Sembolik bağlantı"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hard link"
+msgstr "Sabit bağlantı"
 
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
@@ -8375,6 +8391,10 @@ msgstr "Değiştirme: {}"
 #: crates/gezik/src/info.rs
 msgid "Last opened: {}"
 msgstr "Son açılma: {}"
+
+#: crates/gezik/src/info.rs
+msgid "Links: {}"
+msgstr "Bağlantılar: {}"
 
 #: crates/gezik/src/info.rs
 msgid "Special: {} (not changed here)"
