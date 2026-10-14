@@ -81,6 +81,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::preview::CURRENT.with(|s| s.forget(id)),
     |id| crate::saved_searches::CURRENT.with(|s| s.forget(id)),
     |id| crate::select_tools::CURRENT.with(|s| s.forget(id)),
+    crate::set_dates::forget,
     |id| crate::sidebar::CURRENT.with(|s| s.forget(id)),
     |id| crate::size_map::CURRENT.with(|s| s.forget(id)),
     |id| crate::stack::CURRENT.with(|s| s.forget(id)),

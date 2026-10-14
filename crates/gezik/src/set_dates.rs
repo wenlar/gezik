@@ -28,6 +28,11 @@ thread_local! {
     static OPEN: Slot<Rc<Open>> = const { Slot::new() };
 }
 
+/// Forgets a closed window's dialog.
+pub fn forget(id: crate::windows::WindowId) {
+    OPEN.with(|s| s.forget(id));
+}
+
 /// Opens the dialog for `paths`, its date and time those of the first one's Modified.
 pub fn open(paths: Vec<PathBuf>, then: Option<Then>) {
     let Some(first) = paths.first() else { return };
