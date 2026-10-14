@@ -47,7 +47,7 @@ fn recent_enough(tool: Tool, path: &Path) -> bool {
         // Any ffmpeg does audio and video; what needs a newer one (HEIC) asks for the version.
         // (It keeps its own answers.)
         Tool::Ffmpeg => crate::convert::ffmpeg::is_ffmpeg(path),
-        Tool::Pdfium => true,
+        Tool::Pdfium | Tool::Libmtp => true,
     }
 }
 
@@ -163,6 +163,7 @@ pub(crate) fn folder_name(tool: Tool) -> &'static str {
         Tool::SevenZip => "7zip",
         Tool::Ffmpeg => "ffmpeg",
         Tool::Pdfium => "pdfium",
+        Tool::Libmtp => "libmtp",
     }
 }
 
@@ -172,6 +173,7 @@ pub(crate) fn display_name(tool: Tool) -> &'static str {
         Tool::SevenZip => "7-Zip",
         Tool::Ffmpeg => "ffmpeg",
         Tool::Pdfium => "pdfium",
+        Tool::Libmtp => "libmtp",
     }
 }
 
@@ -201,7 +203,7 @@ fn path_names(tool: Tool) -> &'static [&'static str] {
     match tool {
         Tool::SevenZip => &["7z", "7zz", "7za"],
         Tool::Ffmpeg => &["ffmpeg"],
-        Tool::Pdfium => &[],
+        Tool::Pdfium | Tool::Libmtp => &[],
     }
 }
 
@@ -213,7 +215,7 @@ fn installed_elsewhere(tool: Tool) -> Option<PathBuf> {
             let dir = PathBuf::from(std::env::var_os("ProgramFiles")?);
             Some(dir.join("7-Zip").join("7z.exe")).filter(|p| executable(p))
         }
-        Tool::SevenZip | Tool::Ffmpeg | Tool::Pdfium => None,
+        Tool::SevenZip | Tool::Ffmpeg | Tool::Pdfium | Tool::Libmtp => None,
     }
 }
 

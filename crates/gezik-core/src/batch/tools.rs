@@ -1,5 +1,5 @@
-//! The tools Gezik can download (7-Zip, ffmpeg and pdfium): where each build is, its size and
-//! SHA-256, and which programs (for pdfium, the library) are inside.
+//! The tools Gezik can download (7-Zip, ffmpeg, pdfium and, on macOS, libmtp): where each build
+//! is, its size and SHA-256, and which programs (for pdfium and libmtp, the libraries) are inside.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
@@ -9,6 +9,9 @@ pub enum Tool {
     /// The pdfium library the PDF worker loads (`programs = ["pdfium.dll"]`, `libpdfium.dylib`
     /// on macOS, `libpdfium.so` on Linux).
     Pdfium,
+    /// libmtp with the libusb it uses, for phones on macOS (`programs = ["libmtp.9.dylib",
+    /// "libusb-1.0.0.dylib"]`); Linux uses the system's.
+    Libmtp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,8 +267,12 @@ pub static MANIFEST: &[ToolBuild] = &[
     },
 ];
 
+/// The SHA-256 of a build made but not published yet: `build_for` leaves it out, so Gezik
+/// offers no download of it.
+pub const PENDING: &str = "";
+
 pub fn build_for(tool: Tool, platform: Platform) -> Option<&'static ToolBuild> {
-    MANIFEST.iter().find(|b| b.tool == tool && b.platform == platform)
+    MANIFEST.iter().find(|b| b.tool == tool && b.platform == platform && b.sha256 != PENDING)
 }
 
 #[cfg(test)]
@@ -324,6 +331,31 @@ mod tests {
             };
             assert_eq!(build.programs, [library]);
             assert!(build.version.parse::<u32>().unwrap() >= 7881, "{}", build.version);
+        }
+    }
+
+    /// libmtp only for macOS, one universal file for both; while pending, no download.
+    #[test]
+    fn libmtp_is_offered_only_once_published() {
+        let builds: Vec<&ToolBuild> = MANIFEST.iter().filter(|b| b.tool == Tool::Libmtp).collect();
+        let platforms: Vec<Platform> = builds.iter().map(|b| b.platform).collect();
+        assert_eq!(platforms, [Platform::MacArm64, Platform::MacX64]);
+        for build in builds {
+            let release = format!("https://github.com/wenlar/gezik-tools/releases/download/libmtp-{}-", build.version);
+            assert!(build.url.starts_with(&release) && build.url.ends_with("-macos-universal.tar.xz"), "{}", build.url);
+            assert_eq!((build.kind, build.programs), ("tar.xz", &["libmtp.9.dylib", "libusb-1.0.0.dylib"][..]));
+            if build.sha256 == PENDING {
+                assert_eq!(build.size, 0);
+                assert!(build_for(Tool::Libmtp, build.platform).is_none());
+            } else {
+                assert_eq!(build.sha256.len(), 64);
+                assert!(build.sha256.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+                assert!(build.size > 100_000 && build.size < 4_000_000, "{}", build.size);
+                assert!(build_for(Tool::Libmtp, build.platform).is_some());
+            }
+        }
+        for platform in [Platform::WindowsX64, Platform::LinuxX64, Platform::LinuxArm64] {
+            assert!(build_for(Tool::Libmtp, platform).is_none());
         }
     }
 

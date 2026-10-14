@@ -70,6 +70,8 @@ enum LoadResult {
     SevenZipNeeded(String),
     /// The phone (its name) is not plugged in: This PC instead (spec 16 §4.2).
     NotConnected(String),
+    /// The phone cannot be opened without libmtp (macOS): it is offered.
+    LibmtpNeeded,
 }
 
 /// Lists `location`. Runs on a background thread.
@@ -155,6 +157,13 @@ fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResu
     {
         return LoadResult::NotConnected(name.clone());
     }
+    // Linux: a phone gvfs holds is its folder there (libmtp could not open it).
+    if let VfsRoot::Device { id, .. } = &at.root
+        && let Some(folder) = gezik_platform::mtp::gvfs_mount(id)
+    {
+        let inner = at.inner.split('/').filter(|part| !part.is_empty());
+        return LoadResult::Redirect(Location::Path(inner.fold(folder, |path, part| path.join(part))));
+    }
     if let Some(file) = at.disk()
         && !comes_back(file, ARCHIVE_GAP, &|| gezik_vfs::Cx::stopped(cx))
     {
@@ -172,6 +181,9 @@ fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResu
             let name = at.root.name();
             let ending = Path::new(&name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
             return LoadResult::SevenZipNeeded(ending);
+        }
+        Err(err) if cfg!(target_os = "macos") && gezik_platform::mtp::needs_libmtp(&err) => {
+            return LoadResult::LibmtpNeeded;
         }
         Err(err) => return LoadResult::Failed(err),
     };
@@ -1473,6 +1485,14 @@ impl Navigator {
                     Rc::new(move || _ = crate::panes::with_id(id, |p| p.nav.go(again_at.clone())));
                 crate::archives::with_current(|archives| archives.offer_seven_zip(ending, again));
                 let why = t!("7-Zip needed to open this kind of archive");
+                return self.show_failed(&mode, &location, t!("Cannot open {}: {}", shown, why));
+            }
+            LoadResult::LibmtpNeeded => {
+                let (id, again_at) = (self.id(), location.clone());
+                let again: Rc<dyn Fn()> =
+                    Rc::new(move || _ = crate::panes::with_id(id, |p| p.nav.go(again_at.clone())));
+                crate::archives::with_current(|archives| archives.offer_libmtp(again));
+                let why = gezik_platform::mtp::NoLibmtp.to_string();
                 return self.show_failed(&mode, &location, t!("Cannot open {}: {}", shown, why));
             }
             LoadResult::Trash(loaded) => {

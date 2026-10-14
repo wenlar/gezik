@@ -186,15 +186,18 @@ impl Default for GitSettings {
 }
 
 /// `[devices]` (spec 16 §10): phones plugged in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevicesSettings {
     /// Phones (MTP) show in the sidebar when plugged in.
     pub phones: bool,
+    /// The libmtp to load (`libmtp`, a full path); `None`: Homebrew's or Gezik's download
+    /// (macOS), the system's (Linux).
+    pub libmtp: Option<String>,
 }
 
 impl Default for DevicesSettings {
     fn default() -> Self {
-        DevicesSettings { phones: true }
+        DevicesSettings { phones: true, libmtp: None }
     }
 }
 
@@ -712,6 +715,20 @@ impl Settings {
                             None => warnings.push(Warning::new(
                                 file,
                                 t!("{0}: expected true or false, got {1}", "devices.phones", value),
+                            )),
+                        }
+                    }
+                    if let Some(value) = devices.get("libmtp") {
+                        match value.as_str() {
+                            Some(path) if path.trim().is_empty() => {}
+                            Some(path) if !std::path::Path::new(path).is_absolute() => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: \"{1}\" must be a full path (it is ignored)", "devices.libmtp", path),
+                            )),
+                            Some(path) => settings.devices.libmtp = Some(path.to_owned()),
+                            None => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: expected text, got {1}", "devices.libmtp", value),
                             )),
                         }
                     }
@@ -4346,6 +4363,11 @@ history = [1, \" \", \"dir\"]
         assert!(!settings.devices.phones && warnings.is_empty(), "{warnings:?}");
         let (settings, warnings) = parse("[devices]\nphones = 1\n");
         assert!(settings.devices.phones && warnings.len() == 1);
+        let library = if cfg!(windows) { r"C:\lib\libmtp.dll" } else { "/opt/lib/libmtp.9.dylib" };
+        let (settings, warnings) = parse(&format!("[devices]\nlibmtp = '{library}'\n"));
+        assert_eq!((settings.devices.libmtp.as_deref(), warnings.len()), (Some(library), 0));
+        let (settings, warnings) = parse("[devices]\nlibmtp = \"libmtp.so\"\n");
+        assert!(settings.devices.libmtp.is_none() && warnings.len() == 1);
     }
 
     #[test]

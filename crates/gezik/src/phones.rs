@@ -1,9 +1,12 @@
-//! Phones in the sidebar (spec 16 §10.2, §10.5): found by the system's device event, never by
-//! polling, and read on a worker without loading WPD. A phone unplugged takes its tabs to This
-//! PC. `[devices] phones = false` looks for none.
+//! Phones in the sidebar (spec 16 §10.2–§10.5): found by the system's device event, never by
+//! polling, and read on a worker without loading WPD or libmtp. A phone unplugged takes its tabs
+//! to This PC. `[devices] phones = false` looks for none.
 
 use std::cell::{Cell, RefCell};
+use std::path::PathBuf;
 
+use gezik_config::settings::DevicesSettings;
+use gezik_core::batch::tools::{Platform, Tool, build_for};
 use gezik_core::nav::Location;
 use gezik_core::vfs::{VfsPath, VfsRoot};
 use gezik_platform::mtp::Device;
@@ -15,6 +18,7 @@ thread_local! {
     static LIST: RefCell<Vec<Device>> = const { RefCell::new(Vec::new()) };
     static ON: Cell<bool> = const { Cell::new(true) };
     static WATCHING: Cell<bool> = const { Cell::new(false) };
+    static LIBMTP: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// The phones plugged in, as last read.
@@ -35,10 +39,24 @@ pub fn place_of(name: &str, inner: String) -> Option<Location> {
 }
 
 /// `[devices] phones`: turned on, they are looked for (once watching started); off, none show.
-pub fn set_settings(on: bool) {
+/// `[devices] libmtp` and Gezik's download (macOS) are where libmtp is looked for.
+pub fn set_settings(devices: &DevicesSettings) {
+    LIBMTP.with(|l| l.replace(devices.libmtp.clone()));
+    tell_library();
+    let on = devices.phones;
     if ON.replace(on) != on && WATCHING.get() {
         read();
     }
+}
+
+/// Tells the platform where libmtp may be: the path in settings, Gezik's download.
+fn tell_library() {
+    let tools = crate::windows::config().map(|store| store.tools_dir());
+    let downloaded = Platform::current()
+        .and_then(|platform| build_for(Tool::Libmtp, platform))
+        .zip(tools)
+        .map(|(build, tools)| gezik_batch::tools::install_dir(build, &tools).join(build.programs[0]));
+    gezik_platform::mtp::set_library(LIBMTP.with(|l| l.borrow().clone()).map(PathBuf::from), downloaded);
 }
 
 /// After the first frame: the device event on `window` (the system tells it when a portable
@@ -48,8 +66,11 @@ pub fn start(window: &AppWindow) {
     if WATCHING.get() || !ON.get() {
         return;
     }
+    // The config folder is known by now (its tools folder holds the download).
+    tell_library();
     let handle = window.window().window_handle();
-    if gezik_platform::watch_phones(&handle, read) {
+    // Linux hears it on a thread of its own: the list is read from the UI thread either way.
+    if gezik_platform::watch_phones(&handle, || _ = slint::invoke_from_event_loop(read)) {
         WATCHING.set(true);
         read();
     }
