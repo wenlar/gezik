@@ -3,7 +3,7 @@
 
 mod columns;
 mod folder_fields;
-mod folder_git;
+pub mod folder_git;
 mod folder_tags;
 mod listing;
 mod model;

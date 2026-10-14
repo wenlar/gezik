@@ -373,9 +373,17 @@ fn run(
     deadline: Instant,
     stop: &AtomicBool,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, String), Outcome> {
+    run_command(command(program, args, dir, config), deadline, stop)
+}
+
+/// `run` with the command made.
+fn run_command(
+    command: std::process::Command,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<(std::process::ExitStatus, Vec<u8>, String), Outcome> {
     let (mut child, mut stdout, mut stderr) =
-        gezik_platform::ChildProcess::spawn_piped(command(program, args, dir, config))
-            .map_err(|e| Outcome::Failed(e.to_string()))?;
+        gezik_platform::ChildProcess::spawn_piped(command).map_err(|e| Outcome::Failed(e.to_string()))?;
     let out = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stdout.read_to_end(&mut bytes);
@@ -433,6 +441,76 @@ fn concerns(event: &Event, roots: &[PathBuf]) -> bool {
 pub fn prefix(root: &Path, dir: &Path) -> String {
     let rest = dir.strip_prefix(root).unwrap_or(Path::new(""));
     rest.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+}
+
+/// What a git call lets the repository's own config do (spec 16 §9.4). Every call keeps the
+/// ground above: no prompt, git by its full path (2.31 or newer), the environment's repository
+/// redirections removed, fsmonitor off, settings passed in the environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trust {
+    /// Gezik's own reads and the local commands (stage, unstage, switch, restore): as a status,
+    /// the repository's own filter drivers emptied and no transport.
+    Local,
+    /// fetch, pull: as `Local`, with transport by [`PROTOCOLS`] only.
+    Network,
+    /// commit: its hooks and filters run as git runs them (spec 16 §9.2); no transport.
+    Hooks,
+    /// push: its hooks run, transport by [`PROTOCOLS`] only.
+    HooksNetwork,
+}
+
+/// The protocols push, pull and fetch may use: never `ext::` (a command line) or another one.
+pub const PROTOCOLS: &str = "http:https:ssh:git:file";
+
+/// The git command `args` in `dir` as `trust` allows. For `Local` and `Network` the repository's
+/// own filter drivers are looked up first (a `git config` run, ended by `stop`); a config that
+/// cannot be read refuses the command. Blocking.
+pub fn prepared(
+    args: &[OsString],
+    dir: &Path,
+    trust: Trust,
+    stop: &AtomicBool,
+) -> Result<std::process::Command, Outcome> {
+    let program = program()?;
+    let network = matches!(trust, Trust::Network | Trust::HooksNetwork);
+    let mut config = safe_config();
+    if network {
+        config.retain(|(key, _)| key != "protocol.allow");
+    }
+    if matches!(trust, Trust::Local | Trust::Network) {
+        let deadline = Instant::now() + Duration::from_secs(settings().timeout.into());
+        let listing = ["config", "-z", "--show-scope", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$"]
+            .map(OsString::from);
+        let (code, out, errors) = run(&program, &listing, dir, &config, deadline, stop)?;
+        for driver in drivers_from(code.code(), &out, &errors).map_err(Outcome::Failed)? {
+            for key in ["clean", "process"] {
+                config.push((format!("filter.{driver}.{key}"), String::new()));
+            }
+        }
+    }
+    let mut command = command(&program, args, dir, &config);
+    command.env("GIT_LITERAL_PATHSPECS", "1");
+    if network {
+        command.env_remove("GIT_NO_LAZY_FETCH").env("GIT_ALLOW_PROTOCOL", PROTOCOLS);
+    }
+    Ok(command)
+}
+
+/// Runs `args` in `dir` as `trust` allows and gives its output, or git's first error line
+/// (Gezik's own reads: the branches, the staged files, a file at HEAD; a discard's restore).
+/// Blocking.
+pub fn read(args: &[&str], dir: &Path, trust: Trust) -> Result<Vec<u8>, String> {
+    let stop = AtomicBool::new(false);
+    let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+    let failed = |outcome: Outcome| match outcome {
+        Outcome::Failed(why) => why,
+        Outcome::Missing => gezik_core::git::missing_text(),
+        _ => gezik_i18n::t!("Git took too long ([git] timeout)").into_owned(),
+    };
+    let command = prepared(&args, dir, trust, &stop).map_err(failed)?;
+    let deadline = Instant::now() + Duration::from_secs(settings().timeout.into());
+    let (code, out, errors) = run_command(command, deadline, &stop).map_err(failed)?;
+    if code.success() { Ok(out) } else { Err(first_line(&errors)) }
 }
 
 #[cfg(test)]

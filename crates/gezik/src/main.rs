@@ -30,6 +30,7 @@ mod folder_sizes;
 mod folder_watch;
 mod frame_limit;
 mod git;
+mod git_commands;
 mod info;
 mod integration;
 mod keys;
@@ -384,6 +385,15 @@ fn perform(
         | Action::BrowseArchive
         | Action::RunCommand
         | Action::ToggleCommandOutput
+        | Action::GitStage
+        | Action::GitUnstage
+        | Action::GitCommit
+        | Action::GitPush
+        | Action::GitPull
+        | Action::GitFetch
+        | Action::GitSwitchBranch
+        | Action::GitDiscard
+        | Action::GitCompareHead
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow

@@ -1,0 +1,153 @@
+import { Theme } from "../theme.slint";
+import { DisablableButton } from "disablable-button.slint";
+import { TextButton } from "text-button.slint";
+import { Check } from "check.slint";
+
+// The commit dialog (spec 16 §9.2, git_commands.rs): the message (several lines; a line marks
+// the 72nd column), the staged files (read only), "Stage all changes first" (git commit -a),
+// Commit and Cancel. Commit is off with an empty message, or with nothing staged unless the
+// box is checked. Ctrl+Enter (⌘↩) commits, Esc cancels.
+export component GitCommit inherits Rectangle {
+    in property <string> title;
+    in property <[string]> files;
+    in-out property <string> message;
+    in-out property <bool> all;
+    in property <string> mono-font;
+    // true: Commit, false: Cancel.
+    callback chosen(bool);
+
+    // Git itself refuses a message of spaces only (its output says so).
+    property <bool> can-commit: root.message != "" && (root.files.length > 0 || root.all);
+
+    background: Theme.overlay;
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.chosen(false);
+                return accept;
+            }
+            if event.text == Key.Return && (event.modifiers.control || event.modifiers.meta) {
+                if root.can-commit { root.chosen(true); }
+                return accept;
+            }
+            return reject;
+        }
+        Rectangle {
+            width: min(560px, root.width - 40px);
+            height: content.preferred-height;
+            x: (root.width - self.width) / 2;
+            y: max(20px, (root.height - self.height) / 3);
+            background: Theme.surface-raised;
+            border-radius: Theme.radius * 1.5;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: groupbox;
+            accessible-label: root.title;
+
+            content := VerticalLayout {
+                padding: Theme.spacing * 3;
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: root.title;
+                    font-weight: 600;
+                    overflow: elide;
+                    color: Theme.foreground;
+                }
+                Rectangle {
+                    height: 140px;
+                    border-radius: Theme.radius;
+                    border-width: input.has-focus ? Theme.focus-width : 1px;
+                    border-color: input.has-focus ? Theme.focus-ring : Theme.border;
+                    background: Theme.input-background;
+                    clip: true;
+                    // Ten characters' width, for the line at the 72nd column.
+                    probe := Text {
+                        visible: false;
+                        text: "0000000000";
+                        font-family: root.mono-font;
+                    }
+                    Rectangle {
+                        x: Theme.spacing + 2px + probe.preferred-width / 10 * 72 + view.content-x;
+                        width: 1px;
+                        background: Theme.warning;
+                        opacity: 0.5;
+                    }
+                    view := Flickable {
+                        x: Theme.spacing + 2px;
+                        y: 4px;
+                        width: parent.width - 2 * (Theme.spacing + 2px);
+                        height: parent.height - 8px;
+                        content-width: max(self.width, input.preferred-width + 4px);
+                        content-height: max(self.height, input.preferred-height);
+                        input := TextInput {
+                            width: parent.content-width;
+                            height: parent.content-height;
+                            single-line: false;
+                            wrap: no-wrap;
+                            font-family: root.mono-font;
+                            text <=> root.message;
+                            color: Theme.foreground;
+                            selection-background-color: Theme.selection;
+                            selection-foreground-color: Theme.selection-foreground;
+                            accessible-label: @tr("Commit message");
+                            init => { self.focus(); }
+                            // The cursor stays in sight (as the std TextEdit does).
+                            cursor-position-changed(at) => {
+                                if at.y + view.content-y < 0px {
+                                    view.content-y = -at.y;
+                                } else if at.y + view.content-y > view.height - 20px {
+                                    view.content-y = min(0px, view.height - 20px - at.y);
+                                }
+                                if at.x + view.content-x < 0px {
+                                    view.content-x = -at.x;
+                                } else if at.x + view.content-x > view.width - 4px {
+                                    view.content-x = min(0px, view.width - 4px - at.x);
+                                }
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: root.files.length == 0 ? @tr("Nothing is staged.") : @tr("Staged:");
+                    color: Theme.foreground-muted;
+                    font-size: Theme.font-size-small;
+                }
+                if root.files.length > 0: Flickable {
+                    height: min(120px, root.files.length * (Theme.font-size + 6px));
+                    content-height: root.files.length * (Theme.font-size + 6px);
+                    VerticalLayout {
+                        for file in root.files: Text {
+                            height: Theme.font-size + 6px;
+                            text: file;
+                            overflow: elide;
+                            color: Theme.foreground;
+                            accessible-role: text;
+                        }
+                    }
+                }
+                Check {
+                    text: @tr("Stage all changes first");
+                    checked: root.all;
+                    toggled => { root.all = !root.all; }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: Theme.spacing;
+                    DisablableButton {
+                        text: @tr("Commit");
+                        primary: true;
+                        enabled: root.can-commit;
+                        clicked => { root.chosen(true); }
+                    }
+                    TextButton {
+                        text: @tr("Cancel");
+                        clicked => { root.chosen(false); }
+                    }
+                }
+            }
+        }
+    }
+}

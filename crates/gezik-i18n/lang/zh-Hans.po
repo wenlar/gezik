@@ -339,6 +339,7 @@ msgstr "更改"
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/filter.rs
 #: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/operations.rs
@@ -354,6 +355,7 @@ msgstr "更改"
 #: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
@@ -2834,6 +2836,69 @@ msgid "Command Output"
 msgstr "命令输出"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Stage"
+msgstr "暂存"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Unstage"
+msgstr "取消暂存"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Commit…"
+msgstr "提交…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Push"
+msgstr "推送"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Pull"
+msgstr "拉取"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Fetch"
+msgstr "获取"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Switch Branch…"
+msgstr "切换分支…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Discard Changes…"
+msgstr "放弃更改…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Compare with HEAD"
+msgstr "与 HEAD 比较"
+
+#: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
 msgid "{0}: unknown action"
 msgstr "{0}：未知操作"
@@ -4141,7 +4206,9 @@ msgid_plural "{n} changed"
 msgstr[0] "{n} 项更改"
 
 #. the status bar in a Git repository: files deleted under the folder shown.
+#. a heading in the status bar's Git menu over the deleted files' names
 #: crates/gezik-core/src/git.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "{n} deleted"
 msgid_plural "{n} deleted"
@@ -4208,6 +4275,8 @@ msgstr "评分"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Git"
@@ -7306,11 +7375,13 @@ msgid "Run Command"
 msgstr "运行命令"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "A command is still running. Stop it?"
 msgstr "仍有命令在运行。要停止它吗？"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "Stop and Run"
 msgstr "停止并运行"
@@ -7340,6 +7411,12 @@ msgstr "无法启动 {0}：{1}"
 #, fuzzy
 msgid "Did not start"
 msgstr "未启动"
+
+#. {} is a command put on the clipboard ("git push")
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Copied: {}"
+msgstr "已复制：{}"
 
 #: crates/gezik/src/command_line.rs
 #, fuzzy
@@ -9723,6 +9800,95 @@ msgstr "无法共享：{}"
 msgid "Folder sizes are worked out in folders"
 msgstr "文件夹大小仅在文件夹中计算"
 
+#: crates/gezik/src/git.rs
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git took too long ([git] timeout)"
+msgstr "Git 耗时过长（[git] timeout）"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "and {n} more"
+msgid_plural "and {n} more"
+msgstr[0] "还有 {n} 项"
+
+#. {} is git's own message (not translated).
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git: {}"
+msgstr "Git：{}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Not in a Git repository"
+msgstr "不在 Git 仓库中"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select files first"
+msgstr "请先选择文件"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No branches yet"
+msgstr "还没有分支"
+
+#. the commit dialog's title; {} is the repository's folder name
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Commit to {}"
+msgstr "提交到 {}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git status is not known yet"
+msgstr "Git 状态尚未知"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No changes to discard (staged changes stay: unstage them first)"
+msgstr "没有可放弃的更改（已暂存的更改保留：请先取消暂存）"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file? It goes to the trash first, so you can undo."
+msgid_plural "Discard changes to {n} files? They go to the trash first, so you can undo."
+msgstr[0] "放弃 {n} 个文件的更改？文件会先移到回收站，因此可以撤销。"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file"
+msgid_plural "Discard changes to {n} files"
+msgstr[0] "放弃 {n} 个文件的更改"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "This drive has no trash: changes are not discarded (they could not be undone)"
+msgstr "此驱动器没有回收站：未放弃更改（无法撤销）"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard Changes"
+msgstr "放弃更改"
+
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Discard"
+msgstr "丢弃"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discarding changes to {n} file"
+msgid_plural "Discarding changes to {n} files"
+msgstr[0] "正在放弃 {n} 个文件的更改"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select one file to compare with HEAD"
+msgstr "请选择一个文件与 HEAD 比较"
+
 #: crates/gezik/src/info.rs
 #, fuzzy
 msgid "Cannot show Properties: {}"
@@ -10675,7 +10841,7 @@ msgstr "已翻译 {}%"
 #, fuzzy
 msgid "{0} (+{n} more)"
 msgid_plural "{0} (+{n} more)"
-msgstr[0] "{0}（另有 {n} 条）"
+msgstr[0] "{0}（另有 {n} 项）"
 
 #: crates/gezik/src/main.rs
 #, fuzzy
@@ -13734,11 +13900,6 @@ msgstr "{0} 已更改，但未更新到 {1}"
 
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
-msgid "Discard"
-msgstr "丢弃"
-
-#: crates/gezik/src/vfs_mounts.rs
-#, fuzzy
 msgid "Keep a Copy in Downloads"
 msgstr "在“下载”中保留副本"
 
@@ -13767,12 +13928,6 @@ msgstr "无法读取属性（没有读取线程）"
 #, fuzzy
 msgid "Reading properties… {} of {}"
 msgstr "正在读取属性… {}/{}"
-
-#. {} is git's own message (not translated).
-#: crates/gezik/src/view/folder_git.rs
-#, fuzzy
-msgid "Git: {}"
-msgstr "Git：{}"
 
 #: crates/gezik/src/view/folder_git.rs
 #, fuzzy
@@ -13960,6 +14115,11 @@ msgstr "{}，标签 {}"
 #, fuzzy
 msgid "Stop"
 msgstr "停止"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Open in Terminal"
+msgstr "在终端中打开"
 
 #: crates/gezik/ui/widgets/command-output.slint
 #, fuzzy
@@ -14448,6 +14608,31 @@ msgstr "更多"
 #, fuzzy
 msgid "Saved filters"
 msgstr "已保存的筛选器"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit message"
+msgstr "提交信息"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Nothing is staged."
+msgstr "没有已暂存的内容。"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Staged:"
+msgstr "已暂存："
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Stage all changes first"
+msgstr "先暂存所有更改"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit"
+msgstr "提交"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy
@@ -15738,6 +15923,13 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "命令"
 
+#~ #, fuzzy
+#~ msgid "{0} (+{n} more)"
+#~ msgid_plural "{0} (+{n} more)"
+#~ msgstr[0] "{0}（另有 {n} 条）"
+#~ #, fuzzy
+#~ msgid "cannot watch the config folder for changes: {}"
+#~ msgstr "无法监视配置文件夹的更改：{}"
 #~ #, fuzzy
 #~ msgctxt "setting:view.sort"
 #~ msgid "name | modified | created | type | size | tags | rating"

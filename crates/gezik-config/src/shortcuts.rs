@@ -542,6 +542,21 @@ actions! {
     RunCommand,
     /// Shows or hides the active pane's command output panel (spec 16 §7.3; no key).
     ToggleCommandOutput,
+    /// Git commands in the repository shown (spec 16 §9.1; no keys): `git add` the selection,
+    GitStage,
+    /// `git restore --staged` the selection,
+    GitUnstage,
+    /// the commit dialog,
+    GitCommit,
+    GitPush,
+    GitPull,
+    GitFetch,
+    /// the local branches to switch to,
+    GitSwitchBranch,
+    /// the selection's changes to the trash, then as the index has them,
+    GitDiscard,
+    /// the selected file beside its HEAD version.
+    GitCompareHead,
 }
 
 impl Action {
@@ -682,6 +697,15 @@ impl Action {
             Action::BrowseArchive => "browse-archive",
             Action::RunCommand => "run-command",
             Action::ToggleCommandOutput => "toggle-command-output",
+            Action::GitStage => "git-stage",
+            Action::GitUnstage => "git-unstage",
+            Action::GitCommit => "git-commit",
+            Action::GitPush => "git-push",
+            Action::GitPull => "git-pull",
+            Action::GitFetch => "git-fetch",
+            Action::GitSwitchBranch => "git-switch-branch",
+            Action::GitDiscard => "git-discard",
+            Action::GitCompareHead => "git-compare-head",
         }
     }
 
@@ -835,6 +859,15 @@ impl Action {
             Action::BrowseArchive => tx!("Open as Folder"),
             Action::RunCommand => tx!("Run Command…"),
             Action::ToggleCommandOutput => tx!("Command Output"),
+            Action::GitStage => tx!("Stage"),
+            Action::GitUnstage => tx!("Unstage"),
+            Action::GitCommit => tx!("Commit…"),
+            Action::GitPush => tx!("Push"),
+            Action::GitPull => tx!("Pull"),
+            Action::GitFetch => tx!("Fetch"),
+            Action::GitSwitchBranch => tx!("Switch Branch…"),
+            Action::GitDiscard => tx!("Discard Changes…"),
+            Action::GitCompareHead => tx!("Compare with HEAD"),
         }
     }
 
@@ -2400,7 +2433,11 @@ copy-path = \"ctrl+k\"
         assert_eq!(Action::from_name("browse-archive"), Some(Action::BrowseArchive));
         assert_eq!(Action::from_name("run-command"), Some(Action::RunCommand));
         assert_eq!(Action::from_name("toggle-command-output"), Some(Action::ToggleCommandOutput));
-        assert_eq!(Action::ALL.len(), 135);
+        for name in ["git-stage", "git-commit", "git-switch-branch", "git-discard", "git-compare-head"] {
+            let action = Action::from_name(name).unwrap();
+            assert!(action.default_texts(Platform::Other).is_empty() && action.default_texts(Platform::Mac).is_empty());
+        }
+        assert_eq!(Action::ALL.len(), 144);
     }
 
     #[test]

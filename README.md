@@ -42,7 +42,7 @@ Windows · macOS · Linux
 
 **Tags.** Color tags, star ratings and comments kept in the files (Finder and Dolphin read them), tag dots and columns, `tag:`/`rating:` filters and search, a TAGS sidebar section, and highlight rules that color rows. → [Tags](docs/features.md#tags)
 
-**Git.** In a repository, rows show their Git mark (modified, staged, untracked, conflict; ignored ones faint) and folders the most important one inside, with a Git column to sort and group by, `git:` filter words and the branch with ahead/behind in the status bar. The system's git runs only while a repository folder is shown, and a repository's own settings never run a program. → [Git](docs/features.md#git)
+**Git.** In a repository, rows show their Git mark (modified, staged, untracked, conflict; ignored ones faint) and folders the most important one inside, with a Git column to sort and group by, `git:` filter words and the branch with ahead/behind in the status bar. Stage, unstage, commit, push, pull, fetch, switch branch, discard changes (to the trash first, one undo) and compare with HEAD from the row's menu or the status bar, with git's output in the command panel. The system's git runs only while a repository folder is shown or when you choose a command, and a repository's own settings never run a program unless git itself would (a commit's hooks). → [Git](docs/features.md#git)
 
 **Languages.** English and Turkish, plus machine-translated German, Spanish, French and Simplified Chinese; Gezik follows the system's language unless you pick one. A new language is a plain `.po` file in the settings folder. → [Translating](docs/translating.md)
 

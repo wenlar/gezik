@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use gezik_core::Entry;
-use gezik_core::git::{FolderMarks, GitMark};
+use gezik_core::git::{FolderMarks, GitMark, GitStatus};
 use gezik_core::git_filter::GitTerm;
 use gezik_core::group::GroupBy;
 use gezik_core::sort::SortKey;
@@ -29,6 +29,8 @@ pub struct FolderGit {
     pub marks: FolderMarks,
     /// The status bar's Git part (`⎇ main ↑2 · 5 changed`).
     pub text: String,
+    /// What the run said (the folder's entries, paths from the root): the commands' (16e).
+    pub status: GitStatus,
 }
 
 /// When to run: an event starts the 300 ms wait unless one waits or a run goes on (then one
@@ -167,6 +169,20 @@ impl View {
         }
     }
 
+    /// The repository the folder shown is in.
+    pub fn git_repo(&self) -> Option<Repo> {
+        self.0.git.borrow().at.as_ref().map(|(_, repo)| repo.clone())
+    }
+
+    /// The last status of the folder shown, if it is the one listed.
+    pub fn git_shown(&self) -> Option<Rc<FolderGit>> {
+        let data = self.0.data.borrow();
+        match (&data.listing, &data.folder_git) {
+            (Listing::Files(dir, _), Some(g)) if g.dir == *dir => Some(g.clone()),
+            _ => None,
+        }
+    }
+
     /// Whether a repository folder shows with its marks to come (its Git column, its groups):
     /// not when git is missing or refused.
     pub fn in_repo(&self) -> bool {
@@ -194,6 +210,11 @@ impl View {
         let (repo, id, cancel, watch) = {
             let mut git = self.0.git.borrow_mut();
             let Some((_, repo)) = git.at.clone() else { return };
+            // A git command runs in it: the status waits, and comes once it ends (spec 16 §9.4).
+            if crate::git_commands::busy(&repo.root) {
+                git.pacer.waiting = false;
+                return;
+            }
             if !git.pacer.start() {
                 return;
             }
@@ -252,7 +273,7 @@ impl View {
             Outcome::Done(status) => {
                 let marks = gezik_core::git::folder_marks(&status, &crate::git::prefix(&root, &real));
                 let text = gezik_core::git::status_text(&status, &marks);
-                self.0.data.borrow_mut().folder_git = Some(Rc::new(FolderGit { dir, marks, text }));
+                self.0.data.borrow_mut().folder_git = Some(Rc::new(FolderGit { dir, marks, text, status }));
                 None
             }
             Outcome::Missing => Some(gezik_core::git::missing_text()),

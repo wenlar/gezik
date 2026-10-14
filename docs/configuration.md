@@ -60,7 +60,8 @@ The top of `settings.toml` holds:
   Homebrew's; git 2.31 or newer), `ignored` (default
   `true`: ignored files are marked and drawn faint), `network` (default `false`: repositories
   on network drives are not looked for) and `timeout` (seconds a status may take, 1-600,
-  default 10).
+  default 10; also the longest Gezik waits for git to read a branch list or a file at
+  HEAD for the Git commands).
 - `[devices]` — `phones` (default `true`): Android phones and other portable devices (MTP)
   show in the sidebar when plugged in (Windows; see [Phones](features.md#phones)); `false` and
   Gezik does not look for them.
