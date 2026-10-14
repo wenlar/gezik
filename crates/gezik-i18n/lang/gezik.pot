@@ -4578,6 +4578,14 @@ msgid "Verifying {}"
 msgstr ""
 
 #: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links work only on files"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links must stay on the same drive"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/link.rs
 msgid "Creating a link to {}"
 msgstr ""
 
@@ -7266,6 +7274,10 @@ msgid "New"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+msgid "Create hard link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 msgid "Shortcut"
 msgstr ""
 
@@ -7275,6 +7287,10 @@ msgstr ""
 
 #: crates/gezik/src/context_menu.rs
 msgid "Symbolic link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hard link"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
@@ -8477,6 +8493,10 @@ msgstr ""
 
 #: crates/gezik/src/info.rs
 msgid "Last opened: {}"
+msgstr ""
+
+#: crates/gezik/src/info.rs
+msgid "Links: {}"
 msgstr ""
 
 #: crates/gezik/src/info.rs

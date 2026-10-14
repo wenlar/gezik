@@ -43,7 +43,9 @@ Gezik copies, moves and deletes with its own engine on every OS:
   also offers a text file, a Markdown file and everything in your `templates/` folder.
   **New folder with selection** (Ctrl+Alt+N, ⌃⌘N on macOS) moves the selected items into a
   new folder.
-- **Create link**: a shortcut, junction or symbolic link on Windows, a symbolic link elsewhere.
+- **Create link**: a shortcut, junction or symbolic link on Windows, a symbolic link elsewhere;
+  a hard link to files on the same drive everywhere (no administrator needed). The Info
+  window on macOS and Linux shows **Links: N** for a file with more than one name.
 - **Copy To… / Move To…** (palette, row menu; F5/F6 with two panes ask the same): type the
   target folder, end it with a name mask to rename (`D:\Yedek\*.bak`, `*_old.*`), and with
   **Filter…** take only some files: `*.jpg *.png | thumbs\ *.tmp` (after `|`: left out; a

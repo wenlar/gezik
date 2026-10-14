@@ -1,5 +1,5 @@
 //! Making links (spec 9.2): Windows shortcuts (`.lnk`, as Explorer makes them), junctions and
-//! symbolic links; symbolic links elsewhere.
+//! symbolic links; symbolic links elsewhere; hard links everywhere.
 
 use std::io;
 use std::path::Path;
@@ -48,6 +48,7 @@ pub fn create(kind: LinkKind, target: &Path, at: &Path, target_is_dir: bool) -> 
         LinkKind::Shortcut => imp::shortcut(&target, at),
         LinkKind::Junction => imp::junction(&target, at),
         LinkKind::Alias => crate::finder::make_alias(&target, at),
+        LinkKind::Hard => std::fs::hard_link(&target, at),
     }
 }
 
