@@ -176,6 +176,13 @@ unsafe extern "C" fn changed(refcon: *mut c_void, iterator: IoObject) {
 /// IOKit tells the main run loop of each USB interface matched or gone; `on_change` is called
 /// there. Registered once, for Gezik's life.
 pub(super) fn watch(on_change: impl Fn() + Send + 'static) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    // Registered once for the process, even if a later call comes or a step below fails (a
+    // half-made registration stays as it is rather than being made twice).
+    static REGISTERED: AtomicBool = AtomicBool::new(false);
+    if REGISTERED.swap(true, Ordering::SeqCst) {
+        return false;
+    }
     let on_change: Box<dyn Fn() + Send> = Box::new(on_change);
     // SAFETY: the port and its source live for the process; each matching dictionary is
     // consumed by its call; the callback's data is leaked so it outlives every call.
@@ -186,15 +193,18 @@ pub(super) fn watch(on_change: impl Fn() + Send + 'static) -> bool {
         }
         CFRunLoopAddSource(CFRunLoopGetMain(), IONotificationPortGetRunLoopSource(port), kCFRunLoopCommonModes);
         let refcon = Box::into_raw(Box::new(on_change)).cast::<c_void>();
+        let mut armed = 0;
         for kind in [c"IOServiceFirstMatch", c"IOServiceTerminate"] {
             let mut iterator = 0;
             let matching = IOServiceMatching(c"IOUSBHostInterface".as_ptr());
-            if IOServiceAddMatchingNotification(port, kind.as_ptr(), matching, changed, refcon, &mut iterator) != 0 {
-                return false;
+            if IOServiceAddMatchingNotification(port, kind.as_ptr(), matching, changed, refcon, &mut iterator) == 0 {
+                // What is there already: not a change, but the iterator must be emptied to arm it.
+                drain(iterator);
+                armed += 1;
             }
-            // What is there already: not a change, but the iterator must be emptied to arm it.
-            drain(iterator);
         }
+        // One of the two still tells of phones coming (or going); the callback's data stays
+        // with whichever is armed.
+        armed > 0
     }
-    true
 }

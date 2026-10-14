@@ -5285,6 +5285,10 @@ msgid "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)"
 msgstr ""
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "{0} could not be loaded: {1}"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
 msgid "No permission to open the phone (libmtp's udev rules)"
 msgstr ""
 
@@ -5301,9 +5305,17 @@ msgid "The file ended early"
 msgstr ""
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "a partial file {} may remain on the phone"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
 #: crates/gezik-platform/src/mtp/windows.rs
 #: crates/gezik/src/operations.rs
 msgid "A storage of the phone cannot be deleted"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The copy stopped on an internal error"
 msgstr ""
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
@@ -5312,6 +5324,10 @@ msgstr ""
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
 msgid "Only {0} of {1} bytes arrived"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The phone did not say what it made of {}"
 msgstr ""
 
 #: crates/gezik-platform/src/mtp/mod.rs

@@ -57,6 +57,13 @@ In Terminal the same is `xattr -dr com.apple.quarantine /Applications/Gezik.app`
 Run Gezik from Applications, not from the dmg or Downloads: macOS runs a quarantined app from a
 random read-only copy (App Translocation), where portable mode can't work.
 
+**When macOS signing comes** (Developer ID, hardened runtime, notarization): Gezik loads
+libraries it did not ship with at run time: Homebrew's or the downloaded ad hoc signed libmtp
+for phones, and the downloaded pdfium in the PDF worker. The hardened runtime's library
+validation refuses those (`dlopen` fails with "code signature … not valid for use in process").
+The signed app then needs the `com.apple.security.cs.disable-library-validation` entitlement,
+or every such library re-signed with Gezik's team identity (impossible for Homebrew's).
+
 **Linux.** No warning: `tar xzf gezik-<v>-linux-x64.tar.gz && ./gezik-<v>-linux-x64/gezik`.
 
 ## Checking a download

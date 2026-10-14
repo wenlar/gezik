@@ -7,12 +7,13 @@ use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
-/// A phone in `/sys`: its id ([`super::usb_id`]), name and serial number.
+/// A phone in `/sys`: its id ([`super::usb_id`]), name and udev's `ID_SERIAL` for it (what gvfs
+/// names its mount by).
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Found {
     pub id: String,
     pub name: String,
-    pub serial: String,
+    pub udev_serial: String,
 }
 
 /// The phones under `sys` (`/sys`): USB devices with an MTP interface, by id.
@@ -48,17 +49,22 @@ fn found_in(names: Vec<String>, read: impl Fn(&str, &str) -> Option<String>) -> 
         if found.iter().any(|f| f.id == id) {
             continue;
         }
-        let name = read(device, "product").or_else(|| read(device, "manufacturer")).unwrap_or_default();
-        found.push(Found { id, name, serial: read(device, "serial").unwrap_or_default() });
+        let (manufacturer, product) = (read(device, "manufacturer"), read(device, "product"));
+        let name = product.clone().or_else(|| manufacturer.clone()).unwrap_or_default();
+        // udev's usb_id: the strings, else the numbers.
+        let vendor_text = manufacturer.or_else(|| read(device, "idVendor")).unwrap_or_default();
+        let model = product.or_else(|| read(device, "idProduct")).unwrap_or_default();
+        let udev_serial = id_serial(&vendor_text, &model, &read(device, "serial").unwrap_or_default());
+        found.push(Found { id, name, udev_serial });
     }
     // The folder's order is the kernel's: sorted, the same phone keeps its number in `named`.
     found.sort_by(|a, b| a.id.cmp(&b.id));
     found
 }
 
-/// Whether a kernel uevent (`add@/devices/…` then `KEY=value`, NUL-separated) may change the
+/// What a kernel uevent (`add@/devices/…` then `KEY=value`, NUL-separated) means for the
 /// phones: an interface of class 6 or 255 added, or a USB device removed.
-pub(super) fn is_phone_change(message: &[u8]) -> bool {
+pub(super) fn is_phone_change(message: &[u8]) -> Change {
     let (mut action, mut subsystem, mut devtype, mut interface) = (None, None, None, None);
     for field in message.split(|b| *b == 0) {
         let Some((key, value)) = std::str::from_utf8(field).ok().and_then(|f| f.split_once('=')) else { continue };
@@ -71,26 +77,38 @@ pub(super) fn is_phone_change(message: &[u8]) -> bool {
         }
     }
     match (action, subsystem, devtype) {
-        (Some("add"), Some("usb"), Some("usb_interface")) => {
-            interface.is_some_and(|i| i.starts_with("6/") || i.starts_with("255/"))
+        (Some("add"), Some("usb"), Some("usb_interface"))
+            if interface.is_some_and(|i| i.starts_with("6/") || i.starts_with("255/")) =>
+        {
+            Change::Added
         }
-        (Some("remove"), Some("usb"), Some("usb_device")) => true,
-        _ => false,
+        (Some("remove"), Some("usb"), Some("usb_device")) => Change::Removed,
+        _ => Change::None,
     }
 }
 
-/// Whether gvfs's mount folder `name` (`mtp:host=SAMSUNG_SAMSUNG_Android_RF8M12345`, or before
-/// gvfs 1.30 `mtp:host=%5Busb%3A002%2C005%5D`) is the phone at `bus`/`address` with `serial`.
-pub(super) fn is_gvfs_of(name: &str, bus: u32, address: u8, serial: &str) -> bool {
+/// udev's `ID_SERIAL`: `vendor_model_serial` (no `_serial` without one), each part with
+/// whitespace runs as one `_` and characters outside `#+-.:=@_` and letters or digits as `_`.
+fn id_serial(vendor: &str, model: &str, serial: &str) -> String {
+    let safe = |text: &str| -> String {
+        let joined = text.split_whitespace().collect::<Vec<_>>().join("_");
+        joined.chars().map(|c| if c.is_alphanumeric() || "#+-.:=@_".contains(c) { c } else { '_' }).collect()
+    };
+    let mut out = format!("{}_{}", safe(vendor), safe(model));
+    if !serial.trim().is_empty() {
+        out.push('_');
+        out.push_str(&safe(serial));
+    }
+    out
+}
+
+/// Whether gvfs's mount folder `name` (`mtp:host=<udev ID_SERIAL>`, or before gvfs 1.30
+/// `mtp:host=%5Busb%3A002%2C005%5D`) is the phone at `bus`/`address` with `udev_serial`: the
+/// whole name, not a part of it.
+pub(super) fn is_gvfs_of(name: &str, bus: u32, address: u8, udev_serial: &str) -> bool {
     let Some(host) = name.strip_prefix("mtp:host=") else { return false };
     let host = percent_decoded(host);
-    if host == format!("[usb:{bus:03},{address:03}]") {
-        return true;
-    }
-    // udev's ID_SERIAL: vendor_model_serial, spaces and odd characters as `_`.
-    let serial: String =
-        serial.chars().map(|c| if c.is_ascii_alphanumeric() || "#+-.:=@_".contains(c) { c } else { '_' }).collect();
-    !serial.is_empty() && (host == serial || host.ends_with(&format!("_{serial}")))
+    host == format!("[usb:{bus:03},{address:03}]") || (!udev_serial.is_empty() && host == udev_serial)
 }
 
 /// `%5B` and the like as the bytes they stand for.
@@ -124,45 +142,81 @@ pub(super) fn gvfs_mount(id: &str) -> Option<PathBuf> {
     let listing = fs::read_dir(&gvfs).ok()?;
     listing
         .flatten()
-        .find(|e| is_gvfs_of(&e.file_name().to_string_lossy(), bus, address, &phone.serial))
+        .find(|e| is_gvfs_of(&e.file_name().to_string_lossy(), bus, address, &phone.udev_serial))
         .map(|e| gvfs.join(e.file_name()))
 }
 
+/// What a uevent means for the phones.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Change {
+    None,
+    Added,
+    /// A device went: read again now and once more a moment later (its interfaces may still be
+    /// in `/sys` at the first read).
+    Removed,
+}
+
 /// One thread with a small stack sleeps on the uevent socket and calls `on_change` for each
-/// event that may change the phones (and when events were lost).
+/// event that may change the phones (and when events were lost). The socket is closed when the
+/// thread ends or cannot start.
 #[cfg(target_os = "linux")]
 pub(super) fn watch(on_change: impl Fn() + Send + 'static) -> bool {
-    // SAFETY: a socket and its address of the sizes the kernel expects; closed on failure.
-    let fd = unsafe {
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    // SAFETY: a socket and its address of the sizes the kernel expects; owned (closed on drop)
+    // as soon as it is made.
+    let socket = unsafe {
         let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, libc::NETLINK_KOBJECT_UEVENT);
         if fd < 0 {
             return false;
         }
+        let socket = OwnedFd::from_raw_fd(fd);
         let mut address: libc::sockaddr_nl = std::mem::zeroed();
         address.nl_family = libc::AF_NETLINK as libc::sa_family_t;
         // The kernel's own group (udev's re-sent events are group 2).
         address.nl_groups = 1;
         let size = std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t;
-        if libc::bind(fd, (&raw const address).cast(), size) != 0 {
-            libc::close(fd);
+        if libc::bind(socket.as_raw_fd(), (&raw const address).cast(), size) != 0 {
             return false;
         }
-        fd
+        socket
     };
+    // A failed spawn drops the closure, and the socket with it.
     let thread = std::thread::Builder::new().name("gezik-phones".into()).stack_size(64 * 1024).spawn(move || {
         let mut buffer = [0u8; 8192];
+        let mut failures = 0;
         loop {
             // SAFETY: the buffer outlives the call and is as long as said.
-            let read = unsafe { libc::recv(fd, buffer.as_mut_ptr().cast(), buffer.len(), 0) };
-            match usize::try_from(read) {
-                Ok(read) if is_phone_change(&buffer[..read]) => on_change(),
-                Ok(_) => {}
-                Err(_) => match std::io::Error::last_os_error().raw_os_error() {
-                    Some(libc::EINTR) => {}
+            let read = unsafe { libc::recv(socket.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len(), 0) };
+            let Ok(read) = usize::try_from(read) else {
+                let err = std::io::Error::last_os_error();
+                match err.raw_os_error() {
+                    Some(libc::EINTR | libc::EAGAIN) => {}
                     // Events were lost: read the list again.
                     Some(libc::ENOBUFS) => on_change(),
-                    _ => break,
-                },
+                    _ => {
+                        failures += 1;
+                        eprintln!("gezik: phone events: {err}");
+                        // Not for ever: a socket that keeps failing is given up (phones are
+                        // then found at the next start).
+                        if failures >= 10 {
+                            eprintln!("gezik: phone events stopped");
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                    }
+                }
+                continue;
+            };
+            failures = 0;
+            match is_phone_change(&buffer[..read]) {
+                Change::None => {}
+                Change::Added => on_change(),
+                Change::Removed => {
+                    on_change();
+                    // Events meanwhile wait in the socket.
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    on_change();
+                }
             }
         }
     });
@@ -216,8 +270,8 @@ mod tests {
         let found = found_in(names.map(String::from).to_vec(), |entry, name| {
             files.get(&(entry.to_owned(), name.to_owned())).cloned()
         });
-        let pixel = Found { id: "usb:1:7".into(), name: "Pixel 8".into(), serial: "3A1B".into() };
-        let samsung = Found { id: "usb:3:12".into(), name: "SAMSUNG".into(), serial: "R58M".into() };
+        let pixel = Found { id: "usb:1:7".into(), name: "Pixel 8".into(), udev_serial: "18d1_Pixel_8_3A1B".into() };
+        let samsung = Found { id: "usb:3:12".into(), name: "SAMSUNG".into(), udev_serial: "SAMSUNG__R58M".into() };
         assert_eq!(found, [pixel, samsung]);
         assert!(scan(Path::new("/nothing-here")).is_empty());
     }
@@ -236,28 +290,33 @@ mod tests {
                 "SEQNUM=4242",
             ])
         };
-        assert!(is_phone_change(&add("usb_interface", "6/1/1")));
-        assert!(is_phone_change(&add("usb_interface", "255/255/0")));
-        assert!(!is_phone_change(&add("usb_interface", "8/6/80")), "a USB stick");
-        assert!(!is_phone_change(&add("usb_device", "6/1/1")), "the device before its interfaces");
+        assert_eq!(is_phone_change(&add("usb_interface", "6/1/1")), Change::Added);
+        assert_eq!(is_phone_change(&add("usb_interface", "255/255/0")), Change::Added);
+        assert_eq!(is_phone_change(&add("usb_interface", "8/6/80")), Change::None, "a USB stick");
+        assert_eq!(is_phone_change(&add("usb_device", "6/1/1")), Change::None, "the device before its interfaces");
         let removed = event(&["remove@/devices/x/usb1/1-2", "ACTION=remove", "SUBSYSTEM=usb", "DEVTYPE=usb_device"]);
-        assert!(is_phone_change(&removed));
+        assert_eq!(is_phone_change(&removed), Change::Removed);
         let block = event(&["remove@/devices/x/block/sdb", "ACTION=remove", "SUBSYSTEM=block", "DEVTYPE=disk"]);
-        assert!(!is_phone_change(&block));
-        assert!(!is_phone_change(b"libudev\0\xfe\xed"));
-        assert!(!is_phone_change(b""));
+        assert_eq!(is_phone_change(&block), Change::None);
+        assert_eq!(is_phone_change(b"libudev\0\xfe\xed"), Change::None);
+        assert_eq!(is_phone_change(b""), Change::None);
     }
 
     #[test]
     fn gvfs_mount_names() {
-        assert!(is_gvfs_of("mtp:host=SAMSUNG_SAMSUNG_Android_R58M12ABC", 3, 12, "R58M12ABC"));
-        assert!(is_gvfs_of("mtp:host=Google_Pixel_8_3A1B", 1, 7, "3A1B"));
+        let samsung = id_serial("SAMSUNG", "SAMSUNG_Android", "R58M12ABC");
+        assert_eq!(samsung, "SAMSUNG_SAMSUNG_Android_R58M12ABC");
+        assert!(is_gvfs_of("mtp:host=SAMSUNG_SAMSUNG_Android_R58M12ABC", 3, 12, &samsung));
+        let acme = id_serial(" Acme  Inc. ", "Phone (2)", "SN 1/2");
+        assert_eq!(acme, "Acme_Inc._Phone__2__SN_1_2");
+        assert!(is_gvfs_of("mtp:host=Acme_Inc._Phone__2__SN_1_2", 1, 7, &acme));
+        assert_eq!(id_serial("Google", "Pixel 8", ""), "Google_Pixel_8");
         assert!(is_gvfs_of("mtp:host=%5Busb%3A001%2C007%5D", 1, 7, ""));
-        assert!(is_gvfs_of("mtp:host=Acme_Phone_SN_1_2", 1, 7, "SN 1/2"));
         assert!(!is_gvfs_of("mtp:host=%5Busb%3A001%2C008%5D", 1, 7, ""));
-        assert!(!is_gvfs_of("mtp:host=Google_Pixel_8_3A1B", 1, 7, "A1B"), "only a whole serial");
+        // The whole name: another phone whose name ends the same is not this one.
+        assert!(!is_gvfs_of("mtp:host=Google_Pixel_8_X_3A1B", 1, 7, "Google_Pixel_8_3A1B"));
         assert!(!is_gvfs_of("mtp:host=Google_Pixel_8_3A1B", 1, 7, ""));
-        assert!(!is_gvfs_of("gphoto2:host=Canon_3A1B", 1, 7, "3A1B"));
+        assert!(!is_gvfs_of("gphoto2:host=Google_Pixel_8_3A1B", 1, 7, "Google_Pixel_8_3A1B"));
         assert_eq!(percent_decoded("a%2Cb%zz%4"), "a,b%zz%4");
     }
 }

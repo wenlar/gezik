@@ -165,6 +165,39 @@ fn candidates(configured: Option<&Path>, downloaded: Option<&Path>, mac: bool) -
     paths
 }
 
+/// What trying one place for libmtp gave.
+#[derive(Debug)]
+enum Tried {
+    /// Nothing there (a place Gezik only looks in).
+    Absent,
+    /// A library without this function.
+    Lacks(&'static str),
+    /// It is there and did not load: the loader's words (`dlerror`).
+    Failed(String),
+}
+
+/// Why no libmtp loaded: the first place that has one that does not work (the path in
+/// settings comes first, and is reported even when nothing is there), else `NoLibmtp`.
+fn why_not(tried: Vec<(PathBuf, Tried)>) -> io::Error {
+    for (path, tried) in tried {
+        match tried {
+            Tried::Absent => {}
+            Tried::Lacks(missing) => {
+                let text = gezik_i18n::t!(
+                    "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)",
+                    path.display(),
+                    missing
+                );
+                return io::Error::other(text);
+            }
+            Tried::Failed(why) => {
+                return io::Error::other(gezik_i18n::t!("{0} could not be loaded: {1}", path.display(), why));
+            }
+        }
+    }
+    io::Error::new(io::ErrorKind::NotFound, super::NoLibmtp)
+}
+
 /// libmtp, loaded the first time it is found (and kept: a library is not unloaded).
 #[cfg(unix)]
 fn library() -> io::Result<&'static Lib> {
@@ -174,47 +207,55 @@ fn library() -> io::Result<&'static Lib> {
         return Ok(lib);
     }
     let (configured, downloaded) = super::library_paths();
-    let mut unusable = None;
+    let mut tried = Vec::new();
     for path in candidates(configured.as_deref(), downloaded.as_deref(), cfg!(target_os = "macos")) {
         match load(&path) {
-            Some(Ok(lib)) => {
+            Ok(lib) => {
                 let lib: &'static Lib = Box::leak(Box::new(lib));
                 // SAFETY: libmtp's set-up, once, before any other call.
                 unsafe { (lib.init)() };
                 *loaded = Some(lib);
                 return Ok(lib);
             }
-            Some(Err(missing)) => {
-                let text = gezik_i18n::t!(
-                    "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)",
-                    path.display(),
-                    missing
-                );
-                unusable = Some(io::Error::other(text));
+            // The path in settings is reported even when nothing is there.
+            Err(Tried::Absent) if configured.as_deref() == Some(path.as_path()) => {
+                let why = io::Error::from(io::ErrorKind::NotFound).to_string();
+                tried.push((path, Tried::Failed(why)));
             }
-            None => {}
+            Err(other) => tried.push((path, other)),
         }
     }
-    Err(unusable.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, super::NoLibmtp)))
+    Err(why_not(tried))
 }
 
-/// The library at `path` bound, the name of a function it lacks, or `None` if it does not load.
+/// The library at `path` bound, or why not.
 #[cfg(unix)]
-fn load(path: &Path) -> Option<Result<Lib, &'static str>> {
+fn load(path: &Path) -> Result<Lib, Tried> {
     use std::os::unix::ffi::OsStrExt;
-    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    // SAFETY: dlopen and dlsym with NUL-ended names; each symbol has the type libmtp's header
-    // gives it. A library lacking one is closed again.
+    // A full path that is not there needs no loader (a bare name is searched by it).
+    if path.is_absolute() && !path.exists() {
+        return Err(Tried::Absent);
+    }
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| Tried::Absent)?;
+    // SAFETY: dlopen, dlerror and dlsym with NUL-ended names; each symbol has the type
+    // libmtp's header gives it. A library lacking one is closed again.
     unsafe {
         let handle = libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
         if handle.is_null() {
-            return None;
+            let error = libc::dlerror();
+            let why =
+                if error.is_null() { String::new() } else { CStr::from_ptr(error).to_string_lossy().into_owned() };
+            // The system's, searched by name, not installed.
+            if !path.is_absolute() && why.contains("No such file") {
+                return Err(Tried::Absent);
+            }
+            return Err(Tried::Failed(why));
         }
         let lib = Lib::bind(|symbol| libc::dlsym(handle, symbol.as_ptr()));
         if lib.is_err() {
             libc::dlclose(handle);
         }
-        Some(lib)
+        lib.map_err(Tried::Lacks)
     }
 }
 
@@ -351,6 +392,10 @@ impl Phone {
     /// Deletes `item` in `storage`; a folder the phone will not delete with things in it, what
     /// it holds first (only a folder: a file that fails is an error).
     fn delete_in(&self, device: &Handle, storage: u32, item: u32, is_dir: bool) -> io::Result<()> {
+        // Never a storage (the root) or "no object" (0), whatever a phone lists.
+        if !is_object(item) {
+            return Err(storage_refused());
+        }
         self.clear(device);
         // SAFETY: the device is open.
         if unsafe { (self.lib.delete)(device.0, item) } == 0 {
@@ -395,6 +440,13 @@ impl Phone {
                 return Err(self.error(device, io::ErrorKind::Other));
             }
             while let Some(f) = file.as_ref() {
+                let next = f.next;
+                // A phone listing a storage or "no object" as a child: left out.
+                if !is_object(f.item_id) {
+                    (self.lib.destroy_file)(file);
+                    file = next;
+                    continue;
+                }
                 let name = if f.filename.is_null() {
                     String::new()
                 } else {
@@ -408,7 +460,6 @@ impl Phone {
                     size: f.filesize,
                     modified: f.modified,
                 });
-                let next = f.next;
                 (self.lib.destroy_file)(file);
                 file = next;
             }
@@ -438,6 +489,20 @@ impl Drop for Phone {
 /// The source of a write ended before the size it was given.
 fn ended_early() -> io::Error {
     io::Error::new(io::ErrorKind::UnexpectedEof, gezik_i18n::t!("The file ended early").into_owned())
+}
+
+/// `err`, saying a partial file may be left on the phone when it could not be removed.
+fn with_partial(err: io::Error, left: bool, name: &str) -> io::Error {
+    if !left {
+        return err;
+    }
+    let partial = gezik_i18n::t!("a partial file {} may remain on the phone", name);
+    io::Error::new(err.kind(), format!("{err}; {partial}"))
+}
+
+/// Whether `item` names an object, not a storage's root (or nothing).
+fn is_object(item: u32) -> bool {
+    item != 0 && item != ROOT
 }
 
 /// A storage is never deleted or renamed (nor what it holds through it).
@@ -493,7 +558,7 @@ struct Writing<'a> {
     stopped: bool,
 }
 
-/// libmtp's put function: `length` bytes at `data` arrived.
+/// libmtp's put function: `length` bytes arrived at `data`.
 unsafe extern "C" fn put_piece(
     _: *mut c_void,
     reading: *mut c_void,
@@ -504,18 +569,15 @@ unsafe extern "C" fn put_piece(
     // SAFETY: `reading` is the `Reading` `read_to` passed; `data` holds `length` bytes.
     let (reading, piece) =
         unsafe { (&mut *reading.cast::<Reading<'_>>(), std::slice::from_raw_parts(data, length as usize)) };
-    if let Err(err) = reading.out.write_all(piece) {
-        reading.failed = Some(err);
-        return HANDLER_ERROR;
-    }
-    reading.read += u64::from(length);
+    // A panic must not unwind into C (that aborts): it fails the copy instead.
+    let (code, taken) =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reading.take(piece))).unwrap_or_else(|_| {
+            reading.failed = Some(internal_error());
+            (HANDLER_ERROR, 0)
+        });
     // SAFETY: libmtp's out value.
-    unsafe { *done = length };
-    if !(reading.more)(u64::from(length)) {
-        reading.stopped = true;
-        return HANDLER_CANCEL;
-    }
-    HANDLER_OK
+    unsafe { *done = taken };
+    code
 }
 
 /// libmtp's get function: up to `length` bytes wanted at `data`.
@@ -529,31 +591,63 @@ unsafe extern "C" fn get_piece(
     // SAFETY: `writing` is the `Writing` `put` passed; `data` has room for `length` bytes.
     let (writing, room) =
         unsafe { (&mut *writing.cast::<Writing<'_>>(), std::slice::from_raw_parts_mut(data, length as usize)) };
-    let mut filled = 0;
-    while filled < room.len() {
-        match writing.from.read(&mut room[filled..]) {
-            Ok(0) => break,
-            Ok(read) => filled += read,
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-            Err(err) => {
-                writing.failed = Some(err);
-                return HANDLER_ERROR;
+    let (code, given) =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| writing.give(room))).unwrap_or_else(|_| {
+            writing.failed = Some(internal_error());
+            (HANDLER_ERROR, 0)
+        });
+    // SAFETY: libmtp's out value; `given` ≤ `length`.
+    unsafe { *done = given };
+    code
+}
+
+fn internal_error() -> io::Error {
+    io::Error::other(gezik_i18n::t!("The copy stopped on an internal error").into_owned())
+}
+
+impl Reading<'_> {
+    /// Writes `piece` out: the handler's answer and the bytes taken.
+    fn take(&mut self, piece: &[u8]) -> (u16, u32) {
+        if let Err(err) = self.out.write_all(piece) {
+            self.failed = Some(err);
+            return (HANDLER_ERROR, 0);
+        }
+        self.read += piece.len() as u64;
+        if !(self.more)(piece.len() as u64) {
+            self.stopped = true;
+            return (HANDLER_CANCEL, piece.len() as u32);
+        }
+        (HANDLER_OK, piece.len() as u32)
+    }
+}
+
+impl Writing<'_> {
+    /// Fills `room` from the source: the handler's answer and the bytes given.
+    fn give(&mut self, room: &mut [u8]) -> (u16, u32) {
+        let mut filled = 0;
+        while filled < room.len() {
+            match self.from.read(&mut room[filled..]) {
+                Ok(0) => break,
+                Ok(read) => filled += read,
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(err) => {
+                    self.failed = Some(err);
+                    return (HANDLER_ERROR, 0);
+                }
             }
         }
+        // The source ended before the size given: the copy would not be whole.
+        if filled < room.len() && (filled as u64) < self.left {
+            self.failed = Some(ended_early());
+            return (HANDLER_ERROR, 0);
+        }
+        self.left = self.left.saturating_sub(filled as u64);
+        if !(self.more)(filled as u64) {
+            self.stopped = true;
+            return (HANDLER_CANCEL, filled as u32);
+        }
+        (HANDLER_OK, filled as u32)
     }
-    // The source ended before the size given: the copy would not be whole.
-    if filled < room.len() && (filled as u64) < writing.left {
-        writing.failed = Some(ended_early());
-        return HANDLER_ERROR;
-    }
-    writing.left = writing.left.saturating_sub(filled as u64);
-    // SAFETY: libmtp's out value; `filled` ≤ `length`.
-    unsafe { *done = filled as u32 };
-    if !(writing.more)(filled as u64) {
-        writing.stopped = true;
-        return HANDLER_CANCEL;
-    }
-    HANDLER_OK
 }
 
 impl Session for Phone {
@@ -661,7 +755,7 @@ impl Session for Phone {
             let writing = (&raw mut writing).cast::<c_void>();
             (self.lib.send)(device.0, get_piece, writing, &mut file, None, std::ptr::null())
         };
-        if result == 0 && writing.left == 0 {
+        if result == 0 && writing.left == 0 && is_object(file.item_id) {
             return Ok(Object {
                 id: object_id(file.storage_id, file.item_id),
                 name: name.to_owned(),
@@ -673,16 +767,19 @@ impl Session for Phone {
         let err = match (writing.stopped, writing.failed) {
             (true, _) => io::ErrorKind::Interrupted.into(),
             (_, Some(err)) => err,
+            // Sent, but the phone named no object: nothing to undo or replace by.
+            _ if result == 0 && writing.left == 0 => {
+                io::Error::other(gezik_i18n::t!("The phone did not say what it made of {}", name))
+            }
             _ if result == 0 => ended_early(),
             _ => self.error(&device, io::ErrorKind::Other),
         };
         // The phone made the object before the data failed: nothing half written stays.
-        if file.item_id != 0 {
-            // SAFETY: the device is open.
-            unsafe { (self.lib.delete)(device.0, file.item_id) };
-        }
         self.clear(&device);
-        Err(err)
+        // SAFETY: the device is open.
+        let left = is_object(file.item_id) && unsafe { (self.lib.delete)(device.0, file.item_id) } != 0;
+        self.clear(&device);
+        Err(with_partial(err, left, name))
     }
 
     fn mkdir(&self, parent: &str, name: &str) -> io::Result<Object> {
@@ -700,7 +797,7 @@ impl Session for Phone {
 
     fn delete(&self, id: &str) -> io::Result<()> {
         let (storage, item) = parse_object(id)?;
-        if item == ROOT {
+        if !is_object(item) {
             return Err(storage_refused());
         }
         let device = self.lock();
@@ -710,7 +807,7 @@ impl Session for Phone {
 
     fn rename(&self, id: &str, name: &str) -> io::Result<()> {
         let (_, item) = parse_object(id)?;
-        if item == ROOT {
+        if !is_object(item) {
             return Err(storage_refused());
         }
         let c_name = c_name(name)?;
@@ -801,6 +898,10 @@ mod tests {
         static DELETED: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
         static ERRORS: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
         static SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        /// Objects whose next delete fails (once).
+        static FAILS: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
+        /// A send that succeeds but names no object.
+        static NO_ID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     fn file(item: u32, name: &'static CStr, folder: bool, next: *mut File) -> *mut File {
@@ -819,6 +920,9 @@ mod tests {
     unsafe extern "C" fn fake_list(_: *mut MtpDevice, storage: u32, parent: u32) -> *mut File {
         if storage == 7 && parent == ROOT {
             file(10, c"DCIM", true, file(11, c"a.txt", false, std::ptr::null_mut()))
+        } else if storage == 7 && parent == 10 {
+            // A phone that lists its storage root and "no object" as children.
+            file(ROOT, c"Internal", true, file(0, c"none", false, file(12, c"p.jpg", false, std::ptr::null_mut())))
         } else {
             std::ptr::null_mut()
         }
@@ -866,6 +970,13 @@ mod tests {
         _: Option<Progress>,
         _: *const c_void,
     ) -> c_int {
+        if NO_ID.with(std::cell::Cell::get) {
+            let mut room = [0u8; 6];
+            let mut done = 0;
+            // SAFETY: as libmtp calls it.
+            unsafe { get(device.cast(), writing, 6, room.as_mut_ptr(), &mut done) };
+            return 0;
+        }
         // SAFETY: as libmtp does.
         unsafe {
             (*file).item_id = 99;
@@ -880,6 +991,14 @@ mod tests {
     }
 
     unsafe extern "C" fn fake_delete(_: *mut MtpDevice, item: u32) -> c_int {
+        let fails = FAILS.with(|f| {
+            let mut fails = f.borrow_mut();
+            let at = fails.iter().position(|i| *i == item);
+            at.map(|at| fails.remove(at)).is_some()
+        });
+        if fails {
+            return -1;
+        }
         DELETED.with(|d| d.borrow_mut().push(item));
         0
     }
@@ -941,7 +1060,10 @@ mod tests {
             listed.iter().map(|o| (o.id.as_str(), o.name.as_str(), o.is_dir, o.size)).collect();
         assert_eq!(rows, [("7:10", "DCIM", true, 0), ("7:11", "a.txt", false, 6)]);
         assert_eq!(listed[1].modified, date(1_700_000_000));
-        assert!(phone.list("7:10").unwrap().is_empty(), "an empty folder (no error noted)");
+        assert!(phone.list("7:12").unwrap().is_empty(), "an empty folder (no error noted)");
+        // A storage root or "no object" listed as a child is left out.
+        let names: Vec<String> = phone.list("7:10").unwrap().into_iter().map(|o| o.name).collect();
+        assert_eq!(names, ["p.jpg"]);
     }
 
     #[test]
@@ -993,5 +1115,67 @@ mod tests {
         let err = phone.put("7:10", "b.txt", 6, &mut &b"ab"[..], &mut |_| true).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
         assert_eq!(DELETED.with(|d| d.borrow().clone()), [99, 99, 99]);
+        // The half-made object cannot be removed: the error says so.
+        FAILS.with(|f| f.borrow_mut().push(99));
+        let err = phone.put("7:10", "b.txt", 6, &mut &b"ab"[..], &mut |_| true).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert!(err.to_string().contains("a partial file b.txt may remain on the phone"), "{err}");
+        // Sent, but no object named: an error, not an object with id 0.
+        NO_ID.with(|n| n.set(true));
+        let err = phone.put("7:10", "b.txt", 6, &mut &b"abcdef"[..], &mut |_| true);
+        NO_ID.with(|n| n.set(false));
+        assert!(err.unwrap_err().to_string().contains("did not say"));
+    }
+
+    /// A source that panics: the copy fails, the process does not abort.
+    #[test]
+    fn a_panic_in_a_handler_fails_the_copy() {
+        struct Boom;
+        impl Read for Boom {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                panic!("boom");
+            }
+        }
+        let phone = fake_phone();
+        let err = phone.put("7:10", "b.txt", 6, &mut Boom, &mut |_| true).unwrap_err();
+        assert!(err.to_string().contains("internal error"), "{err}");
+        let mut out = Vec::new();
+        let err = phone.read_to("7:11", &mut out, &mut |_| panic!("boom")).unwrap_err();
+        assert!(err.to_string().contains("internal error"), "{err}");
+    }
+
+    #[test]
+    fn a_folder_is_emptied_without_touching_roots_or_nothing() {
+        let phone = fake_phone();
+        DELETED.with(|d| d.borrow_mut().clear());
+        // The folder refuses while it holds things: only real objects in it go first.
+        FAILS.with(|f| f.borrow_mut().push(10));
+        phone.delete("7:10").unwrap();
+        assert_eq!(DELETED.with(|d| d.borrow().clone()), [12, 10]);
+        assert_eq!(phone.delete("7:0").unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn why_no_library_loaded() {
+        let path = PathBuf::from;
+        let none = why_not(vec![(path("/opt/homebrew/lib/libmtp.9.dylib"), Tried::Absent)]);
+        assert!(needs_no_library(&none));
+        let broken = why_not(vec![
+            (path("/opt/homebrew/lib/libmtp.9.dylib"), Tried::Absent),
+            (
+                path("/usr/local/lib/libmtp.9.dylib"),
+                Tried::Failed("mach-o file, but is an incompatible architecture".into()),
+            ),
+            (path("/x/libmtp.9.dylib"), Tried::Lacks("LIBMTP_Init")),
+        ]);
+        assert!(!needs_no_library(&broken));
+        assert!(broken.to_string().contains("incompatible architecture"), "{broken}");
+        assert!(broken.to_string().starts_with("/usr/local/lib/libmtp.9.dylib could not be loaded"), "{broken}");
+        let old = why_not(vec![(path("/x/libmtp.9.dylib"), Tried::Lacks("LIBMTP_Init"))]);
+        assert!(old.to_string().contains("LIBMTP_Init"));
+    }
+
+    fn needs_no_library(err: &io::Error) -> bool {
+        super::super::needs_libmtp(err)
     }
 }

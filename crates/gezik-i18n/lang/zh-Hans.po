@@ -6389,6 +6389,11 @@ msgstr "无法使用 {0}：缺少 {1}（需要 libmtp 1.1.17 或更高版本）"
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
 #, fuzzy
+msgid "{0} could not be loaded: {1}"
+msgstr "无法加载 {0}：{1}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
 msgid "No permission to open the phone (libmtp's udev rules)"
 msgstr "无权打开手机（libmtp 的 udev 规则）"
 
@@ -6408,11 +6413,21 @@ msgid "The file ended early"
 msgstr "文件提前结束"
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "a partial file {} may remain on the phone"
+msgstr "手机上可能残留不完整的文件 {}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
 #: crates/gezik-platform/src/mtp/windows.rs
 #: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "A storage of the phone cannot be deleted"
 msgstr "无法删除手机的存储"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The copy stopped on an internal error"
+msgstr "复制因内部错误而停止"
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
 #, fuzzy
@@ -6423,6 +6438,11 @@ msgstr "存储 {}"
 #, fuzzy
 msgid "Only {0} of {1} bytes arrived"
 msgstr "{1} 字节中只收到 {0} 字节"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The phone did not say what it made of {}"
+msgstr "手机未说明为 {} 创建了什么"
 
 #: crates/gezik-platform/src/mtp/mod.rs
 #, fuzzy

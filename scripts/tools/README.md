@@ -267,7 +267,8 @@ source archives, their SHA-256 and the configure options).
 and `size: 0`; `build_for` leaves them out, so Gezik offers no download and its box asks for
 Homebrew's (`brew install libmtp`) instead. To publish:
 
-1. On a Mac with the Xcode Command Line Tools (macOS 11 or newer; no Homebrew needed):
+1. On a Mac with the Xcode Command Line Tools (macOS 11 or newer; no Homebrew or pkg-config
+   needed: the script passes libusb's flags to libmtp's configure itself):
 
    ```bash
    bash scripts/tools/prepare-libmtp.sh ~/gezik-tools/libmtp-1.1.23-1

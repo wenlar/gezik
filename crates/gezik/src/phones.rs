@@ -77,8 +77,10 @@ pub fn start(window: &AppWindow) {
     // The config folder is known by now (its tools folder holds the download).
     tell_library();
     let handle = window.window().window_handle();
-    // Linux hears it on a thread of its own: the list is read from the UI thread either way.
-    if gezik_platform::watch_phones(&handle, || _ = slint::invoke_from_event_loop(read)) {
+    // Linux hears it on a thread of its own: the list is read from the UI thread either way,
+    // and not at all while `[devices] phones` is off (the watch itself stays).
+    let heard = || _ = slint::invoke_from_event_loop(|| ON.get().then(read).unwrap_or_default());
+    if gezik_platform::watch_phones(&handle, heard) {
         WATCHING.set(true);
         read();
     }

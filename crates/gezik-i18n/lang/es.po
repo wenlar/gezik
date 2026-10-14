@@ -6445,6 +6445,11 @@ msgstr "No se puede usar {0}: no tiene {1} (se necesita libmtp 1.1.17 o posterio
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
 #, fuzzy
+msgid "{0} could not be loaded: {1}"
+msgstr "No se pudo cargar {0}: {1}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
 msgid "No permission to open the phone (libmtp's udev rules)"
 msgstr "Sin permiso para abrir el teléfono (reglas udev de libmtp)"
 
@@ -6464,11 +6469,21 @@ msgid "The file ended early"
 msgstr "El archivo terminó antes de tiempo"
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "a partial file {} may remain on the phone"
+msgstr "puede quedar un archivo parcial {} en el teléfono"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
 #: crates/gezik-platform/src/mtp/windows.rs
 #: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "A storage of the phone cannot be deleted"
 msgstr "No se puede eliminar un almacenamiento del teléfono"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The copy stopped on an internal error"
+msgstr "La copia se detuvo por un error interno"
 
 #: crates/gezik-platform/src/mtp/libmtp.rs
 #, fuzzy
@@ -6479,6 +6494,11 @@ msgstr "Almacenamiento {}"
 #, fuzzy
 msgid "Only {0} of {1} bytes arrived"
 msgstr "Solo llegaron {0} de {1} bytes"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The phone did not say what it made of {}"
+msgstr "El teléfono no indicó qué creó a partir de {}"
 
 #: crates/gezik-platform/src/mtp/mod.rs
 #, fuzzy

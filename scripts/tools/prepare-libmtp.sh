@@ -1,7 +1,9 @@
 #!/bin/bash
 # Builds libmtp and the libusb it uses from source as one universal (arm64 + x86_64) pair for
 # Gezik's macOS download (Tool::Libmtp, spec 16 §10.3, §19 question 4), on a Mac with the
-# Xcode Command Line Tools. Nothing from Homebrew is linked in.
+# Xcode Command Line Tools (clang, make, lipo, install_name_tool, codesign; curl and shasum
+# come with macOS). pkg-config is not needed: libusb's flags are passed to libmtp's configure.
+# Nothing from Homebrew is linked in.
 #
 #   bash scripts/tools/prepare-libmtp.sh <out folder>
 #
@@ -19,6 +21,9 @@ LIBUSB_URL="https://github.com/libusb/libusb/releases/download/v$LIBUSB/libusb-$
 
 [ $# -eq 1 ] || { echo "usage: $0 <out folder>" >&2; exit 2; }
 [ "$(uname -s)" = Darwin ] || { echo "run this on a Mac" >&2; exit 2; }
+for tool in clang make lipo install_name_tool otool codesign curl shasum; do
+    command -v "$tool" >/dev/null || { echo "$tool is missing (xcode-select --install)" >&2; exit 2; }
+done
 here="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$1"
 out="$(cd "$1" && pwd)"
@@ -61,8 +66,10 @@ for arch in arm64 x86_64; do
         [ "${project%%-*}" = libmtp ] && extra="--disable-mtpz"
         (
             cd "$build"
-            PKG_CONFIG_PATH="$prefix/lib/pkgconfig" PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig" \
-                CC=clang CFLAGS="$flags" LDFLAGS="-arch $arch" \
+            # libusb is handed to libmtp's configure directly: no pkg-config needed, and none of
+            # Homebrew's libraries can be picked up by one.
+            LIBUSB_CFLAGS="-I$prefix/include/libusb-1.0" LIBUSB_LIBS="-L$prefix/lib -lusb-1.0" \
+                PKG_CONFIG=false CC=clang CFLAGS="$flags" LDFLAGS="-arch $arch" \
                 "$work/$project/configure" --host="$host" --prefix="$prefix" \
                 --enable-shared --disable-static $extra >/dev/null
             make -j "$jobs" >/dev/null
