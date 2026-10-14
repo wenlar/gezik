@@ -571,6 +571,34 @@ struct State {
     stopped: bool,
     /// The status written last ("Running… 3 s"), so it is written only when it changes.
     status: String,
+    /// A program Gezik started for a command of its own (git, spec 16 §9.4): `command` is its
+    /// title as it is, no `>` before it.
+    own: bool,
+    /// The panel opens only if it fails (stage, unstage, switch).
+    quiet: bool,
+    /// What Run Again does instead of running `typed`.
+    again: Option<Rc<dyn Fn()>>,
+    /// Told once it ended (stopped, or not started: not ok), with its output.
+    on_end: Option<OnEnd>,
+    /// Open in Terminal is offered (a git command that needed a password).
+    terminal: bool,
+}
+
+/// What a program of Gezik's own is told when it ended: whether it succeeded, and its output;
+/// it answers whether the panel offers Open in Terminal.
+pub type OnEnd = Box<dyn FnOnce(bool, &str) -> bool>;
+
+/// A program Gezik runs in the panel for a command of its own (git, spec 16 §9.4).
+pub struct Process {
+    /// The panel's title ("git push").
+    pub title: String,
+    pub dir: PathBuf,
+    pub command: std::process::Command,
+    /// Written to its input (a commit message, a list of paths).
+    pub input: Option<Vec<u8>>,
+    pub quiet: bool,
+    pub again: Option<Rc<dyn Fn()>>,
+    pub on_end: Option<OnEnd>,
 }
 
 impl State {
@@ -617,6 +645,7 @@ impl CommandLine {
                     0 => p.command.stop(),
                     1 => p.command.run_again(),
                     2 => p.command.copy_output(),
+                    4 => p.command.open_terminal(),
                     _ => p.command.close(),
                 }
             }
@@ -644,10 +673,13 @@ impl CommandLine {
 
     /// Runs the command shown again, in its folder.
     fn run_again(&self) {
-        let (typed, selection) = {
+        let (typed, selection, again) = {
             let state = self.0.state.borrow();
-            (state.typed.clone(), state.selection.clone())
+            (state.typed.clone(), state.selection.clone(), state.again.clone())
         };
+        if let Some(again) = again {
+            return again();
+        }
         if !typed.trim().is_empty() {
             self.start_or_ask(typed, selection);
         }
@@ -714,13 +746,39 @@ impl CommandLine {
         } else {
             ChildProcess::spawn_piped(process)
         };
+        let state = State { open: true, command, typed, selection, list_file, ..State::default() };
+        self.begin(state, notes, started, &call.program.to_string_lossy());
+    }
+
+    /// Runs `process`, a program of Gezik's own, in the panel (no shell, nothing kept in the
+    /// history).
+    pub fn run_process(&self, process: Process) {
+        let Process { title, dir, command, input, quiet, again, on_end } = process;
+        let program = command.get_program().to_string_lossy().into_owned();
+        let started = ChildProcess::spawn_piped_input(command, input);
+        let selection = Selection { dir, ..Selection::default() };
+        let state =
+            State { open: !quiet, command: title, selection, own: true, quiet, again, on_end, ..State::default() };
+        self.begin(state, Vec::new(), started, &program);
+    }
+
+    /// Shows `fresh` in the panel with `notes` first, and follows what `started` (`program`).
+    fn begin(
+        &self,
+        fresh: State,
+        notes: Vec<String>,
+        started: std::io::Result<(ChildProcess, std::process::ChildStdout, std::process::ChildStderr)>,
+        program: &str,
+    ) {
+        let mut failed = None;
         {
             let mut state = self.0.state.borrow_mut();
             // What the last one left running ends now if it may still be stopped.
             state.let_go();
             state.child = None;
             let run = state.run.wrapping_add(1);
-            *state = State { open: true, command, typed: typed.clone(), selection, list_file, run, ..State::default() };
+            *state = State { run, ..fresh };
+            let typed = state.typed.clone();
             self.0.model.clear();
             self.0.model.push_all(notes.into_iter().map(|text| Line { text, err: false }).collect());
             match started {
@@ -744,14 +802,18 @@ impl CommandLine {
                     remember_run(&typed);
                 }
                 Err(err) => {
-                    let program = call.program.to_string_lossy();
                     // TRANSLATORS: {0} is a shell program, {1} why it did not start
                     let text = t!("Could not start {0}: {1}", program, err);
                     self.0.model.push_all(vec![Line { text, err: true }]);
                     state.status = t!("Did not start").into_owned();
+                    state.open = true;
                     state.let_go();
+                    failed = state.on_end.take();
                 }
             }
+        }
+        if let Some(on_end) = failed {
+            on_end(false, "");
         }
         if self.is_running() {
             let id = self.0.id;
@@ -809,6 +871,7 @@ impl CommandLine {
         };
         if finished {
             self.0.timer.stop();
+            self.ended();
             self.show();
             self.refresh_folder();
         } else {
@@ -849,20 +912,59 @@ impl CommandLine {
             state.let_go();
         }
         self.0.timer.stop();
+        self.ended();
         self.show();
+    }
+
+    /// The run ended: a quiet one that failed opens the panel, and a program of Gezik's own is
+    /// told (it may offer Open in Terminal).
+    fn ended(&self) {
+        let (ok, on_end) = {
+            let mut state = self.0.state.borrow_mut();
+            let ok = matches!(state.exited, Some((_, Some(0)))) && !state.stopped;
+            if state.quiet && !ok {
+                state.open = true;
+            }
+            (ok, state.on_end.take())
+        };
+        if let Some(on_end) = on_end {
+            let text = self.0.model.output.borrow().text();
+            let terminal = on_end(ok, &text);
+            self.0.state.borrow_mut().terminal = terminal;
+        }
+    }
+
+    /// `Open in Terminal`: a terminal in the command's folder, the command on the clipboard
+    /// (spec 16 §9.4: git wanted a password it cannot ask for here).
+    fn open_terminal(&self) {
+        let (dir, command) = {
+            let state = self.0.state.borrow();
+            (state.selection.dir.clone(), state.command.clone())
+        };
+        crate::terminal::open_in(dir, false);
+        if gezik_platform::clipboard::write_text(&command).is_ok() {
+            // TRANSLATORS: {} is a command put on the clipboard ("git push")
+            crate::panes::with_id(self.0.id, |p| p.view.note(t!("Copied: {}", command)));
+        }
     }
 
     /// The pane closes (or its window, or Gezik quits): a running command ends with what it
     /// started, quietly; what an ended one left running goes on.
     pub fn end(&self) {
         self.0.timer.stop();
-        let mut state = self.0.state.borrow_mut();
-        state.running = false;
-        if let Some(child) = state.child.as_mut() {
-            child.kill_tree();
+        let on_end = {
+            let mut state = self.0.state.borrow_mut();
+            state.running = false;
+            if let Some(child) = state.child.as_mut() {
+                child.kill_tree();
+            }
+            state.child = None;
+            state.let_go();
+            state.on_end.take()
+        };
+        if let Some(on_end) = on_end {
+            on_end(false, "");
         }
-        state.child = None;
-        state.let_go();
     }
 
     /// `Close`: stops a running command and closes the panel.
@@ -914,7 +1016,7 @@ impl CommandLine {
 
     /// Writes the panel's header to the pane (only what changed is written).
     fn show(&self) {
-        let (open, title, folder, status, state_code, run) = {
+        let (open, title, folder, status, state_code, run, terminal) = {
             let mut state = self.0.state.borrow_mut();
             let took = match (state.started, state.exited) {
                 (Some(started), Some((at, _))) => Some(at.duration_since(started)),
@@ -943,7 +1045,8 @@ impl CommandLine {
                 2
             };
             let folder = state.selection.dir.display().to_string();
-            (state.open, format!("> {}", state.command), folder, status, code, state.run)
+            let title = if state.own { state.command.clone() } else { format!("> {}", state.command) };
+            (state.open, title, folder, status, code, state.run, state.terminal && !state.running)
         };
         let dropped = self.0.model.output.borrow().dropped;
         let model = ModelRc::from(self.0.model.clone());
@@ -956,6 +1059,7 @@ impl CommandLine {
             d.cmd_state = state_code;
             d.cmd_dropped = dropped;
             d.cmd_run = run;
+            d.cmd_terminal = terminal;
         });
     }
 }

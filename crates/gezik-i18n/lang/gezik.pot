@@ -276,6 +276,7 @@ msgstr ""
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/filter.rs
 #: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/operations.rs
@@ -291,6 +292,7 @@ msgstr ""
 #: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
@@ -2354,6 +2356,60 @@ msgid "Command Output"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Stage"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Unstage"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Commit…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Push"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Pull"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Fetch"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Switch Branch…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Discard Changes…"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Compare with HEAD"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
 msgid "{0}: unknown action"
 msgstr ""
 
@@ -3419,7 +3475,9 @@ msgstr[0] ""
 msgstr[1] ""
 
 #. the status bar in a Git repository: files deleted under the folder shown.
+#. a heading in the status bar's Git menu over the deleted files' names
 #: crates/gezik-core/src/git.rs
+#: crates/gezik/src/git_commands.rs
 msgid "{n} deleted"
 msgid_plural "{n} deleted"
 msgstr[0] ""
@@ -3479,6 +3537,8 @@ msgstr ""
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/ui/app.slint
 msgid "Git"
 msgstr ""
@@ -6050,10 +6110,12 @@ msgid "Run Command"
 msgstr ""
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 msgid "A command is still running. Stop it?"
 msgstr ""
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 msgid "Stop and Run"
 msgstr ""
 
@@ -6076,6 +6138,11 @@ msgstr ""
 
 #: crates/gezik/src/command_line.rs
 msgid "Did not start"
+msgstr ""
+
+#. {} is a command put on the clipboard ("git push")
+#: crates/gezik/src/command_line.rs
+msgid "Copied: {}"
 msgstr ""
 
 #: crates/gezik/src/command_line.rs
@@ -8033,6 +8100,83 @@ msgstr ""
 
 #: crates/gezik/src/folder_sizes.rs
 msgid "Folder sizes are worked out in folders"
+msgstr ""
+
+#: crates/gezik/src/git.rs
+#: crates/gezik/src/git_commands.rs
+msgid "Git took too long ([git] timeout)"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "and {n} more"
+msgid_plural "and {n} more"
+msgstr[0] ""
+msgstr[1] ""
+
+#. {} is git's own message (not translated).
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view/folder_git.rs
+msgid "Git: {}"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Not in a Git repository"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Select files first"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "No branches yet"
+msgstr ""
+
+#. the commit dialog's title; {} is the repository's folder name
+#: crates/gezik/src/git_commands.rs
+msgid "Commit to {}"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Git status is not known yet"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "No changes to discard (staged changes stay: unstage them first)"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discard changes to {n} file? It goes to the trash first, so you can undo."
+msgid_plural "Discard changes to {n} files? They go to the trash first, so you can undo."
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discard changes to {n} file"
+msgid_plural "Discard changes to {n} files"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "This drive has no trash: changes are not discarded (they could not be undone)"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discard Changes"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Discard"
+msgstr ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discarding changes to {n} file"
+msgid_plural "Discarding changes to {n} files"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik/src/git_commands.rs
+msgid "Select one file to compare with HEAD"
 msgstr ""
 
 #: crates/gezik/src/info.rs
@@ -11353,10 +11497,6 @@ msgid "{0} changed but is not in {1}"
 msgstr ""
 
 #: crates/gezik/src/vfs_mounts.rs
-msgid "Discard"
-msgstr ""
-
-#: crates/gezik/src/vfs_mounts.rs
 msgid "Keep a Copy in Downloads"
 msgstr ""
 
@@ -11379,11 +11519,6 @@ msgstr ""
 
 #: crates/gezik/src/view/folder_fields.rs
 msgid "Reading properties… {} of {}"
-msgstr ""
-
-#. {} is git's own message (not translated).
-#: crates/gezik/src/view/folder_git.rs
-msgid "Git: {}"
 msgstr ""
 
 #: crates/gezik/src/view/folder_git.rs
@@ -11538,6 +11673,10 @@ msgstr ""
 #: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/filter-bar.slint
 msgid "Stop"
+msgstr ""
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Open in Terminal"
 msgstr ""
 
 #: crates/gezik/ui/widgets/command-output.slint
@@ -11932,6 +12071,26 @@ msgstr ""
 
 #: crates/gezik/ui/widgets/filter-bar.slint
 msgid "Saved filters"
+msgstr ""
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Commit message"
+msgstr ""
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Nothing is staged."
+msgstr ""
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Staged:"
+msgstr ""
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Stage all changes first"
+msgstr ""
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Commit"
 msgstr ""
 
 #: crates/gezik/ui/widgets/info.slint

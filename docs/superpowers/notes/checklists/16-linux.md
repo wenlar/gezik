@@ -19,3 +19,7 @@ Numbering goes on from `15-linux.md` (it ends at 285). Results go to `../linux-t
 ### 16d, Git status
 
 291. **Changes show by themselves (inotify).** In a repository folder (`git init`, a commit), in a terminal: `echo x >> a.txt` (orange dot on `a.txt` within about 1 s), `git add a.txt` (green dot), `git commit -m t` (gone), `touch new.txt` (grey `?`). Write `build/` into `.gitignore` with a `build` folder present: it turns faint. The status bar shows `⎇ <branch>`. A folder outside any repository and one on an NFS/SMB mount: `pgrep -a git` shows nothing while you browse them. Without git (`[git] program = "/nonexistent"`): "Install Git to see repository status" once, no error box.
+
+### 16e, Git commands
+
+292. **Credentials and errors.** In a clone over HTTPS with the libsecret helper (`git config --global credential.helper /usr/lib/git-core/git-credential-libsecret`, signed in once in a terminal): change, Stage, Commit… (Ctrl+Enter), Push from the status bar's Git menu: the output streams in the panel, exit code 0, `↑1` goes. In a clone of an HTTPS repository with no credentials stored and no helper: Push fails at once (no hang, `pgrep -a git` shows none left), the panel says `terminal prompts disabled` and **Open in Terminal** opens a terminal in the repository with `git push` on the clipboard. Discard Changes… on a changed file and Ctrl+Z brings it back (GNOME and KDE trash).

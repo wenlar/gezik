@@ -849,6 +849,28 @@ fn add_tags(subs: &mut Vec<Submenu>, paths: &[PathBuf], native: bool) {
     }
 }
 
+/// `Git ▸` for `rows` in a repository's folder (spec 16 §9.1), after `Tools ▸`. Gezik's own
+/// menus take it while there is room for another submenu, else its items go at the end of
+/// Tools ▸ under a greyed "Git".
+fn add_git(subs: &mut Vec<Submenu>, rows: &[(PathBuf, bool)], native: bool) {
+    let view = crate::panes::active_view();
+    if !view.in_repo() || view.shows_results() {
+        return;
+    }
+    let room = native || subs.len() < MAX_SUBMENUS;
+    let Some(tools) = subs.iter_mut().find(|sub| sub.items.iter().any(|(id, _, _)| *id == TOOLS_EXPORT_LIST)) else {
+        return;
+    };
+    let items = crate::git_commands::row_items(&crate::git_commands::marks_of(&view, rows));
+    if room {
+        let at = tools.at;
+        subs.push(Submenu { title: t!("Git").into_owned(), at, items });
+    } else {
+        tools.items.push((HEADING, t!("Git").into_owned(), false));
+        tools.items.extend(items);
+    }
+}
+
 /// A trash row's menu: only what the trash does (no Explorer menu, nothing that acts on a
 /// `$R…` name).
 pub fn trash_row_items() -> [(u32, &'static str); 2] {
@@ -1441,6 +1463,21 @@ enum Subject {
     /// A property row of the preview, by its value.
     /// A property row's value, and its field when the row is one (Show Column).
     PreviewValue(String, Option<gezik_core::fields::FieldId>),
+    /// The status bar's Git menu (items by id).
+    Git,
+    /// The branch menu: the pane, the repository's root and the branches listed (by place).
+    Branches(crate::panes::PaneId, PathBuf, Vec<String>),
+}
+
+thread_local! {
+    pub(crate) static CURRENT: crate::windows::Slot<Menus> = const { crate::windows::Slot::new() };
+}
+
+/// Runs `f` with this window's menus (a menu that opens once a background answer came).
+pub fn with_current(f: impl FnOnce(&Menus)) {
+    if let Some(menus) = CURRENT.with(crate::windows::Slot::current) {
+        f(&menus);
+    }
 }
 
 /// Lets one native menu be pending or open at a time, so two right-clicks in quick
@@ -1508,6 +1545,7 @@ impl Menus {
             late: crate::finder_menu::Late::default(),
             native_menu: MenuGate::default(),
         };
+        CURRENT.with(|c| c.set(crate::windows::current(), menus.clone()));
         window.on_menu_closed(|| {
             crate::drag::with_current(|drags| drags.menu_shown());
         });
@@ -1591,8 +1629,9 @@ impl Menus {
             let mut subs = vec![self.copy_path_sub(&paths, list.len())];
             let services = self.add_finder_extras(&list, &mut subs, &rows);
             self.add_links(&mut list, &mut subs, &rows, native);
-            self.add_file_tools(&mut list, &mut subs, rows, native);
+            self.add_file_tools(&mut list, &mut subs, rows.clone(), native);
             add_tags(&mut subs, &paths, native);
+            add_git(&mut subs, &rows, native);
             list.extend(self.file_extras(false, false, native));
             let in_cloud = paths.iter().all(|p| crate::cloud::root_of(p).is_some());
             list.extend(cloud_items(in_cloud, native, cfg!(target_os = "macos")));
@@ -1632,6 +1671,7 @@ impl Menus {
         self.add_links(&mut list, &mut subs, &[(path.clone(), is_dir)], native);
         self.add_file_tools(&mut list, &mut subs, vec![(path.clone(), is_dir)], native);
         add_tags(&mut subs, std::slice::from_ref(&path), native);
+        add_git(&mut subs, &[(path.clone(), is_dir)], native);
         list.extend(self.file_extras(true, is_dir, native));
         list.extend(cloud_items(crate::cloud::root_of(&path).is_some(), native, cfg!(target_os = "macos")));
         // Not asked on Windows: Explorer's menu has Eject, and asking a fixed drive's bus costs a query.
@@ -2241,6 +2281,37 @@ impl Menus {
         }
     }
 
+    /// The status bar's Git menu (spec 16 §9.1).
+    pub fn git_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::Git);
+        self.open_slint_entries(&items, Vec::new(), at);
+    }
+
+    /// The branches of the repository at `root` to switch to (`current` marked), at `at` (the
+    /// status bar's Git part) or the pointer's last menu place.
+    pub fn branch_menu(
+        &self,
+        pane: crate::panes::PaneId,
+        root: PathBuf,
+        names: Vec<String>,
+        current: Option<usize>,
+        at: Option<Anchor>,
+    ) {
+        let items: Vec<(u32, String, bool)> = names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                (crate::git_commands::BRANCH_FIRST + i as u32, marked(current == Some(i), name), current != Some(i))
+            })
+            .collect();
+        let at = at.unwrap_or_else(|| {
+            let (x, y) = self.menu_at.get();
+            Anchor::point(x, y)
+        });
+        *self.subject.borrow_mut() = Some(Subject::Branches(pane, root, names));
+        self.open_slint_entries(&items, Vec::new(), at);
+    }
+
     /// One of the Convert layer's menus (convert.rs builds it): `items` (id, title, enabled)
     /// under its button.
     pub fn convert_menu(&self, items: Vec<(u32, String, bool)>, at: Anchor) {
@@ -2385,7 +2456,17 @@ impl Menus {
     }
 
     fn run(&self, id: u32, subject: Subject) {
+        if let Some(action) = crate::git_commands::action_for(id) {
+            return crate::git_commands::run(action, &crate::panes::active_view());
+        }
         match (id, subject) {
+            (id, Subject::Branches(pane, root, names)) => {
+                if let Some(name) =
+                    id.checked_sub(crate::git_commands::BRANCH_FIRST).and_then(|i| names.get(i as usize))
+                {
+                    crate::git_commands::switch_to(pane, root, name.clone());
+                }
+            }
             (id, Subject::Job(job)) => self.ops.job_chosen(job, id),
             (id, Subject::Search) => {
                 crate::panes::with_active(|p| p.search.menu_chosen(id));

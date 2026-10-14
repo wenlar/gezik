@@ -60,7 +60,8 @@ The top of `settings.toml` holds:
   Homebrew's; git 2.31 or newer), `ignored` (default
   `true`: ignored files are marked and drawn faint), `network` (default `false`: repositories
   on network drives are not looked for) and `timeout` (seconds a status may take, 1-600,
-  default 10).
+  default 10; also the longest Gezik waits for git to read a branch list or a file at
+  HEAD for the Git commands).
 - `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group }` for an alias
   and a group. Gezik updates this list when you pin, unpin, rename, group or reorder; the rest
   of the file, including your comments, is kept.

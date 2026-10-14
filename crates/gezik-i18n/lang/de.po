@@ -339,6 +339,7 @@ msgstr "Ändern"
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/filter.rs
 #: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/operations.rs
@@ -354,6 +355,7 @@ msgstr "Ändern"
 #: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
@@ -2849,6 +2851,69 @@ msgid "Command Output"
 msgstr "Befehlsausgabe"
 
 #: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Stage"
+msgstr "Stagen"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Unstage"
+msgstr "Unstagen"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Commit…"
+msgstr "Committen…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Push"
+msgstr "Push"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Pull"
+msgstr "Pull"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Fetch"
+msgstr "Fetch"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Switch Branch…"
+msgstr "Branch wechseln…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Discard Changes…"
+msgstr "Änderungen verwerfen…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Compare with HEAD"
+msgstr "Mit HEAD vergleichen"
+
+#: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
 msgid "{0}: unknown action"
 msgstr "{0}: unbekannte Aktion"
@@ -4166,7 +4231,9 @@ msgstr[0] "{n} geändert"
 msgstr[1] "{n} geändert"
 
 #. the status bar in a Git repository: files deleted under the folder shown.
+#. a heading in the status bar's Git menu over the deleted files' names
 #: crates/gezik-core/src/git.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "{n} deleted"
 msgid_plural "{n} deleted"
@@ -4235,6 +4302,8 @@ msgstr "Bewertung"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Git"
@@ -7381,11 +7450,13 @@ msgid "Run Command"
 msgstr "Befehl ausführen"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "A command is still running. Stop it?"
 msgstr "Ein Befehl läuft noch. Beenden?"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "Stop and Run"
 msgstr "Beenden und ausführen"
@@ -7415,6 +7486,12 @@ msgstr "{0} konnte nicht gestartet werden: {1}"
 #, fuzzy
 msgid "Did not start"
 msgstr "Nicht gestartet"
+
+#. {} is a command put on the clipboard ("git push")
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Copied: {}"
+msgstr "Kopiert: {}"
 
 #: crates/gezik/src/command_line.rs
 #, fuzzy
@@ -9830,6 +9907,99 @@ msgstr "Teilen nicht möglich: {}"
 msgid "Folder sizes are worked out in folders"
 msgstr "Ordnergrößen werden in Ordnern berechnet"
 
+#: crates/gezik/src/git.rs
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git took too long ([git] timeout)"
+msgstr "Git hat zu lange gebraucht ([git] timeout)"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "and {n} more"
+msgid_plural "and {n} more"
+msgstr[0] "und {n} weitere"
+msgstr[1] "und {n} weitere"
+
+#. {} is git's own message (not translated).
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git: {}"
+msgstr "Git: {}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Not in a Git repository"
+msgstr "Nicht in einem Git-Repository"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select files first"
+msgstr "Wählen Sie zuerst Dateien aus"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No branches yet"
+msgstr "Noch keine Branches"
+
+#. the commit dialog's title; {} is the repository's folder name
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Commit to {}"
+msgstr "Commit in {}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git status is not known yet"
+msgstr "Der Git-Status ist noch nicht bekannt"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No changes to discard (staged changes stay: unstage them first)"
+msgstr "Keine Änderungen zum Verwerfen (gestagte Änderungen bleiben: zuerst unstagen)"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file? It goes to the trash first, so you can undo."
+msgid_plural "Discard changes to {n} files? They go to the trash first, so you can undo."
+msgstr[0] "Änderungen an {n} Datei verwerfen? Sie kommt zuerst in den Papierkorb und lässt sich rückgängig machen."
+msgstr[1] "Änderungen an {n} Dateien verwerfen? Sie kommen zuerst in den Papierkorb und lassen sich rückgängig machen."
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file"
+msgid_plural "Discard changes to {n} files"
+msgstr[0] "Änderungen an {n} Datei verwerfen"
+msgstr[1] "Änderungen an {n} Dateien verwerfen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "This drive has no trash: changes are not discarded (they could not be undone)"
+msgstr "Dieses Laufwerk hat keinen Papierkorb: Änderungen werden nicht verworfen (sie ließen sich nicht rückgängig machen)"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard Changes"
+msgstr "Änderungen verwerfen"
+
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Discard"
+msgstr "Verwerfen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discarding changes to {n} file"
+msgid_plural "Discarding changes to {n} files"
+msgstr[0] "Änderungen an {n} Datei werden verworfen"
+msgstr[1] "Änderungen an {n} Dateien werden verworfen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select one file to compare with HEAD"
+msgstr "Wählen Sie eine Datei zum Vergleich mit HEAD"
+
 #: crates/gezik/src/info.rs
 #, fuzzy
 msgid "Cannot show Properties: {}"
@@ -10787,13 +10957,13 @@ msgstr "{} % übersetzt"
 #, fuzzy
 msgid "{0} (+{n} more)"
 msgid_plural "{0} (+{n} more)"
-msgstr[0] "{0} (+{n} weiterer)"
+msgstr[0] "{0} (+{n} weitere)"
 msgstr[1] "{0} (+{n} weitere)"
 
 #: crates/gezik/src/main.rs
 #, fuzzy
 msgid "cannot watch the config folder for changes: {}"
-msgstr "Konfigurationsordner kann nicht auf Änderungen überwacht werden: {}"
+msgstr "Der Konfigurationsordner kann nicht auf Änderungen überwacht werden: {}"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
@@ -13938,11 +14108,6 @@ msgstr "{0} wurde geändert, ist aber nicht in {1}"
 
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
-msgid "Discard"
-msgstr "Verwerfen"
-
-#: crates/gezik/src/vfs_mounts.rs
-#, fuzzy
 msgid "Keep a Copy in Downloads"
 msgstr "Kopie in Downloads behalten"
 
@@ -13971,12 +14136,6 @@ msgstr "Eigenschaften nicht lesbar (kein Thread zum Lesen)"
 #, fuzzy
 msgid "Reading properties… {} of {}"
 msgstr "Eigenschaften werden gelesen… {} von {}"
-
-#. {} is git's own message (not translated).
-#: crates/gezik/src/view/folder_git.rs
-#, fuzzy
-msgid "Git: {}"
-msgstr "Git: {}"
 
 #: crates/gezik/src/view/folder_git.rs
 #, fuzzy
@@ -14167,6 +14326,11 @@ msgstr "{}, Tags {}"
 #, fuzzy
 msgid "Stop"
 msgstr "Stoppen"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Open in Terminal"
+msgstr "Im Terminal öffnen"
 
 #: crates/gezik/ui/widgets/command-output.slint
 #, fuzzy
@@ -14655,6 +14819,31 @@ msgstr "Mehr"
 #, fuzzy
 msgid "Saved filters"
 msgstr "Gespeicherte Filter"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit message"
+msgstr "Commit-Nachricht"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Nothing is staged."
+msgstr "Nichts ist gestagt."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Staged:"
+msgstr "Gestagt:"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Stage all changes first"
+msgstr "Zuerst alle Änderungen stagen"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit"
+msgstr "Committen"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy
@@ -15946,6 +16135,14 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Befehle"
 
+#~ #, fuzzy
+#~ msgid "{0} (+{n} more)"
+#~ msgid_plural "{0} (+{n} more)"
+#~ msgstr[0] "{0} (+{n} weiterer)"
+#~ msgstr[1] "{0} (+{n} weitere)"
+#~ #, fuzzy
+#~ msgid "cannot watch the config folder for changes: {}"
+#~ msgstr "Konfigurationsordner kann nicht auf Änderungen überwacht werden: {}"
 #~ #, fuzzy
 #~ msgctxt "setting:view.sort"
 #~ msgid "name | modified | created | type | size | tags | rating"

@@ -369,9 +369,25 @@ impl ChildProcess {
     /// On Windows the process joins its job object just after it starts (std gives no
     /// suspended start to resume): a program it starts in those first microseconds is not in
     /// the job, and `kill_tree` would miss it. Shells start nothing that fast.
-    pub fn spawn_piped(mut command: Command) -> io::Result<(ChildProcess, ChildStdout, ChildStderr)> {
-        command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    pub fn spawn_piped(command: Command) -> io::Result<(ChildProcess, ChildStdout, ChildStderr)> {
+        ChildProcess::spawn_piped_input(command, None)
+    }
+
+    /// Like `spawn_piped`, with `input` written to its input on another thread and then closed
+    /// (a commit message, a list of paths).
+    pub fn spawn_piped_input(
+        mut command: Command,
+        input: Option<Vec<u8>>,
+    ) -> io::Result<(ChildProcess, ChildStdout, ChildStderr)> {
+        let stdin = if input.is_some() { Stdio::piped() } else { Stdio::null() };
+        command.stdin(stdin).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut process = ChildProcess::start_command(command, false)?;
+        if let (Some(mut pipe), Some(input)) = (process.child.stdin.take(), input) {
+            // A program that never reads it ends the pipe: that error is no failure.
+            std::thread::spawn(move || {
+                let _ = pipe.write_all(&input);
+            });
+        }
         let (Some(stdout), Some(stderr)) = (process.child.stdout.take(), process.child.stderr.take()) else {
             return Err(io::ErrorKind::BrokenPipe.into());
         };

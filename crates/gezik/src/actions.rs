@@ -167,6 +167,15 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::InstallTheme => crate::settings_window::open_themes(),
         Action::ExportSettings => crate::settings_window::open_backup(false),
         Action::ImportSettings => crate::settings_window::open_backup(true),
+        Action::GitStage
+        | Action::GitUnstage
+        | Action::GitCommit
+        | Action::GitPush
+        | Action::GitPull
+        | Action::GitFetch
+        | Action::GitSwitchBranch
+        | Action::GitDiscard
+        | Action::GitCompareHead => crate::git_commands::run(action, view),
         Action::BrowseArchive => {
             // The selected (or focused) archive, as a folder whatever double-click does.
             let at = view.single_selected().or_else(|| view.focus());

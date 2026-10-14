@@ -104,6 +104,8 @@ export struct PaneData {
     cmd-dropped: bool,
     // Bumped by each run (the list starts at its end).
     cmd-run: int,
+    // A git command ended wanting a password: Open in Terminal (spec 16 §9.4).
+    cmd-terminal: bool,
 }
 
 // Where the pane's parts are in the window and how big its lines are (drag.rs, sidebar.rs,
@@ -801,6 +803,7 @@ export component PaneView inherits Rectangle {
                     state: root.data.cmd-state;
                     dropped: root.data.cmd-dropped;
                     run: root.data.cmd-run;
+                    terminal: root.data.cmd-terminal;
                     mono-font: root.mono-font;
                     button(which) => { root.command-button(root.index, which); }
                 }
