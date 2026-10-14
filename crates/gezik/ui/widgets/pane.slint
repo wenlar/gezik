@@ -102,6 +102,8 @@ export struct PaneData {
     cmd-status: string,
     cmd-state: int,
     cmd-dropped: bool,
+    // Bumped by each run (the list starts at its end).
+    cmd-run: int,
 }
 
 // Where the pane's parts are in the window and how big its lines are (drag.rs, sidebar.rs,
@@ -796,6 +798,7 @@ export component PaneView inherits Rectangle {
                     status: root.data.cmd-status;
                     state: root.data.cmd-state;
                     dropped: root.data.cmd-dropped;
+                    run: root.data.cmd-run;
                     mono-font: root.mono-font;
                     button(which) => { root.command-button(root.index, which); }
                 }

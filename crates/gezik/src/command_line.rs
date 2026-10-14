@@ -448,6 +448,20 @@ fn save(list: Vec<String>) {
     });
 }
 
+/// `typed` ran: it goes first in the history (unless the history is off or it is private).
+fn remember_run(typed: &str) {
+    if !REMEMBER.with(Cell::get) {
+        return;
+    }
+    let list = HISTORY.with(|h| {
+        let mut h = h.borrow_mut();
+        remember(&mut h, typed).then(|| h.clone())
+    });
+    if let Some(list) = list {
+        save(list);
+    }
+}
+
 /// The history's commands for the address bar's list while `typed` (after `>`) is typed.
 pub fn history_for(typed: &str) -> Vec<String> {
     HISTORY.with(|h| matching(&h.borrow(), typed).into_iter().map(str::to_owned).collect())
@@ -540,7 +554,11 @@ pub fn held_enter(repeat: bool, enter: bool, editing: bool) -> bool {
 struct State {
     open: bool,
     command: String,
+    /// What followed `>`, as typed (a space first keeps it out of the history).
+    typed: String,
     selection: Selection,
+    /// Runs so far: the panel starts each at its end.
+    run: i32,
     /// The shell, kept while what it started may still be stopped.
     child: Option<ChildProcess>,
     shared: Option<Shared>,
@@ -612,44 +630,34 @@ impl CommandLine {
     /// Enter in the address bar with `typed` (what follows `>`): runs it in the folder `pane`
     /// shows, if it shows one on disk.
     pub fn enter(&self, pane: &Pane, typed: &str) {
-        let command = typed.trim();
-        if command.is_empty() {
+        if typed.trim().is_empty() {
             return;
         }
         let Some(dir) = pane.nav.active_location().folder().map(Path::to_path_buf) else {
             return pane.view.note(t!("Commands run in a folder on disk").into_owned());
         };
-        if REMEMBER.with(Cell::get) {
-            let list = HISTORY.with(|h| {
-                let mut h = h.borrow_mut();
-                remember(&mut h, typed).then(|| h.clone())
-            });
-            if let Some(list) = list {
-                save(list);
-            }
-        }
         let view = &pane.view;
         let file = view.focus().and_then(|i| view.entry_path(i)).map(|(path, _)| path);
         let files: Vec<PathBuf> = view.selected_items().into_iter().map(|(path, _)| path).collect();
-        self.start_or_ask(command.to_owned(), Selection { file, files, dir });
+        self.start_or_ask(typed.to_owned(), Selection { file, files, dir });
     }
 
     /// Runs the command shown again, in its folder.
     fn run_again(&self) {
-        let (command, selection) = {
+        let (typed, selection) = {
             let state = self.0.state.borrow();
-            (state.command.clone(), state.selection.clone())
+            (state.typed.clone(), state.selection.clone())
         };
-        if !command.is_empty() {
-            self.start_or_ask(command, selection);
+        if !typed.trim().is_empty() {
+            self.start_or_ask(typed, selection);
         }
     }
 
-    /// Starts `command`; while another runs, asks first whether to stop it (Enter and Esc
-    /// both keep it running).
-    fn start_or_ask(&self, command: String, selection: Selection) {
+    /// Starts `typed` (what followed `>`); while another runs, asks first whether to stop it
+    /// (Enter and Esc both keep it running, and nothing is started or kept in the history).
+    fn start_or_ask(&self, typed: String, selection: Selection) {
         if !self.is_running() {
-            return self.start(command, selection);
+            return self.start(typed, selection);
         }
         let this = self.clone();
         crate::operations::with_current(|ops| {
@@ -661,14 +669,15 @@ impl CommandLine {
                 move |choice| {
                     if choice == Some(1) {
                         this.stop();
-                        this.start(command, selection);
+                        this.start(typed, selection);
                     }
                 },
             );
         });
     }
 
-    fn start(&self, command: String, selection: Selection) {
+    fn start(&self, typed: String, selection: Selection) {
+        let command = typed.trim().to_owned();
         let shell = SETTINGS.with(|s| pick_shell(&s.borrow(), std::env::var_os("SHELL"), cfg!(windows)));
         let call = invocation(&shell, &command, std::env::var_os("ComSpec"));
         let cmd = shell == Shell::Cmd;
@@ -710,7 +719,8 @@ impl CommandLine {
             // What the last one left running ends now if it may still be stopped.
             state.let_go();
             state.child = None;
-            *state = State { open: true, command: command.clone(), selection, list_file, ..State::default() };
+            let run = state.run.wrapping_add(1);
+            *state = State { open: true, command, typed: typed.clone(), selection, list_file, run, ..State::default() };
             self.0.model.clear();
             self.0.model.push_all(notes.into_iter().map(|text| Line { text, err: false }).collect());
             match started {
@@ -730,6 +740,8 @@ impl CommandLine {
                     state.shared = Some(shared);
                     state.started = Some(Instant::now());
                     state.running = true;
+                    // Only what ran is kept (not one cancelled at the question).
+                    remember_run(&typed);
                 }
                 Err(err) => {
                     let program = call.program.to_string_lossy();
@@ -902,7 +914,7 @@ impl CommandLine {
 
     /// Writes the panel's header to the pane (only what changed is written).
     fn show(&self) {
-        let (open, title, folder, status, state_code) = {
+        let (open, title, folder, status, state_code, run) = {
             let mut state = self.0.state.borrow_mut();
             let took = match (state.started, state.exited) {
                 (Some(started), Some((at, _))) => Some(at.duration_since(started)),
@@ -930,7 +942,8 @@ impl CommandLine {
             } else {
                 2
             };
-            (state.open, format!("> {}", state.command), state.selection.dir.display().to_string(), status, code)
+            let folder = state.selection.dir.display().to_string();
+            (state.open, format!("> {}", state.command), folder, status, code, state.run)
         };
         let dropped = self.0.model.output.borrow().dropped;
         let model = ModelRc::from(self.0.model.clone());
@@ -942,6 +955,7 @@ impl CommandLine {
             d.cmd_status = status.into();
             d.cmd_state = state_code;
             d.cmd_dropped = dropped;
+            d.cmd_run = run;
         });
     }
 }
@@ -1236,6 +1250,18 @@ mod tests {
         let want: Vec<String> = (140..150).rev().map(|i| format!("echo {i}")).collect();
         assert_eq!(matching(&h, "ECHO 14"), want);
         assert_eq!(matching(&h, "").len(), HISTORY_ROWS);
+    }
+
+    #[test]
+    fn only_a_run_goes_into_the_history_and_only_while_it_is_on() {
+        HISTORY.with(|h| h.borrow_mut().clear());
+        remember_run("dir");
+        remember_run(" secret");
+        assert_eq!(history_for(""), ["dir"]);
+        REMEMBER.with(|r| r.set(false));
+        remember_run("echo off");
+        REMEMBER.with(|r| r.set(true));
+        assert_eq!(history_for(""), ["dir"]);
     }
 
     #[test]

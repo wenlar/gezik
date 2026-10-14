@@ -872,7 +872,10 @@ export component AppWindow inherits Window {
 
     // Gives the keyboard to the file list.
     public function focus-list() {
-        if root.conflicts-open {
+        // A question keeps the keyboard while it is open (a field's Enter that asked it ends
+        // typing, and the list would take the keyboard back a moment later).
+        if root.dialog-open {
+        } else if root.conflicts-open {
             root.conflict-focus-seq += 1;
         } else if root.rb-open {
             root.rb-focus-seq += 1;
@@ -1089,7 +1092,9 @@ export component AppWindow inherits Window {
                             sheet-y: sheet-place.y;
                             sheet-width: sheet-place.width;
                             sheet-height: sheet-place.height;
-                            focus-requested => { keys.focus(); }
+                            focus-requested => {
+                                if !root.dialog-open { keys.focus(); }
+                            }
                             keyboard-menu(p, row, x, y) => { root.keyboard-menu(p, row, x, y); }
                             scrolled(p, y) => { root.scrolled(p, y); }
                             revealed(p, entry, y) => { root.revealed(p, entry, y); }
