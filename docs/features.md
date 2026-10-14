@@ -24,6 +24,8 @@ Gezik copies, moves and deletes with its own engine on every OS:
   and no files, paste makes a `Pasted image ….png` or `Pasted text ….txt`.
 - **Drag and drop** files onto a folder in the list, the empty space (the folder shown), a
   folder or drive in the sidebar, a part of the address bar or a tab (rest on it to open it).
+  Resting on a folder opens it too (spring-loaded folders, `[drag] spring-delay`), so a drag
+  can go deeper; without a drop the pane goes back.
   The same drive moves, another drive copies; Shift moves, Ctrl (⌥ on macOS) copies; Alt or
   Ctrl+Shift on Windows, Ctrl+Shift on Linux and ⌘⌥ on macOS make links; the right button
   asks. Drop folders between pinned ones to pin them. Drags go out to Explorer, the desktop

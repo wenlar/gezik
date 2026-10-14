@@ -1561,6 +1561,11 @@ msgstr "{0}: se esperaban tablas [[rename-presets]], se obtuvo {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
+msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
+msgstr "{0}: se esperaba 0 (desactivado) o un número de milisegundos, se obtuvo {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
 msgid "{0}: expected [[filters]] tables, got {1}"
 msgstr "{0}: se esperaban tablas [[filters]], se obtuvo {1}"
 
@@ -15760,6 +15765,18 @@ msgstr "Recordar"
 msgctxt "setting:history.remember"
 msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
 msgstr "Recordar las carpetas que abre, para las listas Recientes y Frecuentes de la barra de direcciones, y los comandos ejecutados con \">\" (en state.toml). false también los olvida; \"clear-history\" (sin tecla por defecto) vacía ambas."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:drag.spring-delay"
+msgid "Spring delay"
+msgstr "Retraso de apertura"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:drag.spring-delay"
+msgid "Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar) opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000."
+msgstr "Si un arrastre se detiene estos milisegundos sobre una carpeta (en la lista, el árbol o la barra lateral), se abre; Esc o soltar fuera vuelve atrás. 0: desactivado; si no, de 200 a 3000."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

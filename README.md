@@ -28,7 +28,7 @@ Windows · macOS · Linux
 
 ## Features
 
-**Files.** Copy, cut and paste through the system clipboard, drag and drop to and from other programs, conflicts asked up front, undo and redo for the whole session, and a drop stack for collecting items from several folders. → [File operations](docs/features.md#file-operations)
+**Files.** Copy, cut and paste through the system clipboard, drag and drop to and from other programs (folders spring open as you rest on them), conflicts asked up front, undo and redo for the whole session, and a drop stack for collecting items from several folders. → [File operations](docs/features.md#file-operations)
 
 **Batch work.** Batch rename with rules and a live preview, archives (open them as folders and change what is inside, extract and compress zip, 7z, tar and more), and conversion of pictures, text, audio, video and PDF, plus your own commands. → [Batch rename](docs/features.md#batch-rename) · [Archives](docs/features.md#archives) · [Inside archives](docs/features.md#inside-archives) · [Convert and PDF](docs/features.md#convert-and-pdf)
 

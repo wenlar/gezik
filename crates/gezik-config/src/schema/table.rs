@@ -138,6 +138,7 @@ pub const FIELDS: &[Field] = &[
     f(None, "max-fps", General, Int),
     f(Some("session"), "restore", General, Bool),
     f(Some("history"), "remember", General, Bool),
+    f(Some("drag"), "spring-delay", General, Int),
     f(Some("files"), "confirm-trash", General, Bool),
     f(Some("files"), "copy-threads", General, Choice(THREADS)),
     f(Some("files"), "verify", General, Bool),

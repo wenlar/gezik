@@ -170,6 +170,11 @@ tree-follow = false
 # F5/F6 ask before copying or moving to the other pane (its folder can be changed there).
 confirm = true
 
+[drag]
+# Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar)
+# opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000.
+spring-delay = 700
+
 [tags]
 # Your tags, in order: the first seven get the keys Alt+Shift+1…7 (macOS ⌃1…⌃7).
 # color: red, orange, yellow, green, blue, purple, gray or none.

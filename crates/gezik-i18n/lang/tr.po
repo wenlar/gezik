@@ -1281,6 +1281,10 @@ msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}: [[rename-presets]] tabloları bekleniyordu, gelen: {1}"
 
 #: crates/gezik-config/src/settings.rs
+msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
+msgstr "{0}: 0 (kapalı) ya da milisaniye sayısı bekleniyordu, gelen: {1}"
+
+#: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[filters]] tables, got {1}"
 msgstr "{0}: [[filters]] tabloları bekleniyordu, gelen: {1}"
 
@@ -12672,6 +12676,16 @@ msgstr "Hatırla"
 msgctxt "setting:history.remember"
 msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
 msgstr "Açtığınız klasörleri adres çubuğunun Son kullanılanlar ve Sık kullanılanlar listeleri için, \">\" ile çalıştırılan komutları da hatırla (state.toml'da). false bunları da unutur; \"clear-history\" (varsayılan tuşu yok) ikisini de boşaltır."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:drag.spring-delay"
+msgid "Spring delay"
+msgstr "Yaylanma gecikmesi"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:drag.spring-delay"
+msgid "Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar) opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000."
+msgstr "Sürükleme bir klasörün üstünde (listede, ağaçta ya da kenar çubuğunda) bu kadar milisaniye durunca klasör açılır; Esc ya da dışarı bırakma geri döner. 0: kapalı; değilse 200 ile 3000 arası."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:files.confirm-trash"

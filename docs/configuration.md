@@ -51,6 +51,9 @@ The top of `settings.toml` holds:
 - `max-fps` — most frames drawn per second, e.g. while scrolling (default 120; 0 = as many as
   the display refreshes). The software renderer redraws the visible text every frame, so on
   high refresh rate displays a cap saves a lot of CPU.
+- `[drag] spring-delay` — milliseconds a drag rests on a folder (in the list, the sidebar or
+  its tree) before that folder opens (default 700; 0 = off; else kept between 200 and 3000).
+  A drag that ends without a drop (Esc, or released outside Gezik) goes back to where it began.
 - `[command-line] shell` — the shell a `>` command in the address bar runs with: `""`
   (default) is cmd on Windows and `$SHELL` (else `/bin/sh`) on macOS and Linux; `"powershell"`
   or `"pwsh"`; or a full path, which gets `shell-args` (say `["-c"]`) and then the command.

@@ -1561,6 +1561,11 @@ msgstr "{0}: [[rename-presets]]-Tabellen erwartet, {1} erhalten"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
+msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
+msgstr "{0}: 0 (aus) oder eine Anzahl Millisekunden erwartet, erhalten: {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
 msgid "{0}: expected [[filters]] tables, got {1}"
 msgstr "{0}: [[filters]]-Tabellen erwartet, {1} erhalten"
 
@@ -15760,6 +15765,18 @@ msgstr "Merken"
 msgctxt "setting:history.remember"
 msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
 msgstr "Geöffnete Ordner für die Listen „Zuletzt“ und „Häufig“ der Adressleiste sowie mit \">\" ausgeführte Befehle merken (in state.toml). false vergisst sie auch; \"clear-history\" (standardmäßig ohne Taste) leert beide."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:drag.spring-delay"
+msgid "Spring delay"
+msgstr "Federverzögerung"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:drag.spring-delay"
+msgid "Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar) opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000."
+msgstr "Ruht ein Ziehvorgang so viele Millisekunden auf einem Ordner (in der Liste, im Baum oder in der Seitenleiste), öffnet er sich; Esc oder Ablegen außerhalb geht zurück. 0: aus; sonst 200 bis 3000."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

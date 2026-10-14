@@ -1548,6 +1548,11 @@ msgstr "{0}：应为 [[rename-presets]] 表，实际为 {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
+msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
+msgstr "{0}：应为 0（关闭）或毫秒数，实际为 {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
 msgid "{0}: expected [[filters]] tables, got {1}"
 msgstr "{0}：应为 [[filters]] 表，实际为 {1}"
 
@@ -15546,6 +15551,18 @@ msgstr "记住"
 msgctxt "setting:history.remember"
 msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
 msgstr "记住打开的文件夹（用于地址栏的“最近”和“常用”列表）以及用 \">\" 运行的命令（保存在 state.toml 中）。false 也会忘记它们；\"clear-history\"（默认无快捷键）清空两者。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:drag.spring-delay"
+msgid "Spring delay"
+msgstr "弹簧延迟"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:drag.spring-delay"
+msgid "Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar) opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000."
+msgstr "拖动在文件夹上（列表、树或侧边栏中）停留这么多毫秒后打开它；按 Esc 或在外部放下则返回。0：关闭；否则为 200 到 3000。"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

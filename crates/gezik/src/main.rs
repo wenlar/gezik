@@ -160,6 +160,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
         }
     }
     dual::set_confirm(loaded.settings.panes_confirm);
+    drag::set_spring_delay(loaded.settings.spring_delay);
     preview::fields::set_properties(loaded.settings.preview_properties);
     // The shortcuts first: the pins' tips name their keys.
     keys::set_shortcuts(loaded.settings.shortcuts.clone());

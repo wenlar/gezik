@@ -7,7 +7,7 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use gezik_core::drag::{
@@ -16,7 +16,7 @@ use gezik_core::drag::{
 };
 use gezik_core::layout::Rect;
 use gezik_core::nav::Location;
-use gezik_core::ops::paths::is_within;
+use gezik_core::ops::paths::{is_within, same_path};
 use gezik_core::vfs::VfsPath;
 use gezik_platform::DriveKind;
 use gezik_platform::dnd::{Answer, Attached, DragEnd, DropHandler, Handoff, Offer, OnEnd, OutsideDrag, VirtualFiles};
@@ -32,6 +32,17 @@ use crate::{AppWindow, SidebarRow, Theme};
 
 /// How often a drag near the list's top or bottom edge scrolls it.
 const SCROLL_STEP: Duration = Duration::from_millis(30);
+
+/// How often a pane that sprang open is looked at until its folder is on screen.
+const SETTLE_STEP: Duration = Duration::from_millis(50);
+
+/// `[drag] spring-delay` in ms (0: off).
+static SPRING_DELAY: AtomicU32 = AtomicU32::new(700);
+
+/// `[drag] spring-delay` changed.
+pub fn set_spring_delay(ms: u32) {
+    SPRING_DELAY.store(ms, Ordering::Relaxed);
+}
 
 /// Where a drop would land and what it would do.
 #[derive(Debug, Clone, PartialEq)]
@@ -147,6 +158,12 @@ struct Inner {
     /// The tab under the pointer (pane, tab), waiting to open.
     hover_tab: Cell<Option<(usize, usize)>>,
     tab_timer: Timer,
+    /// Spring-loaded folders (spec 16l): the folder the drag rests on (pane, folder) and where
+    /// the panes it opened started.
+    spring: RefCell<drag::Spring<(usize, PathBuf), Location>>,
+    spring_timer: Timer,
+    /// Waits for a pane that sprang open to show its folder, to find the target there anew.
+    settle_timer: Timer,
     scroll_timer: Timer,
     /// The window's drop target for other programs.
     attached: RefCell<Option<Attached>>,
@@ -307,6 +324,9 @@ impl Drags {
             crumbs: RefCell::default(),
             hover_tab: Cell::new(None),
             tab_timer: Timer::default(),
+            spring: RefCell::default(),
+            spring_timer: Timer::default(),
+            settle_timer: Timer::default(),
             scroll_timer: Timer::default(),
             attached: RefCell::default(),
             outside: RefCell::default(),
@@ -539,6 +559,7 @@ impl Drags {
             self.0.handed.set(None);
             self.0.grab_lost.set(false);
             *self.0.phase.borrow_mut() = Phase::Ended;
+            self.spring_back(false);
             return true;
         }
         if !self.is_active() {
@@ -771,6 +792,8 @@ impl Drags {
                 if let Some(index) = d.pressed {
                     crate::panes::active_view().release(index, true);
                 }
+                // Dropped outside the window.
+                self.spring_back(false);
                 true
             }
             Phase::Dragging(mut d) => {
@@ -829,6 +852,7 @@ impl Drags {
         }
         self.show(&window, x, y, &target, ghost);
         self.follow_tab(target.hit);
+        self.follow_spring(&target);
         self.follow_edge(&layout, x, y);
         if let Phase::Dragging(d) | Phase::Offer(d) = &mut *self.0.phase.borrow_mut() {
             d.target = Some(target);
@@ -1166,6 +1190,91 @@ impl Drags {
         self.reanswer();
     }
 
+    /// Resting on a folder (a list entry, a Miller column row, a tree or sidebar row) opens it
+    /// after `[drag] spring-delay`: in its pane, or for the sidebar in the active pane.
+    fn follow_spring(&self, target: &Target) {
+        let spot = match (target.hit, &target.dir) {
+            // Only where the drag could be dropped (never into a dragged folder itself).
+            _ if target.into.is_some() || target.archive.is_some() || target.action.is_none() => None,
+            (Hit::Entry(p, _) | Hit::Column(p, _, Some(_)), Some(dir)) => Some((p, dir.clone())),
+            (Hit::Sidebar(_), Some(dir)) => Some((crate::panes::active_index(), dir.clone())),
+            _ => None,
+        };
+        // Not while the pane still loads: what it shows is not what it goes to.
+        let spot = spot.filter(|(p, dir)| {
+            crate::panes::at(index(*p)).is_some_and(|pane| {
+                pane.nav.settled()
+                    && !matches!(pane.nav.active_location(), Location::Path(here) if same_path(&here, dir))
+            })
+        });
+        let delay = drag::spring_delay(SPRING_DELAY.load(Ordering::Relaxed));
+        let wait = self.0.spring.borrow_mut().over(spot.clone(), delay);
+        match (wait, spot) {
+            (drag::SpringWait::Start(delay), Some(spot)) => self.0.spring_timer.start(
+                TimerMode::SingleShot,
+                delay,
+                crate::windows::bind_mut(move || {
+                    let spot = spot.clone();
+                    with_current(|drags| drags.spring_rested(spot));
+                }),
+            ),
+            (drag::SpringWait::Keep, _) => {}
+            _ => self.0.spring_timer.stop(),
+        }
+    }
+
+    fn spring_rested(&self, (p, dir): (usize, PathBuf)) {
+        if !self.0.spring.borrow().rested(&(p, dir.clone()))
+            || !matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Offer(_))
+        {
+            return;
+        }
+        let Some(pane) = crate::panes::at(index(p)) else { return };
+        self.0.spring.borrow_mut().sprang(p, pane.nav.active_location());
+        pane.nav.go(Location::Path(dir));
+        // As with a tab opened under the drag: the pressed entry goes with the old list.
+        if p == crate::panes::active_index()
+            && let Phase::Dragging(d) = &mut *self.0.phase.borrow_mut()
+        {
+            d.pressed = None;
+            self.0.grab_lost.set(true);
+        }
+        self.0.settle_timer.start(
+            TimerMode::Repeated,
+            SETTLE_STEP,
+            crate::windows::bind_mut(|| {
+                with_current(|drags| drags.settle_step());
+            }),
+        );
+    }
+
+    /// Once the panes show what they went to, the target under the resting pointer is found
+    /// anew (the next folder can spring from there).
+    fn settle_step(&self) {
+        if !matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Offer(_)) {
+            return self.0.settle_timer.stop();
+        }
+        if crate::panes::all().iter().all(|pane| pane.nav.settled()) {
+            self.0.settle_timer.stop();
+            self.update();
+            self.reanswer();
+        }
+    }
+
+    /// The drag ended: without a drop, each pane that sprang open goes back where it started.
+    fn spring_back(&self, dropped: bool) {
+        self.0.spring_timer.stop();
+        self.0.settle_timer.stop();
+        let back = self.0.spring.borrow_mut().end(dropped);
+        for (p, start) in back {
+            if let Some(pane) = crate::panes::at(index(p)) {
+                let nav = pane.nav.clone();
+                // After the end is fully handled (the list is not busy with the drag).
+                Timer::single_shot(Duration::ZERO, crate::windows::bind(move || nav.go(start)));
+            }
+        }
+    }
+
     /// Near the list's top or bottom edge the list scrolls while the pointer rests there.
     fn follow_edge(&self, layout: &Layout, x: f32, y: f32) {
         let near = list_under(layout, x, y).is_some_and(|(_, list)| {
@@ -1246,6 +1355,7 @@ impl Drags {
         self.0.tab_timer.stop();
         self.0.scroll_timer.stop();
         self.0.hover_tab.set(None);
+        self.spring_back(d.as_ref().is_some_and(|d| d.target.as_ref().is_some_and(|t| t.action.is_some())));
         if let Some(window) = self.0.window.upgrade() {
             window.set_drag_active(false);
             window.set_drag_label("".into());
@@ -1363,7 +1473,10 @@ impl Drags {
         // The window's events may be all that follows this drag (a tab opened under it): that
         // stays so outside the window and when it comes back.
         let grab_lost = self.0.grab_lost.get();
+        // The drag goes on outside: where the panes started is kept for its end.
+        let spring = std::mem::take(&mut *self.0.spring.borrow_mut());
         self.finish(None);
+        *self.0.spring.borrow_mut() = spring;
         self.0.grab_lost.set(grab_lost);
         let (sources, right) = (d.sources.clone(), d.right);
         *self.0.phase.borrow_mut() = Phase::Outside(d.clone());
@@ -1394,6 +1507,7 @@ impl Drags {
                 if let Some(index) = d.pressed {
                     crate::panes::active_view().release(index, true);
                 }
+                self.spring_back(false);
             }
             Ok(Handoff::Running(outside)) => {
                 // Only a drag Gezik drives (X11) follows the window's events out there.
@@ -1453,6 +1567,8 @@ impl Drags {
         self.0.grab_lost.set(false);
         // Gone already when the release was seen in the window (X11): nothing left to undo.
         let Some(handed) = self.0.handed.take() else { return };
+        // Nothing is left when the drag came back and was dropped on Gezik meanwhile.
+        self.spring_back(false);
         {
             let mut phase = self.0.phase.borrow_mut();
             // Also when the drag came back as an offer and was dropped on Gezik meanwhile.

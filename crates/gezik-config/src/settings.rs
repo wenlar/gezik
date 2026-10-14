@@ -458,6 +458,9 @@ pub struct Settings {
     pub sidebar_tree_follow: bool,
     /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
     pub panes_confirm: bool,
+    /// `[drag] spring-delay`: ms a drag rests on a folder before it opens (spec 16l); 0 is off,
+    /// else clamped to `gezik_core::drag::SPRING_DELAY_RANGE`.
+    pub spring_delay: u32,
     /// `[preview] properties`: the preview reads and shows the file's metadata (spec 13 §7.4).
     pub preview_properties: bool,
     pub terminal: TerminalSettings,
@@ -516,6 +519,7 @@ impl Default for Settings {
             sidebar_tags: true,
             sidebar_tree_follow: false,
             panes_confirm: true,
+            spring_delay: 700,
             preview_properties: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
@@ -865,6 +869,31 @@ impl Settings {
                     }
                 }
                 None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "panes", value))),
+            },
+        }
+        match table.get("drag") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(drag) => {
+                    if let Some(value) = drag.get("spring-delay") {
+                        match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
+                            Some(0) => settings.spring_delay = 0,
+                            Some(n) => {
+                                let range = gezik_core::drag::SPRING_DELAY_RANGE;
+                                settings.spring_delay = n.clamp(*range.start(), *range.end());
+                            }
+                            None => warnings.push(Warning::new(
+                                file,
+                                t!(
+                                    "{0}: expected 0 (off) or a number of milliseconds, got {1}",
+                                    "drag.spring-delay",
+                                    value
+                                ),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "drag", value))),
             },
         }
         match table.get("preview") {
@@ -2932,6 +2961,26 @@ reduce-motion = \"yes\"
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(settings.max_fps, 60);
         assert_eq!(parse("max-fps = 0\n").0.max_fps, 0);
+    }
+
+    #[test]
+    fn spring_delay_is_clamped_and_zero_is_off() {
+        assert_eq!(Settings::default().spring_delay, 700);
+        for (text, ms) in [("0", 0), ("50", 200), ("900", 900), ("10000", 3000)] {
+            let (settings, warnings) = parse(&format!(
+                "[drag]
+spring-delay = {text}
+"
+            ));
+            assert_eq!((settings.spring_delay, warnings.len()), (ms, 0), "{text}");
+        }
+        let (settings, warnings) = parse(
+            "[drag]
+spring-delay = -5
+",
+        );
+        assert_eq!(settings.spring_delay, 700);
+        assert!(warnings[0].message.starts_with("drag.spring-delay:"), "{}", warnings[0].message);
     }
 
     #[test]
