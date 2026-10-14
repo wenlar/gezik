@@ -1186,6 +1186,16 @@ msgid "all"
 msgstr ""
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "right"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "bottom"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:archives.double-click"
 msgid "browse"
 msgstr ""
@@ -1299,6 +1309,9 @@ msgstr ""
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected \"right\" or \"bottom\", got {1}"
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
@@ -2183,6 +2196,16 @@ msgstr ""
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/ui/app.slint
 msgid "Two Panes"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Stack Panes"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Preview at Bottom"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
@@ -7647,7 +7670,15 @@ msgid "Flat view"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+msgid "Preview at bottom"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 msgid "Two panes"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Stack panes"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
@@ -13235,6 +13266,16 @@ msgid "F5/F6 ask before copying or moving to the other pane (its folder can be c
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "Stacked"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "The two panes one above the other, the splitter between them dragged up and down."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:sidebar.cloud"
 msgid "Cloud"
 msgstr ""
@@ -13272,6 +13313,16 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:preview.properties"
 msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "Position"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "right | bottom: the preview pane beside the list or under it (with two panes, under both)."
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

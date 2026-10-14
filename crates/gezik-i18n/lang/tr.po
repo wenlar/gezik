@@ -1177,6 +1177,16 @@ msgid "all"
 msgstr "tümü"
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "right"
+msgstr "sağ"
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "bottom"
+msgstr "alt"
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:archives.double-click"
 msgid "browse"
 msgstr "klasör gibi aç"
@@ -1291,6 +1301,10 @@ msgstr "{0}: [[rename-presets]] tabloları bekleniyordu, gelen: {1}"
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
 msgstr "{0}: 0 (kapalı) ya da milisaniye sayısı bekleniyordu, gelen: {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected \"right\" or \"bottom\", got {1}"
+msgstr "{0}: \"right\" ya da \"bottom\" bekleniyordu, gelen: {1}"
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[filters]] tables, got {1}"
@@ -2177,6 +2191,16 @@ msgstr "Kenar çubuğu ağacında göster"
 #: crates/gezik/ui/app.slint
 msgid "Two Panes"
 msgstr "İki bölme"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Stack Panes"
+msgstr "Bölmeleri üst üste koy"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Preview at Bottom"
+msgstr "Önizleme altta"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "Switch to the Other Pane"
@@ -7564,8 +7588,16 @@ msgid "Flat view"
 msgstr "Düz görünüm"
 
 #: crates/gezik/src/context_menu.rs
+msgid "Preview at bottom"
+msgstr "Önizleme altta"
+
+#: crates/gezik/src/context_menu.rs
 msgid "Two panes"
 msgstr "İki bölme"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Stack panes"
+msgstr "Bölmeleri üst üste koy"
 
 #: crates/gezik/src/context_menu.rs
 msgid "Sync browsing"
@@ -13075,6 +13107,16 @@ msgid "F5/F6 ask before copying or moving to the other pane (its folder can be c
 msgstr "F5/F6 diğer bölmeye kopyalamadan ya da taşımadan önce sorar (hedef klasör orada değiştirilebilir)."
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "Stacked"
+msgstr "Üst üste"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "The two panes one above the other, the splitter between them dragged up and down."
+msgstr "İki bölme üst üste; aralarındaki ayırıcı yukarı aşağı sürüklenir."
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:sidebar.cloud"
 msgid "Cloud"
 msgstr "Bulut"
@@ -13113,6 +13155,16 @@ msgstr "Özellikler"
 msgctxt "setting:preview.properties"
 msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
 msgstr "Önizleme bölmesi ve Hızlı bakış, dosyanın temel bilgilerinin altında özelliklerini de gösterir (kamera, sanatçı, süre, sayfa …); Gezik bunları önizleme sırasında dosyadan okur. Kapalı: hiçbir şey okunmaz."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "Position"
+msgstr "Konum"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "right | bottom: the preview pane beside the list or under it (with two panes, under both)."
+msgstr "right | bottom: önizleme bölmesi listenin yanında ya da altında (iki bölmede ikisinin de altında)."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:archives.double-click"

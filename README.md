@@ -38,7 +38,7 @@ Windows · macOS · Linux
 
 **Navigation.** Tabs that come back as you left them, tab sets, pinned folders with aliases, groups, colours and icons, and an address bar with Recent and Frequent folders that also runs a command typed after `>` in the folder shown (its output in a panel, no terminal needed). → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal) · [Commands in the address bar](docs/features.md#commands-in-the-address-bar)
 
-**Layouts.** Two panes with F5/F6 copy and move and synced browsing, a folder tree in the sidebar, grouping by type, date or size, Miller columns, several windows with tabs you can tear off, and view rules that pick a folder's view by path, kind or content. → [Layouts](docs/features.md#layouts)
+**Layouts.** Two panes (side by side or stacked) with F5/F6 copy and move and synced browsing, the preview beside or under the list, a folder tree in the sidebar, grouping by type, date or size, Miller columns, several windows with tabs you can tear off, and view rules that pick a folder's view by path, kind or content. → [Layouts](docs/features.md#layouts)
 
 **Tags.** Color tags, star ratings and comments kept in the files (Finder and Dolphin read them), tag dots and columns, `tag:`/`rating:` filters and search, a TAGS sidebar section, and highlight rules that color rows. → [Tags](docs/features.md#tags)
 

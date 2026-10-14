@@ -328,6 +328,7 @@ shell-args = []           # before the command, for a full path
   the selection into the other pane's folder (asking first, where that folder can still be
   changed); Ctrl+U swaps the panes' tabs. **Sync Browsing** makes a step into a sub-folder or
   up in both panes. One pane is the default; the second comes back if you left it open.
+  **Stack Panes** (View menu, `[panes] stacked = true`) puts them one above the other.
 - **Folder tree**: the arrow on a folder in the sidebar (places, pinned folders, drives)
   opens it as a tree; the arrow keys move in it. **Show in Sidebar Tree** (View button menu)
   opens the tree down to the folder shown, `tree-follow = true` does it all the time. A
@@ -380,7 +381,9 @@ group = "date"
 - **Preview pane** (Alt+P) and **Quick Look** (Space): code in color with line numbers (about
   25 languages), text of any size from end to end, **Show as Hex** for any file, PDF pages
   with zoom (pdfium), pictures zoomed to their real size, video and audio with play, seek and
-  volume (ffmpeg); both tools download only when asked.
+  volume (ffmpeg); both tools download only when asked. **Preview at Bottom** (View menu,
+  `[preview] position = "bottom"`) puts the pane under the list (under both panes), its
+  height dragged.
 - **Properties** under the preview and in Get Info: picture size, the photo's date, camera,
   lens and place, length and codecs, music tags and cover, document title, author and pages,
   read by Gezik itself from a bounded part of the file (`[preview] properties = false` hides

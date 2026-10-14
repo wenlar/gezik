@@ -269,10 +269,17 @@ pub const FIELDS: &[Field] = &[
         ]),
     ),
     f(Some("panes"), "confirm", Layouts, Bool),
+    f(Some("panes"), "stacked", Layouts, Bool),
     f(Some("sidebar"), "cloud", Layouts, Bool),
     f(Some("sidebar"), "tags", Layouts, Bool),
     f(Some("sidebar"), "tree-follow", Layouts, Bool),
     f(Some("preview"), "properties", Layouts, Bool),
+    f(
+        Some("preview"),
+        "position",
+        Layouts,
+        Choice(&[tx!("choice:preview.position" => "right"), tx!("choice:preview.position" => "bottom")]),
+    ),
     f(
         Some("archives"),
         "double-click",

@@ -1435,6 +1435,18 @@ msgstr "alle"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
+msgctxt "choice:preview.position"
+msgid "right"
+msgstr "rechts"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:preview.position"
+msgid "bottom"
+msgstr "unten"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
 msgctxt "choice:archives.double-click"
 msgid "browse"
 msgstr "wie einen Ordner öffnen"
@@ -1573,6 +1585,10 @@ msgstr "{0}: [[rename-presets]]-Tabellen erwartet, {1} erhalten"
 #, fuzzy
 msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
 msgstr "{0}: 0 (aus) oder eine Anzahl Millisekunden erwartet, erhalten: {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected \"right\" or \"bottom\", got {1}"
+msgstr "{0}: \"right\" oder \"bottom\" erwartet, {1} erhalten"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2645,6 +2661,18 @@ msgstr "Im Ordnerbaum zeigen"
 #, fuzzy
 msgid "Two Panes"
 msgstr "Zwei Bereiche"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Stack Panes"
+msgstr "Bereiche übereinander"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Preview at Bottom"
+msgstr "Vorschau unten"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -9347,8 +9375,18 @@ msgstr "Flache Ansicht"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
+msgid "Preview at bottom"
+msgstr "Vorschau unten"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
 msgid "Two panes"
 msgstr "Zwei Bereiche"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Stack panes"
+msgstr "Bereiche übereinander"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
@@ -16248,6 +16286,18 @@ msgstr "F5/F6 fragen vor dem Kopieren oder Verschieben in den anderen Bereich (d
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:panes.stacked"
+msgid "Stacked"
+msgstr "Übereinander"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:panes.stacked"
+msgid "The two panes one above the other, the splitter between them dragged up and down."
+msgstr "Die beiden Bereiche übereinander; der Trenner dazwischen wird nach oben und unten gezogen."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:sidebar.cloud"
 msgid "Cloud"
 msgstr "Cloud"
@@ -16293,6 +16343,18 @@ msgstr "Eigenschaften"
 msgctxt "setting:preview.properties"
 msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
 msgstr "Vorschaubereich und Quick Look zeigen die Eigenschaften einer Datei unter ihren Angaben (Kamera, Interpret, Länge, Seiten …), von Gezik bei der Vorschau aus der Datei gelesen. Aus: nichts wird gelesen."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:preview.position"
+msgid "Position"
+msgstr "Position"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:preview.position"
+msgid "right | bottom: the preview pane beside the list or under it (with two panes, under both)."
+msgstr "right | bottom: die Vorschau neben der Liste oder darunter (bei zwei Bereichen unter beiden)."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

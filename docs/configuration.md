@@ -313,7 +313,9 @@ Folder sizes are off by default, so nothing is counted in the background. **Calc
 folder sizes** (row menu and View menu) counts the selected folders, or every folder shown,
 on any drive. The preview pane (Alt+P) shows a picture, the start of a text file, a
 thumbnail, folder item counts or file facts for the selection; Space opens a larger quick
-look.
+look. `[preview] position = "bottom"` puts it under the list (its height is kept in
+`state.toml`), `[panes] stacked = true` the two panes one above the other; both are in the
+View menu too.
 
 Themes: see [Writing a theme](themes.md). Shortcuts: see [Keyboard shortcuts](shortcuts.md).
 

@@ -465,6 +465,10 @@ actions! {
     RevealInTree,
     /// Opens or closes the second pane (10b).
     ToggleDualPane,
+    /// `[panes] stacked`: the two panes one above the other, or side by side (no key; 16m).
+    StackPanes,
+    /// `[preview] position`: the preview under the list, or beside it (no key; 16m).
+    PreviewAtBottom,
     /// Makes the other pane the active one (Tab, only with two panes and the list focused).
     FocusOtherPane,
     /// Copies the selection into the other pane's folder (F5 with two panes).
@@ -658,6 +662,8 @@ impl Action {
             Action::ExpandGroups => "expand-groups",
             Action::RevealInTree => "reveal-in-tree",
             Action::ToggleDualPane => "toggle-dual-pane",
+            Action::StackPanes => "stack-panes",
+            Action::PreviewAtBottom => "preview-at-bottom",
             Action::FocusOtherPane => "focus-other-pane",
             Action::CopyToOtherPane => "copy-to-other-pane",
             Action::MoveToOtherPane => "move-to-other-pane",
@@ -821,6 +827,8 @@ impl Action {
             Action::ExpandGroups => tx!("Expand All Groups"),
             Action::RevealInTree => tx!("Show in Sidebar Tree"),
             Action::ToggleDualPane => tx!("Two Panes"),
+            Action::StackPanes => tx!("Stack Panes"),
+            Action::PreviewAtBottom => tx!("Preview at Bottom"),
             Action::FocusOtherPane => tx!("Switch to the Other Pane"),
             Action::CopyToOtherPane => tx!("Copy to the Other Pane"),
             Action::MoveToOtherPane => tx!("Move to the Other Pane"),
@@ -2437,12 +2445,20 @@ copy-path = \"ctrl+k\"
         assert_eq!(Action::from_name("browse-archive"), Some(Action::BrowseArchive));
         assert_eq!(Action::from_name("run-command"), Some(Action::RunCommand));
         assert_eq!(Action::from_name("toggle-command-output"), Some(Action::ToggleCommandOutput));
-        for name in ["git-stage", "git-commit", "git-switch-branch", "git-discard", "git-compare-head", "check-updates"]
-        {
+        for name in [
+            "git-stage",
+            "git-commit",
+            "git-switch-branch",
+            "git-discard",
+            "git-compare-head",
+            "check-updates",
+            "stack-panes",
+            "preview-at-bottom",
+        ] {
             let action = Action::from_name(name).unwrap();
             assert!(action.default_texts(Platform::Other).is_empty() && action.default_texts(Platform::Mac).is_empty());
         }
-        assert_eq!(Action::ALL.len(), 145);
+        assert_eq!(Action::ALL.len(), 147);
     }
 
     #[test]

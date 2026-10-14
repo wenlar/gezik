@@ -706,6 +706,9 @@ pub const TWO_PANES: u32 = 2030;
 pub const SYNC_BROWSING: u32 = 2031;
 pub const SWAP_PANES: u32 = 2032;
 pub const SAME_FOLDER: u32 = 2033;
+/// View ▸ Stack panes, Preview at bottom (16m).
+pub const STACK_PANES: u32 = 2034;
+pub const PREVIEW_BOTTOM: u32 = 2035;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
 // Step 11 (spec 11 §13.3): 2200–2399. Tools ▸ 2200–2219 in the macOS Tools menu's order: Compare
@@ -2142,10 +2145,13 @@ impl Menus {
         let at_panes = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).map_or(entries.len(), |i| i + 1);
         let dual = crate::dual::is_open();
         let sync = crate::dual::is_synced();
+        let (stacked, bottom) = crate::dual::layout();
         entries.splice(
             at_panes..at_panes,
             [
+                (PREVIEW_BOTTOM, marked(bottom, &t!("Preview at bottom")), true),
                 (TWO_PANES, marked(dual, &t!("Two panes")), true),
+                (STACK_PANES, marked(stacked, &t!("Stack panes")), true),
                 (SYNC_BROWSING, marked(sync, &t!("Sync browsing")), dual),
                 (SWAP_PANES, marked(false, &t!("Swap panes")), dual),
                 (SAME_FOLDER, marked(false, &t!("Same folder in other pane")), dual),
@@ -2895,6 +2901,8 @@ impl Menus {
             (PREVIEW_HEX, Subject::View) => self.preview.show_hex(),
             (PREVIEW_PLAY, Subject::View) => self.preview.play_action(),
             (TWO_PANES, Subject::View) => crate::dual::toggle(),
+            (STACK_PANES, Subject::View) => crate::dual::toggle_layout(false),
+            (PREVIEW_BOTTOM, Subject::View) => crate::dual::toggle_layout(true),
             (SYNC_BROWSING, Subject::View) => crate::dual::toggle_sync(),
             (SWAP_PANES, Subject::View) => crate::dual::swap(),
             (SAME_FOLDER, Subject::View) => crate::dual::same_folder(),
@@ -3391,6 +3399,8 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            STACK_PANES,
+            PREVIEW_BOTTOM,
             UNDO,
             REDO,
             PASTE,
@@ -3747,6 +3757,8 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            STACK_PANES,
+            PREVIEW_BOTTOM,
             TOOLS_COMPARE,
             TOOLS_SELECT_DIFFERENCES,
             TOOLS_SIZE_MAP,

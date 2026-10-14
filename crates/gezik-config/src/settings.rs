@@ -461,6 +461,10 @@ pub struct Settings {
     /// `[drag] spring-delay`: ms a drag rests on a folder before it opens (spec 16l); 0 is off,
     /// else clamped to `gezik_core::drag::SPRING_DELAY_RANGE`.
     pub spring_delay: u32,
+    /// `[panes] stacked`: the two panes one above the other (spec 16m §7).
+    pub panes_stacked: bool,
+    /// `[preview] position = "bottom"`: the preview under the list, not beside it.
+    pub preview_bottom: bool,
     /// `[preview] properties`: the preview reads and shows the file's metadata (spec 13 §7.4).
     pub preview_properties: bool,
     pub terminal: TerminalSettings,
@@ -520,6 +524,8 @@ impl Default for Settings {
             sidebar_tree_follow: false,
             panes_confirm: true,
             spring_delay: 700,
+            panes_stacked: false,
+            preview_bottom: false,
             preview_properties: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
@@ -872,6 +878,15 @@ impl Settings {
                             )),
                         }
                     }
+                    if let Some(value) = panes.get("stacked") {
+                        match value.as_bool() {
+                            Some(on) => settings.panes_stacked = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: expected true or false, got {1}", "panes.stacked", value),
+                            )),
+                        }
+                    }
                 }
                 None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "panes", value))),
             },
@@ -911,6 +926,16 @@ impl Settings {
                             None => warnings.push(Warning::new(
                                 file,
                                 t!("{0}: expected true or false, got {1}", "preview.properties", value),
+                            )),
+                        }
+                    }
+                    if let Some(value) = preview.get("position") {
+                        match value.as_str() {
+                            Some("right") => settings.preview_bottom = false,
+                            Some("bottom") => settings.preview_bottom = true,
+                            _ => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: expected \"right\" or \"bottom\", got {1}", "preview.position", value),
                             )),
                         }
                     }
@@ -2087,6 +2112,8 @@ pub struct State {
     pub preview_open: bool,
     /// Preview pane width in logical pixels (200–600).
     pub preview_width: Option<u32>,
+    /// The preview's height under the list (`[preview] position = "bottom"`), 120–600.
+    pub preview_height: Option<u32>,
     /// The preview wraps text and code (`[preview] wrap-text`, `wrap-code`; spec 13 §4.2);
     /// `None` until first changed (text wraps, code does not).
     pub preview_wrap: Option<(bool, bool)>,
@@ -2281,6 +2308,11 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (200..=600).contains(w));
+        let preview_height = preview
+            .and_then(|p| p.get("height"))
+            .and_then(|v| v.as_integer())
+            .and_then(|h| u32::try_from(h).ok())
+            .filter(|h| (120..=600).contains(h));
         let wrap = |key: &str| preview.and_then(|p| p.get(key)).and_then(|v| v.as_bool());
         let preview_wrap = match (wrap("wrap-text"), wrap("wrap-code")) {
             (None, None) => None,
@@ -2411,6 +2443,7 @@ impl State {
             result_columns,
             preview_open,
             preview_width,
+            preview_height,
             preview_wrap,
             preview_volume,
             operations_collapsed,
@@ -2488,6 +2521,7 @@ impl State {
         }
         if self.preview_open
             || self.preview_width.is_some()
+            || self.preview_height.is_some()
             || self.preview_wrap.is_some()
             || self.preview_volume.is_some()
         {
@@ -2495,6 +2529,9 @@ impl State {
             preview.insert("open".into(), toml::Value::Boolean(self.preview_open));
             if let Some(width) = self.preview_width {
                 preview.insert("width".into(), toml::Value::Integer(width.into()));
+            }
+            if let Some(height) = self.preview_height {
+                preview.insert("height".into(), toml::Value::Integer(height.into()));
             }
             if let Some((text, code)) = self.preview_wrap {
                 preview.insert("wrap-text".into(), toml::Value::Boolean(text));
@@ -4184,6 +4221,58 @@ properties = 1
         assert!(settings.preview_properties, "a bad value keeps the default");
         assert_eq!(warnings[0].message, "preview.properties: expected true or false, got 1");
         assert!(parse(include_str!("../templates/settings.toml")).0.preview_properties);
+    }
+
+    #[test]
+    fn stacked_panes_and_the_preview_at_the_bottom_are_off_unless_asked() {
+        let template = parse(include_str!("../templates/settings.toml")).0;
+        assert!(!template.panes_stacked && !template.preview_bottom);
+        let (settings, warnings) = parse(
+            "[panes]
+stacked = true
+
+[preview]
+position = \"bottom\"
+",
+        );
+        assert!(settings.panes_stacked && settings.preview_bottom && warnings.is_empty());
+        assert!(
+            !parse(
+                "[preview]
+position = \"right\"
+"
+            )
+            .0
+            .preview_bottom
+        );
+        let (settings, warnings) = parse(
+            "[panes]
+stacked = \"yes\"
+
+[preview]
+position = \"top\"
+",
+        );
+        assert!(!settings.panes_stacked && !settings.preview_bottom, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "panes.stacked: expected true or false, got \"yes\"");
+        assert_eq!(warnings[1].message, "preview.position: expected \"right\" or \"bottom\", got \"top\"");
+    }
+
+    #[test]
+    fn the_bottom_preview_height_round_trips() {
+        let state = State { preview_height: Some(240), ..State::default() };
+        assert!(state.to_toml().contains("height = 240"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(
+            State::parse(
+                "[preview]
+height = 50
+"
+            )
+            .preview_height,
+            None,
+            "out of range"
+        );
     }
 
     #[test]

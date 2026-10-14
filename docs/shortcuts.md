@@ -46,7 +46,7 @@ including those with no key by default (`show-trash`, `system-integration`,
 `calculate-folder-sizes`, `toggle-stack`, `browse-archive`, `run-command`,
 `toggle-command-output`, the Git commands `git-stage`, `git-unstage`, `git-commit`,
 `git-push`, `git-pull`, `git-fetch`, `git-switch-branch`, `git-discard`,
-`git-compare-head`, `check-updates` and more). Ctrl+wheel in a folder changes the grid
+`git-compare-head`, `check-updates`, `stack-panes`, `preview-at-bottom` and more). Ctrl+wheel in a folder changes the grid
 or icon size.
 
 The file list keys are fixed: arrow keys, PgUp/PgDn, Home/End move the focus; Shift with
