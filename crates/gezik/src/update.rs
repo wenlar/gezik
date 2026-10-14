@@ -153,7 +153,12 @@ fn run(channel: Option<Channel>, asked: bool) {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(version) = updated {
                 let page = page_of(&version);
-                show(Note { text: t!("Updated to {}", version), restart: false, link: t!("What's new").into_owned(), page });
+                show(Note {
+                    text: t!("Updated to {}", version),
+                    restart: false,
+                    link: t!("What's new").into_owned(),
+                    page,
+                });
             }
             if let Some(ready) = waiting {
                 with(|s| {
@@ -233,7 +238,11 @@ fn show(note: Note) {
 fn apply(window: &AppWindow) {
     let note = with(|s| s.note.clone()).unwrap_or_default();
     window.set_update_text(note.text.into());
-    window.set_update_act(if note.restart { SharedString::from(t!("Restart now").as_ref()) } else { SharedString::new() });
+    window.set_update_act(if note.restart {
+        SharedString::from(t!("Restart now").as_ref())
+    } else {
+        SharedString::new()
+    });
     window.set_update_link(note.link.into());
 }
 
@@ -293,8 +302,7 @@ pub fn finish() {
     }
     if restart {
         let program = if cfg!(target_os = "macos") { ready.target.join("Contents/MacOS/gezik") } else { ready.target };
-        let started =
-            std::process::Command::new(program).env(RESTART_ENV, std::process::id().to_string()).spawn();
+        let started = std::process::Command::new(program).env(RESTART_ENV, std::process::id().to_string()).spawn();
         if let Err(err) = started {
             eprintln!("gezik: cannot start Gezik again: {err}");
         }
@@ -749,8 +757,9 @@ mod tests {
         let folder = dir.join("update").join("9.0.0");
         fs::create_dir_all(&folder).unwrap();
         let exe = ("gezik-9.0.0-windows-x64/gezik.exe".to_owned(), b"exe".to_vec());
-        let zip = gezik_batch::archive::write_zip_entries(&[exe.clone(), ("../../../evil.txt".to_owned(), b"out".to_vec())])
-            .unwrap();
+        let zip =
+            gezik_batch::archive::write_zip_entries(&[exe.clone(), ("../../../evil.txt".to_owned(), b"out".to_vec())])
+                .unwrap();
         let file = folder.join("gezik-9.0.0-windows-x64.zip");
         fs::write(&file, zip).unwrap();
         // The entry that would land outside fails the unpack: nothing is installed from it.

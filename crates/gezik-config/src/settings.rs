@@ -2386,11 +2386,7 @@ impl State {
                 .and_then(|v| v.get("checked"))
                 .and_then(|v| v.as_integer())
                 .and_then(|n| u64::try_from(n).ok()),
-            update_told: table
-                .get("update")
-                .and_then(|v| v.get("told"))
-                .and_then(|v| v.as_str())
-                .map(str::to_owned),
+            update_told: table.get("update").and_then(|v| v.get("told")).and_then(|v| v.as_str()).map(str::to_owned),
             tags_used: table
                 .get("tags")
                 .and_then(|v| v.as_table())
@@ -4746,11 +4742,17 @@ shell-args = \"-c\"
 
     #[test]
     fn the_last_update_check_is_remembered() {
-        let state = State { update_checked: Some(1_800_000_000), update_told: Some("0.2.0".into()), ..State::default() };
+        let state =
+            State { update_checked: Some(1_800_000_000), update_told: Some("0.2.0".into()), ..State::default() };
         let text = state.to_toml();
-        assert!(text.contains("[update]
+        assert!(
+            text.contains(
+                "[update]
 checked = 1800000000
-told = \"0.2.0\""), "{text}");
+told = \"0.2.0\""
+            ),
+            "{text}"
+        );
         assert_eq!(State::parse(&text), state);
         assert!(!State::default().to_toml().contains("[update]"));
     }
@@ -4759,16 +4761,20 @@ told = \"0.2.0\""), "{text}");
     fn updates_are_on_and_follow_the_running_version_unless_told_otherwise() {
         use gezik_core::update::Channel;
         assert_eq!(Settings::default().update, UpdateSettings { check: true, channel: Channel::Auto });
-        let (settings, warnings) = parse("[update]
+        let (settings, warnings) = parse(
+            "[update]
 check = false
 channel = \"stable\"
-");
+",
+        );
         assert_eq!(settings.update, UpdateSettings { check: false, channel: Channel::Stable });
         assert!(warnings.is_empty());
-        let (settings, warnings) = parse("[update]
+        let (settings, warnings) = parse(
+            "[update]
 check = 1
 channel = \"beta\"
-");
+",
+        );
         assert_eq!(settings.update, UpdateSettings::default(), "a bad value keeps the default");
         assert_eq!(warnings[0].message, "update.check: expected true or false, got 1");
         assert_eq!(warnings[1].message, "update.channel: expected \"auto\", \"stable\" or \"pre\", got \"beta\"");

@@ -42,8 +42,7 @@ impl Version {
         }
         let ident = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
         let pre: Vec<String> = pre.map(|pre| pre.split('.').map(str::to_owned).collect()).unwrap_or_default();
-        if parts.next().is_some() || !pre.iter().all(|p| ident(p)) || build.is_some_and(|b| !b.split('.').all(ident))
-        {
+        if parts.next().is_some() || !pre.iter().all(|p| ident(p)) || build.is_some_and(|b| !b.split('.').all(ident)) {
             return None;
         }
         Some(Version { numbers, pre, text: text.to_owned() })
@@ -248,7 +247,8 @@ mod tests {
 
     #[test]
     fn what_is_not_a_version_is_refused() {
-        for bad in ["", "1", "1.2", "1.2.3.4", "a.b.c", "1.2.3-", "1.2.3-rc..1", "1.2.3-rc/../x", "1.2.3+", "-1.2.3", " 1.2.3"]
+        for bad in
+            ["", "1", "1.2", "1.2.3.4", "a.b.c", "1.2.3-", "1.2.3-rc..1", "1.2.3-rc/../x", "1.2.3+", "-1.2.3", " 1.2.3"]
         {
             assert_eq!(Version::parse(bad), None, "{bad:?}");
         }
@@ -274,7 +274,8 @@ mod tests {
         draft.draft = true;
         // Marked a pre-release though its version has no `-` part.
         let marked = release("v0.8.0", true);
-        let releases = [draft, marked, release("0.7.0", false), release("v0.6.0-rc..1", false), release("v0.5.0", false)];
+        let releases =
+            [draft, marked, release("0.7.0", false), release("v0.6.0-rc..1", false), release("v0.5.0", false)];
         let found = newest(&releases, Channel::Stable, &v("0.1.0")).map(|(v, _)| v.text);
         assert_eq!(found, Some("0.5.0".to_owned()));
         let found = newest(&releases, Channel::Pre, &v("0.1.0")).map(|(v, _)| v.text);
@@ -284,15 +285,10 @@ mod tests {
     #[test]
     fn each_install_takes_its_own_file() {
         let version = v("0.2.0-rc.1");
-        let names: Vec<String> = [
-            Package::Windows,
-            Package::WindowsPortable,
-            Package::MacApp,
-            Package::AppImage,
-            Package::LinuxTar,
-        ]
-        .map(|p| p.asset_name(&version))
-        .into();
+        let names: Vec<String> =
+            [Package::Windows, Package::WindowsPortable, Package::MacApp, Package::AppImage, Package::LinuxTar]
+                .map(|p| p.asset_name(&version))
+                .into();
         assert_eq!(
             names,
             [

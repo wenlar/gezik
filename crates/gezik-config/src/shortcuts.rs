@@ -2437,7 +2437,8 @@ copy-path = \"ctrl+k\"
         assert_eq!(Action::from_name("browse-archive"), Some(Action::BrowseArchive));
         assert_eq!(Action::from_name("run-command"), Some(Action::RunCommand));
         assert_eq!(Action::from_name("toggle-command-output"), Some(Action::ToggleCommandOutput));
-        for name in ["git-stage", "git-commit", "git-switch-branch", "git-discard", "git-compare-head", "check-updates"] {
+        for name in ["git-stage", "git-commit", "git-switch-branch", "git-discard", "git-compare-head", "check-updates"]
+        {
             let action = Action::from_name(name).unwrap();
             assert!(action.default_texts(Platform::Other).is_empty() && action.default_texts(Platform::Mac).is_empty());
         }
