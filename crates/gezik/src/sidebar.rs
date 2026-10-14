@@ -54,6 +54,7 @@ const ICON_SEARCH: i32 = 6;
 const ICON_TRASH: i32 = 7;
 const ICON_CLOUD: i32 = 8;
 const ICON_PHONE: i32 = 9;
+const ICON_COMPUTER: i32 = 10;
 /// A pin's own icon: this plus its place in `pins::ICONS` (`Glyph.pin-icons`).
 const ICON_PIN_OWN: i32 = 100;
 
@@ -64,7 +65,6 @@ fn pin_color(hue: Hue) -> slint::Color {
         Hue::Rgb([r, g, b]) => slint::Color::from_rgb_u8(r, g, b),
     }
 }
-const ICON_COMPUTER: i32 = 10;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
 /// and names "Home" (when it exists; translated only when shown).

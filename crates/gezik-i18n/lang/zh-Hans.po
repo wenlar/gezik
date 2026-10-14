@@ -10440,6 +10440,11 @@ msgstr "位置：多个文件夹"
 
 #: crates/gezik/src/info.rs
 #, fuzzy
+msgid "Links: {}"
+msgstr "链接数：{}"
+
+#: crates/gezik/src/info.rs
+#, fuzzy
 msgid "Created: {}"
 msgstr "创建日期：{}"
 
@@ -10452,11 +10457,6 @@ msgstr "修改日期：{}"
 #, fuzzy
 msgid "Last opened: {}"
 msgstr "上次打开：{}"
-
-#: crates/gezik/src/info.rs
-#, fuzzy
-msgid "Links: {}"
-msgstr "链接数：{}"
 
 #: crates/gezik/src/info.rs
 #, fuzzy

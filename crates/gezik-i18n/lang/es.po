@@ -10555,6 +10555,11 @@ msgstr "Ubicación: varias carpetas"
 
 #: crates/gezik/src/info.rs
 #, fuzzy
+msgid "Links: {}"
+msgstr "Enlaces: {}"
+
+#: crates/gezik/src/info.rs
+#, fuzzy
 msgid "Created: {}"
 msgstr "Creado: {}"
 
@@ -10567,11 +10572,6 @@ msgstr "Modificado: {}"
 #, fuzzy
 msgid "Last opened: {}"
 msgstr "Última apertura: {}"
-
-#: crates/gezik/src/info.rs
-#, fuzzy
-msgid "Links: {}"
-msgstr "Enlaces: {}"
 
 #: crates/gezik/src/info.rs
 #, fuzzy

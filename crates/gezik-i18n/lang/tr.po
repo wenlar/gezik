@@ -8531,6 +8531,10 @@ msgid "Where: several folders"
 msgstr "Konum: birkaç klasör"
 
 #: crates/gezik/src/info.rs
+msgid "Links: {}"
+msgstr "Bağlantılar: {}"
+
+#: crates/gezik/src/info.rs
 msgid "Created: {}"
 msgstr "Oluşturma: {}"
 
@@ -8541,10 +8545,6 @@ msgstr "Değiştirme: {}"
 #: crates/gezik/src/info.rs
 msgid "Last opened: {}"
 msgstr "Son açılma: {}"
-
-#: crates/gezik/src/info.rs
-msgid "Links: {}"
-msgstr "Bağlantılar: {}"
 
 #: crates/gezik/src/info.rs
 msgid "Special: {} (not changed here)"
