@@ -43,6 +43,8 @@ thread_local! {
     pub(crate) static DUAL: crate::windows::Slot<std::rc::Rc<RefCell<Dual>>> = const { crate::windows::Slot::new() };
     /// `[panes] confirm`: F5/F6 ask first.
     static CONFIRM: Cell<bool> = const { Cell::new(true) };
+    /// `[panes] stacked` and `[preview] position = "bottom"` (16m), every window's.
+    static LAYOUT: Cell<(bool, bool)> = const { Cell::new((false, false)) };
     /// The pane that just stepped into a sub-folder or up (sync browsing follows only those).
     static STEPPED: Cell<Option<PaneId>> = const { Cell::new(None) };
 }
@@ -90,6 +92,53 @@ pub fn set_confirm(confirm: bool) {
     CONFIRM.with(|c| c.set(confirm));
 }
 
+/// `[panes] stacked` or `[preview] position` changed (settings.toml read).
+pub fn set_layout(stacked: bool, preview_bottom: bool) {
+    LAYOUT.with(|l| l.set((stacked, preview_bottom)));
+}
+
+/// `[panes] stacked` and whether the preview is at the bottom.
+pub fn layout() -> (bool, bool) {
+    LAYOUT.with(Cell::get)
+}
+
+/// `window` shows the panes and the preview as `[panes] stacked` and `[preview] position` say.
+pub fn show_layout(window: &AppWindow) {
+    let (stacked, bottom) = LAYOUT.with(Cell::get);
+    window.set_panes_stacked(stacked);
+    window.set_preview_bottom(bottom);
+}
+
+/// `stack-panes` (`preview` false) and `preview-at-bottom`: every window changes now, and
+/// settings.toml keeps it.
+pub fn toggle_layout(preview: bool) {
+    let (mut stacked, mut bottom) = LAYOUT.with(Cell::get);
+    let change = if preview {
+        bottom = !bottom;
+        SettingsChange::Value {
+            table: Some("preview".into()),
+            key: "position".into(),
+            value: Some(if bottom { "\"bottom\"" } else { "\"right\"" }.into()),
+        }
+    } else {
+        stacked = !stacked;
+        SettingsChange::Value { table: Some("panes".into()), key: "stacked".into(), value: Some(stacked.to_string()) }
+    };
+    set_layout(stacked, bottom);
+    crate::windows::for_each(show_layout);
+    // The preview's picture is loaded for its new size.
+    crate::preview::with_current(crate::preview::Preview::schedule);
+    let Some(config) = with_dual(|d| d.borrow().config.clone()) else { return };
+    let id = crate::windows::current();
+    config.write_settings(change, move |result| {
+        if let Err(warning) = result {
+            let _ = slint::invoke_from_event_loop(move || {
+                crate::windows::with_window(id, |_| panes::active_view().note(warning.to_string()));
+            });
+        }
+    });
+}
+
 /// `[session] restore` changed: off, state.toml forgets the right pane's tabs too.
 pub fn set_restore(restore: bool) {
     let changed = with_dual(|d| std::mem::replace(&mut d.borrow_mut().restore, restore) != restore);
@@ -115,7 +164,8 @@ pub fn open(start: Option<usize>) {
         return;
     }
     let scale = window.window().scale_factor();
-    if start.is_none() && (window.window().size().width as f32 / scale) < MIN_WIDTH {
+    // Stacked, each pane has the window's width.
+    if start.is_none() && !LAYOUT.with(Cell::get).0 && (window.window().size().width as f32 / scale) < MIN_WIDTH {
         window.set_view_two_panes(false);
         return panes::active_view().note(t!("The window is too narrow for two panes").into_owned());
     }

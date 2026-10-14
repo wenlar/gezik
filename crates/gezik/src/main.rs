@@ -160,6 +160,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
         }
     }
     dual::set_confirm(loaded.settings.panes_confirm);
+    dual::set_layout(loaded.settings.panes_stacked, loaded.settings.preview_bottom);
     preview::fields::set_properties(loaded.settings.preview_properties);
     // The shortcuts first: the pins' tips name their keys.
     keys::set_shortcuts(loaded.settings.shortcuts.clone());
@@ -239,6 +240,7 @@ fn apply_to_window(window: &AppWindow, loaded: &Loaded) {
     sidebar::with_current(|s| s.set_show_tags(loaded.settings.sidebar_tags));
     sidebar::with_current(|s| s.set_tree_follow(loaded.settings.sidebar_tree_follow));
     view_options::sync(window, view_options::current());
+    dual::show_layout(window);
     window.set_mono_font(mono_font().into());
     // Gezik's own menus (where Slint has no system ones) stay inside the window.
     window.set_native_menus(context_menu::native_menus());
@@ -414,6 +416,8 @@ fn perform(
         | Action::ExpandGroups
         | Action::RevealInTree
         | Action::ToggleDualPane
+        | Action::StackPanes
+        | Action::PreviewAtBottom
         | Action::FocusOtherPane
         | Action::CopyToOtherPane
         | Action::MoveToOtherPane
@@ -1299,6 +1303,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         state.result_columns = Some(view.result_columns());
                         state.preview_open = preview_open;
                         state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+                        state.preview_height = Some(window.get_preview_height().round().clamp(120.0, 600.0) as u32);
                         let column = window.get_column_width().round().clamp(120.0, 600.0) as u32;
                         state.column_width = (column != COLUMN_WIDTH).then_some(column);
                         state.operations_collapsed = ops.collapsed();

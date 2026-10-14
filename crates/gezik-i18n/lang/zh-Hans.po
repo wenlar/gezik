@@ -1412,6 +1412,18 @@ msgstr "全部"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
+msgctxt "choice:preview.position"
+msgid "right"
+msgstr "右侧"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:preview.position"
+msgid "bottom"
+msgstr "底部"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
 msgctxt "choice:archives.double-click"
 msgid "browse"
 msgstr "作为文件夹打开"
@@ -1545,6 +1557,11 @@ msgstr "{0}：“{1}”必须是完整路径（已忽略）"
 #, fuzzy
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}：应为 [[rename-presets]] 表，实际为 {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
+msgid "{0}: expected \"right\" or \"bottom\", got {1}"
+msgstr "{0}：应为 \"right\" 或 \"bottom\"，实际为 {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2615,6 +2632,18 @@ msgstr "在侧边栏树中显示"
 #, fuzzy
 msgid "Two Panes"
 msgstr "双窗格"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Stack Panes"
+msgstr "上下排列窗格"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Preview at Bottom"
+msgstr "预览在底部"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -9121,8 +9150,18 @@ msgstr "平铺视图"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
+msgid "Preview at bottom"
+msgstr "预览在底部"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
 msgid "Two panes"
 msgstr "双窗格"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Stack panes"
+msgstr "上下排列窗格"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
@@ -15885,6 +15924,18 @@ msgstr "F5/F6 复制或移动到另一窗格前询问（可在其中更改目标
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:panes.stacked"
+msgid "Stacked"
+msgstr "上下排列"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:panes.stacked"
+msgid "The two panes one above the other, the splitter between them dragged up and down."
+msgstr "两个窗格上下排列，中间的分隔条可上下拖动。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:sidebar.cloud"
 msgid "Cloud"
 msgstr "云"
@@ -15930,6 +15981,18 @@ msgstr "属性"
 msgctxt "setting:preview.properties"
 msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
 msgstr "预览窗格和快速查看在文件信息下方显示其属性（相机、艺术家、时长、页数 …），预览时由 Gezik 从文件读取。关闭时：不读取任何内容。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:preview.position"
+msgid "Position"
+msgstr "位置"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:preview.position"
+msgid "right | bottom: the preview pane beside the list or under it (with two panes, under both)."
+msgstr "right | bottom：预览窗格在列表旁边或下方（双窗格时在两者下方）。"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

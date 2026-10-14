@@ -650,6 +650,7 @@ fn open_beside_with(
         window_state::capture_into(window, &mut state);
         state.preview_open = preview::with_current(preview::Preview::is_pane_open).unwrap_or(false);
         state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+        state.preview_height = Some(window.get_preview_height().round().clamp(120.0, 600.0) as u32);
     });
     if let Some(place) = place {
         state.window = Some(placed(state.window, place));
@@ -872,6 +873,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         .into(),
     );
     window.set_preview_width(state.preview_width.unwrap_or(280) as f32);
+    window.set_preview_height(state.preview_height.unwrap_or(220) as f32);
     window.set_column_width(state.column_width.unwrap_or(crate::COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(settings.folder_sizes, settings.search.everything);

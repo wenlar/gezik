@@ -132,6 +132,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ExpandGroups => view.collapse_all(false),
         Action::RevealInTree => crate::sidebar::with_current(crate::sidebar::Sidebar::reveal_current),
         Action::ToggleDualPane => crate::dual::toggle(),
+        Action::StackPanes => crate::dual::toggle_layout(false),
+        Action::PreviewAtBottom => crate::dual::toggle_layout(true),
         Action::FocusOtherPane => return crate::dual::focus_other(),
         Action::CopyToOtherPane => crate::dual::to_other(false),
         Action::MoveToOtherPane => crate::dual::to_other(true),
