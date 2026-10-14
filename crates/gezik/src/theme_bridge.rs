@@ -100,6 +100,7 @@ pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     global.set_git_staged(color(c.git_staged));
     global.set_git_untracked(color(c.git_untracked));
     global.set_git_conflict(color(c.git_conflict));
+    global.set_git_renamed(color(c.git_renamed));
 
     let m = &theme.metrics;
     global.set_font_family(m.font_family.as_str().into());

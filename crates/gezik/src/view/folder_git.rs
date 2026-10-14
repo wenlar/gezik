@@ -91,8 +91,10 @@ pub struct GitState {
     timer: slint::Timer,
     /// The watch of `.git` (its folder): kept while the same repository shows.
     watch: Option<(PathBuf, notify::RecommendedWatcher)>,
-    /// The last problem said: not said again for each run.
-    said: Option<String>,
+    /// Why the folder shown has no marks although in a repository (no git, too old, refused,
+    /// too slow): said in the status bar's Git part, beside the item count. Meanwhile it counts
+    /// as no repository (no column, no Git groups).
+    problem: Option<String>,
 }
 
 #[cfg(test)]
@@ -118,8 +120,9 @@ impl View {
             if git.watch.as_ref().is_some_and(|(d, _)| *d != repo.git_dir) {
                 git.watch = None;
             }
-            git.said = None;
-            git.at.replace((dir, repo)).is_some()
+            let was = git.problem.take().is_none() && git.at.is_some();
+            git.at = Some((dir, repo));
+            was
         };
         let had = self.0.data.borrow_mut().folder_git.take().is_some();
         if !was_repo {
@@ -134,26 +137,41 @@ impl View {
 
     /// Not in a repository: no run, no watch, no marks.
     fn git_off(&self) {
-        let was = {
+        let was = self.in_repo();
+        {
             let mut git = self.0.git.borrow_mut();
             git.run = None;
             git.watch = None;
             git.timer.stop();
             git.pacer = Pacer::default();
-            git.at.take().is_some()
-        };
-        let had = self.0.data.borrow_mut().folder_git.take().is_some();
-        if was {
-            self.sync_columns();
+            git.at = None;
+            git.problem = None;
         }
-        if had {
+        let had = self.0.data.borrow_mut().folder_git.take().is_some();
+        self.git_repo_changed(was, had);
+    }
+
+    /// After a change that may end the marks: the column and the Git groups go when the folder
+    /// no longer counts as a repository (`was` it did), rows are drawn again when marks
+    /// went (`had`).
+    fn git_repo_changed(&self, was: bool, had: bool) {
+        if was != self.in_repo() {
+            self.sync_columns();
+            // A grouping by Git falls back to none (and comes back).
+            self.resort(false);
+            self.update_status();
+        } else if had {
             self.git_rows_changed();
+        } else {
+            self.update_status();
         }
     }
 
-    /// Whether a repository folder shows (its Git column, its marks).
+    /// Whether a repository folder shows with its marks to come (its Git column, its groups):
+    /// not when git is missing or refused.
     pub fn in_repo(&self) -> bool {
-        self.0.git.borrow().at.is_some()
+        let git = self.0.git.borrow();
+        git.at.is_some() && git.problem.is_none()
     }
 
     /// The folder or its `.git` changed: a run after the wait.
@@ -173,16 +191,16 @@ impl View {
     }
 
     fn git_start(&self) {
-        let (dir, repo, id, cancel, watch) = {
+        let (repo, id, cancel, watch) = {
             let mut git = self.0.git.borrow_mut();
-            let Some((dir, repo)) = git.at.clone() else { return };
+            let Some((_, repo)) = git.at.clone() else { return };
             if !git.pacer.start() {
                 return;
             }
             git.runs += 1;
             let (id, cancel) = (git.runs, Arc::new(AtomicBool::new(false)));
             git.run = Some(GitRun { id, cancel: cancel.clone() });
-            (dir, repo, id, cancel, git.watch.is_none())
+            (repo, id, cancel, git.watch.is_none())
         };
         #[cfg(test)]
         STARTED.with(|s| s.set(s.get() + 1));
@@ -190,7 +208,7 @@ impl View {
         let (pane, window) = (self.0.id, self.0.window.clone());
         let spawned = std::thread::Builder::new().name("gezik-git".into()).spawn(move || {
             let timeout = Duration::from_secs(settings.timeout.into());
-            let outcome = crate::git::status(&dir, settings.ignored, timeout, &cancel);
+            let outcome = crate::git::status(&repo.real, settings.ignored, timeout, &cancel);
             let watch = watch
                 .then(|| {
                     let window = window.clone();
@@ -215,7 +233,7 @@ impl View {
 
     /// A run's result, on the UI thread (an older run's is dropped).
     pub fn git_arrived(&self, id: u64, outcome: Outcome, watch: Option<notify::RecommendedWatcher>) {
-        let (dir, root, again) = {
+        let (dir, root, real, again) = {
             let mut git = self.0.git.borrow_mut();
             if !git.run.as_ref().is_some_and(|run| run.id == id) {
                 return;
@@ -227,30 +245,34 @@ impl View {
             {
                 git.watch = Some((repo.git_dir.clone(), watch));
             }
-            (dir, repo.root, git.pacer.done())
+            (dir, repo.root, repo.real, git.pacer.done())
         };
+        let was = self.in_repo();
         let problem = match outcome {
             Outcome::Done(status) => {
-                let marks = gezik_core::git::folder_marks(&status, &crate::git::prefix(&root, &dir));
+                let marks = gezik_core::git::folder_marks(&status, &crate::git::prefix(&root, &real));
                 let text = gezik_core::git::status_text(&status, &marks);
                 self.0.data.borrow_mut().folder_git = Some(Rc::new(FolderGit { dir, marks, text }));
-                self.0.git.borrow_mut().said = None;
                 None
             }
-            Outcome::Missing => crate::git::missing_note(),
+            Outcome::Missing => Some(gezik_core::git::missing_text()),
             // TRANSLATORS: {} is git's own message (not translated).
             Outcome::Failed(why) => Some(t!("Git: {}", why)),
             Outcome::TimedOut => Some(t!("Git status took too long ([git] timeout)").into_owned()),
-            Outcome::Stopped => None,
+            Outcome::Stopped => return,
         };
-        if let Some(problem) = problem {
-            let new = self.0.git.borrow().said.as_ref() != Some(&problem);
-            if new {
-                self.0.git.borrow_mut().said = Some(problem.clone());
-                self.note(problem);
+        // No status: no marks, never the last run's (they would be wrong now).
+        let had = problem.is_some() && self.0.data.borrow_mut().folder_git.take().is_some();
+        let done = problem.is_none();
+        self.0.git.borrow_mut().problem = problem;
+        if done {
+            self.git_rows_changed();
+            if was != self.in_repo() {
+                self.sync_columns();
             }
+        } else {
+            self.git_repo_changed(was, had);
         }
-        self.git_rows_changed();
         if again {
             self.git_soon();
         }
@@ -274,8 +296,12 @@ impl View {
             || self.0.filter.borrow().as_ref().is_some_and(|f| !f.git.is_empty())
     }
 
-    /// The status bar's Git part for the folder shown ("" elsewhere).
+    /// The status bar's Git part for the folder shown ("" elsewhere): the branch and changes,
+    /// or why there are none.
     pub(super) fn git_text(&self) -> String {
+        if let Some(problem) = self.0.git.borrow().problem.clone() {
+            return problem;
+        }
         let data = self.0.data.borrow();
         match (&data.listing, &data.folder_git) {
             (Listing::Files(dir, _), Some(g)) if g.dir == *dir => g.text.clone(),
@@ -336,7 +362,7 @@ mod tests {
     }
 
     fn repo() -> Repo {
-        Repo { root: "/r".into(), git_dir: "/r/.git".into(), common: "/r/.git".into() }
+        Repo { root: "/r".into(), git_dir: "/r/.git".into(), common: "/r/.git".into(), real: "/r/src".into() }
     }
 
     #[test]
@@ -364,6 +390,33 @@ mod tests {
         );
         view.git_listed(None);
         assert!(view.0.data.borrow().folder_git.is_none() && !view.in_repo(), "left: forgotten");
+    }
+
+    #[test]
+    fn no_git_drops_the_marks_column_and_branch() {
+        let view = view_of(&["a.txt", "new.txt"]);
+        view.git_listed(Some(("/r/src".into(), repo())));
+        let id = view.0.git.borrow().runs;
+        let status = GitStatus {
+            branch: Some("main".into()),
+            entries: vec![("src/a.txt".into(), GitMark::Modified)],
+            ..GitStatus::default()
+        };
+        view.git_arrived(id, Outcome::Done(status), None);
+        assert!(view.git_text().starts_with("⎇ main"));
+        // `[git] program` now names no git: the same folder again.
+        view.0.git.borrow_mut().pacer = Pacer::default();
+        view.git_start();
+        let id = view.0.git.borrow().runs;
+        view.git_arrived(id, Outcome::Missing, None);
+        assert!(view.0.data.borrow().folder_git.is_none(), "no stale marks");
+        assert!(!view.in_repo(), "no Git column, no Git groups");
+        assert_eq!(view.git_text(), gezik_core::git::missing_text(), "said beside the item count");
+        let a = view.0.data.borrow().full[0].clone();
+        assert_eq!(view.git_keys(std::path::Path::new("/r/src"))(&a), None);
+        // Group by Git falls back to none.
+        view.0.current.set(gezik_core::view::ViewSettings { group: GroupBy::Git, ..view.0.current.get() });
+        assert_eq!(view.group_by(), GroupBy::None);
     }
 
     #[test]

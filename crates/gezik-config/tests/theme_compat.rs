@@ -226,5 +226,5 @@ fn the_example_comments_state_the_resolved_values() {
         assert_eq!(example.colors.get(key), hex(value), "example.toml: commented {key}");
         seen += 1;
     }
-    assert_eq!(seen, 22, "commented colors in example.toml");
+    assert_eq!(seen, 23, "commented colors in example.toml");
 }

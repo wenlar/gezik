@@ -510,6 +510,18 @@ export component FileView inherits Rectangle {
                 resize(w) => { root.col-match = clamp(w, 50px, 600px); }
                 resize-done => { root.columns-resized(); }
             }
+            // Git right of the name (a text column after Size would touch its right-aligned numbers).
+            if root.col-git > 0: HeaderCell {
+                gap-before: root.gap;
+                width: root.col-git;
+                text: @tr("column" => "Git");
+                sorted: root.sort-column == 11;
+                descending: root.sort-desc;
+                clicked => { root.header-clicked(11); }
+                menu(x, y) => { root.header-menu(x, y); }
+                resize(w) => { root.col-git = clamp(w, 50px, 600px); }
+                resize-done => { root.columns-resized(); }
+            }
             if root.col-modified > 0: HeaderCell {
                 gap-before: root.gap;
                 width: root.col-modified;
@@ -584,17 +596,6 @@ export component FileView inherits Rectangle {
                 text: @tr("column" => "Comment");
                 menu(x, y) => { root.header-menu(x, y); }
                 resize(w) => { root.col-comment = clamp(w, 50px, 600px); }
-                resize-done => { root.columns-resized(); }
-            }
-            if root.col-git > 0: HeaderCell {
-                gap-before: root.gap;
-                width: root.col-git;
-                text: @tr("column" => "Git");
-                sorted: root.sort-column == 11;
-                descending: root.sort-desc;
-                clicked => { root.header-clicked(11); }
-                menu(x, y) => { root.header-menu(x, y); }
-                resize(w) => { root.col-git = clamp(w, 50px, 600px); }
                 resize-done => { root.columns-resized(); }
             }
             // Not sorted by: a click does nothing.
@@ -857,6 +858,13 @@ export component FileView inherits Rectangle {
                         overflow: elide;
                         color: entry.text-color;
                     }
+                    if root.col-git > 0 && root.mode == 0: Text {
+                        width: root.col-git;
+                        text: entry.file.git-text;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: entry.muted-color;
+                    }
                     if root.col-modified > 0 && root.mode == 0: Text {
                         width: root.col-modified;
                         text: entry.file.modified;
@@ -905,13 +913,6 @@ export component FileView inherits Rectangle {
                     if root.col-comment > 0 && root.mode == 0: Text {
                         width: root.col-comment;
                         text: entry.file.comment;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        color: entry.muted-color;
-                    }
-                    if root.col-git > 0 && root.mode == 0: Text {
-                        width: root.col-git;
-                        text: entry.file.git-text;
                         vertical-alignment: center;
                         overflow: elide;
                         color: entry.muted-color;

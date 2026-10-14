@@ -17,8 +17,8 @@ worked out from the ones you set: an accent alone also recolors the selection, f
 progress bars and so on. `icon-folder`, `icon-image`, `icon-video`, `icon-audio`,
 `icon-archive`, `icon-document`, `icon-code` and `icon-other` color Gezik's own icons,
 `focus-ring` is the keyboard focus in the file list and `marquee` is the rubber-band
-selection (it can be translucent, e.g. `"#88c0d033"`). `git-modified`, `git-staged`, `git-untracked` and
-`git-conflict` color the Git marks on rows in a repository. `inset` (0-16) is the gap around
+selection (it can be translucent, e.g. `"#88c0d033"`). `git-modified`, `git-staged`, `git-untracked`,
+`git-conflict` and `git-renamed` color the Git marks on rows in a repository. `inset` (0-16) is the gap around
 the file list; the classic themes use 0. Older themes that set `folder-icon` or `file-icon`
 keep working: they are still read as `icon-folder` and `icon-other`.
 

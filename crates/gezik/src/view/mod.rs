@@ -2398,6 +2398,8 @@ impl View {
     fn group_by(&self) -> GroupBy {
         let results = self.0.data.try_borrow().is_ok_and(|d| d.results.is_some());
         let by = grouped_by(&self.0.current.get());
+        // By Git only where marks come (spec 16 §8.4): not a lone "Unchanged" group.
+        let by = if by == GroupBy::Git && !self.in_repo() { GroupBy::None } else { by };
         if results { results_group(by) } else { by }
     }
 

@@ -2,6 +2,7 @@
 //! marks of the names in the folder shown, a folder's being the most important one inside it.
 //! Pure: the run itself is the app's (`gezik/src/git.rs`).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use gezik_i18n::{t, tn, tx};
@@ -53,9 +54,15 @@ impl GitMark {
 /// untracked, unchanged, ignored last.
 pub fn rank(mark: Option<GitMark>) -> u8 {
     match mark {
-        None => 8,
-        Some(GitMark::Ignored) => 9,
-        Some(m) => 8 - m as u8,
+        Some(GitMark::Conflict) => 0,
+        Some(GitMark::Modified) => 1,
+        Some(GitMark::StagedModified) => 2,
+        Some(GitMark::Staged) => 3,
+        Some(GitMark::Renamed) => 4,
+        Some(GitMark::Added) => 5,
+        Some(GitMark::Untracked) => 6,
+        None => 7,
+        Some(GitMark::Ignored) => 8,
     }
 }
 
@@ -165,18 +172,45 @@ pub struct FolderMarks {
     pub deleted: Vec<String>,
     /// Changes under the folder: entries not ignored, and the deleted.
     pub changed: usize,
+    /// Conflicts under the folder.
+    pub conflicts: usize,
+    /// How names are folded (`fold_for`): keys and the names looked up alike.
+    case: bool,
+    nfc: bool,
 }
 
 impl FolderMarks {
     /// Name `name`'s mark (`None`: unchanged).
     pub fn of(&self, name: &str) -> Option<GitMark> {
-        self.whole.or_else(|| self.names.get(name).copied())
+        self.whole.or_else(|| self.names.get(&*fold_for(name, self.case, self.nfc)).copied())
     }
 }
 
-/// The marks of `status` for the folder `prefix` (from the root, with `/`; "" for the root).
+/// A name as `case` and `nfc` fold it: lower case where the file system ignores case (a name on
+/// disk may differ in case from the index's), composed (NFC) on macOS, where git composes the
+/// names it reads and a name on disk may be decomposed.
+pub fn fold_for(name: &str, case: bool, nfc: bool) -> Cow<'_, str> {
+    let mut out = Cow::Borrowed(name);
+    if nfc && !name.is_ascii() {
+        out = Cow::Owned(icu_normalizer::ComposingNormalizerBorrowed::new_nfc().normalize(name).into_owned());
+    }
+    if case && out.chars().any(char::is_uppercase) {
+        out = Cow::Owned(out.to_lowercase());
+    }
+    out
+}
+
+/// The marks of `status` for the folder `prefix` (from the root, with `/`; "" for the root),
+/// names folded as this system's file systems compare them.
 pub fn folder_marks(status: &GitStatus, prefix: &str) -> FolderMarks {
-    let mut out = FolderMarks::default();
+    let macos = cfg!(target_os = "macos");
+    folder_marks_for(status, prefix, cfg!(windows) || macos, macos)
+}
+
+/// `folder_marks` with names folded by `fold_for(_, case, nfc)`.
+pub fn folder_marks_for(status: &GitStatus, prefix: &str, case: bool, nfc: bool) -> FolderMarks {
+    let mut out = FolderMarks { case, nfc, ..FolderMarks::default() };
+    let prefix = &*fold_for(prefix, case, nfc);
     let under = |path: &str| -> Option<String> {
         if prefix.is_empty() {
             return Some(path.to_owned());
@@ -184,6 +218,7 @@ pub fn folder_marks(status: &GitStatus, prefix: &str) -> FolderMarks {
         path.strip_prefix(prefix).and_then(|rest| rest.strip_prefix('/')).map(str::to_owned)
     };
     for (path, mark) in &status.entries {
+        let path = &fold_for(path, case, nfc).into_owned();
         // The folder shown is the entry or inside it (an ignored `build/` opened).
         let contains = path == prefix || prefix.strip_prefix(path.as_str()).is_some_and(|r| r.starts_with('/'));
         if !path.is_empty() && contains {
@@ -193,6 +228,7 @@ pub fn folder_marks(status: &GitStatus, prefix: &str) -> FolderMarks {
         }
         let Some(rest) = under(path) else { continue };
         out.changed += usize::from(*mark != GitMark::Ignored);
+        out.conflicts += usize::from(*mark == GitMark::Conflict);
         match rest.split_once('/') {
             None => {
                 out.names.insert(rest.into(), *mark);
@@ -204,7 +240,7 @@ pub fn folder_marks(status: &GitStatus, prefix: &str) -> FolderMarks {
             }
         }
     }
-    out.deleted = status.deleted.iter().filter_map(|p| under(p)).collect();
+    out.deleted = status.deleted.iter().filter_map(|p| under(&fold_for(p, case, nfc))).collect();
     out.changed += out.deleted.len();
     out
 }
@@ -235,6 +271,10 @@ pub fn status_text(status: &GitStatus, marks: &FolderMarks) -> String {
     if !marks.deleted.is_empty() {
         // TRANSLATORS: the status bar in a Git repository: files deleted under the folder shown.
         text.push_str(&format!(" · {}", tn!("{n} deleted" | "{n} deleted", marks.deleted.len())));
+    }
+    if marks.conflicts > 0 {
+        // TRANSLATORS: the status bar in a Git repository: files in conflict under the folder shown.
+        text.push_str(&format!(" · {}", tn!("{n} conflict" | "{n} conflicts", marks.conflicts)));
     }
     text
 }
@@ -345,6 +385,27 @@ mod tests {
     }
 
     #[test]
+    fn names_differing_in_case_or_composition_find_their_mark() {
+        let s = GitStatus {
+            entries: vec![
+                ("Docs/ReadMe.md".into(), GitMark::Modified),
+                ("Docs/\u{e9}t\u{e9}.txt".into(), GitMark::Untracked),
+            ],
+            ..GitStatus::default()
+        };
+        // Windows: the folder and file as on disk, in another case.
+        let windows = folder_marks_for(&s, "docs", true, false);
+        assert_eq!(windows.of("README.md"), Some(GitMark::Modified));
+        // macOS: a decomposed name from disk, git's composed one.
+        let macos = folder_marks_for(&s, "Docs", true, true);
+        assert_eq!(macos.of("e\u{301}te\u{301}.txt"), Some(GitMark::Untracked));
+        assert_eq!(macos.of("readme.md"), Some(GitMark::Modified));
+        // Linux: names are bytes.
+        let linux = folder_marks_for(&s, "Docs", false, false);
+        assert_eq!((linux.of("readme.md"), linux.of("ReadMe.md")), (None, Some(GitMark::Modified)));
+    }
+
+    #[test]
     fn a_folder_inside_an_ignored_or_untracked_one_marks_every_row() {
         let s = GitStatus { entries: vec![("build".into(), GitMark::Ignored)], ..GitStatus::default() };
         assert_eq!(folder_marks(&s, "build").of("anything"), Some(GitMark::Ignored));
@@ -360,6 +421,9 @@ mod tests {
         s.deleted.push("c".into());
         let m = folder_marks(&s, "");
         assert_eq!(status_text(&s, &m), "⎇ main ↑2 · 1 changed · 1 deleted");
+        s.entries.push(("d".into(), GitMark::Conflict));
+        let m = folder_marks(&s, "");
+        assert_eq!(status_text(&s, &m), "⎇ main ↑2 · 2 changed · 1 deleted · 1 conflict");
         s.ahead_behind = Some((0, 3));
         assert_eq!(status_text(&s, &FolderMarks::default()), "⎇ main ↓3");
     }
@@ -368,8 +432,8 @@ mod tests {
     fn conflicts_rank_first_and_ignored_last() {
         let order = [
             Some(GitMark::Conflict),
-            Some(GitMark::StagedModified),
             Some(GitMark::Modified),
+            Some(GitMark::StagedModified),
             Some(GitMark::Staged),
             Some(GitMark::Renamed),
             Some(GitMark::Added),

@@ -3425,6 +3425,13 @@ msgid_plural "{n} deleted"
 msgstr[0] ""
 msgstr[1] ""
 
+#. the status bar in a Git repository: files in conflict under the folder shown.
+#: crates/gezik-core/src/git.rs
+msgid "{n} conflict"
+msgid_plural "{n} conflicts"
+msgstr[0] ""
+msgstr[1] ""
+
 #: crates/gezik-core/src/git.rs
 msgid "Install Git to see repository status"
 msgstr ""
@@ -11860,6 +11867,11 @@ msgstr ""
 
 #: crates/gezik/ui/widgets/file-view.slint
 msgctxt "column"
+msgid "Git"
+msgstr ""
+
+#: crates/gezik/ui/widgets/file-view.slint
+msgctxt "column"
 msgid "Date deleted"
 msgstr ""
 
@@ -11886,11 +11898,6 @@ msgstr ""
 #: crates/gezik/ui/widgets/file-view.slint
 msgctxt "column"
 msgid "Comment"
-msgstr ""
-
-#: crates/gezik/ui/widgets/file-view.slint
-msgctxt "column"
-msgid "Git"
 msgstr ""
 
 #: crates/gezik/ui/widgets/file-view.slint

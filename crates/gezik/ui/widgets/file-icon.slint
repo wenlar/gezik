@@ -9,10 +9,11 @@ export component FileIcon inherits Rectangle {
     in property <bool> has-picture;
     // The cloud badge (spec 9 §7.3): 1 a cloud, 2 an outlined tick, 3 a filled tick; 0 none.
     in property <int> cloud;
-    // The Git mark (spec 16 §8.3), `GitMark` in gezik-core git.rs: 2 untracked `?`, 3 added `+`,
-    // 4 renamed `→`, 5 staged and 6 modified dots, 7 both (half and half), 8 conflict `!`; 0
-    // none, 1 ignored (the row is faint instead).
+    // The Git mark (spec 16 §8.3), `GitMark` in gezik-core git.rs: 2 untracked `?` (grey), 3
+    // added `+` (green), 4 renamed `→` (blue), 5 staged and 6 modified dots, 7 both (half and
+    // half), 8 conflict `!` (red); 0 none, 1 ignored (the row is faint instead).
     in property <int> git;
+    property <bool> git-symbol: root.git == 2 || root.git == 3 || root.git == 4 || root.git == 8;
     accessible-role: none;
 
     pure function kind-color(kind: int) -> color {
@@ -44,18 +45,21 @@ export component FileIcon inherits Rectangle {
     }
 
     // Bottom left, one element only where a mark is: rows elsewhere cost nothing.
+    // A symbol needs room to read: 11 px at the list's 16 px icons; a dot stays small.
     if root.git > 1: Rectangle {
-        width: max(8px, root.width * 0.5);
+        width: root.git-symbol ? max(11px, root.width * 0.7) : max(8px, root.width * 0.5);
         height: self.width;
-        x: -self.width * 0.2;
+        x: -self.width * 0.25;
         y: root.height - self.height * 0.8;
         border-radius: self.width / 2;
-        background: root.git == 2 ? Theme.background
+        background: root.git == 2 ? Theme.git-untracked
+            : root.git == 4 ? Theme.git-renamed
             : root.git == 6 ? Theme.git-modified
             : root.git == 8 ? Theme.git-conflict
             : Theme.git-staged;
-        border-width: root.git == 2 ? 1px : 0px;
-        border-color: Theme.git-untracked;
+        // A ring in the list's own color sets it off the icon under it.
+        border-width: 1px;
+        border-color: Theme.background;
         if root.git == 7: Path {
             width: parent.width;
             height: parent.height;
@@ -64,13 +68,13 @@ export component FileIcon inherits Rectangle {
             commands: "M 4 0 A 4 4 0 0 1 4 8 Z";
             fill: Theme.git-modified;
         }
-        if root.git == 2 || root.git == 3 || root.git == 4 || root.git == 8: Text {
+        if root.git-symbol: Text {
             width: parent.width;
             height: parent.height;
             text: root.git == 2 ? "?" : root.git == 3 ? "+" : root.git == 4 ? "→" : "!";
-            color: root.git == 2 ? Theme.git-untracked : Theme.background;
-            font-size: parent.height * 0.8;
-            font-weight: 700;
+            color: #ffffff;
+            font-size: parent.height * 0.82;
+            font-weight: 800;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

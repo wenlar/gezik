@@ -53,9 +53,10 @@ drop-target = "#88c0d040"    # where dragged files would land; from accent (stro
 # scrollbar = "#eceff438"        # from foreground
 # scrollbar-hover = "#eceff46b"  # from foreground
 # git-modified = "#f0a35a"       # Git marks on rows: a modified file
-# git-staged = "#5ad27e"         # staged, added or renamed
-# git-untracked = "#9ca3af"
-# git-conflict = "#ff6b6b"
+# git-staged = "#3fb760"         # staged or added
+# git-untracked = "#8a919c"
+# git-conflict = "#f04848"
+# git-renamed = "#4d8ef0"
 
 [metrics]
 # font-family = "Inter"  # leave out or "" for the system font

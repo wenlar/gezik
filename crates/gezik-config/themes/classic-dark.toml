@@ -51,9 +51,10 @@ syntax-number = "#fdba74"
 syntax-comment = "#9ca3af"
 syntax-tag = "#fca5a5"
 git-modified = "#f0a35a"
-git-staged = "#5ad27e"
-git-untracked = "#9ca3af"
-git-conflict = "#ff6b6b"
+git-staged = "#3fb760"
+git-untracked = "#8a919c"
+git-conflict = "#f04848"
+git-renamed = "#4d8ef0"
 
 [metrics]
 font-family = ""
