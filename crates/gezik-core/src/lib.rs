@@ -17,6 +17,8 @@ pub mod export;
 pub mod field_filter;
 pub mod fields;
 pub mod file_filter;
+pub mod git;
+pub mod git_filter;
 pub mod group;
 pub mod highlight;
 pub mod history;

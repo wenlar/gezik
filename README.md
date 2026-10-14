@@ -42,6 +42,8 @@ Windows · macOS · Linux
 
 **Tags.** Color tags, star ratings and comments kept in the files (Finder and Dolphin read them), tag dots and columns, `tag:`/`rating:` filters and search, a TAGS sidebar section, and highlight rules that color rows. → [Tags](docs/features.md#tags)
 
+**Git.** In a repository, rows show their Git mark (modified, staged, untracked, conflict; ignored ones faint) and folders the most important one inside, with a Git column to sort and group by, `git:` filter words and the branch with ahead/behind in the status bar. The system's git runs only while a repository folder is shown, and a repository's own settings never run a program. → [Git](docs/features.md#git)
+
 **Languages.** English and Turkish, plus machine-translated German, Spanish, French and Simplified Chinese; Gezik follows the system's language unless you pick one. A new language is a plain `.po` file in the settings folder. → [Translating](docs/translating.md)
 
 **The system.** A command line, a single instance, one Trash view for every bin, and PATH integration you can undo. → [System integration](docs/features.md#system-integration)

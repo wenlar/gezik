@@ -15,3 +15,7 @@ Numbering goes on from `15-linux.md` (it ends at 285). Results go to `../linux-t
 
 289. **bash and fish.** With `$SHELL` bash: `>echo $0; ls -la | head -3` shows `bash` and the listing; with `$SHELL` fish (start Gezik from fish, or `SHELL=/usr/bin/fish gezik`): `>echo $FISH_VERSION` shows its version, `>set x 1; echo $x` shows `1`. `>sleep 30` and **Stop**: `pgrep -a sleep` shows none left. `>echo "$GEZIK_FILES"` prints the selected paths.
 290. **Programs that want a terminal.** `>sudo ls` ends at once saying a terminal (or a password) is required, and Gezik keeps answering; `>read x; echo done` prints `done`; `>top` ends with an error. `>git log` prints without a pager. The panel's **Copy Output** puts the text on the clipboard (paste it in an editor), **Close** (or Esc on the list) closes the panel.
+
+### 16d, Git status
+
+291. **Changes show by themselves (inotify).** In a repository folder (`git init`, a commit), in a terminal: `echo x >> a.txt` (orange dot on `a.txt` within about 1 s), `git add a.txt` (green dot), `git commit -m t` (gone), `touch new.txt` (grey `?`). Write `build/` into `.gitignore` with a `build` folder present: it turns faint. The status bar shows `⎇ <branch>`. A folder outside any repository and one on an NFS/SMB mount: `pgrep -a git` shows nothing while you browse them. Without git (`[git] program = "/nonexistent"`): "Install Git to see repository status" once, no error box.

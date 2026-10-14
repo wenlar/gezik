@@ -46,7 +46,8 @@ const REMOVAL_CHECKS: u32 = 20;
 /// What a background load produces; `Send`, so it can cross back to the UI thread.
 #[derive(Debug)]
 enum LoadResult {
-    Files(PathBuf, Vec<Entry>),
+    /// A folder's entries, and the Git repository it is in (spec 16 §8.2: looked for here).
+    Files(PathBuf, Vec<Entry>, Option<crate::git::Repo>),
     Drives(Vec<Drive>),
     /// The shown folder no longer exists; `fallback` is its nearest existing ancestor
     /// (looked up on the loading thread: it may wait on a dead network share).
@@ -85,14 +86,14 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
         // `\\server` (Windows): its disk shares as folders (spec 9 §7.4). The name came from
         // the user; nothing is discovered.
         Location::Path(path) if let Some(server) = server_of(path) => match gezik_platform::network::shares(&server) {
-            Ok(names) => LoadResult::Files(path.clone(), names.into_iter().map(share_entry).collect()),
+            Ok(names) => LoadResult::Files(path.clone(), names.into_iter().map(share_entry).collect(), None),
             Err(err) => LoadResult::Failed(err),
         },
         Location::Path(path) => match list_dir(path) {
             Ok(mut entries) => {
                 // What a copy or delete is still working on under a temporary name.
                 entries.retain(|entry| !gezik_ops::pending::is_internal_name(&entry.name));
-                LoadResult::Files(path.clone(), entries)
+                LoadResult::Files(path.clone(), entries, crate::git::find_repo(path))
             }
             // A path through an archive file (typed, a tab set's, a session's): inside it.
             Err(_) if let Some(inside) = split_archive(path, Path::is_file) => {
@@ -212,7 +213,7 @@ fn redirected(mode: Mode, from: &Location, to: &Location) -> Mode {
 /// cannot be listed. Runs on a background thread.
 pub(crate) fn read_folder(path: &Path) -> Option<Vec<Entry>> {
     match list(&Location::Path(path.to_path_buf()), &Mode::Move(Vec::new())) {
-        LoadResult::Files(_, entries) => Some(entries),
+        LoadResult::Files(_, entries, _) => Some(entries),
         _ => None,
     }
 }
@@ -1403,6 +1404,8 @@ impl Navigator {
             let fallback = inner.fallback.take();
             (opened, ticket.is_some() && fallback == ticket)
         };
+        // The Git repository of the folder listed (spec 16 §8): none for anything else.
+        let mut repo = None;
         let shown = match &location {
             Location::Path(p) => p.display().to_string(),
             Location::Vfs(at) => at.text(),
@@ -1412,7 +1415,8 @@ impl Navigator {
             Location::Flat(folder) => folder.display().to_string(),
         };
         let listing = match result {
-            LoadResult::Files(path, mut entries) => {
+            LoadResult::Files(path, mut entries, found) => {
+                repo = found.map(|repo| (path.clone(), repo));
                 crate::panes::with_id(self.id(), |p| p.folder_sizes.apply_known(&path, &mut entries));
                 // The sidebar tree's open branch of this folder shows its sub-folders (spec 10 §5.2).
                 crate::sidebar::with_current(|s| s.listed(&path, &entries));
@@ -1498,6 +1502,7 @@ impl Navigator {
         if !(quiet && note.is_none() && view.shows_same(&listing)) {
             view.show(listing, &state, note, place);
         }
+        view.git_listed(repo);
         crate::panes::with_id(self.id(), |p| p.folder_sizes.shown(&location));
         self.update_chrome();
         if location.is_results() {
@@ -1957,7 +1962,7 @@ mod tests {
         let tmp = TempDir::new("list");
         std::fs::write(tmp.0.join("a.txt"), "x").expect("write");
         match list(&Location::Path(tmp.0.clone()), &Mode::Show) {
-            LoadResult::Files(path, entries) => {
+            LoadResult::Files(path, entries, _) => {
                 assert_eq!(path, tmp.0);
                 assert_eq!(entries.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["a.txt"]);
             }
@@ -1974,7 +1979,7 @@ mod tests {
         std::fs::create_dir(tmp.0.join(".gezik-deleting-0123456789abcdef")).expect("mkdir");
         std::fs::write(tmp.0.join(".gezik-copying-"), "a user's name, not ours").expect("write");
         match list(&Location::Path(tmp.0.clone()), &Mode::Show) {
-            LoadResult::Files(_, entries) => {
+            LoadResult::Files(_, entries, _) => {
                 let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
                 assert_eq!(names, [".gezik-copying-", "a.txt"]);
             }

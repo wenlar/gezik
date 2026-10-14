@@ -96,6 +96,11 @@ pub fn apply_global(global: &Theme<'_>, theme: &ResolvedTheme) {
     global.set_syntax_number(color(c.syntax_number));
     global.set_syntax_comment(color(c.syntax_comment));
     global.set_syntax_tag(color(c.syntax_tag));
+    global.set_git_modified(color(c.git_modified));
+    global.set_git_staged(color(c.git_staged));
+    global.set_git_untracked(color(c.git_untracked));
+    global.set_git_conflict(color(c.git_conflict));
+    global.set_git_renamed(color(c.git_renamed));
 
     let m = &theme.metrics;
     global.set_font_family(m.font_family.as_str().into());

@@ -29,6 +29,7 @@ mod finder_menu;
 mod folder_sizes;
 mod folder_watch;
 mod frame_limit;
+mod git;
 mod info;
 mod integration;
 mod keys;
@@ -178,6 +179,12 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     filter::set_settings(loaded.settings.keyboard, loaded.settings.filters.clone());
     path_box::set_settings(loaded.settings.history);
     command_line::set_settings(loaded.settings.command_line.clone(), loaded.settings.history.remember);
+    // Git marks turned on or off, or another git: every pane looks again (spec 16 §8).
+    if git::set_settings(loaded.settings.git.clone()) {
+        for p in panes::everywhere() {
+            p.nav.reload();
+        }
+    }
     for p in panes::everywhere() {
         p.search.set_settings(loaded.settings.search.clone());
         p.folder_sizes.set_settings(loaded.settings.folder_sizes, loaded.settings.search.everything);

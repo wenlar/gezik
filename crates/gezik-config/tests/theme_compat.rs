@@ -210,7 +210,7 @@ fn contrast_holds_in_every_theme_and_accent() {
 }
 
 /// Every color the example theme shows commented out is what the rules make from the
-/// example's other colors (or, for success and warning, the base theme's own).
+/// example's other colors (or, for success, warning and the Git marks, the base theme's own).
 #[test]
 fn the_example_comments_state_the_resolved_values() {
     let text = include_str!("../templates/example.toml");
@@ -226,5 +226,5 @@ fn the_example_comments_state_the_resolved_values() {
         assert_eq!(example.colors.get(key), hex(value), "example.toml: commented {key}");
         seen += 1;
     }
-    assert_eq!(seen, 18, "commented colors in example.toml");
+    assert_eq!(seen, 23, "commented colors in example.toml");
 }

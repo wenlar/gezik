@@ -3,6 +3,7 @@
 
 mod columns;
 mod folder_fields;
+mod folder_git;
 mod folder_tags;
 mod listing;
 mod model;
@@ -83,6 +84,7 @@ pub fn header_sort(column: i32) -> Option<SortKey> {
         }
         i => ColumnKey::RESULTS
             .into_iter()
+            .chain([ColumnKey::Git])
             .find(|k| k.index() == i && !matches!(k, ColumnKey::Match | ColumnKey::Comment))
             .map(ColumnKey::sort_key),
     }
@@ -188,6 +190,8 @@ struct Inner {
     /// The field columns' headers (spec 13 §8.1), one model the pane keeps: a dragged edge
     /// changes its row in place.
     field_model: Rc<slint::VecModel<crate::FieldColumn>>,
+    /// The Git status of the folder shown (spec 16 §8): its repository, the run, the watch.
+    git: RefCell<folder_git::GitState>,
 }
 
 /// The filter bar's text, the pattern the list shows, and what is wrong with the text.
@@ -199,6 +203,8 @@ struct FilterState {
     tags: Vec<gezik_core::meta_filter::TagTerm>,
     /// Its property words (spec 13 §8.3).
     fields: Vec<gezik_core::field_filter::FieldTerm>,
+    /// Its `git:` words (spec 16 §8.4).
+    git: Vec<gezik_core::git_filter::GitTerm>,
     error: Option<String>,
 }
 
@@ -208,15 +214,18 @@ impl FilterState {
     fn new(text: &str, before: Option<&FilterState>) -> FilterState {
         // `tag:`, `rating:` and `comment:` words first (spec 12 §6.3), then property words (spec
         // 13 §8.3); a property word whose value does not read is said and left out.
-        let (names, tags) = gezik_core::meta_filter::split(text);
+        // `git:` words first (spec 16 §8.4): a property word would read `git` as a property.
+        let (names, git) = gezik_core::git_filter::split(text);
+        let (names, tags) = gezik_core::meta_filter::split(&names);
         let (names, fields, field_error) = gezik_core::field_filter::split_lenient(&names);
         match Pattern::compile(&names) {
-            Ok(pattern) => FilterState { text: text.to_owned(), pattern, tags, fields, error: field_error },
+            Ok(pattern) => FilterState { text: text.to_owned(), pattern, tags, fields, git, error: field_error },
             Err(error) => FilterState {
                 text: text.to_owned(),
                 pattern: before.map(|b| b.pattern.clone()).unwrap_or_default(),
                 tags: before.map(|b| b.tags.clone()).unwrap_or_default(),
                 fields: before.map(|b| b.fields.clone()).unwrap_or_default(),
+                git: before.map(|b| b.git.clone()).unwrap_or_default(),
                 error: Some(error),
             },
         }
@@ -398,6 +407,7 @@ impl View {
             field_runs: Cell::new(0),
             field_progress: RefCell::new(None),
             field_model,
+            git: RefCell::default(),
         }));
         // Weak: the media client lives inside the view.
         let weak = Rc::downgrade(&view.0);
@@ -605,7 +615,9 @@ impl View {
                     state.filter.as_deref().map(|text| FilterState::new(text, None))
                 };
                 let (shown, rows) = match &filter {
-                    Some(filter) => self.filter_files(&listing, &full, &filter.pattern, &filter.tags, &filter.fields),
+                    Some(filter) => {
+                        self.filter_files(&listing, &full, &filter.pattern, &filter.tags, &filter.fields, &filter.git)
+                    }
                     None => (listing, None),
                 };
                 *self.0.filter.borrow_mut() = filter;
@@ -910,7 +922,7 @@ impl View {
             return self.sync_filter_bar(&window);
         }
         let patterns = |f: Option<&FilterState>| {
-            f.map(|f| (f.pattern.clone(), f.tags.clone(), f.fields.clone())).unwrap_or_default()
+            f.map(|f| (f.pattern.clone(), f.tags.clone(), f.fields.clone(), f.git.clone())).unwrap_or_default()
         };
         let old_pattern = patterns(self.0.filter.borrow().as_ref());
         let mut next = text.map(|text| FilterState::new(text, self.0.filter.borrow().as_ref()));
@@ -919,6 +931,10 @@ impl View {
         if let Some(f) = next.as_mut().filter(|f| results.is_some() && !f.tags.is_empty()) {
             f.tags.clear();
             f.error.get_or_insert_with(|| t("", TAGS_IN_FOLDERS).into_owned());
+        }
+        // Nor `git:` words (no repository in the results).
+        if let Some(f) = next.as_mut().filter(|_| results.is_some()) {
+            f.git.clear();
         }
         if let Some(f) = next.as_mut().filter(|f| results.is_some() && !f.fields.is_empty()) {
             f.fields.clear();
@@ -945,7 +961,7 @@ impl View {
                 Some(set) => filtered_results(set, &new_pattern.0),
                 None => {
                     let shape = shape.unwrap_or_default();
-                    self.filter_files(&shape, &full, &new_pattern.0, &new_pattern.1, &new_pattern.2)
+                    self.filter_files(&shape, &full, &new_pattern.0, &new_pattern.1, &new_pattern.2, &new_pattern.3)
                 }
             };
             // What was selected and still shows stays selected, carried by position through
@@ -1093,11 +1109,15 @@ impl View {
     /// The columns on screen right of Name, in their order (Match only when a result has a line).
     pub fn shown_column_keys(&self) -> Vec<ColumnKey> {
         let matches = self.results().is_some_and(|set| set.has_matches());
-        let vfs = self.shows_vfs();
+        let (vfs, git) = (self.shows_vfs(), self.in_repo());
         let shown = self.columns_shown().into_iter().filter(|c| c.visible);
         shown
             .map(|c| c.key)
-            .filter(|&key| (key != ColumnKey::Match || matches) && (key != ColumnKey::Packed || vfs))
+            .filter(|&key| {
+                (key != ColumnKey::Match || matches)
+                    && (key != ColumnKey::Packed || vfs)
+                    && (key != ColumnKey::Git || git)
+            })
             .collect()
     }
 
@@ -1154,6 +1174,7 @@ impl View {
                     Column::Shown(ColumnKey::Created) => date(entry.as_deref().and_then(|e| e.created)),
                     Column::Shown(ColumnKey::Type) => model::type_name_for(&data, i),
                     Column::Shown(ColumnKey::Packed) => model::packed_cell(&data, i, raw),
+                    Column::Shown(ColumnKey::Git) => gezik_core::git::label(model::git_mark(&data, i)),
                     Column::Shown(key @ (ColumnKey::Tags | ColumnKey::Rating | ColumnKey::Comment)) => {
                         model::known_meta_cell(&data, i, *key)
                     }
@@ -2104,6 +2125,7 @@ impl View {
                 tags: None,
                 rating: None,
                 field: None,
+                git: None,
             };
             let order = full.sort_order(spec, folders_first, plain, (by != GroupBy::None).then_some(&grouping));
             // Let go first: the UI thread then moves the set, no copy.
@@ -2283,7 +2305,7 @@ impl View {
     /// What the filter lets through of `full` (shown like `shape`), and where they are in it.
     fn filtered(&self, shape: &Listing, full: &Rc<Vec<Entry>>) -> (Listing, Option<Vec<usize>>) {
         match self.0.filter.borrow().as_ref() {
-            Some(filter) => self.filter_files(shape, full, &filter.pattern, &filter.tags, &filter.fields),
+            Some(filter) => self.filter_files(shape, full, &filter.pattern, &filter.tags, &filter.fields, &filter.git),
             None => (shape.with_entries(full.clone()), None),
         }
     }
@@ -2376,6 +2398,8 @@ impl View {
     fn group_by(&self) -> GroupBy {
         let results = self.0.data.try_borrow().is_ok_and(|d| d.results.is_some());
         let by = grouped_by(&self.0.current.get());
+        // By Git only where marks come (spec 16 §8.4): not a lone "Unchanged" group.
+        let by = if by == GroupBy::Git && !self.in_repo() { GroupBy::None } else { by };
         if results { results_group(by) } else { by }
     }
 
@@ -2490,6 +2514,7 @@ impl View {
                 ColumnKey::Rating => window.get_col_rating(),
                 ColumnKey::Comment => window.get_col_comment(),
                 ColumnKey::Packed => window.get_col_packed(),
+                ColumnKey::Git => window.get_col_git(),
                 // Kept as dragged (`field_resized`).
                 ColumnKey::Field(_) => continue,
             };
@@ -2568,8 +2593,13 @@ impl View {
         let rule = self.0.rule_columns.get();
         let columns = self.active_columns().borrow();
         let vfs = self.shows_vfs();
+        // Git only in a repository (spec 16 §8.4).
+        let git = self.in_repo();
         let width = |key: ColumnKey| {
-            if (key == ColumnKey::Match && !matches) || (key == ColumnKey::Packed && !vfs) {
+            if (key == ColumnKey::Match && !matches)
+                || (key == ColumnKey::Packed && !vfs)
+                || (key == ColumnKey::Git && !git)
+            {
                 return 0.0;
             }
             let shown = |c: &ColumnState| rule.map_or(c.visible, |set| set.has(c.key));
@@ -2586,6 +2616,7 @@ impl View {
         window.set_col_rating(rating);
         window.set_col_comment(comment);
         window.set_col_packed(width(ColumnKey::Packed));
+        window.set_col_git(width(ColumnKey::Git));
         drop(columns);
         // Rows read their meta while a meta column shows (spec 12 §6.1, §8.2); shown now, they ask.
         let shown = (tags > 0.0, rating > 0.0, comment > 0.0);
@@ -2655,6 +2686,7 @@ impl View {
             SortKey::Folder => ColumnKey::Folder.index(),
             SortKey::Tags => ColumnKey::Tags.index(),
             SortKey::Rating => ColumnKey::Rating.index(),
+            SortKey::Git => ColumnKey::Git.index(),
             SortKey::Field(id) => ColumnKey::Field(id).index(),
         };
         crate::panes::edit(self.0.id, |d| {
@@ -2693,14 +2725,15 @@ impl View {
         let type_name = |e: &Entry| self.type_name_of(e);
         // A sort by tags, rating or a field that is not grouped goes through a grouping by
         // nothing (its keys).
-        let by_keys = matches!(view.sort.key, SortKey::Tags | SortKey::Rating | SortKey::Field(_))
-            || matches!(by, GroupBy::Tag | GroupBy::Rating | GroupBy::Field(_));
+        let by_keys = matches!(view.sort.key, SortKey::Tags | SortKey::Rating | SortKey::Field(_) | SortKey::Git)
+            || matches!(by, GroupBy::Tag | GroupBy::Rating | GroupBy::Field(_) | GroupBy::Git);
         let order = if by == GroupBy::None && !by_keys {
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, None)
         } else {
             let dates = self.fresh_dates();
             let (tags, rating) = (self.tag_keys(dir), self.rating_keys(dir));
             let look = self.field_look(dir);
+            let git = self.git_keys(dir);
             let grouping = Grouping {
                 by,
                 spec: view.sort,
@@ -2711,6 +2744,7 @@ impl View {
                 tags: Some(&tags),
                 rating: Some(&rating),
                 field: Some(&look),
+                git: Some(&git),
             };
             sort_entries_grouped(&mut entries, view.sort, folders_first, type_name, Some(&grouping))
         };
@@ -2833,6 +2867,10 @@ impl View {
                     Listing::Files(dir, _) if matches!(by, GroupBy::Field(_)) => Some(self.field_look(dir)),
                     _ => None,
                 };
+                let git = match &data.listing {
+                    Listing::Files(dir, _) if by == GroupBy::Git => Some(self.git_keys(dir)),
+                    _ => None,
+                };
                 let grouping = Grouping {
                     by,
                     spec: self.sort(),
@@ -2843,6 +2881,7 @@ impl View {
                     tags: tags.as_ref().map(|t| t as &dyn Fn(&Entry) -> gezik_core::meta_filter::TagKey),
                     rating: rating.as_ref().map(|r| r as &gezik_core::group::RatingKey),
                     field: look.as_ref().map(|l| l as &gezik_core::group::FieldLook<'_>),
+                    git: git.as_ref().map(|g| g as &gezik_core::group::GitKey),
                 };
                 let collapsed = self.0.collapsed.borrow();
                 let listing = &data.listing;
@@ -3033,6 +3072,7 @@ impl View {
         if !crate::panes::is_active(self.0.id) {
             return;
         }
+        window.set_git_status(self.git_text().into());
         if let Some(note) = self.0.note.borrow().clone() {
             window.set_status(note.into());
             return;
@@ -3088,7 +3128,7 @@ impl View {
 /// Search results are not grouped by tag, rating (plan 12c sapma 2) or a field (plan 13e sapma
 /// 3): their rows are not read whole.
 fn results_group(by: GroupBy) -> GroupBy {
-    if matches!(by, GroupBy::Tag | GroupBy::Rating | GroupBy::Field(_)) { GroupBy::None } else { by }
+    if matches!(by, GroupBy::Tag | GroupBy::Rating | GroupBy::Field(_) | GroupBy::Git) { GroupBy::None } else { by }
 }
 
 fn grouped_by(view: &ViewSettings) -> GroupBy {

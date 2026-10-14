@@ -1307,6 +1307,12 @@ msgstr "note"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
+msgctxt "choice:view.sort"
+msgid "git"
+msgstr "git"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
 msgctxt "choice:view.sort-dir"
 msgid "asc"
 msgstr "crois."
@@ -1370,6 +1376,12 @@ msgstr "balise"
 msgctxt "choice:view.group"
 msgid "rating"
 msgstr "note"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:view.group"
+msgid "git"
+msgstr "git"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
@@ -1719,6 +1731,11 @@ msgstr "{0} : \"browse\", \"system\" ou \"extract-here\" attendu, reçu {1}"
 #, fuzzy
 msgid "{0}: expected a number from 1 to 4096, got {1}"
 msgstr "{0} : nombre de 1 à 4096 attendu, reçu {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
+msgid "{0}: expected a number from 1 to 600, got {1}"
+msgstr "{0} : nombre de 1 à 600 attendu, reçu {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -4092,6 +4109,83 @@ msgstr "Saisissez un motif de chaque côté de « > » : *.jpg>*.cr2"
 msgid "\"{}\": a folder pattern is one name, like thumbs\\"
 msgstr "« {} » : un motif de dossier est un seul nom, comme thumbs\\"
 
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Ignored"
+msgstr "Ignoré"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Untracked"
+msgstr "Non suivi"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Added"
+msgstr "Ajouté"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Renamed"
+msgstr "Renommé"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Staged"
+msgstr "Indexé"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Modified"
+msgstr "Modifié"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Staged, modified"
+msgstr "Indexé, modifié"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Conflict"
+msgstr "Conflit"
+
+#. the status bar in a Git repository: changes under the folder shown.
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "{n} changed"
+msgid_plural "{n} changed"
+msgstr[0] "{n} modification"
+msgstr[1] "{n} modifications"
+
+#. the status bar in a Git repository: files deleted under the folder shown.
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "{n} deleted"
+msgid_plural "{n} deleted"
+msgstr[0] "{n} supprimé"
+msgstr[1] "{n} supprimés"
+
+#. the status bar in a Git repository: files in conflict under the folder shown.
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "{n} conflict"
+msgid_plural "{n} conflicts"
+msgstr[0] "{n} conflit"
+msgstr[1] "{n} conflits"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "Install Git to see repository status"
+msgstr "Installez Git pour voir l'état du dépôt"
+
 #: crates/gezik-core/src/group.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
@@ -4138,6 +4232,13 @@ msgstr "Étiquette"
 #, fuzzy
 msgid "Rating"
 msgstr "Note"
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Git"
+msgstr "Git"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/search.rs
@@ -4257,6 +4358,12 @@ msgstr "Dossiers"
 #, fuzzy
 msgid "Not Rated"
 msgstr "Non noté"
+
+#: crates/gezik-core/src/group.rs
+#, fuzzy
+msgctxt "git"
+msgid "Unchanged"
+msgstr "Inchangé"
 
 #. a group of duplicate files: how many, each one's size, the space deleting all but one frees.
 #: crates/gezik-core/src/group.rs
@@ -8247,6 +8354,16 @@ msgstr "Masquer Compressé"
 #, fuzzy
 msgid "Show Packed"
 msgstr "Afficher Compressé"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Hide Git"
+msgstr "Masquer Git"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Show Git"
+msgstr "Afficher Git"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
@@ -13855,6 +13972,17 @@ msgstr "Impossible de lire les propriétés (aucun thread pour les lire)"
 msgid "Reading properties… {} of {}"
 msgstr "Lecture des propriétés… {} sur {}"
 
+#. {} is git's own message (not translated).
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git: {}"
+msgstr "Git : {}"
+
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git status took too long ([git] timeout)"
+msgstr "L'état Git a pris trop de temps ([git] timeout)"
+
 #: crates/gezik/src/view/folder_tags.rs
 #, fuzzy
 msgid "Tags could not be read (no thread to read them)"
@@ -14443,6 +14571,12 @@ msgstr "Dossier"
 msgctxt "column"
 msgid "Match"
 msgstr "Résultat"
+
+#: crates/gezik/ui/widgets/file-view.slint
+#, fuzzy
+msgctxt "column"
+msgid "Git"
+msgstr "Git"
 
 #: crates/gezik/ui/widgets/file-view.slint
 #, fuzzy
@@ -15275,8 +15409,8 @@ msgstr "Tri"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.sort"
-msgid "name | modified | created | type | size | tags | rating"
-msgstr "name | modified | created | type | size | tags | rating"
+msgid "name | modified | created | type | size | tags | rating | git"
+msgstr "name | modified | created | type | size | tags | rating | git"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15311,8 +15445,8 @@ msgstr "Groupe"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.group"
-msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
-msgstr "none | type | date | size | tag | rating : les groupes de la liste quand un dossier n'a pas de vue propre"
+msgid "none | type | date | size | tag | rating | git: the list's groups when a folder has no view of its own"
+msgstr "none | type | date | size | tag | rating | git : les groupes de la liste quand un dossier n'a pas de vue propre"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15445,6 +15579,66 @@ msgstr "Shell"
 msgctxt "setting:command-line.shell"
 msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
 msgstr "Le shell avec lequel s'exécute une commande saisie après \">\" dans la barre d'adresse (Entrée uniquement), dans le dossier affiché : \"\" est cmd sous Windows et $SHELL (sinon /bin/sh) ailleurs ; \"powershell\" ou \"pwsh\" ; ou un chemin complet, qui reçoit shell-args puis la commande."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.status"
+msgid "Status"
+msgstr "État"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.status"
+msgid "Marks for changed, staged, untracked and ignored files in Git repositories, the branch in the status bar. Gezik runs the system's git only while a repository folder is shown, never outside one."
+msgstr "Marques pour les fichiers modifiés, indexés, non suivis et ignorés dans les dépôts Git, la branche dans la barre d'état. Gezik exécute le git du système uniquement pendant qu'un dossier de dépôt est affiché, jamais en dehors."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.program"
+msgid "Program"
+msgstr "Programme"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.program"
+msgid "Path to git; empty = PATH (macOS: not the /usr/bin stub without Command Line Tools)"
+msgstr "Chemin de git ; vide = PATH (macOS : pas le substitut de /usr/bin sans Command Line Tools)"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.ignored"
+msgid "Ignored"
+msgstr "Ignorés"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.ignored"
+msgid "Also mark ignored files (drawn faint)"
+msgstr "Marquer aussi les fichiers ignorés (estompés)"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.network"
+msgid "Network"
+msgstr "Réseau"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.network"
+msgid "Also look for repositories on network drives"
+msgstr "Chercher aussi les dépôts sur les lecteurs réseau"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.timeout"
+msgid "Timeout"
+msgstr "Délai"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.timeout"
+msgid "Seconds a status may take"
+msgstr "Secondes que peut prendre une requête d'état"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15752,6 +15946,14 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Commandes"
 
+#~ #, fuzzy
+#~ msgctxt "setting:view.sort"
+#~ msgid "name | modified | created | type | size | tags | rating"
+#~ msgstr "name | modified | created | type | size | tags | rating"
+#~ #, fuzzy
+#~ msgctxt "setting:view.group"
+#~ msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
+#~ msgstr "none | type | date | size | tag | rating : les groupes de la liste quand un dossier n'a pas de vue propre"
 #~ #, fuzzy
 #~ msgctxt "setting:history.remember"
 #~ msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."

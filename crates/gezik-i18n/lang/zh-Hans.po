@@ -1294,6 +1294,12 @@ msgstr "评分"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
+msgctxt "choice:view.sort"
+msgid "git"
+msgstr "git"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
 msgctxt "choice:view.sort-dir"
 msgid "asc"
 msgstr "升序"
@@ -1357,6 +1363,12 @@ msgstr "标签"
 msgctxt "choice:view.group"
 msgid "rating"
 msgstr "评分"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:view.group"
+msgid "git"
+msgstr "git"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
@@ -1706,6 +1718,11 @@ msgstr "{0}：应为 \"browse\"、\"system\" 或 \"extract-here\"，实际为 {1
 #, fuzzy
 msgid "{0}: expected a number from 1 to 4096, got {1}"
 msgstr "{0}：应为 1 到 4096 之间的数字，实际为 {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
+msgid "{0}: expected a number from 1 to 600, got {1}"
+msgstr "{0}：应为 1 到 600 之间的数字，实际为 {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -4068,6 +4085,80 @@ msgstr "在“>”两侧都输入模式：*.jpg>*.cr2"
 msgid "\"{}\": a folder pattern is one name, like thumbs\\"
 msgstr "“{}”：文件夹模式是一个名称，如 thumbs\\"
 
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Ignored"
+msgstr "已忽略"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Untracked"
+msgstr "未跟踪"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Added"
+msgstr "已添加"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Renamed"
+msgstr "已重命名"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Staged"
+msgstr "已暂存"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Modified"
+msgstr "已修改"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Staged, modified"
+msgstr "已暂存，已修改"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgctxt "git"
+msgid "Conflict"
+msgstr "冲突"
+
+#. the status bar in a Git repository: changes under the folder shown.
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "{n} changed"
+msgid_plural "{n} changed"
+msgstr[0] "{n} 项更改"
+
+#. the status bar in a Git repository: files deleted under the folder shown.
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "{n} deleted"
+msgid_plural "{n} deleted"
+msgstr[0] "{n} 项已删除"
+
+#. the status bar in a Git repository: files in conflict under the folder shown.
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "{n} conflict"
+msgid_plural "{n} conflicts"
+msgstr[0] "{n} 个冲突"
+
+#: crates/gezik-core/src/git.rs
+#, fuzzy
+msgid "Install Git to see repository status"
+msgstr "安装 Git 以查看仓库状态"
+
 #: crates/gezik-core/src/group.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
@@ -4114,6 +4205,13 @@ msgstr "标签"
 #, fuzzy
 msgid "Rating"
 msgstr "评分"
+
+#: crates/gezik-core/src/group.rs
+#: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Git"
+msgstr "Git"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/search.rs
@@ -4233,6 +4331,12 @@ msgstr "文件夹"
 #, fuzzy
 msgid "Not Rated"
 msgstr "未评分"
+
+#: crates/gezik-core/src/group.rs
+#, fuzzy
+msgctxt "git"
+msgid "Unchanged"
+msgstr "未更改"
 
 #. a group of duplicate files: how many, each one's size, the space deleting all but one frees.
 #: crates/gezik-core/src/group.rs
@@ -8159,6 +8263,16 @@ msgstr "隐藏压缩后大小"
 #, fuzzy
 msgid "Show Packed"
 msgstr "显示压缩后大小"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Hide Git"
+msgstr "隐藏 Git"
+
+#: crates/gezik/src/context_menu.rs
+#, fuzzy
+msgid "Show Git"
+msgstr "显示 Git"
 
 #: crates/gezik/src/context_menu.rs
 #, fuzzy
@@ -13654,6 +13768,17 @@ msgstr "无法读取属性（没有读取线程）"
 msgid "Reading properties… {} of {}"
 msgstr "正在读取属性… {}/{}"
 
+#. {} is git's own message (not translated).
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git: {}"
+msgstr "Git：{}"
+
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git status took too long ([git] timeout)"
+msgstr "Git 状态耗时过长（[git] timeout）"
+
 #: crates/gezik/src/view/folder_tags.rs
 #, fuzzy
 msgid "Tags could not be read (no thread to read them)"
@@ -14239,6 +14364,12 @@ msgstr "文件夹"
 msgctxt "column"
 msgid "Match"
 msgstr "匹配"
+
+#: crates/gezik/ui/widgets/file-view.slint
+#, fuzzy
+msgctxt "column"
+msgid "Git"
+msgstr "Git"
 
 #: crates/gezik/ui/widgets/file-view.slint
 #, fuzzy
@@ -15070,8 +15201,8 @@ msgstr "排序"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.sort"
-msgid "name | modified | created | type | size | tags | rating"
-msgstr "name | modified | created | type | size | tags | rating"
+msgid "name | modified | created | type | size | tags | rating | git"
+msgstr "name | modified | created | type | size | tags | rating | git"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15106,8 +15237,8 @@ msgstr "分组"
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
 msgctxt "setting:view.group"
-msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
-msgstr "none | type | date | size | tag | rating：文件夹没有自己的视图时列表的分组方式"
+msgid "none | type | date | size | tag | rating | git: the list's groups when a folder has no view of its own"
+msgstr "none | type | date | size | tag | rating | git：文件夹没有自己的视图时列表的分组"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15240,6 +15371,66 @@ msgstr "Shell"
 msgctxt "setting:command-line.shell"
 msgid "The shell a command typed after \">\" in the address bar runs with (Enter only), in the folder shown: \"\" is cmd on Windows and $SHELL (else /bin/sh) elsewhere; \"powershell\" or \"pwsh\"; or a full path, given shell-args then the command."
 msgstr "在地址栏中 \">\" 后输入的命令在当前文件夹中运行所用的 shell（仅按 Enter 时）：\"\" 在 Windows 上为 cmd，其他系统为 $SHELL（否则 /bin/sh）；\"powershell\" 或 \"pwsh\"；或完整路径，依次传入 shell-args 和命令。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.status"
+msgid "Status"
+msgstr "状态"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.status"
+msgid "Marks for changed, staged, untracked and ignored files in Git repositories, the branch in the status bar. Gezik runs the system's git only while a repository folder is shown, never outside one."
+msgstr "在 Git 仓库中标记已修改、已暂存、未跟踪和已忽略的文件，并在状态栏显示分支。Gezik 仅在显示仓库文件夹时运行系统的 git，在仓库之外从不运行。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.program"
+msgid "Program"
+msgstr "程序"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.program"
+msgid "Path to git; empty = PATH (macOS: not the /usr/bin stub without Command Line Tools)"
+msgstr "git 的路径；留空 = PATH（macOS：没有 Command Line Tools 时不用 /usr/bin 中的占位程序）"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.ignored"
+msgid "Ignored"
+msgstr "已忽略"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.ignored"
+msgid "Also mark ignored files (drawn faint)"
+msgstr "也标记已忽略的文件（淡色显示）"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.network"
+msgid "Network"
+msgstr "网络"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.network"
+msgid "Also look for repositories on network drives"
+msgstr "也在网络驱动器上查找仓库"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.timeout"
+msgid "Timeout"
+msgstr "超时"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:git.timeout"
+msgid "Seconds a status may take"
+msgstr "一次状态查询可用的秒数"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
@@ -15547,6 +15738,14 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "命令"
 
+#~ #, fuzzy
+#~ msgctxt "setting:view.sort"
+#~ msgid "name | modified | created | type | size | tags | rating"
+#~ msgstr "name | modified | created | type | size | tags | rating"
+#~ #, fuzzy
+#~ msgctxt "setting:view.group"
+#~ msgid "none | type | date | size | tag | rating: the list's groups when a folder has no view of its own"
+#~ msgstr "none | type | date | size | tag | rating：文件夹没有自己的视图时列表的分组方式"
 #~ #, fuzzy
 #~ msgctxt "setting:history.remember"
 #~ msgid "Remember the folders you open, for the address bar's Recent and Frequent lists (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties the list."

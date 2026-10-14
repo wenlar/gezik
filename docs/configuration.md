@@ -54,6 +54,13 @@ The top of `settings.toml` holds:
   (default) is cmd on Windows and `$SHELL` (else `/bin/sh`) on macOS and Linux; `"powershell"`
   or `"pwsh"`; or a full path, which gets `shell-args` (say `["-c"]`) and then the command.
   See [Commands in the address bar](features.md#commands-in-the-address-bar).
+- `[git]` — Git marks in repositories (see [Git](features.md#git)): `status` (default
+  `true`; `false` and git never runs), `program` (a full path to git or a name looked for on
+  PATH; empty = `git` on PATH; on macOS `/usr/bin/git` only with the Command Line Tools, then
+  Homebrew's; git 2.31 or newer), `ignored` (default
+  `true`: ignored files are marked and drawn faint), `network` (default `false`: repositories
+  on network drives are not looked for) and `timeout` (seconds a status may take, 1-600,
+  default 10).
 - `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group }` for an alias
   and a group. Gezik updates this list when you pin, unpin, rename, group or reorder; the rest
   of the file, including your comments, is kept.

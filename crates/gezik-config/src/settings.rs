@@ -164,6 +164,27 @@ pub struct CommandLineSettings {
     pub shell_args: Vec<String>,
 }
 
+/// `[git]` (spec 16 §8): Git status in repositories, with the system's `git`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitSettings {
+    /// Marks in repositories (git runs only while a repository folder is shown).
+    pub status: bool,
+    /// Path to git; empty: PATH (macOS: not the /usr/bin stub without Command Line Tools).
+    pub program: String,
+    /// Ignored files are marked too (drawn faint).
+    pub ignored: bool,
+    /// Repositories on network drives are looked for too.
+    pub network: bool,
+    /// Seconds a status may take.
+    pub timeout: u32,
+}
+
+impl Default for GitSettings {
+    fn default() -> Self {
+        GitSettings { status: true, program: String::new(), ignored: true, network: false, timeout: 10 }
+    }
+}
+
 /// What Space shows on macOS (`[system] quick-look`, spec 9 §4.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum QuickLookMode {
@@ -420,6 +441,7 @@ pub struct Settings {
     pub sync_profiles: Vec<crate::sync_profiles::SyncProfile>,
     pub archives: ArchivesSettings,
     pub command_line: CommandLineSettings,
+    pub git: GitSettings,
     pub tools: ToolsSettings,
     pub convert: ConvertSettings,
     /// User commands (`[[commands]]`); invalid ones are left out.
@@ -470,6 +492,7 @@ impl Default for Settings {
             sync_profiles: Vec::new(),
             archives: ArchivesSettings::default(),
             command_line: CommandLineSettings::default(),
+            git: GitSettings::default(),
             tools: ToolsSettings::default(),
             convert: ConvertSettings::default(),
             commands: Vec::new(),
@@ -655,6 +678,13 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(command_line) => settings.command_line = parse_command_line(command_line, file, warnings),
                 None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "command-line", value))),
+            },
+        }
+        match table.get("git") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(git) => settings.git = parse_git(git, file, warnings),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "git", value))),
             },
         }
         match table.get("tools") {
@@ -1647,6 +1677,33 @@ fn parse_command_line(table: &toml::Table, file: &str, warnings: &mut Vec<Warnin
                 file,
                 t!("{0}: expected a list of text, got {1}", "command-line.shell-args", value),
             )),
+        }
+    }
+    out
+}
+
+fn parse_git(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> GitSettings {
+    let mut out = GitSettings::default();
+    for (key, slot) in [("status", &mut out.status), ("ignored", &mut out.ignored), ("network", &mut out.network)] {
+        if let Some(value) = table.get(key) {
+            match value.as_bool() {
+                Some(on) => *slot = on,
+                None => warnings
+                    .push(Warning::new(file, t!("{0}: expected true or false, got {1}", format!("git.{key}"), value))),
+            }
+        }
+    }
+    if let Some(value) = table.get("program") {
+        match value.as_str() {
+            Some(program) => out.program = program.trim().to_owned(),
+            None => warnings.push(Warning::new(file, t!("{0}: expected text, got {1}", "git.program", value))),
+        }
+    }
+    if let Some(value) = table.get("timeout") {
+        match value.as_integer().and_then(|n| u32::try_from(n).ok()).filter(|n| (1..=600).contains(n)) {
+            Some(seconds) => out.timeout = seconds,
+            None => warnings
+                .push(Warning::new(file, t!("{0}: expected a number from 1 to 600, got {1}", "git.timeout", value))),
         }
     }
     out
@@ -4248,6 +4305,31 @@ history = [1, \" \", \"dir\"]
             ["dir"]
         );
         assert!(!State::default().to_toml().contains("command-line"), "nothing written while empty");
+    }
+
+    #[test]
+    fn reads_git() {
+        let (settings, warnings) = parse(
+            "[git]
+status = false
+program = \" /opt/git \"
+ignored = false
+network = true
+timeout = 30
+",
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let want =
+            GitSettings { status: false, program: "/opt/git".into(), ignored: false, network: true, timeout: 30 };
+        assert_eq!(settings.git, want);
+        let (settings, warnings) = parse(
+            "[git]
+status = \"yes\"
+timeout = 0
+",
+        );
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert_eq!(settings.git, GitSettings::default(), "on by default (spec 16 §19)");
     }
 
     #[test]

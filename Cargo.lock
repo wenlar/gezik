@@ -1812,6 +1812,7 @@ name = "gezik-core"
 version = "0.1.0-rc.2"
 dependencies = [
  "gezik-i18n",
+ "icu_normalizer",
 ]
 
 [[package]]

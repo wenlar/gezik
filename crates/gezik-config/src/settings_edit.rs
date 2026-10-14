@@ -1233,7 +1233,7 @@ pattern = \"y\"
         let out = with_value(template, Some("view"), "sort", Some("\"size\"")).unwrap();
         assert_eq!(
             changed_lines(template, &out),
-            ["sort = \"size\"          # name | modified | created | type | size | tags | rating"]
+            ["sort = \"size\"          # name | modified | created | type | size | tags | rating | git"]
         );
         let out = with_value(template, None, "theme", Some("\"nord\"")).unwrap();
         assert_eq!(changed_lines(template, &out), ["theme = \"nord\""]);

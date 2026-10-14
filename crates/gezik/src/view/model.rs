@@ -65,6 +65,8 @@ pub struct ViewData {
     /// The folder's fields read whole (spec 13 §7.5): only while a sort, grouping or filter
     /// needs them.
     pub folder_fields: Option<Rc<super::folder_fields::FolderFields>>,
+    /// The Git marks of the folder shown (spec 16 §8): only in a repository.
+    pub folder_git: Option<Rc<super::folder_git::FolderGit>>,
 }
 
 pub struct ItemsModel {
@@ -242,6 +244,7 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         pending,
     } = row_meta(data, i);
     let selected = data.selection.is_selected(i);
+    let git = git_mark(data, i);
     let (tint, bold) = match entry.filter(|_| entries) {
         Some(e) => {
             use gezik_core::highlight::RowMeta;
@@ -277,8 +280,12 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         icon: icon.unwrap_or_default(),
         selected,
         focused: data.selection.focus() == Some(i),
+        // Ignored by Git: faint as a cut row (spec 16 §8.3).
         cut: entries
-            && (listing.key_at(i).is_some_and(|key| data.cut.contains(&*key)) || waiting(data) || waiting_fields(data)),
+            && (listing.key_at(i).is_some_and(|key| data.cut.contains(&*key))
+                || waiting(data)
+                || waiting_fields(data)
+                || git == Some(gezik_core::git::GitMark::Ignored)),
         cloud: cloud_state_at(data, i).map_or(0, |s| s as i32),
         folder,
         found,
@@ -292,6 +299,8 @@ pub fn file_row(data: &ViewData, i: usize) -> FileRow {
         rating_faint,
         comment: comment.into(),
         packed: packed_cell(data, i, false).into(),
+        git: git.map_or(0, |m| m as i32),
+        git_text: gezik_core::git::label(git).into(),
         tint,
         bold,
         fields: field_cells(data, i),
@@ -306,6 +315,14 @@ pub fn packed_cell(data: &ViewData, i: usize, raw: bool) -> String {
         Some((Some(bytes), _)) if raw => bytes.to_string(),
         Some((Some(bytes), _)) => format_size_in(bytes, data.options.size_format),
         _ => String::new(),
+    }
+}
+
+/// Entry `i`'s Git mark (spec 16 §8.3): only in a folder of a repository, once its status came.
+pub fn git_mark(data: &ViewData, i: usize) -> Option<gezik_core::git::GitMark> {
+    match (&data.listing, &data.folder_git) {
+        (Listing::Files(dir, entries), Some(g)) if g.dir == *dir => entries.get(i).and_then(|e| g.marks.of(&e.name)),
+        _ => None,
     }
 }
 

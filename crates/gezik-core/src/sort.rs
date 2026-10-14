@@ -24,6 +24,9 @@ pub enum SortKey {
     Tags,
     /// Each row's stars (spec 12 §8.2): from `Grouping::rating`, none without it.
     Rating,
+    /// Each row's Git mark (spec 16 §8.4): from `Grouping::git`, conflicts first. Its column's
+    /// header sorts by it; not in `ALL` (no Sort by item).
+    Git,
 }
 
 impl SortKey {
@@ -49,6 +52,7 @@ impl SortKey {
             SortKey::Field(id) => id.def().key,
             SortKey::Tags => "tags",
             SortKey::Rating => "rating",
+            SortKey::Git => "git",
         }
     }
 
@@ -56,7 +60,7 @@ impl SortKey {
     pub fn parse(text: &str) -> Option<SortKey> {
         SortKey::ALL
             .into_iter()
-            .chain([SortKey::Folder])
+            .chain([SortKey::Folder, SortKey::Git])
             .find(|k| k.as_str() == text)
             .or_else(|| crate::fields::by_key(text).map(SortKey::Field))
     }
@@ -331,6 +335,8 @@ enum Primary {
     Tag(u32, (u32, u32)),
     // Stars; 0: not rated.
     Rating(u8),
+    // The Git mark's rank (`git::rank`).
+    Git(u8),
 }
 
 /// Sorts `entries` by `spec` (see [`sort_order`]). Returns where each entry came from: entry
@@ -441,6 +447,7 @@ pub fn sort_rows_grouped<'e, 'a>(
     // whose field is on its way or has no value (spec 13 §8.2).
     let tags = group.and_then(|g| g.tags).filter(|_| spec.key == SortKey::Tags);
     let ratings = group.and_then(|g| g.rating).filter(|_| spec.key == SortKey::Rating);
+    let gits = group.and_then(|g| g.git).filter(|_| spec.key == SortKey::Git);
     let last = |e: &Entry, key: Option<&TagKey>, stars: Option<Option<u8>>| -> u8 {
         match stars {
             Some(None) => 2,
@@ -495,6 +502,7 @@ pub fn sort_rows_grouped<'e, 'a>(
                 TagKey::Untagged | TagKey::Pending => Primary::Tag(u32::MAX, (0, 0)),
             }),
             SortKey::Rating => Some(Primary::Rating(stars.flatten().unwrap_or(0))),
+            SortKey::Git => Some(Primary::Git(crate::git::rank(gits.and_then(|key| key(&e))))),
         });
     }
     let span = |(start, end): (u32, u32)| &buf[start as usize..end as usize];

@@ -7,3 +7,5 @@ license.workspace = true
 
 [dependencies]
 gezik-i18n.workspace = true
+# NFC for Git's names on macOS (the version gezik-search already links).
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
