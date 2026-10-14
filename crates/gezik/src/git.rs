@@ -704,8 +704,7 @@ mod tests {
         {
             // A FIFO would block an open() until a writer comes.
             let fifo = dir.join("fifo");
-            let path = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
-            assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+            assert!(std::process::Command::new("mkfifo").arg(&fifo).status().unwrap().success());
             assert_eq!(read_small(&fifo), None);
         }
         let _ = std::fs::remove_dir_all(&dir);
