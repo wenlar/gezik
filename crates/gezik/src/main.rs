@@ -54,6 +54,7 @@ mod resident;
 mod saved_searches;
 mod search;
 mod select_tools;
+mod set_dates;
 mod settings_backup;
 mod settings_window;
 mod sidebar;
@@ -471,9 +472,9 @@ fn handle_key(
     has_modifier: bool,
     menu_key: bool,
 ) -> bool {
-    // A question, the conflict list or the commit dialog over the window has the keyboard: a
+    // A question, the conflict list, the commit or Set Dates dialog over the window has the keyboard: a
     // shortcut (Ctrl+V's paste as a file) never runs behind its text field.
-    if window.get_dialog_open() || window.get_conflicts_open() || window.get_gc_open() {
+    if window.get_dialog_open() || window.get_conflicts_open() || window.get_gc_open() || window.get_sd_open() {
         return false;
     }
     // The batch rename layer: Esc and Ctrl+Enter wherever its focus is, other keys to it.

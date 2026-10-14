@@ -912,6 +912,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     path_box::PathBox::connect(&window);
     crate::command_line::CommandLine::connect(&window);
     crate::git_commands::connect(&window);
+    crate::set_dates::connect(&window);
     filter::Filter::connect(&window);
     search::Searches::connect(&window);
     let left = panes::Pane {

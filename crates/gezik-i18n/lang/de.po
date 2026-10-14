@@ -347,6 +347,7 @@ msgstr "Ändern"
 #: crates/gezik/src/saved_searches.rs
 #: crates/gezik/src/search.rs
 #: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/sidebar.rs
 #: crates/gezik/src/tab_sets.rs
@@ -358,6 +359,7 @@ msgstr "Ändern"
 #: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/set-dates.slint
 #: crates/gezik/ui/widgets/settings.slint
 #, fuzzy
 msgid "Cancel"
@@ -5116,11 +5118,13 @@ msgstr "Gestern {}"
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Modified"
 msgstr "Geändert"
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Created"
 msgstr "Erstellt"
@@ -5379,6 +5383,13 @@ msgid "Change tags of {n} item"
 msgid_plural "Change tags of {n} items"
 msgstr[0] "Tags von {n} Element ändern"
 msgstr[1] "Tags von {n} Elementen ändern"
+
+#: crates/gezik-ops/src/task.rs
+#, fuzzy
+msgid "Set dates of {n} item"
+msgid_plural "Set dates of {n} items"
+msgstr[0] "Datum von {n} Element festlegen"
+msgstr[1] "Datum von {n} Elementen festlegen"
 
 #: crates/gezik-ops/src/task.rs
 #, fuzzy
@@ -5811,6 +5822,16 @@ msgstr "Kein Tag-Speicher"
 #, fuzzy
 msgid "Kept in Gezik's tag store: {}"
 msgstr "Im Gezik-Tag-Speicher abgelegt: {}"
+
+#: crates/gezik-ops/src/tasks/times.rs
+#, fuzzy
+msgid "Setting the dates of {}"
+msgstr "Datum von {} wird festgelegt"
+
+#: crates/gezik-ops/src/tasks/times.rs
+#, fuzzy
+msgid "No date taken"
+msgstr "Kein Aufnahmedatum"
 
 #: crates/gezik-ops/src/tasks/trash.rs
 #, fuzzy
@@ -8779,6 +8800,12 @@ msgid "Export list…"
 msgstr "Liste exportieren…"
 
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/info.slint
+#, fuzzy
+msgid "Set Dates…"
+msgstr "Datum festlegen…"
+
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Tools"
@@ -9656,6 +9683,7 @@ msgid "Convert to"
 msgstr "Umwandeln in"
 
 #: crates/gezik/src/convert.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
 msgid "Choose"
@@ -12670,6 +12698,42 @@ msgstr "Nach Muster abwählen"
 #, fuzzy
 msgid "Deselect"
 msgstr "Abwählen"
+
+#. the Set Dates dialog's title; {} is a file name or "3 items"
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Set Dates of {}"
+msgstr "Datum festlegen: {}"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "From file"
+msgstr "Aus Datei"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "File:"
+msgstr "Datei:"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "No such file: {}"
+msgstr "Datei nicht gefunden: {}"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Choose at least one date"
+msgstr "Mindestens ein Datum auswählen"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Enter the date as YYYY-MM-DD and the time as HH:MM:SS"
+msgstr "Datum als JJJJ-MM-TT und Uhrzeit als HH:MM:SS eingeben"
+
+#: crates/gezik/src/set_dates.rs
+#, fuzzy
+msgid "Choose a file first"
+msgstr "Zuerst eine Datei auswählen"
 
 #: crates/gezik/src/settings_backup.rs
 #: crates/gezik/src/settings_window.rs
@@ -15755,6 +15819,51 @@ msgstr "{} zu {}"
 #, fuzzy
 msgid "Reset to rules"
 msgstr "Auf Regeln zurücksetzen"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Accessed"
+msgstr "Letzter Zugriff"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Date and time"
+msgstr "Datum und Uhrzeit"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Now"
+msgstr "Jetzt"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Date taken (EXIF)"
+msgstr "Aufnahmedatum (EXIF)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "From file…"
+msgstr "Aus Datei…"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Date (YYYY-MM-DD)"
+msgstr "Datum (JJJJ-MM-TT)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Time (HH:MM:SS)"
+msgstr "Uhrzeit (HH:MM:SS)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Local time: YYYY-MM-DD and HH:MM:SS"
+msgstr "Ortszeit: JJJJ-MM-TT und HH:MM:SS"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+#, fuzzy
+msgid "Set"
+msgstr "Festlegen"
 
 #: crates/gezik/ui/widgets/settings.slint
 #, fuzzy

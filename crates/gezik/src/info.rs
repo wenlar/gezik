@@ -188,6 +188,8 @@ impl Info {
         window.on_info_as_admin(move || t.as_admin());
         let t = self.clone();
         window.on_info_close(move || t.close());
+        let t = self.clone();
+        window.on_info_set_dates(move || t.set_dates());
     }
 
     /// Get Info on `paths`: Windows' Properties, else this window.
@@ -301,7 +303,8 @@ impl Info {
         let perms = perm_digits(attrs::perm_states(&all));
         window.set_info_view(InfoView {
             title: title(&state.items).into(),
-            general: general_text(&state.items, state.times, state.links, &state.size).into(),
+            general: general_text(&state.items, state.links, &state.size).into(),
+            dates: dates_text(state.times).into(),
             properties: crate::preview::fields::model(crate::preview::fields::rows(&state.fields)),
             perms,
             perms_enabled,
@@ -592,6 +595,20 @@ impl Info {
         });
     }
 
+    /// A click on the dates: Set Dates… for the items; the window reads them again after.
+    fn set_dates(&self) {
+        let Some(paths) = self.0.state.borrow().as_ref().map(|state| state.paths.clone()) else { return };
+        let info = self.clone();
+        crate::set_dates::open(
+            paths,
+            Some(Box::new(move |id| {
+                if let Some(state) = info.0.state.borrow_mut().as_mut() {
+                    state.jobs.push((id, Vec::new()));
+                }
+            })),
+        );
+    }
+
     /// One of this window's jobs ended: what it says, and the items read again.
     pub fn job_finished(&self, id: JobId, report: &Report) {
         let paths = {
@@ -639,8 +656,8 @@ fn title(items: &[(PathBuf, Entry)]) -> String {
     }
 }
 
-/// The General part: kind, size, where, one item's dates and a file's other names, a line each.
-fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], links: u64, size: &str) -> String {
+/// The General part: kind, size, where and a file's other names, a line each.
+fn general_text(items: &[(PathBuf, Entry)], links: u64, size: &str) -> String {
     let mut lines = Vec::new();
     match items {
         [(_, entry)] if entry.is_link => lines.push(t!("Kind: Symbolic link").into_owned()),
@@ -658,6 +675,15 @@ fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], link
         Some(_) => lines.push(t!("Where: several folders").into_owned()),
         None => {}
     }
+    if links > 1 {
+        lines.push(t!("Links: {}", links));
+    }
+    lines.join("\n")
+}
+
+/// One item's dates, a line each (a click on them opens Set Dates).
+fn dates_text(times: [Option<SystemTime>; 3]) -> String {
+    let mut lines = Vec::new();
     for (i, time) in times.into_iter().enumerate() {
         if let Some(time) = time {
             let date = crate::view_options::date_text(time);
@@ -667,9 +693,6 @@ fn general_text(items: &[(PathBuf, Entry)], times: [Option<SystemTime>; 3], link
                 _ => t!("Last opened: {}", date),
             });
         }
-    }
-    if links > 1 {
-        lines.push(t!("Links: {}", links));
     }
     lines.join("\n")
 }
@@ -835,16 +858,12 @@ mod tests {
     fn general_lines_and_titles() {
         let e = |is_dir| Entry { is_dir, ..Entry::default() };
         let one = [(PathBuf::from("/d/rapor.pdf"), e(false))];
-        let text = general_text(&one, [None; 3], 1, "Size: 1 KB in 1 file");
+        let text = general_text(&one, 1, "Size: 1 KB in 1 file");
         assert!(text.starts_with("Kind: "), "{text}");
         assert_eq!(text.lines().skip(1).collect::<Vec<_>>(), ["Size: 1 KB in 1 file", "Where: /d"]);
         let two = [(PathBuf::from("/d/a"), e(false)), (PathBuf::from("/e/b"), e(true))];
-        assert!(general_text(&one, [None; 3], 3, "Size: …").ends_with(
-            "
-Where: /d
-Links: 3"
-        ));
-        assert_eq!(general_text(&two, [None; 3], 1, "Size: …"), "Kind: 2 items\nSize: …\nWhere: several folders");
+        assert!(general_text(&one, 3, "Size: …").ends_with("\nWhere: /d\nLinks: 3"));
+        assert_eq!(general_text(&two, 1, "Size: …"), "Kind: 2 items\nSize: …\nWhere: several folders");
         assert_eq!(title(&one), "rapor.pdf Info");
         assert_eq!(title(&two), "2 items");
         assert_eq!(unreadable_note(2), ("2 items could not be read and are not shown".to_owned(), true));

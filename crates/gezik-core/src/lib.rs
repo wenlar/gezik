@@ -40,6 +40,7 @@ pub mod syntax;
 pub mod system_change;
 pub mod templates;
 pub mod text;
+pub mod times;
 pub mod tree;
 pub mod treemap;
 pub mod update;

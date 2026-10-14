@@ -730,6 +730,8 @@ pub const TOOLS_COPY_TO: u32 = 2207;
 pub const TOOLS_MOVE_TO: u32 = 2208;
 pub const TOOLS_SPLIT: u32 = 2209;
 pub const TOOLS_JOIN: u32 = 2210;
+/// Tools ▸ Set Dates… (16k), on rows (2215: 2211–2214 left for the other 16 parts).
+pub const TOOLS_SET_DATES: u32 = 2215;
 // Step 12 (spec 12 §12.3): 2400–2599. Tags ▸ 2400–2409 (Tags… 2400, Clear tags 2401, 12d's
 // Comment… 2402; 12e: New tag… 2403, the search bar's Filters ▸ Tags… 2404 and Comment… 2405),
 // the list's tags 2410–2469, ratings 2470–2475, the sidebar's tag menu 2480–2489, colours
@@ -816,7 +818,8 @@ pub fn tag_row_items(tag: &Tag, first: bool, last: bool) -> (Vec<(u32, String, b
 /// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
 /// `rows` (a row menu's) and Verify checksums for one checksum file, Find duplicates and Size
 /// Map on one folder or a folder's empty space (`size_map`), Export list… always, then Copy
-/// to… and Move to… for `rows`, Split file… for one file and Join files for one part or `.crc`.
+/// to… and Move to… for `rows`, Split file… for one file and Join files for one part or `.crc`,
+/// and Set Dates… for `rows`.
 pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
@@ -839,6 +842,9 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
     }
     items.push((TOOLS_EXPORT_LIST, t!("Export list…").into_owned(), true));
     items.extend(crate::copy_to::menu_items(rows).into_iter().map(|(id, title)| (id, title, true)));
+    if !rows.is_empty() {
+        items.push((TOOLS_SET_DATES, t!("Set Dates…").into_owned(), true));
+    }
     Submenu { title: t!("Tools").into_owned(), at, items }
 }
 
@@ -2715,6 +2721,10 @@ impl Menus {
                 crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
             }
             (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
+            (TOOLS_SET_DATES, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                crate::set_dates::open(rows.into_iter().map(|(path, _)| path).collect(), None);
+            }
             (TOOLS_DUPLICATES, Subject::Row(_) | Subject::Background(_)) => {
                 crate::panes::with_active(|p| p.search.find_duplicates());
             }
@@ -3189,6 +3199,7 @@ fn from_submenu(id: u32) -> bool {
         || id == TOOLS_CHECKSUMS
         || id == TOOLS_VERIFY
         || (TOOLS_COPY_TO..=TOOLS_JOIN).contains(&id)
+        || id == TOOLS_SET_DATES
         || (TAGS_PICKER..=TAGS_RATING_LAST).contains(&id)
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
@@ -3545,7 +3556,8 @@ mod tests {
                 TOOLS_EXPORT_LIST,
                 TOOLS_COPY_TO,
                 TOOLS_MOVE_TO,
-                TOOLS_SPLIT
+                TOOLS_SPLIT,
+                TOOLS_SET_DATES
             ],
             "the macOS Tools menu's order"
         );
@@ -3773,6 +3785,7 @@ mod tests {
             TOOLS_MOVE_TO,
             TOOLS_SPLIT,
             TOOLS_JOIN,
+            TOOLS_SET_DATES,
             TAG_DOTS,
             SORT_BY_TAGS,
             GROUP_BY_TAG,
