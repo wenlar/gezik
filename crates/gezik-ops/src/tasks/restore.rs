@@ -182,7 +182,8 @@ mod tests {
     #[test]
     fn a_replaced_file_comes_back_only_while_its_older_version_is_in_the_trash() {
         let dir = test_dir("swap-back");
-        let file = dir.join("a.zip");
+        // A name no other test trashes (see `trash::holds`).
+        let file = dir.join(format!("swapped-{}.zip", std::process::id()));
         write(&file, "old");
         let trashed = fs::trash(&file).unwrap().unwrap();
         write(&file, "new");
@@ -198,11 +199,7 @@ mod tests {
         let (report, _) = finish(&engine, job, |c| vec![Decision::Skip; c.len()]);
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(read(&file), "old");
-        let in_bin = gezik_platform::trash::list()
-            .items
-            .into_iter()
-            .any(|item| item.original.as_deref() == Some(file.as_path()));
-        assert!(in_bin, "the newer one is in the trash under its own name");
+        assert!(gezik_platform::trash::holds(&file), "the newer one is in the trash under its own name");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
