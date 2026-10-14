@@ -45,8 +45,8 @@ const TICK: Duration = Duration::from_millis(33);
 /// How long output may still come once the shell ended (a program it left running holds the
 /// pipes open).
 const GRACE: Duration = Duration::from_millis(500);
-/// History rows the address bar lists under a command.
-const HISTORY_ROWS: usize = 20;
+/// History rows the address bar lists under a command (its list shows 18 rows).
+const HISTORY_ROWS: usize = 18;
 
 /// The command in an address `typed`, if it is one: what follows a `>` (spaces before it are
 /// passed over). A `>` further in is part of a path.
@@ -97,19 +97,28 @@ const POWERSHELL_RUN: &str = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new
     $ProgressPreference='SilentlyContinue';\
     & ([ScriptBlock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:GEZIK_COMMAND))))";
 
-/// How `shell` runs `command`, as typed. cmd gets `/s /c "<command>"`: it takes off the outer
-/// quotes and runs the rest exactly as typed, `"`, `%`, `^` and all; PowerShell gets it in
+/// How `shell` runs `command`, as typed. cmd runs in two: the first sets the console's code
+/// page to UTF-8 (`chcp 65001`) and starts the second, which therefore writes UTF-8 from its
+/// own commands (`echo`, `dir`) and its console programs (ping) alike: the OEM code page loses
+/// letters (437 has no ğ, ş, ı), and cmd reads the code page only when it starts. The second
+/// gets `/s /c "<command>"` through `GEZIK_COMMAND`, put in by the first's delayed expansion
+/// (`!…!`, after it parsed its own line): it takes off the outer quotes and runs the rest
+/// exactly as typed, `"`, `%`, `^` and all; PowerShell gets it in
 /// base64, which no quoting can break; a POSIX shell gets it as one argument. `comspec` is
 /// `%ComSpec%`, cmd's own path.
 pub fn invocation(shell: &Shell, command: &str, comspec: Option<OsString>) -> Invocation {
     let plain = |program: OsString, args: Vec<OsString>| Invocation { program, args, raw: None, env: Vec::new() };
     match shell {
-        Shell::Cmd => Invocation {
-            program: comspec.filter(|c| !c.is_empty()).unwrap_or_else(|| "cmd.exe".into()),
-            args: ["/d", "/s", "/c"].map(OsString::from).to_vec(),
-            raw: Some(format!("\"{command}\"")),
-            env: Vec::new(),
-        },
+        Shell::Cmd => {
+            let program = comspec.filter(|c| !c.is_empty()).unwrap_or_else(|| "cmd.exe".into());
+            let inner = program.to_string_lossy().into_owned();
+            Invocation {
+                program,
+                args: ["/v:on", "/d", "/s", "/c"].map(OsString::from).to_vec(),
+                raw: Some(format!("\"chcp 65001>nul & \"{inner}\" /d /s /c !GEZIK_COMMAND!\"")),
+                env: vec![("GEZIK_COMMAND", format!("\"{command}\"").into())],
+            }
+        }
         Shell::Pwsh(program) => Invocation {
             program: program.into(),
             args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_RUN].map(OsString::from).to_vec(),
@@ -439,6 +448,20 @@ fn save(list: Vec<String>) {
     });
 }
 
+/// `typed` ran: it goes first in the history (unless the history is off or it is private).
+fn remember_run(typed: &str) {
+    if !REMEMBER.with(Cell::get) {
+        return;
+    }
+    let list = HISTORY.with(|h| {
+        let mut h = h.borrow_mut();
+        remember(&mut h, typed).then(|| h.clone())
+    });
+    if let Some(list) = list {
+        save(list);
+    }
+}
+
 /// The history's commands for the address bar's list while `typed` (after `>`) is typed.
 pub fn history_for(typed: &str) -> Vec<String> {
     HISTORY.with(|h| matching(&h.borrow(), typed).into_iter().map(str::to_owned).collect())
@@ -531,7 +554,11 @@ pub fn held_enter(repeat: bool, enter: bool, editing: bool) -> bool {
 struct State {
     open: bool,
     command: String,
+    /// What followed `>`, as typed (a space first keeps it out of the history).
+    typed: String,
     selection: Selection,
+    /// Runs so far: the panel starts each at its end.
+    run: i32,
     /// The shell, kept while what it started may still be stopped.
     child: Option<ChildProcess>,
     shared: Option<Shared>,
@@ -603,44 +630,34 @@ impl CommandLine {
     /// Enter in the address bar with `typed` (what follows `>`): runs it in the folder `pane`
     /// shows, if it shows one on disk.
     pub fn enter(&self, pane: &Pane, typed: &str) {
-        let command = typed.trim();
-        if command.is_empty() {
+        if typed.trim().is_empty() {
             return;
         }
         let Some(dir) = pane.nav.active_location().folder().map(Path::to_path_buf) else {
             return pane.view.note(t!("Commands run in a folder on disk").into_owned());
         };
-        if REMEMBER.with(Cell::get) {
-            let list = HISTORY.with(|h| {
-                let mut h = h.borrow_mut();
-                remember(&mut h, typed).then(|| h.clone())
-            });
-            if let Some(list) = list {
-                save(list);
-            }
-        }
         let view = &pane.view;
         let file = view.focus().and_then(|i| view.entry_path(i)).map(|(path, _)| path);
         let files: Vec<PathBuf> = view.selected_items().into_iter().map(|(path, _)| path).collect();
-        self.start_or_ask(command.to_owned(), Selection { file, files, dir });
+        self.start_or_ask(typed.to_owned(), Selection { file, files, dir });
     }
 
     /// Runs the command shown again, in its folder.
     fn run_again(&self) {
-        let (command, selection) = {
+        let (typed, selection) = {
             let state = self.0.state.borrow();
-            (state.command.clone(), state.selection.clone())
+            (state.typed.clone(), state.selection.clone())
         };
-        if !command.is_empty() {
-            self.start_or_ask(command, selection);
+        if !typed.trim().is_empty() {
+            self.start_or_ask(typed, selection);
         }
     }
 
-    /// Starts `command`; while another runs, asks first whether to stop it (Enter and Esc
-    /// both keep it running).
-    fn start_or_ask(&self, command: String, selection: Selection) {
+    /// Starts `typed` (what followed `>`); while another runs, asks first whether to stop it
+    /// (Enter and Esc both keep it running, and nothing is started or kept in the history).
+    fn start_or_ask(&self, typed: String, selection: Selection) {
         if !self.is_running() {
-            return self.start(command, selection);
+            return self.start(typed, selection);
         }
         let this = self.clone();
         crate::operations::with_current(|ops| {
@@ -652,14 +669,15 @@ impl CommandLine {
                 move |choice| {
                     if choice == Some(1) {
                         this.stop();
-                        this.start(command, selection);
+                        this.start(typed, selection);
                     }
                 },
             );
         });
     }
 
-    fn start(&self, command: String, selection: Selection) {
+    fn start(&self, typed: String, selection: Selection) {
+        let command = typed.trim().to_owned();
         let shell = SETTINGS.with(|s| pick_shell(&s.borrow(), std::env::var_os("SHELL"), cfg!(windows)));
         let call = invocation(&shell, &command, std::env::var_os("ComSpec"));
         let cmd = shell == Shell::Cmd;
@@ -701,7 +719,8 @@ impl CommandLine {
             // What the last one left running ends now if it may still be stopped.
             state.let_go();
             state.child = None;
-            *state = State { open: true, command: command.clone(), selection, list_file, ..State::default() };
+            let run = state.run.wrapping_add(1);
+            *state = State { open: true, command, typed: typed.clone(), selection, list_file, run, ..State::default() };
             self.0.model.clear();
             self.0.model.push_all(notes.into_iter().map(|text| Line { text, err: false }).collect());
             match started {
@@ -721,6 +740,8 @@ impl CommandLine {
                     state.shared = Some(shared);
                     state.started = Some(Instant::now());
                     state.running = true;
+                    // Only what ran is kept (not one cancelled at the question).
+                    remember_run(&typed);
                 }
                 Err(err) => {
                     let program = call.program.to_string_lossy();
@@ -893,7 +914,7 @@ impl CommandLine {
 
     /// Writes the panel's header to the pane (only what changed is written).
     fn show(&self) {
-        let (open, title, folder, status, state_code) = {
+        let (open, title, folder, status, state_code, run) = {
             let mut state = self.0.state.borrow_mut();
             let took = match (state.started, state.exited) {
                 (Some(started), Some((at, _))) => Some(at.duration_since(started)),
@@ -921,7 +942,8 @@ impl CommandLine {
             } else {
                 2
             };
-            (state.open, format!("> {}", state.command), state.selection.dir.display().to_string(), status, code)
+            let folder = state.selection.dir.display().to_string();
+            (state.open, format!("> {}", state.command), folder, status, code, state.run)
         };
         let dropped = self.0.model.output.borrow().dropped;
         let model = ModelRc::from(self.0.model.clone());
@@ -933,6 +955,7 @@ impl CommandLine {
             d.cmd_status = status.into();
             d.cmd_state = state_code;
             d.cmd_dropped = dropped;
+            d.cmd_run = run;
         });
     }
 }
@@ -998,8 +1021,10 @@ mod tests {
         let typed = r#"echo "a b" 100% ^& ğüş & dir "C:\Program Files""#;
         let call = invocation(&Shell::Cmd, typed, Some(r"C:\Windows\system32\cmd.exe".into()));
         assert_eq!(call.program, r"C:\Windows\system32\cmd.exe");
-        assert_eq!(call.args, ["/d", "/s", "/c"]);
-        assert_eq!(call.raw.as_deref(), Some(format!("\"{typed}\"").as_str()));
+        assert_eq!(call.args, ["/v:on", "/d", "/s", "/c"]);
+        let inner = r#""chcp 65001>nul & "C:\Windows\system32\cmd.exe" /d /s /c !GEZIK_COMMAND!""#;
+        assert_eq!(call.raw.as_deref(), Some(inner));
+        assert_eq!(call.env, [("GEZIK_COMMAND", OsString::from(format!("\"{typed}\"")))]);
         assert_eq!(invocation(&Shell::Cmd, "dir", None).program, "cmd.exe");
     }
 
@@ -1228,6 +1253,92 @@ mod tests {
     }
 
     #[test]
+    fn only_a_run_goes_into_the_history_and_only_while_it_is_on() {
+        HISTORY.with(|h| h.borrow_mut().clear());
+        remember_run("dir");
+        remember_run(" secret");
+        assert_eq!(history_for(""), ["dir"]);
+        REMEMBER.with(|r| r.set(false));
+        remember_run("echo off");
+        REMEMBER.with(|r| r.set(true));
+        assert_eq!(history_for(""), ["dir"]);
+    }
+
+    /// The panel follows its end as lines come (also once the oldest are dropped), stays where
+    /// it is once scrolled up, and starts each run at its end (headless, as drawn).
+    #[test]
+    fn the_output_panel_follows_its_end() {
+        use slint::ComponentHandle;
+        crate::windows::tests::platform();
+        let probe = crate::CommandOutputProbe::new().unwrap();
+        probe.show().unwrap();
+        let model = Rc::new(OutputModel::default());
+        probe.set_lines(ModelRc::from(model.clone()));
+        let settle = || {
+            for _ in 0..4 {
+                std::thread::sleep(Duration::from_millis(60));
+                crate::windows::tests::frame((-1.0, -1.0));
+            }
+        };
+        let add = |from: usize, n: usize| {
+            model.push_all((from..from + n).map(|i| Line { text: format!("line {i}"), err: false }).collect());
+        };
+        let at_end = |what: &str| {
+            let (y, end) = (probe.get_view_y(), probe.get_view_end());
+            assert!(end < 0.0, "{what}: more lines than room");
+            assert!((y - end).abs() < 1.0, "{what}: at {y}, the end is {end}");
+        };
+        settle();
+        for i in 0..5 {
+            add(i * 20, 20);
+            settle();
+            at_end("lines coming");
+        }
+        // The cap drops the oldest lines while more come.
+        for i in 0..3 {
+            model.output.borrow_mut().lines.drain(..30);
+            model.notify.row_removed(0, 30);
+            add(1000 + i * 40, 40);
+            settle();
+            at_end("after a drop");
+        }
+        // Scrolled up by the wheel: new lines leave it there.
+        let step = probe.get_line_step();
+        probe.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(200.0, 200.0),
+            delta_x: 0.0,
+            delta_y: step * 10.0,
+        });
+        settle();
+        let up = probe.get_view_y();
+        assert!(up > probe.get_view_end() + step, "scrolled up: {up}");
+        add(2000, 30);
+        settle();
+        assert!((probe.get_view_y() - up).abs() < 1.0, "stays put: {} vs {up}", probe.get_view_y());
+        // Back down by the wheel: it follows again.
+        probe.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(200.0, 200.0),
+            delta_x: 0.0,
+            delta_y: -step * 1000.0,
+        });
+        settle();
+        add(2100, 10);
+        settle();
+        at_end("scrolled back down");
+        // "Earlier output dropped" shows above the list (it gets lower).
+        probe.set_dropped(true);
+        add(2200, 5);
+        settle();
+        at_end("with the note");
+        // A new run starts at its end.
+        model.clear();
+        probe.set_run(1);
+        add(3000, 50);
+        settle();
+        at_end("a new run");
+    }
+
+    #[test]
     fn durations_read_as_seconds_and_minutes() {
         assert_eq!(duration_text(Duration::from_millis(420)), "0.4 s");
         assert_eq!(duration_text(Duration::from_secs(12)), "12 s");
@@ -1355,15 +1466,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Letters the OEM code page lacks (437 has no ğ, ş, ı, İ) come through cmd's own commands
+    /// and a console program alike; the exit code is the command's, not `chcp`'s.
     #[cfg(windows)]
     #[test]
-    fn cmd_output_in_the_oem_code_page_reads_right() {
-        let dir = temp("oem");
-        let (lines, _) = run(&Shell::Cmd, "echo über", &dir, &[]);
-        // Where the OEM code page has ü (437, 850, 857 and UTF-8 all do).
-        if gezik_platform::decode_oem(b"\x81").as_deref() == Some("ü") {
-            assert_eq!(texts(&lines, false), ["über"]);
-        }
+    fn cmd_output_keeps_every_letter() {
+        let dir = temp("letters");
+        std::fs::create_dir_all(dir.join("Türkçe ğüşıİöç")).unwrap();
+        let typed = r#"echo copy ğüşıİ test & echo a^&b ^^ 100% "x&y" !z! & dir /b& exit /b 4"#;
+        let (lines, code) = run(&Shell::Cmd, typed, &dir, &[]);
+        assert_eq!(code, Some(4));
+        let out: Vec<&str> = texts(&lines, false).iter().map(|l| l.trim_end()).collect();
+        assert_eq!(out, ["copy ğüşıİ test", r#"a&b ^ 100% "x&y" !z!"#, "Türkçe ğüşıİöç"]);
+        // where.exe, a console program, names a file with them.
+        std::fs::write(dir.join("ğüşıİ.txt"), "").unwrap();
+        let (lines, _) = run(&Shell::Cmd, "where /r . *.txt", &dir, &[]);
+        assert!(texts(&lines, false).iter().any(|l| l.ends_with("ğüşıİ.txt")), "{lines:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

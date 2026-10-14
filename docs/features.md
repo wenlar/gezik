@@ -295,8 +295,9 @@ restore = true            # open the tabs of last time at start
   escape codes are taken out, full-screen programs (vim, top, less) and password prompts (ssh,
   sudo) do not work; use **Open terminal** for those. `TERM=dumb`, `NO_COLOR=1`,
   `PAGER=cat`, `GIT_PAGER=cat` and `GIT_TERMINAL_PROMPT=0` are set. Commands run as you,
-  never as administrator. On Windows output that is not UTF-8 is read in the console's code
-  page. At most 2 MB is kept ("Earlier output dropped" above it); a flood of output is shown
+  never as administrator. On Windows cmd runs with its console in UTF-8 (`chcp 65001`), so
+  `dir` and `echo` keep every letter (ğ, ş, ı too); a program that still writes in the old
+  console code page is read in it. At most 2 MB is kept ("Earlier output dropped" above it); a flood of output is shown
   2,000 lines at a time and never holds up the program. cmd cannot work in a
   network folder (`\\server\share`): there Gezik does not start it (PowerShell can).
 - ↑ and ↓ after `>` go through the commands run before (newest first, no repeats, the last

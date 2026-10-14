@@ -21,19 +21,39 @@ export component CommandOutput inherits Rectangle {
     in property <bool> dropped;
     in property <string> mono-font;
     in-out property <length> panel-height: 180px;
+    // Bumped by each run: the list starts at its end and follows it.
+    in property <int> run;
     // 0 Stop, 1 Run Again, 2 Copy Output, 3 Close.
     callback button(int);
+    // Where the list is scrolled, and where its end is (the last line whole at the bottom): the
+    // tests' (`CommandOutputProbe`).
+    out property <length> view-y: list.content-y;
+    out property <length> view-end: min(0px, list.visible-height - root.lines.length * root.line-height);
+    out property <length> line-step: root.line-height;
 
     property <length> line-height: Theme.font-size + 5px;
-    property <int> count: root.lines.length;
-    property <int> shown-count;
     property <length> pressed-height;
-    changed count => {
-        // At the end before these lines came: it stays there.
-        if list.content-y <= min(0px, list.visible-height - root.shown-count * root.line-height) + 1px {
-            list.content-y = min(0px, list.visible-height - root.count * root.line-height);
+    // The list follows new lines while it is at the end, as a terminal does. Only the user's
+    // scrolling (the wheel, the keys, the scroll bar) turns following off, when it leaves the
+    // list short of its end; reaching the end again, End, or a new run turn it back on.
+    property <bool> follow: true;
+    property <length> end: min(0px, list.visible-height - list.content-height);
+    function to-end() {
+        list.content-y = root.end;
+    }
+    changed end => {
+        if root.follow {
+            root.to-end();
         }
-        root.shown-count = root.count;
+    }
+    changed run => {
+        root.follow = true;
+        root.to-end();
+    }
+    // The user scrolled to `y`.
+    function scroll-to(y: length) {
+        list.content-y = clamp(y, root.end, 0px);
+        root.follow = list.content-y <= root.end + 1px;
     }
 
     background: Theme.surface;
@@ -114,16 +134,69 @@ export component CommandOutput inherits Rectangle {
             color: Theme.foreground-muted;
             font-size: Theme.font-size-small;
         }
-        list := ListView {
-            accessible-label: @tr("Output");
-            for line in root.lines: Text {
-                height: root.line-height;
-                text: line.text;
-                font-family: root.mono-font;
-                color: line.err ? Theme.warning : Theme.foreground;
-                overflow: clip;
-                vertical-alignment: center;
-                accessible-role: text;
+        // A click gives the output the keyboard: the arrows, PageUp/PageDown, Home and End
+        // scroll it (End follows the end again).
+        keys := FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.PageUp {
+                    root.scroll-to(list.content-y + list.visible-height);
+                } else if event.text == Key.PageDown {
+                    root.scroll-to(list.content-y - list.visible-height);
+                } else if event.text == Key.UpArrow {
+                    root.scroll-to(list.content-y + root.line-height);
+                } else if event.text == Key.DownArrow {
+                    root.scroll-to(list.content-y - root.line-height);
+                } else if event.text == Key.Home {
+                    root.scroll-to(0px);
+                } else if event.text == Key.End {
+                    root.scroll-to(root.end);
+                } else {
+                    return reject;
+                }
+                accept
+            }
+            list := ListView {
+                width: parent.width;
+                height: parent.height;
+                accessible-label: @tr("Output");
+                // Every line is one height: the list's own estimate came a line short at the end.
+                content-height: root.lines.length * root.line-height;
+                // Taking lines off the top moves the list (after `end` changed): back to the end.
+                changed content-y => {
+                    if root.follow && self.content-y != root.end {
+                        root.to-end();
+                    }
+                }
+                bar-moved => { root.follow = self.content-y <= root.end + 1px; }
+                for line in root.lines: Text {
+                    height: root.line-height;
+                    text: line.text;
+                    font-family: root.mono-font;
+                    color: line.err ? Theme.warning : Theme.foreground;
+                    overflow: clip;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                }
+            }
+            // Over the lines (not the scroll bar): a click gives the keyboard, the wheel scrolls.
+            TouchArea {
+                width: parent.width - 10px;
+                height: parent.height;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down {
+                        keys.focus();
+                    }
+                }
+                scroll-event(event) => {
+                    root.scroll-to(list.content-y + event.delta-y);
+                    accept
+                }
+            }
+            // Its ring while it has the keyboard.
+            Rectangle {
+                border-width: keys.has-focus ? Theme.focus-width : 0px;
+                border-color: Theme.focus-ring;
+                border-radius: Theme.radius-small;
             }
         }
     }

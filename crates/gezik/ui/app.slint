@@ -22,12 +22,33 @@ import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.sli
 import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
-import { CmdLine } from "widgets/command-output.slint";
+import { CmdLine, CommandOutput } from "widgets/command-output.slint";
 import { ColumnItem } from "widgets/column-view.slint";
 import { SettingsWindow, SettingItem } from "widgets/settings.slint";
 
 // Re-exported so Rust can set it with `window.global::<Theme>()` and build crumbs, tabs
 // and sidebar rows.
+// The command panel alone in a window, for command_line.rs's tests (headless).
+export component CommandOutputProbe inherits Window {
+    in property <[CmdLine]> lines;
+    in property <int> state;
+    in property <int> run;
+    in property <bool> dropped;
+    out property <length> view-y: panel.view-y;
+    out property <length> view-end: panel.view-end;
+    out property <length> line-step: panel.line-step;
+    width: 600px;
+    height: 300px;
+    panel := CommandOutput {
+        width: parent.width;
+        height: parent.height;
+        lines: root.lines;
+        state: root.state;
+        run: root.run;
+        dropped: root.dropped;
+    }
+}
+
 export { Theme, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, FieldColumn, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, CmdLine, PaneGeometry, PaneFocus, ColumnItem, SettingsWindow, SettingItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
@@ -872,7 +893,10 @@ export component AppWindow inherits Window {
 
     // Gives the keyboard to the file list.
     public function focus-list() {
-        if root.conflicts-open {
+        // A question keeps the keyboard while it is open (a field's Enter that asked it ends
+        // typing, and the list would take the keyboard back a moment later).
+        if root.dialog-open {
+        } else if root.conflicts-open {
             root.conflict-focus-seq += 1;
         } else if root.rb-open {
             root.rb-focus-seq += 1;
@@ -1089,7 +1113,9 @@ export component AppWindow inherits Window {
                             sheet-y: sheet-place.y;
                             sheet-width: sheet-place.width;
                             sheet-height: sheet-place.height;
-                            focus-requested => { keys.focus(); }
+                            focus-requested => {
+                                if !root.dialog-open { keys.focus(); }
+                            }
                             keyboard-menu(p, row, x, y) => { root.keyboard-menu(p, row, x, y); }
                             scrolled(p, y) => { root.scrolled(p, y); }
                             revealed(p, entry, y) => { root.revealed(p, entry, y); }

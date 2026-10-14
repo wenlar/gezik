@@ -39,6 +39,15 @@ export component Dialog inherits Rectangle {
         if !root.has-input { scope.focus(); }
     }
 
+    // The keyboard stays in the box: Tab past its last part (or Shift+Tab before its first)
+    // lands here and goes back to the box. Without it Tab went on to the window behind.
+    FocusScope {
+        width: 0px;
+        height: 0px;
+        focus-gained(reason) => { scope.focus(); }
+    }
+
+    // Enter and Esc anywhere in the box (a button with the keyboard too) answer.
     scope := FocusScope {
         init => {
             if !root.has-input { self.focus(); }
@@ -54,116 +63,122 @@ export component Dialog inherits Rectangle {
             }
             return reject;
         }
-    }
 
-    Rectangle {
-        width: min(460px, root.width - 40px);
-        height: content.preferred-height;
-        x: (root.width - self.width) / 2;
-        y: (root.height - self.height) / 3;
-        background: Theme.surface-raised;
-        border-radius: Theme.radius * 1.5;
-        border-width: 1px;
-        border-color: Theme.border;
-        accessible-role: groupbox;
-        accessible-label: root.title;
+        Rectangle {
+            width: min(460px, root.width - 40px);
+            height: content.preferred-height;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 3;
+            background: Theme.surface-raised;
+            border-radius: Theme.radius * 1.5;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: groupbox;
+            accessible-label: root.title;
 
-        content := VerticalLayout {
-            padding: Theme.spacing * 3;
-            spacing: Theme.spacing * 2;
-            Text {
-                text: root.title;
-                font-weight: 600;
-                wrap: word-wrap;
-                color: Theme.foreground;
-            }
-            if root.message != "": Flickable {
-                height: min(300px, message-text.preferred-height);
-                content-height: message-text.preferred-height;
-                message-text := Text {
-                    width: parent.width;
-                    text: root.message;
+            content := VerticalLayout {
+                padding: Theme.spacing * 3;
+                spacing: Theme.spacing * 2;
+                Text {
+                    text: root.title;
+                    font-weight: 600;
                     wrap: word-wrap;
-                    color: Theme.foreground-muted;
+                    color: Theme.foreground;
                 }
-            }
-            // The field's own keys: Enter picks the first button, Esc the `escape` one.
-            if root.has-input: FocusScope {
-                // Not a layout: without a height the field would overlap the message.
-                height: field.height;
-                key-pressed(event) => {
-                    if event.text == Key.Escape {
-                        root.chosen(root.escape);
-                        return accept;
+                if root.message != "": Flickable {
+                    height: min(300px, message-text.preferred-height);
+                    content-height: message-text.preferred-height;
+                    message-text := Text {
+                        width: parent.width;
+                        text: root.message;
+                        wrap: word-wrap;
+                        color: Theme.foreground-muted;
                     }
-                    return reject;
+                }
+                // The field's own keys: Enter picks the first button, Esc the `escape` one.
+                if root.has-input: FocusScope {
+                    // Not a layout: without a height the field would overlap the message.
+                    height: field.height;
+                    key-pressed(event) => {
+                        if event.text == Key.Escape {
+                            root.chosen(root.escape);
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.spacing * 2;
+                        field := TextField {
+                            text <=> root.input;
+                            secret: root.input-secret && !root.show-secret;
+                            init => { self.focus-and-select(); }
+                            accepted => { root.chosen(0); }
+                            edited(text) => { root.edited(text); }
+                        }
+                        if root.input-secret: Check {
+                            text: @tr("Show");
+                            checked: root.show-secret;
+                            toggled => { root.show-secret = !root.show-secret; }
+                        }
+                    }
+                }
+                if root.has-input && root.note != "": Text {
+                    text: root.note;
+                    wrap: word-wrap;
+                    color: root.note-error ? Theme.danger : Theme.foreground-muted;
+                }
+                // Tab goes field, boxes, buttons; on a box Space toggles it, Enter and Esc answer as
+                // in the field. The keys and the ring are here, not in Check: Check is in many
+                // layers, and each instance would pay for them.
+                for label[i] in root.check-labels: box := FocusScope {
+                    height: check.height;
+                    key-pressed(event) => {
+                        if event.text == " " {
+                            root.check-toggled(i);
+                            return accept;
+                        }
+                        if event.text == Key.Return {
+                            root.chosen(0);
+                            return accept;
+                        }
+                        if event.text == Key.Escape {
+                            root.chosen(root.escape);
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    check := Check {
+                        text: label;
+                        checked: root.checks[i];
+                        toggled => { root.check-toggled(i); }
+                    }
+                    // The focus ring, as on the buttons: around the box and its label.
+                    Rectangle {
+                        x: -3px;
+                        y: 1px;
+                        width: check.min-width + 2px;
+                        height: parent.height - 2px;
+                        border-radius: Theme.radius;
+                        border-width: box.has-focus ? Theme.focus-width : 0px;
+                        border-color: Theme.focus-ring;
+                    }
                 }
                 HorizontalLayout {
-                    spacing: Theme.spacing * 2;
-                    field := TextField {
-                        text <=> root.input;
-                        secret: root.input-secret && !root.show-secret;
-                        init => { self.focus-and-select(); }
-                        accepted => { root.chosen(0); }
-                        edited(text) => { root.edited(text); }
+                    alignment: end;
+                    spacing: Theme.spacing;
+                    for label[i] in root.buttons: TextButton {
+                        text: label;
+                        primary: i == 0;
+                        clicked => { root.chosen(i); }
                     }
-                    if root.input-secret: Check {
-                        text: @tr("Show");
-                        checked: root.show-secret;
-                        toggled => { root.show-secret = !root.show-secret; }
-                    }
-                }
-            }
-            if root.has-input && root.note != "": Text {
-                text: root.note;
-                wrap: word-wrap;
-                color: root.note-error ? Theme.danger : Theme.foreground-muted;
-            }
-            // Tab goes field, boxes, buttons; on a box Space toggles it, Enter and Esc answer as
-            // in the field. The keys and the ring are here, not in Check: Check is in many
-            // layers, and each instance would pay for them.
-            for label[i] in root.check-labels: box := FocusScope {
-                height: check.height;
-                key-pressed(event) => {
-                    if event.text == " " {
-                        root.check-toggled(i);
-                        return accept;
-                    }
-                    if event.text == Key.Return {
-                        root.chosen(0);
-                        return accept;
-                    }
-                    if event.text == Key.Escape {
-                        root.chosen(root.escape);
-                        return accept;
-                    }
-                    return reject;
-                }
-                check := Check {
-                    text: label;
-                    checked: root.checks[i];
-                    toggled => { root.check-toggled(i); }
-                }
-                // The focus ring, as on the buttons: around the box and its label.
-                Rectangle {
-                    x: -3px;
-                    y: 1px;
-                    width: check.min-width + 2px;
-                    height: parent.height - 2px;
-                    border-radius: Theme.radius;
-                    border-width: box.has-focus ? Theme.focus-width : 0px;
-                    border-color: Theme.focus-ring;
-                }
-            }
-            HorizontalLayout {
-                alignment: end;
-                spacing: Theme.spacing;
-                for label[i] in root.buttons: TextButton {
-                    text: label;
-                    primary: i == 0;
-                    clicked => { root.chosen(i); }
                 }
             }
         }
+    }
+
+    FocusScope {
+        width: 0px;
+        height: 0px;
+        focus-gained(reason) => { scope.focus(); }
     }
 }

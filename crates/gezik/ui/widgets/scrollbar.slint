@@ -8,6 +8,8 @@ export component ScrollBar inherits TouchArea {
     // How far it scrolls: content height minus visible height.
     in property <length> maximum;
     in property <length> page-size;
+    // The user moved it (a drag, a click above or below the thumb).
+    callback moved-by-user();
     property <length> track: self.height - 6px;
     property <length> thumb-height: min(self.track, max(24px, self.track * (self.page-size / max(1px, self.maximum + self.page-size))));
     property <length> thumb-y: 3px + (self.track - self.thumb-height) * (-self.value / max(1px, self.maximum));
@@ -25,8 +27,10 @@ export component ScrollBar inherits TouchArea {
                 self.pressed-value = self.value;
             } else if self.mouse-y < self.thumb-y {
                 self.value = min(0px, self.value + self.page-size);
+                root.moved-by-user();
             } else {
                 self.value = max(-self.maximum, self.value - self.page-size);
+                root.moved-by-user();
             }
         }
         if event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel {
@@ -37,6 +41,7 @@ export component ScrollBar inherits TouchArea {
         if self.dragging {
             self.value = clamp(self.pressed-value - (self.mouse-y - self.pressed-y) * (self.maximum / max(1px, self.track - self.thumb-height)),
                 -self.maximum, 0px);
+            root.moved-by-user();
         }
     }
 
@@ -59,6 +64,8 @@ export component ScrollView {
     in-out property <length> content-height <=> flick.content-height;
     in-out property <length> content-x <=> flick.content-x;
     in-out property <length> content-y <=> flick.content-y;
+    // Its scroll bar was moved by the user.
+    callback bar-moved();
 
     min-width: 50px;
     min-height: 50px;
@@ -80,6 +87,7 @@ export component ScrollView {
         value <=> flick.content-y;
         maximum: flick.content-height - flick.height;
         page-size: flick.height;
+        moved-by-user => { root.bar-moved(); }
     }
 }
 
