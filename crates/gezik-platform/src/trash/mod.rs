@@ -110,6 +110,19 @@ pub fn changed() {
     imp::changed();
 }
 
+/// For tests: whether a bin holds the item that was at `original`, under its own name. By the
+/// bin's record; in Finder's Trash, which keeps none for what NSFileManager trashes (Put Back is
+/// Finder's own), by an entry of that name in the home Trash: give `original` a name no other
+/// test trashes, so it is free there.
+#[doc(hidden)]
+pub fn holds(original: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        let entry = original.file_name().zip(dirs::home_dir()).map(|(name, home)| home.join(".Trash").join(name));
+        return entry.is_some_and(|entry| entry.symlink_metadata().is_ok());
+    }
+    list().items.iter().any(|item| item.original.as_deref() == Some(original))
+}
+
 /// For tests: deletes for good what this user's bins hold from `dir` or inside it, entry and
 /// record, so a test that trashes or undoes leaves nothing in the real trash. How many went.
 /// Only a test folder is purged ([`is_test_dir`]); any other `dir` purges nothing.

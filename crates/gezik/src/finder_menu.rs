@@ -210,14 +210,28 @@ mod tests {
         extras("Slow")
     }
 
+    static RELEASED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// A list that comes only once the test releases it.
+    fn held(_: &[PathBuf]) -> Extras {
+        while !RELEASED.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        extras("Held")
+    }
+
     #[test]
     fn a_slow_list_opens_the_menu_with_loading() {
         let late = Late::default();
         let items = vec![PathBuf::from("/a.pdf")];
         assert_eq!(fetch_with(&late, items.clone(), WAIT, quick).unwrap().apps, [app("Quick")]);
-        let start = std::time::Instant::now();
-        assert_eq!(fetch_with(&late, items, Duration::from_millis(20), slow), None);
-        assert!(start.elapsed() < Duration::from_millis(120), "the menu does not wait for the list");
+        // The list cannot come before the menu returns: returning at all is not waiting for it.
+        assert_eq!(
+            fetch_with(&late, items, Duration::from_millis(20), held),
+            None,
+            "the menu does not wait for the list"
+        );
+        RELEASED.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     #[test]
