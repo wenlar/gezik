@@ -1641,6 +1641,12 @@ fn route(
     }
     if let winit::event::WindowEvent::Focused(true) = event {
         crate::operations::with_current(crate::operations::Operations::clipboard_check);
+        // Git marks: a file changed elsewhere in a sub-folder of the folder shown (which its
+        // watcher does not see) shows once the window comes back; nothing runs outside
+        // repositories, and no folder tree is watched.
+        for pane in crate::panes::all() {
+            pane.view.git_soon();
+        }
     }
     if let winit::event::WindowEvent::DroppedFile(path) = event {
         drag::with_current(|drags| drags.dropped_file(path.clone()));

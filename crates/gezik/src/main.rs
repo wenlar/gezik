@@ -462,8 +462,9 @@ fn handle_key(
     has_modifier: bool,
     menu_key: bool,
 ) -> bool {
-    // A question or the conflict list over the window has the keyboard.
-    if window.get_dialog_open() || window.get_conflicts_open() {
+    // A question, the conflict list or the commit dialog over the window has the keyboard: a
+    // shortcut (Ctrl+V's paste as a file) never runs behind its text field.
+    if window.get_dialog_open() || window.get_conflicts_open() || window.get_gc_open() {
         return false;
     }
     // The batch rename layer: Esc and Ctrl+Enter wherever its focus is, other keys to it.
@@ -1456,6 +1457,29 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every layer over the window (an `if root.<x>-open:` in app.slint) gives the keyboard to
+    /// itself in `handle_key`: no window shortcut runs while its field is typed in. The side
+    /// panels (operations, drop stack) are not over the list.
+    #[test]
+    fn every_layer_over_the_window_takes_the_keys() {
+        let slint = include_str!("../ui/app.slint");
+        let main = include_str!("main.rs");
+        let body = &main[main.find("fn handle_key(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let mut checked = 0;
+        for line in slint.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("if root.") else { continue };
+            let Some((name, _)) = rest.split_once("-open:") else { continue };
+            if !name.chars().all(|c| c.is_ascii_lowercase() || c == '-') || matches!(name, "ops-panel" | "stack") {
+                continue;
+            }
+            let getter = format!("get_{}_open()", name.replace('-', "_"));
+            assert!(body.contains(&getter), "handle_key does not give {name}'s layer its keys");
+            checked += 1;
+        }
+        assert!(checked >= 11, "{checked}");
+    }
 
     #[test]
     fn a_warning_is_printed_once_however_often_the_config_is_applied() {

@@ -501,6 +501,17 @@ impl ChildProcess {
         self.finished = true;
     }
 
+    /// Asks it and what it started to stop (SIGINT to its process group: git then takes its
+    /// lock files away); whether that could be asked (not on Windows, where only
+    /// `kill_tree` ends it).
+    pub fn interrupt(&mut self) -> bool {
+        #[cfg(unix)]
+        if let Ok(group) = libc::pid_t::try_from(self.child.id()) {
+            return unsafe { libc::killpg(group, libc::SIGINT) } == 0;
+        }
+        false
+    }
+
     /// Ends it and everything it started.
     pub fn kill_tree(&mut self) {
         #[cfg(windows)]

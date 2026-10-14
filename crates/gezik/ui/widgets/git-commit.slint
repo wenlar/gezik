@@ -9,7 +9,10 @@ import { Check } from "check.slint";
 // box is checked. Ctrl+Enter (⌘↩) commits, Esc cancels.
 export component GitCommit inherits Rectangle {
     in property <string> title;
-    in property <[string]> files;
+    // The staged files, one a line.
+    in property <string> files;
+    // What `-a` commits: the staged files and the tracked files changed since, one a line.
+    in property <string> all-files;
     in-out property <string> message;
     in-out property <bool> all;
     in property <string> mono-font;
@@ -17,7 +20,16 @@ export component GitCommit inherits Rectangle {
     callback chosen(bool);
 
     // Git itself refuses a message of spaces only (its output says so).
-    property <bool> can-commit: root.message != "" && (root.files.length > 0 || root.all);
+    property <string> shown: root.all ? root.all-files : root.files;
+    property <bool> can-commit: root.message != "" && root.shown != "";
+
+    // Where the 72nd column ends: ten characters' width of the mono font, times 7.2.
+    property <length> column-72: probe.preferred-width / 10 * 72;
+    probe := Text {
+        visible: false;
+        text: "0000000000";
+        font-family: root.mono-font;
+    }
 
     background: Theme.overlay;
     // Clicks outside the box go nowhere.
@@ -36,7 +48,8 @@ export component GitCommit inherits Rectangle {
             return reject;
         }
         Rectangle {
-            width: min(560px, root.width - 40px);
+            // Wide enough for 72 columns of the message (and its padding), within the window.
+            width: min(max(560px, root.column-72 + 2 * (Theme.spacing + 2px) + Theme.spacing * 6 + 16px), root.width - 40px);
             height: content.preferred-height;
             x: (root.width - self.width) / 2;
             y: max(20px, (root.height - self.height) / 3);
@@ -63,14 +76,8 @@ export component GitCommit inherits Rectangle {
                     border-color: input.has-focus ? Theme.focus-ring : Theme.border;
                     background: Theme.input-background;
                     clip: true;
-                    // Ten characters' width, for the line at the 72nd column.
-                    probe := Text {
-                        visible: false;
-                        text: "0000000000";
-                        font-family: root.mono-font;
-                    }
                     Rectangle {
-                        x: Theme.spacing + 2px + probe.preferred-width / 10 * 72 + view.content-x;
+                        x: Theme.spacing + 2px + root.column-72 + view.content-x;
                         width: 1px;
                         background: Theme.warning;
                         opacity: 0.5;
@@ -111,21 +118,16 @@ export component GitCommit inherits Rectangle {
                     }
                 }
                 Text {
-                    text: root.files.length == 0 ? @tr("Nothing is staged.") : @tr("Staged:");
+                    text: root.shown == "" ? (root.all ? @tr("No changes to commit.") : @tr("Nothing is staged.")) : (root.all ? @tr("To commit:") : @tr("Staged:"));
                     color: Theme.foreground-muted;
                     font-size: Theme.font-size-small;
                 }
-                if root.files.length > 0: Flickable {
-                    height: min(120px, root.files.length * (Theme.font-size + 6px));
-                    content-height: root.files.length * (Theme.font-size + 6px);
-                    VerticalLayout {
-                        for file in root.files: Text {
-                            height: Theme.font-size + 6px;
-                            text: file;
-                            overflow: elide;
-                            color: Theme.foreground;
-                            accessible-role: text;
-                        }
+                if root.shown != "": Flickable {
+                    height: min(120px, list.preferred-height);
+                    content-height: list.preferred-height;
+                    list := Text {
+                        text: root.shown;
+                        color: Theme.foreground;
                     }
                 }
                 Check {

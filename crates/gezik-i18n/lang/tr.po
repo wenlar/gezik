@@ -8020,6 +8020,11 @@ msgid "and {n} more"
 msgid_plural "and {n} more"
 msgstr[0] "ve {n} tane daha"
 
+#. {} is a lock file of git's (…/.git/index.lock)
+#: crates/gezik/src/git_commands.rs
+msgid "Git left {} behind: delete it only if no git is running"
+msgstr "Git geride {} bıraktı: yalnız hiçbir git çalışmıyorsa silin"
+
 #. {} is git's own message (not translated).
 #: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/view/folder_git.rs
@@ -8075,9 +8080,21 @@ msgid "Discard"
 msgstr "Değişikliği at"
 
 #: crates/gezik/src/git_commands.rs
+msgid "cancelled"
+msgstr "iptal edildi"
+
+#: crates/gezik/src/git_commands.rs
+msgid "{0}; the file is still in the trash at {1} ({2})"
+msgstr "{0}; dosya hâlâ çöpte: {1} ({2})"
+
+#: crates/gezik/src/git_commands.rs
 msgid "Discarding changes to {n} file"
 msgid_plural "Discarding changes to {n} files"
 msgstr[0] "{n} dosyadaki değişiklikler atılıyor"
+
+#: crates/gezik/src/git_commands.rs
+msgid "changed since: left as it is"
+msgstr "o zamandan beri değişti: olduğu gibi bırakıldı"
 
 #: crates/gezik/src/git_commands.rs
 msgid "Select one file to compare with HEAD"
@@ -11921,8 +11938,16 @@ msgid "Commit message"
 msgstr "Commit iletisi"
 
 #: crates/gezik/ui/widgets/git-commit.slint
+msgid "No changes to commit."
+msgstr "İşlenecek değişiklik yok."
+
+#: crates/gezik/ui/widgets/git-commit.slint
 msgid "Nothing is staged."
 msgstr "Hazırlanmış bir şey yok."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "To commit:"
+msgstr "İşlenecekler:"
 
 #: crates/gezik/ui/widgets/git-commit.slint
 msgid "Staged:"
