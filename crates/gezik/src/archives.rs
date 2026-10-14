@@ -479,12 +479,14 @@ fn libmtp_offer(size: Option<u64>, download: bool) -> (String, Vec<&'static str>
     match size {
         Some(size) if download => (t!("Phones need libmtp (~{}, free).", format_size(size)), offer_buttons()),
         _ if download => (
-            t!("Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install                 libmtp).")
+            t!("Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install \
+                libmtp).")
             .into_owned(),
             vec![tx!("OK")],
         ),
         _ => (
-            t!("Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in                 settings.toml.")
+            t!("Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in \
+                settings.toml.")
             .into_owned(),
             vec![tx!("OK")],
         ),

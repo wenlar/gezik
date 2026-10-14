@@ -178,8 +178,13 @@ mod tests {
     fn phones_are_found_in_sys() {
         let mut files = std::collections::HashMap::new();
         let mut file = |entry: &str, name: &str, text: &str| {
-            files.insert((entry.to_owned(), name.to_owned()), format!("{text}
-"));
+            files.insert(
+                (entry.to_owned(), name.to_owned()),
+                format!(
+                    "{text}
+"
+                ),
+            );
         };
         let mut device = |name: &str, vendor: &str, bus: &str, address: &str, product: &str, serial: &str| {
             for (key, text) in [("idVendor", vendor), ("busnum", bus), ("devnum", address), ("serial", serial)] {

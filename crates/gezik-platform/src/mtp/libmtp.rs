@@ -348,23 +348,39 @@ impl Phone {
         unsafe { (self.lib.clear_errors)(device.0) };
     }
 
-    /// Deletes `item` in `storage`, what a folder holds first if the phone will not delete a
-    /// folder with things in it.
-    fn delete_in(&self, device: &Handle, storage: u32, item: u32) -> io::Result<()> {
+    /// Deletes `item` in `storage`; a folder the phone will not delete with things in it, what
+    /// it holds first (only a folder: a file that fails is an error).
+    fn delete_in(&self, device: &Handle, storage: u32, item: u32, is_dir: bool) -> io::Result<()> {
         self.clear(device);
         // SAFETY: the device is open.
         if unsafe { (self.lib.delete)(device.0, item) } == 0 {
             return Ok(());
         }
         let failed = self.error(device, io::ErrorKind::Other);
-        let children = self.objects(device, storage, item).map_err(|_| failed)?;
-        for child in &children {
-            self.delete_in(device, storage, child.item_id)?;
+        if !is_dir {
+            return Err(failed);
         }
+        for child in self.objects(device, storage, item).map_err(|_| failed)? {
+            self.delete_in(device, storage, child.item_id, child.is_dir)?;
+        }
+        self.clear(device);
         // SAFETY: the device is open.
         match unsafe { (self.lib.delete)(device.0, item) } {
             0 => Ok(()),
             _ => Err(self.error(device, io::ErrorKind::Other)),
+        }
+    }
+
+    /// Whether `item` is a folder, and its size, as libmtp's record says.
+    fn about(&self, device: &Handle, item: u32) -> io::Result<(bool, u64)> {
+        self.clear(device);
+        // SAFETY: libmtp's own record, read and freed here.
+        unsafe {
+            let file = (self.lib.metadata)(device.0, item);
+            let Some(f) = file.as_ref() else { return Err(self.error(device, io::ErrorKind::NotFound)) };
+            let about = (f.filetype == FOLDER, f.filesize);
+            (self.lib.destroy_file)(file);
+            Ok(about)
         }
     }
 
@@ -419,6 +435,19 @@ impl Drop for Phone {
     }
 }
 
+/// The source of a write ended before the size it was given.
+fn ended_early() -> io::Error {
+    io::Error::new(io::ErrorKind::UnexpectedEof, gezik_i18n::t!("The file ended early").into_owned())
+}
+
+/// A storage is never deleted or renamed (nor what it holds through it).
+fn storage_refused() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        gezik_i18n::t!("A storage of the phone cannot be deleted").into_owned(),
+    )
+}
+
 /// `<storage>:<object>` of an object id.
 fn parse_object(id: &str) -> io::Result<(u32, u32)> {
     let parsed = id.split_once(':').and_then(|(s, o)| Some((s.parse().ok()?, o.parse().ok()?)));
@@ -447,6 +476,8 @@ fn date(seconds: i64) -> Option<SystemTime> {
 /// What a read hands each piece to.
 struct Reading<'a> {
     out: &'a mut dyn Write,
+    /// Bytes written so far.
+    read: u64,
     more: &'a mut dyn FnMut(u64) -> bool,
     failed: Option<io::Error>,
     stopped: bool,
@@ -455,21 +486,29 @@ struct Reading<'a> {
 /// What a write takes each piece from.
 struct Writing<'a> {
     from: &'a mut dyn Read,
+    /// Bytes still to come (the size given).
+    left: u64,
     more: &'a mut dyn FnMut(u64) -> bool,
     failed: Option<io::Error>,
     stopped: bool,
 }
 
 /// libmtp's put function: `length` bytes at `data` arrived.
-unsafe extern "C" fn put_piece(_: *mut c_void, reading: *mut c_void, length: u32, data: *mut u8, done: *mut u32) -> u16 {
+unsafe extern "C" fn put_piece(
+    _: *mut c_void,
+    reading: *mut c_void,
+    length: u32,
+    data: *mut u8,
+    done: *mut u32,
+) -> u16 {
     // SAFETY: `reading` is the `Reading` `read_to` passed; `data` holds `length` bytes.
-    let (reading, piece) = unsafe {
-        (&mut *reading.cast::<Reading<'_>>(), std::slice::from_raw_parts(data, length as usize))
-    };
+    let (reading, piece) =
+        unsafe { (&mut *reading.cast::<Reading<'_>>(), std::slice::from_raw_parts(data, length as usize)) };
     if let Err(err) = reading.out.write_all(piece) {
         reading.failed = Some(err);
         return HANDLER_ERROR;
     }
+    reading.read += u64::from(length);
     // SAFETY: libmtp's out value.
     unsafe { *done = length };
     if !(reading.more)(u64::from(length)) {
@@ -480,11 +519,16 @@ unsafe extern "C" fn put_piece(_: *mut c_void, reading: *mut c_void, length: u32
 }
 
 /// libmtp's get function: up to `length` bytes wanted at `data`.
-unsafe extern "C" fn get_piece(_: *mut c_void, writing: *mut c_void, length: u32, data: *mut u8, done: *mut u32) -> u16 {
+unsafe extern "C" fn get_piece(
+    _: *mut c_void,
+    writing: *mut c_void,
+    length: u32,
+    data: *mut u8,
+    done: *mut u32,
+) -> u16 {
     // SAFETY: `writing` is the `Writing` `put` passed; `data` has room for `length` bytes.
-    let (writing, room) = unsafe {
-        (&mut *writing.cast::<Writing<'_>>(), std::slice::from_raw_parts_mut(data, length as usize))
-    };
+    let (writing, room) =
+        unsafe { (&mut *writing.cast::<Writing<'_>>(), std::slice::from_raw_parts_mut(data, length as usize)) };
     let mut filled = 0;
     while filled < room.len() {
         match writing.from.read(&mut room[filled..]) {
@@ -497,6 +541,12 @@ unsafe extern "C" fn get_piece(_: *mut c_void, writing: *mut c_void, length: u32
             }
         }
     }
+    // The source ended before the size given: the copy would not be whole.
+    if filled < room.len() && (filled as u64) < writing.left {
+        writing.failed = Some(ended_early());
+        return HANDLER_ERROR;
+    }
+    writing.left = writing.left.saturating_sub(filled as u64);
     // SAFETY: libmtp's out value; `filled` ≤ `length`.
     unsafe { *done = filled as u32 };
     if !(writing.more)(filled as u64) {
@@ -521,9 +571,13 @@ impl Session for Phone {
             let mut storage = (*device.0).storage;
             while let Some(s) = storage.as_ref() {
                 let text = |p: *mut c_char| {
-                    (!p.is_null()).then(|| CStr::from_ptr(p).to_string_lossy().trim().to_owned()).filter(|t| !t.is_empty())
+                    (!p.is_null())
+                        .then(|| CStr::from_ptr(p).to_string_lossy().trim().to_owned())
+                        .filter(|t| !t.is_empty())
                 };
-                let name = text(s.description).or_else(|| text(s.volume)).unwrap_or_else(|| gezik_i18n::t!("Storage {}", s.id));
+                let name = text(s.description)
+                    .or_else(|| text(s.volume))
+                    .unwrap_or_else(|| gezik_i18n::t!("Storage {}", s.id));
                 storages.push(Object { id: object_id(s.id, ROOT), name, is_dir: true, size: 0, modified: None });
                 storage = s.next;
             }
@@ -550,14 +604,20 @@ impl Session for Phone {
     fn read_to(&self, id: &str, out: &mut dyn Write, more: &mut dyn FnMut(u64) -> bool) -> io::Result<()> {
         let (_, item) = parse_object(id)?;
         let device = self.lock();
+        let (_, size) = self.about(&device, item)?;
         self.clear(&device);
-        let mut reading = Reading { out, more, failed: None, stopped: false };
+        let mut reading = Reading { out, more, read: 0, failed: None, stopped: false };
         // SAFETY: `reading` outlives the call, which hands it to `put_piece` only.
         let result = unsafe {
             let reading = (&raw mut reading).cast::<c_void>();
             (self.lib.read)(device.0, item, put_piece, reading, None, std::ptr::null())
         };
         match (result, reading.stopped, reading.failed) {
+            // A file that arrived short is not whole (a move would delete the original).
+            (0, false, None) if reading.read != size => {
+                let text = gezik_i18n::t!("Only {0} of {1} bytes arrived", reading.read, size);
+                Err(io::Error::new(io::ErrorKind::UnexpectedEof, text))
+            }
             (0, false, None) => Ok(()),
             (_, true, _) => {
                 self.clear(&device);
@@ -594,14 +654,14 @@ impl Session for Phone {
             filetype: UNKNOWN,
             next: std::ptr::null_mut(),
         };
-        let mut writing = Writing { from, more, failed: None, stopped: false };
+        let mut writing = Writing { from, left: size, more, failed: None, stopped: false };
         // SAFETY: `file`, its name and `writing` outlive the call, which hands `writing` to
         // `get_piece` only.
         let result = unsafe {
             let writing = (&raw mut writing).cast::<c_void>();
             (self.lib.send)(device.0, get_piece, writing, &mut file, None, std::ptr::null())
         };
-        if result == 0 {
+        if result == 0 && writing.left == 0 {
             return Ok(Object {
                 id: object_id(file.storage_id, file.item_id),
                 name: name.to_owned(),
@@ -613,6 +673,7 @@ impl Session for Phone {
         let err = match (writing.stopped, writing.failed) {
             (true, _) => io::ErrorKind::Interrupted.into(),
             (_, Some(err)) => err,
+            _ if result == 0 => ended_early(),
             _ => self.error(&device, io::ErrorKind::Other),
         };
         // The phone made the object before the data failed: nothing half written stays.
@@ -639,12 +700,19 @@ impl Session for Phone {
 
     fn delete(&self, id: &str) -> io::Result<()> {
         let (storage, item) = parse_object(id)?;
+        if item == ROOT {
+            return Err(storage_refused());
+        }
         let device = self.lock();
-        self.delete_in(&device, storage, item)
+        let (is_dir, _) = self.about(&device, item)?;
+        self.delete_in(&device, storage, item, is_dir)
     }
 
     fn rename(&self, id: &str, name: &str) -> io::Result<()> {
         let (_, item) = parse_object(id)?;
+        if item == ROOT {
+            return Err(storage_refused());
+        }
         let c_name = c_name(name)?;
         let device = self.lock();
         self.clear(&device);
@@ -699,7 +767,8 @@ mod tests {
         let all = |_: &CStr| nothing as *mut c_void;
         // SAFETY: the functions are never called.
         assert!(unsafe { Lib::bind(all) }.is_ok());
-        let old = |name: &CStr| if name == c"LIBMTP_Open_Raw_Device_Uncached" { std::ptr::null_mut() } else { all(name) };
+        let old =
+            |name: &CStr| if name == c"LIBMTP_Open_Raw_Device_Uncached" { std::ptr::null_mut() } else { all(name) };
         // SAFETY: as above.
         assert_eq!(unsafe { Lib::bind(old) }.err(), Some("LIBMTP_Open_Raw_Device_Uncached"));
     }
@@ -731,6 +800,7 @@ mod tests {
     thread_local! {
         static DELETED: RefCell<Vec<u32>> = const { RefCell::new(Vec::new()) };
         static ERRORS: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        static SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     }
 
     fn file(item: u32, name: &'static CStr, folder: bool, next: *mut File) -> *mut File {
@@ -747,7 +817,21 @@ mod tests {
     }
 
     unsafe extern "C" fn fake_list(_: *mut MtpDevice, storage: u32, parent: u32) -> *mut File {
-        if storage == 7 && parent == ROOT { file(10, c"DCIM", true, file(11, c"a.txt", false, std::ptr::null_mut())) } else { std::ptr::null_mut() }
+        if storage == 7 && parent == ROOT {
+            file(10, c"DCIM", true, file(11, c"a.txt", false, std::ptr::null_mut()))
+        } else {
+            std::ptr::null_mut()
+        }
+    }
+
+    /// Object 11 (6 bytes, or 7 when SHORT is set: the read then comes short), 10 a folder.
+    unsafe extern "C" fn fake_metadata(_: *mut MtpDevice, item: u32) -> *mut File {
+        let made = file(item, c"x", item == 10, std::ptr::null_mut());
+        if SHORT.with(std::cell::Cell::get) {
+            // SAFETY: just made.
+            unsafe { (*made).filesize = 7 };
+        }
+        made
     }
 
     unsafe extern "C" fn fake_destroy(file: *mut File) {
@@ -827,6 +911,7 @@ mod tests {
             match name.to_bytes() {
                 b"LIBMTP_Get_Files_And_Folders" => fake_list as *mut c_void,
                 b"LIBMTP_destroy_file_t" => fake_destroy as *mut c_void,
+                b"LIBMTP_Get_Filemetadata" => fake_metadata as *mut c_void,
                 b"LIBMTP_Get_File_To_Handler" => fake_read as *mut c_void,
                 b"LIBMTP_Send_File_From_Handler" => fake_send as *mut c_void,
                 b"LIBMTP_Delete_Object" => fake_delete as *mut c_void,
@@ -864,15 +949,32 @@ mod tests {
         let phone = fake_phone();
         let mut out = Vec::new();
         let mut counted = 0;
-        phone.read_to("7:11", &mut out, &mut |n| {
-            counted += n;
-            true
-        })
-        .unwrap();
+        phone
+            .read_to("7:11", &mut out, &mut |n| {
+                counted += n;
+                true
+            })
+            .unwrap();
         assert_eq!((out.as_slice(), counted), (&b"abcdef"[..], 6));
         let mut out = Vec::new();
         let err = phone.read_to("7:11", &mut out, &mut |_| false).unwrap_err();
         assert_eq!((err.kind(), out.as_slice()), (io::ErrorKind::Interrupted, &b"abc"[..]));
+        // Fewer bytes than the phone said: not whole.
+        SHORT.with(|s| s.set(true));
+        let err = phone.read_to("7:11", &mut Vec::new(), &mut |_| true).unwrap_err();
+        SHORT.with(|s| s.set(false));
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn a_storage_is_never_deleted_or_renamed() {
+        let phone = fake_phone();
+        DELETED.with(|d| d.borrow_mut().clear());
+        assert_eq!(phone.delete(&object_id(7, ROOT)).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(phone.rename(&object_id(7, ROOT), "x").unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        assert!(DELETED.with(|d| d.borrow().is_empty()));
+        phone.delete("7:11").unwrap();
+        assert_eq!(DELETED.with(|d| d.borrow().clone()), [11]);
     }
 
     #[test]
@@ -887,5 +989,9 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::Interrupted);
         assert_eq!(DELETED.with(|d| d.borrow().clone()), [99, 99]);
         assert!(ERRORS.with(|e| e.borrow().is_empty()), "the error stack is emptied");
+        // A source shorter than the size given: refused, the object removed.
+        let err = phone.put("7:10", "b.txt", 6, &mut &b"ab"[..], &mut |_| true).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(DELETED.with(|d| d.borrow().clone()), [99, 99, 99]);
     }
 }

@@ -535,11 +535,25 @@ timeout = 10              # seconds a status may take
 
 ## Phones
 
-On Windows, Android phones (and other MTP devices: media players, cameras) show under the
-drives in the sidebar once plugged in, found by the system's device event within moments;
-Gezik does not poll and loads nothing for them until you open one. A USB stick or card
-reader that Windows also lists as a portable device is left out (it is a drive already).
-macOS and Linux follow in a later step.
+Android phones (and other MTP devices: media players, cameras) show under the drives in the
+sidebar once plugged in, found by the system's device event within moments; Gezik does not
+poll and loads nothing for them until you open one. A USB stick or card reader that Windows
+also lists as a portable device is left out (it is a drive already).
+
+- **macOS**: Gezik talks to phones through libmtp, loaded only when a phone is opened. It uses
+  Homebrew's (`brew install libmtp`) if there is one; otherwise opening a phone offers Gezik's
+  download of it (about 1 MB, free; until that download is published the box asks you to
+  install Homebrew's). Image Capture (its `ptpcamerad` helper), Android File Transfer or
+  OpenMTP can hold the phone: Gezik then says "Another app is using the phone"; quit that app
+  and click the phone again. In Image Capture, choose the phone and set "Connecting this
+  phone opens" to "No application" so it does not take the phone each time.
+- **Linux**: Gezik uses the system's libmtp (`sudo apt install libmtp9`; Fedora and Arch:
+  `libmtp`), whose package also brings the udev rules that let you open the phone without
+  root. Where GNOME, Cinnamon or MATE have mounted the phone already (gvfs), Gezik opens
+  gvfs's folder (`/run/user/<uid>/gvfs/mtp:host=…`) instead: it is a plain folder there, and
+  everything works as in any other folder. A phone is found through the kernel's device
+  events, heard by one sleeping thread.
+- `[devices] libmtp` (macOS, Linux) names a libmtp of your own.
 
 - **Open**: click the phone (right-click: Open, Open in new tab), or type
   `mtp://Pixel 8/Internal shared storage/DCIM` in the address bar. Its top shows the

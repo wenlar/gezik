@@ -1266,6 +1266,10 @@ msgid "\"off\", \"local\" or \"all\""
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
+msgid "{0}: \"{1}\" must be a full path (it is ignored)"
+msgstr ""
+
+#: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr ""
 
@@ -1432,10 +1436,6 @@ msgstr ""
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected a number from 1 to 600, got {1}"
-msgstr ""
-
-#: crates/gezik-config/src/settings.rs
-msgid "{0}: \"{1}\" must be a full path (it is ignored)"
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
@@ -5280,13 +5280,50 @@ msgstr ""
 msgid "Too many tags and too long a comment for one file"
 msgstr ""
 
-#: crates/gezik-platform/src/mtp/mod.rs
-msgid "Phone"
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)"
 msgstr ""
 
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "No permission to open the phone (libmtp's udev rules)"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Another app is using the phone (Image Capture, Android File Transfer). Quit it and try again."
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Another app is using the phone. Quit it and try again."
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The file ended early"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
 #: crates/gezik-platform/src/mtp/windows.rs
 #: crates/gezik/src/operations.rs
 msgid "A storage of the phone cannot be deleted"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Storage {}"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Only {0} of {1} bytes arrived"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phones need libmtp"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Install libmtp (e.g. sudo apt install libmtp9)"
+msgstr ""
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phone"
 msgstr ""
 
 #: crates/gezik-platform/src/network.rs
@@ -5712,6 +5749,10 @@ msgid "pdfium needed"
 msgstr ""
 
 #: crates/gezik/src/archives.rs
+msgid "libmtp needed"
+msgstr ""
+
+#: crates/gezik/src/archives.rs
 msgid "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
 msgstr ""
 
@@ -5803,6 +5844,18 @@ msgstr ""
 
 #: crates/gezik/src/archives.rs
 msgid "Opening {} archives needs 7-Zip: install 7-Zip 25 or newer yourself, or set seven-zip under [tools] in settings.toml."
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp (~{}, free)."
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install libmtp)."
+msgstr ""
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in settings.toml."
 msgstr ""
 
 #: crates/gezik/src/archives.rs
@@ -12988,6 +13041,16 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:devices.phones"
 msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.libmtp"
+msgid "Libmtp"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.libmtp"
+msgid "Path to libmtp (macOS, Linux); empty = Homebrew's or Gezik's download (macOS), the system's (Linux)"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

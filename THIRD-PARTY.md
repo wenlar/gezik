@@ -120,6 +120,19 @@ License version 3. Each download holds the two programs, the licence text (`LICE
 their SHA-256. FFmpeg's source is at https://ffmpeg.org/download.html. How the downloads are
 made: `scripts/tools/README.md`.
 
+## libmtp and libusb (macOS: Homebrew's or downloaded on request; Linux: the system's)
+
+libmtp (https://github.com/libmtp/libmtp) and libusb (https://github.com/libusb/libusb) are not
+built into Gezik; Gezik loads libmtp at run time (`dlopen`) when a phone is opened on macOS or
+Linux. Linux uses the system package (`libmtp.so.9`); macOS uses Homebrew's, or a download
+from https://github.com/wenlar/gezik-tools: libmtp 1.1.23 and libusb 1.0.30 built from their
+unmodified source by `scripts/tools/prepare-libmtp.sh` (source archives pinned by SHA-256 in
+`scripts/tools/sources.sha256`; only the libraries' install names are set to `@loader_path`).
+Both are under the GNU Lesser General Public License version 2.1 or later; each download holds
+the two libraries, the licence text (`COPYING`) and `SOURCE.txt`, which links the sources.
+Because the libraries are loaded, not linked, they can be replaced by any compatible build
+(`[devices] libmtp` in settings.toml).
+
 ## pdfium (downloaded on request)
 
 pdfium is not built into Gezik. When the user asks for PDF work that reads PDFs, Gezik downloads

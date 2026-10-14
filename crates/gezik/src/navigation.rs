@@ -155,7 +155,14 @@ fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResu
         && gezik_vfs::mounted(&at.root).is_none_or(|vfs| !vfs.unchanged())
         && !gezik_platform::mtp::present(id)
     {
-        return LoadResult::NotConnected(name.clone());
+        // Plugged in again (macOS and Linux number it anew): the phone of that name now.
+        return match gezik_platform::mtp::devices().into_iter().find(|d| d.name.eq_ignore_ascii_case(name)) {
+            Some(phone) => LoadResult::Redirect(Location::Vfs(VfsPath {
+                root: VfsRoot::Device { id: phone.id, name: phone.name },
+                inner: at.inner.clone(),
+            })),
+            None => LoadResult::NotConnected(name.clone()),
+        };
     }
     // Linux: a phone gvfs holds is its folder there (libmtp could not open it).
     if let VfsRoot::Device { id, .. } = &at.root

@@ -1,6 +1,6 @@
 # Tool downloads
 
-Gezik offers to download tools it does not build in (7-Zip, ffmpeg and pdfium). The
+Gezik offers to download tools it does not build in (7-Zip, ffmpeg, pdfium and, on macOS, libmtp). The
 downloads live as GitHub release files in the public repository `wenlar/gezik-tools`;
 `crates/gezik-core/src/batch/tools.rs` (`MANIFEST`) pins each file's address, size and SHA-256,
 and Gezik refuses a download whose hash differs.
@@ -248,3 +248,53 @@ For a new build: run `prepare-pdfium.ps1 -Build <new> -FullVersion <its PDFium v
 -UpdateSources -Out D:\Work\gezik-tools\pdfium-<new>-1` (it rewrites only the pdfium lines of
 `sources.sha256`; GitHub's digest is still checked), verify the attestations, then follow
 steps 2-4 of "Updating to a new version" with `pdfium-<new>-1`. Never go below 7881.
+
+## libmtp (macOS)
+
+libmtp is the library Gezik loads (`dlopen`) to open a phone on macOS and Linux. Linux uses the
+system's (`libmtp.so.9`); macOS uses Homebrew's if there is one, else this download. There is
+no official macOS build, so Gezik builds it: `prepare-libmtp.sh` builds libusb 1.0.30 and
+libmtp 1.1.23 from their release archives (pinned in `sources.sha256`, checked by size and
+SHA-256) for arm64 and x86_64, joins each into one universal library with `lipo`, sets their
+install names to `@loader_path` (libmtp finds libusb beside it), signs them ad hoc (Apple
+silicon runs no unsigned code) and checks that nothing outside the package or the system is
+linked. The release `libmtp-1.1.23-1` holds one file for both Mac platforms
+(`kind = "tar.xz"`): `libmtp-1.1.23-macos-universal.tar.xz` with `libmtp.9.dylib`,
+`libusb-1.0.0.dylib`, `COPYING` (the LGPL 2.1, both libraries' licence) and `SOURCE.txt` (the
+source archives, their SHA-256 and the configure options).
+
+**State: not published yet.** `MANIFEST`'s two libmtp entries carry `sha256: PENDING` (empty)
+and `size: 0`; `build_for` leaves them out, so Gezik offers no download and its box asks for
+Homebrew's (`brew install libmtp`) instead. To publish:
+
+1. On a Mac with the Xcode Command Line Tools (macOS 11 or newer; no Homebrew needed):
+
+   ```bash
+   bash scripts/tools/prepare-libmtp.sh ~/gezik-tools/libmtp-1.1.23-1
+   ```
+
+   It prints the package's size and SHA-256 and writes the two `MANIFEST` entries to
+   `manifest.rs.txt` there.
+2. Try it before publishing: `tar xJf` it into a folder, then
+   `otool -L libmtp.9.dylib` (only `@loader_path/libusb-1.0.0.dylib` and `/usr/lib`,
+   `/System` entries), `lipo -archs` on both (arm64 and x86_64), and with a phone plugged in
+   set `[devices] libmtp` to that folder's `libmtp.9.dylib` and open the phone in Gezik.
+3. Publish:
+
+   ```bash
+   cd ~/gezik-tools/libmtp-1.1.23-1
+   gh release create libmtp-1.1.23-1 --repo wenlar/gezik-tools --title "libmtp 1.1.23 (macOS)" \
+     libmtp-1.1.23-macos-universal.tar.xz \
+     --notes "libmtp 1.1.23 with libusb 1.0.30, built from unmodified source for Gezik by scripts/tools/prepare-libmtp.sh as universal (arm64, x86_64) libraries for macOS 11 or newer; only the install names were set to @loader_path and the libraries signed ad hoc. Both are under the GNU Lesser General Public License version 2.1 or later (COPYING in the file). Sources: https://github.com/libmtp/libmtp/releases/tag/v1.1.23 and https://github.com/libusb/libusb/releases/tag/v1.0.30; SOURCE.txt in the file names the archives and their SHA-256."
+   ```
+
+4. Replace the two pending entries in `crates/gezik-core/src/batch/tools.rs` with the lines of
+   `manifest.rs.txt`, run `cargo test -p gezik-core tools` (it checks a published entry's
+   hash and size) and
+   `GEZIK_TOOLS_DIR=~/gezik-tools/libmtp-1.1.23-1 cargo test -p gezik-batch --test tools prepared`,
+   and check the served file:
+   `curl -sSfL https://github.com/wenlar/gezik-tools/releases/download/libmtp-1.1.23-1/libmtp-1.1.23-macos-universal.tar.xz | shasum -a 256`.
+
+For a new version: change `LIBMTP`/`LIBUSB` in the script and their lines in `sources.sha256`
+(compare with the hashes and signatures on the projects' GitHub releases), then as above with
+`libmtp-<new>-1`. The library must have every function `libmtp.rs` binds (1.1.17 or newer).

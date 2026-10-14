@@ -726,10 +726,8 @@ impl Settings {
                                 t!("{0}: \"{1}\" must be a full path (it is ignored)", "devices.libmtp", path),
                             )),
                             Some(path) => settings.devices.libmtp = Some(path.to_owned()),
-                            None => warnings.push(Warning::new(
-                                file,
-                                t!("{0}: expected text, got {1}", "devices.libmtp", value),
-                            )),
+                            None => warnings
+                                .push(Warning::new(file, t!("{0}: expected text, got {1}", "devices.libmtp", value))),
                         }
                     }
                 }

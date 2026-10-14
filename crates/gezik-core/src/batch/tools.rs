@@ -265,6 +265,29 @@ pub static MANIFEST: &[ToolBuild] = &[
         programs: &["libpdfium.so"],
         kind: "7z",
     },
+    // libmtp 1.1.23 and libusb 1.0.30, built from source (sources.sha256) as one universal pair
+    // by scripts/tools/prepare-libmtp.sh on a Mac. PENDING until the maintainer publishes the
+    // `libmtp-1.1.23-1` release: then its size and SHA-256 (the script prints them) go here.
+    ToolBuild {
+        tool: Tool::Libmtp,
+        platform: Platform::MacArm64,
+        version: "1.1.23",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/libmtp-1.1.23-1/libmtp-1.1.23-macos-universal.tar.xz",
+        size: 0,
+        sha256: PENDING,
+        programs: &["libmtp.9.dylib", "libusb-1.0.0.dylib"],
+        kind: "tar.xz",
+    },
+    ToolBuild {
+        tool: Tool::Libmtp,
+        platform: Platform::MacX64,
+        version: "1.1.23",
+        url: "https://github.com/wenlar/gezik-tools/releases/download/libmtp-1.1.23-1/libmtp-1.1.23-macos-universal.tar.xz",
+        size: 0,
+        sha256: PENDING,
+        programs: &["libmtp.9.dylib", "libusb-1.0.0.dylib"],
+        kind: "tar.xz",
+    },
 ];
 
 /// The SHA-256 of a build made but not published yet: `build_for` leaves it out, so Gezik
