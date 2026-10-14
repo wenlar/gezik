@@ -72,6 +72,14 @@ Release exe (Windows, `cargo build --release -j 4 -p gezik`): master 31,837,696 
 | 8 | Notun düzeni | İlk derlemede bağlantılar arasında boşluk vardı (iç düzen esniyordu): `horizontal-stretch: 0` ile düzeldi, yeniden bakıldı ✅ |
 | 9 | ✕ ile notu kapatmak | ⏭️ Atlandı: kullanıcı o an başka bir uygulamada yazıyordu, girdi gönderilmedi; test Gezik'i durduruldu |
 
-Ekran testi incelemeden önceki derlemeyle yapıldı; inceleme düzeltmeleri (aşağıda) Windows yolunda yalnız Restart now'ın soru sırasını ve `install_target`'ın derleme işaretini değiştirdi (testte `GEZIK_UPDATE_FEED` kurulumu açık tutar), birim testleri yeniden geçti.
+Yukarıdaki adımlar incelemeden önceki derlemeyle yapıldı. **Birleşmeden sonra `master` bf78acbd ile yeniden** (`measure`, eski exe `0.1.0-rc.2`, yeni exe sürümü `0.1.0-rc.99`'a çekilmiş aynı kaynak, yeniden yapılmış zip, `SHA256SUMS.txt` ve `releases.json`):
+
+| # | Adım | Sonuç |
+|---|---|---|
+| 10 | Eski exe açıldı, ~19 s | ✅ "Gezik 0.1.0-rc.99 is ready — installs when you close it · Restart now · What's new"; `update\0.1.0-rc.99\…\gezik.exe` ve `ready` |
+| 11 | Notta ✕ | ✅ Not kapandı |
+| 12 | Alt+F4 (not kapatılmışken) | ✅ Kurulum yine yapıldı: `app\gezik.exe --version` = 0.1.0-rc.99, `gezik.exe.old` = 0.1.0-rc.2; `update\installed` |
+| 13 | Yeniden açıldı | ✅ "Updated to 0.1.0-rc.99 · What's new"; `.old` ve `update\0.1.0-rc.99\` silindi |
+| 14 | Eski exe geri, `[update]` silindi, açıldı, **Restart now** | ✅ Yeni süreç (başka PID) aynı sekmelerle açıldı, "Updated to 0.1.0-rc.99", `.old` silindi |
 
 Bu turda düzeltilenler: düzen (8); elle denetimde "Checking for updates…" notunun sonuç notu gelince kalması (artık siliniyor).
