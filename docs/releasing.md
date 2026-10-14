@@ -1,8 +1,8 @@
 # Releasing Gezik
 
-The packages are built by `.github/workflows/release.yml`. They are **not signed** yet (no
-Authenticode certificate, no Apple Developer ID), so Windows and macOS warn on first start;
-see [What users see](#what-users-see-without-signing).
+The packages are built by `.github/workflows/release.yml`. They are signed only once the
+signing secrets are set up ([Windows](#windows-signing), [macOS](#macos-signing)); until then
+Windows and macOS warn on first start, see [What users see](#what-users-see-without-signing).
 
 ## Cutting a release
 
@@ -80,13 +80,6 @@ In Terminal the same is `xattr -dr com.apple.quarantine /Applications/Gezik.app`
 Run Gezik from Applications, not from the dmg or Downloads: macOS runs a quarantined app from a
 random read-only copy (App Translocation), where portable mode can't work.
 
-**When macOS signing comes** (Developer ID, hardened runtime, notarization): Gezik loads
-libraries it did not ship with at run time: Homebrew's or the downloaded ad hoc signed libmtp
-for phones, and the downloaded pdfium in the PDF worker. The hardened runtime's library
-validation refuses those (`dlopen` fails with "code signature … not valid for use in process").
-The signed app then needs the `com.apple.security.cs.disable-library-validation` entitlement,
-or every such library re-signed with Gezik's team identity (impossible for Homebrew's).
-
 **Linux.** No warning: `tar xzf gezik-<v>-linux-x64.tar.gz && ./gezik-<v>-linux-x64/gezik`.
 
 ## Windows signing
@@ -121,6 +114,36 @@ One-time setup in the Azure portal:
 
 Check a run by hand (`gh workflow run release.yml -f version=0.0.0-sign`): in the downloaded
 zip, `Get-AuthenticodeSignature gezik.exe` should say `Valid` with Wenlar LLC.
+
+## macOS signing
+
+`release.yml` signs `Gezik.app` with the Developer ID certificate (hardened runtime, timestamp,
+`scripts/macos/gezik.entitlements`), has Apple notarize it and staples the ticket, before the
+dmg and the update tarball are made. Until the secrets below exist, the steps are skipped and
+`make-app.sh` signs ad hoc as before. Once notarized builds ship, update the macOS line of
+`docs/release-notes-unsigned.md` and [What users see](#what-users-see-without-signing).
+
+The entitlement `com.apple.security.cs.disable-library-validation` is there because Gezik loads
+libraries it did not ship with at run time: Homebrew's or the downloaded ad hoc signed libmtp for
+phones, and the downloaded pdfium in the PDF worker. Without it the hardened runtime refuses them
+(`dlopen` fails with "code signature … not valid for use in process").
+
+One-time setup (Wenlar LLC's Apple Developer account):
+
+1. On a Mac, Keychain Access ▸ Certificate Assistant ▸ Request a Certificate from a Certificate
+   Authority (saved to disk). At developer.apple.com ▸ Certificates ▸ **+** ▸
+   **Developer ID Application**, upload the request, download the certificate and open it.
+2. In Keychain Access, under My Certificates, export "Developer ID Application: …" with its key
+   as `gezik.p12` with a password. `base64 -i gezik.p12 | pbcopy` copies it for step 4.
+3. App Store Connect ▸ Users and Access ▸ Integrations ▸ App Store Connect API ▸ team key with
+   the **Developer** role. Note the key ID and the issuer ID; download the `.p8` (only once).
+4. In GitHub, Settings ▸ Secrets and variables ▸ Actions ▸ **Secrets**: `MACOS_CERT_P12` (the
+   base64 text), `MACOS_CERT_PASSWORD`, `APPLE_API_KEY` (the whole `.p8` text),
+   `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`.
+
+Check a run by hand (`gh workflow run release.yml -f version=0.0.0-sign`): the Notarize step
+ends with `source=Notarized Developer ID`; on a Mac, the downloaded dmg's app opens without the
+"Apple could not verify" box.
 
 ## Checking a download
 

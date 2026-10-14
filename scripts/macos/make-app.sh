@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Assembles Gezik.app from a built binary and signs it ad hoc (no Developer ID yet).
+# Assembles Gezik.app from a built binary and signs it: with the Developer ID named by
+# $SIGN_IDENTITY when set (release.yml), otherwise ad hoc.
 #   scripts/macos/make-app.sh [binary] [version] [out folder]
 # Defaults: target/release/gezik, the workspace version in Cargo.toml, target/release.
 # The Info.plist is crates/gezik/macos/Info.plist (the one build.rs embeds in the binary) plus
@@ -46,7 +47,13 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/gezik.icns"
 $PB -c "Add :CFBundleIconFile string gezik" "$PLIST"
 
-codesign --force --sign - "$APP"
+if [ -n "${SIGN_IDENTITY:-}" ]; then
+    # Developer ID: hardened runtime and a timestamp, as notarization asks.
+    codesign --force --options runtime --timestamp \
+        --entitlements scripts/macos/gezik.entitlements --sign "$SIGN_IDENTITY" "$APP"
+else
+    codesign --force --sign - "$APP"
+fi
 
 # Self-check: a valid plist with the version, a signature that verifies.
 plutil -lint "$PLIST" >/dev/null
