@@ -45,8 +45,8 @@ const TICK: Duration = Duration::from_millis(33);
 /// How long output may still come once the shell ended (a program it left running holds the
 /// pipes open).
 const GRACE: Duration = Duration::from_millis(500);
-/// History rows the address bar lists under a command.
-const HISTORY_ROWS: usize = 20;
+/// History rows the address bar lists under a command (its list shows 18 rows).
+const HISTORY_ROWS: usize = 18;
 
 /// The command in an address `typed`, if it is one: what follows a `>` (spaces before it are
 /// passed over). A `>` further in is part of a path.
@@ -1262,6 +1262,80 @@ mod tests {
         remember_run("echo off");
         REMEMBER.with(|r| r.set(true));
         assert_eq!(history_for(""), ["dir"]);
+    }
+
+    /// The panel follows its end as lines come (also once the oldest are dropped), stays where
+    /// it is once scrolled up, and starts each run at its end (headless, as drawn).
+    #[test]
+    fn the_output_panel_follows_its_end() {
+        use slint::ComponentHandle;
+        crate::windows::tests::platform();
+        let probe = crate::CommandOutputProbe::new().unwrap();
+        probe.show().unwrap();
+        let model = Rc::new(OutputModel::default());
+        probe.set_lines(ModelRc::from(model.clone()));
+        let settle = || {
+            for _ in 0..4 {
+                std::thread::sleep(Duration::from_millis(60));
+                crate::windows::tests::frame((-1.0, -1.0));
+            }
+        };
+        let add = |from: usize, n: usize| {
+            model.push_all((from..from + n).map(|i| Line { text: format!("line {i}"), err: false }).collect());
+        };
+        let at_end = |what: &str| {
+            let (y, end) = (probe.get_view_y(), probe.get_view_end());
+            assert!(end < 0.0, "{what}: more lines than room");
+            assert!((y - end).abs() < 1.0, "{what}: at {y}, the end is {end}");
+        };
+        settle();
+        for i in 0..5 {
+            add(i * 20, 20);
+            settle();
+            at_end("lines coming");
+        }
+        // The cap drops the oldest lines while more come.
+        for i in 0..3 {
+            model.output.borrow_mut().lines.drain(..30);
+            model.notify.row_removed(0, 30);
+            add(1000 + i * 40, 40);
+            settle();
+            at_end("after a drop");
+        }
+        // Scrolled up by the wheel: new lines leave it there.
+        let step = probe.get_line_step();
+        probe.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(200.0, 200.0),
+            delta_x: 0.0,
+            delta_y: step * 10.0,
+        });
+        settle();
+        let up = probe.get_view_y();
+        assert!(up > probe.get_view_end() + step, "scrolled up: {up}");
+        add(2000, 30);
+        settle();
+        assert!((probe.get_view_y() - up).abs() < 1.0, "stays put: {} vs {up}", probe.get_view_y());
+        // Back down by the wheel: it follows again.
+        probe.window().dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(200.0, 200.0),
+            delta_x: 0.0,
+            delta_y: -step * 1000.0,
+        });
+        settle();
+        add(2100, 10);
+        settle();
+        at_end("scrolled back down");
+        // "Earlier output dropped" shows above the list (it gets lower).
+        probe.set_dropped(true);
+        add(2200, 5);
+        settle();
+        at_end("with the note");
+        // A new run starts at its end.
+        model.clear();
+        probe.set_run(1);
+        add(3000, 50);
+        settle();
+        at_end("a new run");
     }
 
     #[test]

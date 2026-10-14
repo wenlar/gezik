@@ -20,6 +20,8 @@ export component PathSuggestions inherits Rectangle {
 
     property <length> row-height: Theme.row-height;
     height: min(root.rows.length, 18) * root.row-height + Theme.spacing;
+    // More than 18 rows are never drawn below the frame.
+    clip: true;
     background: Theme.surface-raised;
     border-radius: Theme.radius;
     border-width: 1px;

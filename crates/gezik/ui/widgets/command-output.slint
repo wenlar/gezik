@@ -25,42 +25,35 @@ export component CommandOutput inherits Rectangle {
     in property <int> run;
     // 0 Stop, 1 Run Again, 2 Copy Output, 3 Close.
     callback button(int);
+    // Where the list is scrolled, and where its end is (the last line whole at the bottom): the
+    // tests' (`CommandOutputProbe`).
+    out property <length> view-y: list.content-y;
+    out property <length> view-end: min(0px, list.visible-height - root.lines.length * root.line-height);
+    out property <length> line-step: root.line-height;
 
     property <length> line-height: Theme.font-size + 5px;
     property <length> pressed-height;
-    // The list follows new lines while it is at the end, as a terminal does: scrolled up, it
-    // stays where it is until it is scrolled back down. `set-y` is where following last put it;
-    // the list counts as at the end there, or at the end its height allows now (its height
-    // follows the lines a frame late, and dropping the oldest lines moves it).
-    property <length> set-y;
-    property <length> end-y: min(0px, list.visible-height - root.lines.length * root.line-height);
-    property <int> settle: 10;
-    function follow() {
-        if list.content-y <= max(root.set-y, min(0px, list.visible-height - list.content-height)) + 1px {
-            root.set-y = root.end-y;
-            list.content-y = root.end-y;
+    // The list follows new lines while it is at the end, as a terminal does. Only the user's
+    // scrolling (the wheel, the keys, the scroll bar) turns following off, when it leaves the
+    // list short of its end; reaching the end again, End, or a new run turn it back on.
+    property <bool> follow: true;
+    property <length> end: min(0px, list.visible-height - list.content-height);
+    function to-end() {
+        list.content-y = root.end;
+    }
+    changed end => {
+        if root.follow {
+            root.to-end();
         }
     }
-    // Only while a command runs, and a moment after it ended or the panel opened.
-    Timer {
-        interval: 50ms;
-        running: root.state == 0 || root.settle > 0;
-        triggered => {
-            root.follow();
-            if root.settle > 0 {
-                root.settle -= 1;
-            }
-        }
-    }
-    changed state => { root.settle = 10; }
     changed run => {
-        root.set-y = 0px;
-        list.content-y = 0px;
-        root.settle = 10;
+        root.follow = true;
+        root.to-end();
     }
-
+    // The user scrolled to `y`.
     function scroll-to(y: length) {
-        list.content-y = clamp(y, min(0px, list.visible-height - list.content-height), 0px);
+        list.content-y = clamp(y, root.end, 0px);
+        root.follow = list.content-y <= root.end + 1px;
     }
 
     background: Theme.surface;
@@ -156,8 +149,7 @@ export component CommandOutput inherits Rectangle {
                 } else if event.text == Key.Home {
                     root.scroll-to(0px);
                 } else if event.text == Key.End {
-                    root.scroll-to(root.end-y);
-                    root.set-y = list.content-y;
+                    root.scroll-to(root.end);
                 } else {
                     return reject;
                 }
@@ -167,6 +159,15 @@ export component CommandOutput inherits Rectangle {
                 width: parent.width;
                 height: parent.height;
                 accessible-label: @tr("Output");
+                // Every line is one height: the list's own estimate came a line short at the end.
+                content-height: root.lines.length * root.line-height;
+                // Taking lines off the top moves the list (after `end` changed): back to the end.
+                changed content-y => {
+                    if root.follow && self.content-y != root.end {
+                        root.to-end();
+                    }
+                }
+                bar-moved => { root.follow = self.content-y <= root.end + 1px; }
                 for line in root.lines: Text {
                     height: root.line-height;
                     text: line.text;
