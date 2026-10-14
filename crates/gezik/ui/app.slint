@@ -23,6 +23,7 @@ import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
 import { CmdLine, CommandOutput } from "widgets/command-output.slint";
+import { GitCommit } from "widgets/git-commit.slint";
 import { ColumnItem } from "widgets/column-view.slint";
 import { SettingsWindow, SettingItem } from "widgets/settings.slint";
 
@@ -269,6 +270,20 @@ export component AppWindow inherits Window {
             MenuItem { title: @tr("Clear Folder History"); activated => { root.menu-command("clear-history"); } }
         }
         Menu {
+            title: @tr("Git");
+            MenuItem { title: @tr("Stage"); activated => { root.menu-command("git-stage"); } }
+            MenuItem { title: @tr("Unstage"); activated => { root.menu-command("git-unstage"); } }
+            MenuItem { title: @tr("Commit…"); activated => { root.menu-command("git-commit"); } }
+            MenuSeparator { }
+            MenuItem { title: @tr("Push"); activated => { root.menu-command("git-push"); } }
+            MenuItem { title: @tr("Pull"); activated => { root.menu-command("git-pull"); } }
+            MenuItem { title: @tr("Fetch"); activated => { root.menu-command("git-fetch"); } }
+            MenuItem { title: @tr("Switch Branch…"); activated => { root.menu-command("git-switch-branch"); } }
+            MenuSeparator { }
+            MenuItem { title: @tr("Discard Changes…"); activated => { root.menu-command("git-discard"); } }
+            MenuItem { title: @tr("Compare with HEAD"); activated => { root.menu-command("git-compare-head"); } }
+        }
+        Menu {
             title: @tr("Tools");
             MenuItem { title: @tr("Compare"); shortcut: root.menu-keys ? root.bar-key("compare", root.keys-version) : @keys(); activated => { root.menu-command("compare"); } }
             MenuItem { title: @tr("Select Differences"); activated => { root.menu-command("select-differences"); } }
@@ -381,6 +396,17 @@ export component AppWindow inherits Window {
     in property <string> status;
     // The Git part (spec 16 §8.4): `⎇ main ↑2 · 5 changed` in a repository, else empty.
     in property <string> git-status;
+    // A click on it: the Git menu (spec 16 §9.1), under its box.
+    callback git-menu(length, length, length, length);
+    // The commit dialog (git-commit.slint, git_commands.rs).
+    in property <bool> gc-open;
+    in property <string> gc-title;
+    in property <string> gc-files;
+    // The files a commit with "Stage all changes first" takes (staged and changed tracked ones).
+    in property <string> gc-all-files;
+    in-out property <string> gc-message;
+    in-out property <bool> gc-all;
+    callback gc-chosen(bool);
     // Settings/theme problems, shown on the right of the status bar.
     in property <string> notice;
     // The active tab is locked (the menu bar's Lock/Unlock Tab).
@@ -906,7 +932,7 @@ export component AppWindow inherits Window {
     public function focus-list() {
         // A question keeps the keyboard while it is open (a field's Enter that asked it ends
         // typing, and the list would take the keyboard back a moment later).
-        if root.dialog-open {
+        if root.dialog-open || root.gc-open {
         } else if root.conflicts-open {
             root.conflict-focus-seq += 1;
         } else if root.rb-open {
@@ -1430,11 +1456,27 @@ export component AppWindow inherits Window {
                         vertical-alignment: center;
                         color: Theme.foreground-muted;
                     }
-                    if root.git-status != "": Text {
-                        text: root.git-status;
-                        font-size: Theme.font-size-small;
-                        vertical-alignment: center;
-                        color: Theme.foreground-muted;
+                    if root.git-status != "": Rectangle {
+                        width: git-text.preferred-width + 8px;
+                        border-radius: Theme.radius;
+                        background: git-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: root.git-status;
+                        accessible-action-default => { git-touch.open(); }
+                        git-text := Text {
+                            x: 4px;
+                            height: parent.height;
+                            text: root.git-status;
+                            font-size: Theme.font-size-small;
+                            vertical-alignment: center;
+                            color: Theme.foreground-muted;
+                        }
+                        git-touch := TouchArea {
+                            function open() {
+                                root.git-menu(self.absolute-position.x, self.absolute-position.y, self.absolute-position.x + self.width, self.absolute-position.y + self.height);
+                            }
+                            clicked => { self.open(); }
+                        }
                     }
                     if root.ops-summary != "": Rectangle {
                         width: summary-text.preferred-width + 26px;
@@ -1811,6 +1853,19 @@ export component AppWindow inherits Window {
             rows: root.path-rows;
             current: root.path-current;
             chosen(path) => { root.path-chosen(path); }
+        }
+        if root.gc-open: GitCommit {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            title: root.gc-title;
+            files: root.gc-files;
+            all-files: root.gc-all-files;
+            message <=> root.gc-message;
+            all <=> root.gc-all;
+            mono-font: root.mono-font;
+            chosen(commit) => { root.gc-chosen(commit); }
         }
         if root.dialog-open: Dialog {
             x: 0;

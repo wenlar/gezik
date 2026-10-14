@@ -30,6 +30,7 @@ mod folder_sizes;
 mod folder_watch;
 mod frame_limit;
 mod git;
+mod git_commands;
 mod info;
 mod integration;
 mod keys;
@@ -44,6 +45,7 @@ mod palette;
 mod panes;
 mod path_box;
 mod pdf;
+mod phones;
 mod places;
 mod popup;
 mod preview;
@@ -180,6 +182,7 @@ fn apply_config(files: &ConfigFiles) -> Loaded {
     path_box::set_settings(loaded.settings.history);
     command_line::set_settings(loaded.settings.command_line.clone(), loaded.settings.history.remember);
     // Git marks turned on or off, or another git: every pane looks again (spec 16 §8).
+    phones::set_settings(&loaded.settings.devices);
     if git::set_settings(loaded.settings.git.clone()) {
         for p in panes::everywhere() {
             p.nav.reload();
@@ -384,6 +387,15 @@ fn perform(
         | Action::BrowseArchive
         | Action::RunCommand
         | Action::ToggleCommandOutput
+        | Action::GitStage
+        | Action::GitUnstage
+        | Action::GitCommit
+        | Action::GitPush
+        | Action::GitPull
+        | Action::GitFetch
+        | Action::GitSwitchBranch
+        | Action::GitDiscard
+        | Action::GitCompareHead
         | Action::KeepOffline
         | Action::FreeUpSpace
         | Action::NewWindow
@@ -452,8 +464,9 @@ fn handle_key(
     has_modifier: bool,
     menu_key: bool,
 ) -> bool {
-    // A question or the conflict list over the window has the keyboard.
-    if window.get_dialog_open() || window.get_conflicts_open() {
+    // A question, the conflict list or the commit dialog over the window has the keyboard: a
+    // shortcut (Ctrl+V's paste as a file) never runs behind its text field.
+    if window.get_dialog_open() || window.get_conflicts_open() || window.get_gc_open() {
         return false;
     }
     // The batch rename layer: Esc and Ctrl+Enter wherever its focus is, other keys to it.
@@ -1228,6 +1241,15 @@ fn main() -> Result<(), slint::PlatformError> {
     let memory = Rc::new(std::cell::RefCell::new(memory));
     // The templates of New ▸, read once the window is up.
     slint::Timer::single_shot(std::time::Duration::from_millis(500), templates::load_in_background);
+    // Phones: the system's device event, set up after the first frame (spec 16 §10.2).
+    slint::Timer::single_shot(std::time::Duration::from_millis(500), {
+        let window = window.as_weak();
+        move || {
+            if let Some(window) = window.upgrade() {
+                phones::start(&window);
+            }
+        }
+    });
     let engine_settings = gezik_ops::Settings {
         threads: initial_settings.files.copy_threads,
         pending_deletes: config.as_ref().map(|store| store.local_dir().join("pending-deletes")),
@@ -1446,6 +1468,29 @@ fn main() -> Result<(), slint::PlatformError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every layer over the window (an `if root.<x>-open:` in app.slint) gives the keyboard to
+    /// itself in `handle_key`: no window shortcut runs while its field is typed in. The side
+    /// panels (operations, drop stack) are not over the list.
+    #[test]
+    fn every_layer_over_the_window_takes_the_keys() {
+        let slint = include_str!("../ui/app.slint");
+        let main = include_str!("main.rs");
+        let body = &main[main.find("fn handle_key(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let mut checked = 0;
+        for line in slint.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("if root.") else { continue };
+            let Some((name, _)) = rest.split_once("-open:") else { continue };
+            if !name.chars().all(|c| c.is_ascii_lowercase() || c == '-') || matches!(name, "ops-panel" | "stack") {
+                continue;
+            }
+            let getter = format!("get_{}_open()", name.replace('-', "_"));
+            assert!(body.contains(&getter), "handle_key does not give {name}'s layer its keys");
+            checked += 1;
+        }
+        assert!(checked >= 11, "{checked}");
+    }
 
     #[test]
     fn a_warning_is_printed_once_however_often_the_config_is_applied() {

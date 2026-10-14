@@ -62,11 +62,11 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 37 | Sistem geneli kısayol, tepsi, girişte başlama | 5/8 | Yok | ✅ Var | 9b9 (#57), varsayılan kapalı. Linux tepsi menüsü yok |
 | 38 | Yönetici yetkisiyle işlem | 5/8 | Yok | ✅ Var | 9b7 (#46): tek seferlik yardımcı, "Retry as administrator" |
 | 39 | Tarayıcı/e-postadan sanal dosya bırakma | 3/8 | Yok | ✅ Var | 9b8 (#55): Windows ve macOS; Linux XDS bilerek kapsam dışı |
-| 40 | Git | 3/8 | Planlı | 🔜 Planlı | 16 Gelişmiş |
+| 40 | Git | 3/8 | Planlı | ✅ Var | 16d (#147) durum: işaretler, sütun, süzgeç, gruplama, dal; 16e komutlar: stage/unstage, commit, push/pull/fetch, dal değiştirme, çöpe giden discard, HEAD ile karşılaştırma |
 | 41 | Eşli gezinme | 4/8 | Yok | ✅ Var | 10b (#64): Sync Browsing |
 | 42 | Tek tıkla açma | 4/8 | Yok | ✅ Var | 7b (#19): `single-click-open` |
 | 43 | Komut satırı seçenekleri | 4/8 | Kısmen | ✅ Var | 9b1 (#35): `--new-tab`, `--new-window`, `--select`; PATH 9b3 (#38) |
-| 44 | MTP / telefon | 4/8 | Planlı | 🔜 Planlı | 16 Gelişmiş |
+| 44 | MTP / telefon | 4/8 | Kısmen | 🟡 Kısmen | 16f: Windows (WPD) kenar çubuğu, gezinme, kopyalama, yeni klasör, yeniden adlandırma, silme. 16g: macOS (IOKit, Homebrew libmtp; indirme paketi yayımlanmayı bekliyor) ve Linux (netlink, sistem libmtp, gvfs önceliği) kodda; gerçek telefonla macOS/Linux denetimi yapılmadığı için 🟡 (denetim listeleri macOS 409–412, Linux 293–296) |
 | 45 | macOS sistem simgeleri, QuickLook | 2/8 | Yok | ✅ Var | 9a1 (#34), sistem paneli 9a2 (#36) |
 | 46 | Panodaki resmi/metni dosya olarak yapıştırma | 2/8 | Yok | ✅ Var | 7c (#20) |
 | 47 | Yeni dosya şablonları; seçimle yeni klasör | 3/8 | Kısmen | ✅ Var | 7c (#20): `templates/`, Ctrl+Alt+N |

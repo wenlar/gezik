@@ -37,6 +37,8 @@ pub const SECTION_TREE: i32 = 7;
 pub const SECTION_TREE_MORE: i32 = 8;
 /// A tag of `[tags] list` (spec 12 §7.1), `index` its place there.
 pub const SECTION_TAGS: i32 = 9;
+/// A phone plugged in (spec 16 §10.5), under the drives, `index` its place in `phones::list`.
+pub const SECTION_PHONES: i32 = 10;
 
 /// `SidebarRow.icon`: the glyph sidebar.slint draws on a place (0: none, on headings).
 const ICON_HOME: i32 = 1;
@@ -47,6 +49,7 @@ const ICON_DRIVE: i32 = 5;
 const ICON_SEARCH: i32 = 6;
 const ICON_TRASH: i32 = 7;
 const ICON_CLOUD: i32 = 8;
+const ICON_PHONE: i32 = 9;
 
 /// A known folder's icon: the house for the home folder, which `known_folders` puts first
 /// and names "Home" (when it exists; translated only when shown).
@@ -486,6 +489,11 @@ impl Sidebar {
         self.location_changed(location);
     }
 
+    /// The phones plugged in changed (spec 16 §10.5): their rows again.
+    pub fn phones_changed(&self) {
+        self.update_rows();
+    }
+
     /// Makes this sidebar reachable from the config watcher and background checks. Call
     /// once, right after `new`, before any pins are set.
     pub fn install(&self) {
@@ -805,6 +813,7 @@ impl Sidebar {
         let inner = self.0.borrow();
         match section {
             SECTION_TRASH => (index == 0).then_some(Location::Trash),
+            SECTION_PHONES => crate::phones::location(usize::try_from(index).ok()?),
             // A tree folder, or a capped branch's folder (its "… n more" line).
             SECTION_TREE | SECTION_TREE_MORE => {
                 let shown = inner.shown.try_borrow().ok()?;
@@ -1324,6 +1333,11 @@ impl Sidebar {
             rows.extend(
                 places.drives.iter().enumerate().map(|(i, d)| item(&d.label, SECTION_DRIVES, i, &d.path, ICON_DRIVE)),
             );
+            rows.extend(crate::phones::list().into_iter().enumerate().map(|(i, phone)| SidebarRow {
+                active: matches!(&current, Location::Vfs(at) if matches!(&at.root, gezik_core::vfs::VfsRoot::Device { id, .. } if *id == phone.id)),
+                tip: phone.name.as_str().into(),
+                ..item(&phone.name, SECTION_PHONES, i, Path::new(""), ICON_PHONE)
+            }));
             rows.push(SidebarRow {
                 header: false,
                 label: gezik_i18n::t("", gezik_core::nav::TRASH_NAME).as_ref().into(),

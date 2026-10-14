@@ -25,7 +25,9 @@ export component CommandOutput inherits Rectangle {
     in property <int> run;
     // While the list does not follow: what came since ("1,204 new lines · End"), or "".
     in property <string> new-lines;
-    // 0 Stop, 1 Run Again, 2 Copy Output, 3 Close.
+    // Open in Terminal is offered (a git command that wanted a password, spec 16 §9.4).
+    in property <bool> terminal;
+    // 0 Stop, 1 Run Again, 2 Copy Output, 3 Close, 4 Open in Terminal.
     callback button(int);
     // The list starts or stops following its end: while it does not, Rust leaves its rows as
     // they are (nothing added or dropped under the reader) and counts what comes instead.
@@ -130,6 +132,11 @@ export component CommandOutput inherits Rectangle {
                 text: @tr("Stop");
                 compact: true;
                 clicked => { root.button(0); }
+            }
+            if root.terminal: TextButton {
+                text: @tr("Open in Terminal");
+                compact: true;
+                clicked => { root.button(4); }
             }
             if root.state != 0: TextButton {
                 text: @tr("Run Again");

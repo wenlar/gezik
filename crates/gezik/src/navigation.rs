@@ -68,6 +68,10 @@ enum LoadResult {
     Declined,
     /// Only 7-Zip reads the archive, and there is none (its ending): it is offered.
     SevenZipNeeded(String),
+    /// The phone (its name) is not plugged in: This PC instead (spec 16 §4.2).
+    NotConnected(String),
+    /// The phone cannot be opened without libmtp (macOS): it is offered.
+    LibmtpNeeded,
 }
 
 /// Lists `location`. Runs on a background thread.
@@ -85,6 +89,16 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
         Location::Drives => LoadResult::Drives(gezik_platform::drives()),
         // `\\server` (Windows): its disk shares as folders (spec 9 §7.4). The name came from
         // the user; nothing is discovered.
+        // `mtp://Pixel 8/DCIM` (a tab set's, a pin's): the phone of that name now.
+        Location::Path(path) if let Some((name, inner)) = gezik_core::vfs::split_device(path) => {
+            match gezik_platform::mtp::devices().into_iter().find(|d| d.name.eq_ignore_ascii_case(&name)) {
+                Some(phone) => LoadResult::Redirect(Location::Vfs(VfsPath {
+                    root: VfsRoot::Device { id: phone.id, name: phone.name },
+                    inner,
+                })),
+                None => LoadResult::NotConnected(name),
+            }
+        }
         Location::Path(path) if let Some(server) = server_of(path) => match gezik_platform::network::shares(&server) {
             Ok(names) => LoadResult::Files(path.clone(), names.into_iter().map(share_entry).collect(), None),
             Err(err) => LoadResult::Failed(err),
@@ -137,6 +151,26 @@ fn list(location: &Location, mode: &Mode) -> LoadResult {
 /// §5.2). Runs on a background thread; `cx` asks for a password in a window and stops once
 /// the load is overtaken.
 fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResult {
+    if let VfsRoot::Device { id, name } = &at.root
+        && gezik_vfs::mounted(&at.root).is_none_or(|vfs| !vfs.unchanged())
+        && !gezik_platform::mtp::present(id)
+    {
+        // Plugged in again (macOS and Linux number it anew): the phone of that name now.
+        return match gezik_platform::mtp::devices().into_iter().find(|d| d.name.eq_ignore_ascii_case(name)) {
+            Some(phone) => LoadResult::Redirect(Location::Vfs(VfsPath {
+                root: VfsRoot::Device { id: phone.id, name: phone.name },
+                inner: at.inner.clone(),
+            })),
+            None => LoadResult::NotConnected(name.clone()),
+        };
+    }
+    // Linux: a phone gvfs holds is its folder there (libmtp could not open it).
+    if let VfsRoot::Device { id, .. } = &at.root
+        && let Some(folder) = gezik_platform::mtp::gvfs_mount(id)
+    {
+        let inner = at.inner.split('/').filter(|part| !part.is_empty());
+        return LoadResult::Redirect(Location::Path(inner.fold(folder, |path, part| path.join(part))));
+    }
     if let Some(file) = at.disk()
         && !comes_back(file, ARCHIVE_GAP, &|| gezik_vfs::Cx::stopped(cx))
     {
@@ -154,6 +188,9 @@ fn list_vfs(at: &VfsPath, mode: &Mode, cx: &crate::vfs_mounts::UiCx) -> LoadResu
             let name = at.root.name();
             let ending = Path::new(&name).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
             return LoadResult::SevenZipNeeded(ending);
+        }
+        Err(err) if cfg!(target_os = "macos") && gezik_platform::mtp::needs_libmtp(&err) => {
+            return LoadResult::LibmtpNeeded;
         }
         Err(err) => return LoadResult::Failed(err),
     };
@@ -1266,6 +1303,10 @@ impl Navigator {
         if text.is_empty() {
             return;
         }
+        // A phone's address is no path to resolve (spec 16 §4.2).
+        if let Some((name, inner)) = gezik_core::vfs::split_device(Path::new(&text)) {
+            return self.go(crate::phones::place_of(&name, inner).unwrap_or(Location::Path(text.into())));
+        }
         let path = match self.active_location().folder() {
             Some(base) => resolve_typed(&text, Some(base)),
             None => resolve_typed(&text, None),
@@ -1424,6 +1465,10 @@ impl Navigator {
             }
             LoadResult::Drives(drives) => Listing::Drives(drives),
             LoadResult::Vfs(at, vfs, entries) => {
+                // A locked phone, or one not in "File transfer", shows no storage (spec 16 §10.1).
+                if vfs.device() && at.inner.is_empty() && entries.is_empty() {
+                    note = Some(t!("Unlock the phone and choose File transfer in its USB notification").into_owned());
+                }
                 crate::vfs_mounts::hold(vfs.clone());
                 Listing::Vfs(Rc::new(crate::view::VfsDir { at, vfs }), Rc::new(entries))
             }
@@ -1449,6 +1494,14 @@ impl Navigator {
                 let why = t!("7-Zip needed to open this kind of archive");
                 return self.show_failed(&mode, &location, t!("Cannot open {}: {}", shown, why));
             }
+            LoadResult::LibmtpNeeded => {
+                let (id, again_at) = (self.id(), location.clone());
+                let again: Rc<dyn Fn()> =
+                    Rc::new(move || _ = crate::panes::with_id(id, |p| p.nav.go(again_at.clone())));
+                crate::archives::with_current(|archives| archives.offer_libmtp(again));
+                let why = gezik_platform::mtp::NoLibmtp.to_string();
+                return self.show_failed(&mode, &location, t!("Cannot open {}: {}", shown, why));
+            }
             LoadResult::Trash(loaded) => {
                 note = crate::trash_view::shown(&loaded.bins, loaded.denied).or(note);
                 Listing::Results(Arc::new(loaded.set))
@@ -1464,6 +1517,14 @@ impl Navigator {
                 self.show_failed(&mode, &location, String::new());
                 let step = Step::Navigate(fallback.clone());
                 self.load(fallback, Mode::Move(vec![step]), Some(t!("{} no longer exists", shown)));
+                let mut inner = self.0.borrow_mut();
+                inner.fallback = inner.pending.as_ref().map(|(ticket, _)| *ticket);
+                return;
+            }
+            LoadResult::NotConnected(name) => {
+                self.show_failed(&mode, &location, String::new());
+                let step = Step::Navigate(Location::Drives);
+                self.load(Location::Drives, Mode::Move(vec![step]), Some(t!("{} is not connected", name)));
                 let mut inner = self.0.borrow_mut();
                 inner.fallback = inner.pending.as_ref().map(|(ticket, _)| *ticket);
                 return;
@@ -1585,6 +1646,15 @@ impl Navigator {
     /// tab there goes to This PC (Back returns), and the watch and removal watch of a folder
     /// there end now, not once This PC is listed. shortcut: a search walk or thumbnail still
     /// running on the drive is not waited for; the system then says it is in use.
+    /// Phone `id` was unplugged: its tabs go to This PC (spec 16 §10.1).
+    pub fn leave_device(&self, id: &str) {
+        let active = self.0.borrow_mut().tabs.leave_device(id);
+        if active {
+            self.load(Location::Drives, Mode::Show, None);
+        }
+        self.update_chrome();
+    }
+
     pub fn leave_drive(&self, root: &Path) {
         self.save_view();
         let active = {

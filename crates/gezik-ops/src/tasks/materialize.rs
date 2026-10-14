@@ -106,7 +106,7 @@ impl Task for MaterializeTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.dir.clone()], work: Work::Disk }
+        Resources { paths: vec![self.dir.clone()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     /// One at a time: the source answers on one thread anyway, and keeps its order.

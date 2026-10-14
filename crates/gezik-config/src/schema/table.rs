@@ -278,6 +278,8 @@ pub const FIELDS: &[Field] = &[
     f(Some("git"), "ignored", FilesAndTools, Bool),
     f(Some("git"), "network", FilesAndTools, Bool),
     f(Some("git"), "timeout", FilesAndTools, Int),
+    f(Some("devices"), "phones", FilesAndTools, Bool),
+    f(Some("devices"), "libmtp", FilesAndTools, Path),
     f(Some("convert"), "ffmpeg", FilesAndTools, Path),
     f(Some("tools"), "download", FilesAndTools, Bool),
     f(Some("tools"), "seven-zip", FilesAndTools, Path),

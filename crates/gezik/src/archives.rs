@@ -297,6 +297,8 @@ pub enum Need {
     PdfPages,
     /// ffmpeg, to play video and sound in the preview (spec 13 §6.4): any version.
     Playback,
+    /// libmtp, to open a phone (macOS, spec 16 §10.3).
+    Phones,
 }
 
 impl Need {
@@ -304,6 +306,7 @@ impl Need {
         match self {
             Need::Archive(_) => Tool::SevenZip,
             Need::Pdf | Need::PdfiumFailed | Need::PdfPages => Tool::Pdfium,
+            Need::Phones => Tool::Libmtp,
             _ => Tool::Ffmpeg,
         }
     }
@@ -376,6 +379,10 @@ pub fn tool_offer(
         Need::Archive(ext) => {
             let (message, buttons) = seven_zip_offer(ext, size, download, linux);
             return (tx!("7-Zip needed"), message, buttons);
+        }
+        Need::Phones => {
+            let (message, buttons) = libmtp_offer(size, download);
+            return (tx!("libmtp needed"), message, buttons);
         }
         Need::ConfiguredTooOld => {
             let message =
@@ -461,6 +468,26 @@ pub fn seven_zip_offer(ext: &str, size: Option<u64>, download: bool, linux: bool
                  [tools] in settings.toml.",
                 ext
             ),
+            vec![tx!("OK")],
+        ),
+    }
+}
+
+/// The "phones need libmtp" box (macOS): its message and buttons (shown with `t`). `size`: the
+/// download (none: not published yet); `download`: `[tools] download`.
+fn libmtp_offer(size: Option<u64>, download: bool) -> (String, Vec<&'static str>) {
+    match size {
+        Some(size) if download => (t!("Phones need libmtp (~{}, free).", format_size(size)), offer_buttons()),
+        _ if download => (
+            t!("Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install \
+                libmtp).")
+            .into_owned(),
+            vec![tx!("OK")],
+        ),
+        _ => (
+            t!("Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in \
+                settings.toml.")
+            .into_owned(),
             vec![tx!("OK")],
         ),
     }
@@ -885,6 +912,11 @@ impl Archives {
     pub fn offer_pdfium(&self, failed: bool, hint: Option<String>, again: Rc<dyn Fn()>, row: Option<JobId>) {
         let need = if failed { Need::PdfiumFailed } else { Need::Pdf };
         self.offer(need, hint, Then::Again { again, row });
+    }
+
+    /// The box for libmtp, a phone was to be opened (macOS); `again` opens it once libmtp is there.
+    pub fn offer_libmtp(&self, again: Rc<dyn Fn()>) {
+        self.offer(Need::Phones, None, Then::Again { again, row: None });
     }
 
     /// The box for pdfium from the preview (a PDF's other pages or zoom): Download fetches it
@@ -1369,7 +1401,7 @@ mod tests {
         assert_eq!(release_page(url), "https://github.com/wenlar/gezik-tools/releases/tag/ffmpeg-9.0.2-1");
         assert_eq!(release_page("https://example.com/a.zip"), TOOLS_PAGE);
         // Every build of this system has one.
-        for tool in [Tool::SevenZip, Tool::Ffmpeg, Tool::Pdfium] {
+        for tool in [Tool::SevenZip, Tool::Ffmpeg, Tool::Pdfium, Tool::Libmtp] {
             if let Some(build) = Platform::current().and_then(|p| build_for(tool, p)) {
                 assert!(release_page(build.url).contains("/releases/tag/"), "{}", build.url);
             }
@@ -1440,6 +1472,20 @@ mod tests {
         let (title, message, _) = tool_offer(&Need::PdfPages, Some(2_900_000), true, false, None);
         assert_eq!((title, message.as_str()), ("pdfium needed", "More PDF pages need pdfium (~2.8 MB, free)."));
         assert_eq!(Need::PdfPages.tool(), Tool::Pdfium);
+    }
+
+    #[test]
+    fn the_libmtp_box() {
+        assert_eq!(Need::Phones.tool(), Tool::Libmtp);
+        let (title, message, buttons) = tool_offer(&Need::Phones, Some(1_200_000), true, false, None);
+        assert_eq!((title, message.as_str()), ("libmtp needed", "Phones need libmtp (~1.1 MB, free)."));
+        assert_eq!(buttons, ["Download", "Where does it come from?", "Cancel"]);
+        // Not published yet: Homebrew's.
+        let (_, message, buttons) = tool_offer(&Need::Phones, None, true, false, None);
+        assert!(message.contains("cannot download it for this system yet") && message.contains("brew install libmtp"));
+        assert_eq!(buttons, ["OK"]);
+        let (_, message, _) = tool_offer(&Need::Phones, Some(1_200_000), false, false, None);
+        assert!(message.contains("[devices]"), "{message}");
     }
 
     #[test]

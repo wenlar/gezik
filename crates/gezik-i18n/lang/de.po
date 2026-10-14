@@ -339,6 +339,7 @@ msgstr "Ändern"
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/filter.rs
 #: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/operations.rs
@@ -354,6 +355,7 @@ msgstr "Ändern"
 #: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
@@ -407,6 +409,7 @@ msgstr "Kein verwendbarer Name: {}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "Ein Ordner kann nicht in sich selbst verschoben werden"
@@ -1529,6 +1532,11 @@ msgstr "\"off\", \"local\" oder \"all\""
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
+msgid "{0}: \"{1}\" must be a full path (it is ignored)"
+msgstr "{0}: \"{1}\" muss ein vollständiger Pfad sein (wird ignoriert)"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}: [[rename-presets]]-Tabellen erwartet, {1} erhalten"
 
@@ -1736,11 +1744,6 @@ msgstr "{0}: Zahl von 1 bis 4096 erwartet, {1} erhalten"
 #, fuzzy
 msgid "{0}: expected a number from 1 to 600, got {1}"
 msgstr "{0}: Zahl von 1 bis 600 erwartet, {1} erhalten"
-
-#: crates/gezik-config/src/settings.rs
-#, fuzzy
-msgid "{0}: \"{1}\" must be a full path (it is ignored)"
-msgstr "{0}: \"{1}\" muss ein vollständiger Pfad sein (wird ignoriert)"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2847,6 +2850,69 @@ msgstr "Befehl ausführen…"
 #, fuzzy
 msgid "Command Output"
 msgstr "Befehlsausgabe"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Stage"
+msgstr "Stagen"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Unstage"
+msgstr "Unstagen"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Commit…"
+msgstr "Committen…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Push"
+msgstr "Push"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Pull"
+msgstr "Pull"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Fetch"
+msgstr "Fetch"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Switch Branch…"
+msgstr "Branch wechseln…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Discard Changes…"
+msgstr "Änderungen verwerfen…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Compare with HEAD"
+msgstr "Mit HEAD vergleichen"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -4166,7 +4232,9 @@ msgstr[0] "{n} geändert"
 msgstr[1] "{n} geändert"
 
 #. the status bar in a Git repository: files deleted under the folder shown.
+#. a heading in the status bar's Git menu over the deleted files' names
 #: crates/gezik-core/src/git.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "{n} deleted"
 msgid_plural "{n} deleted"
@@ -4235,6 +4303,8 @@ msgstr "Bewertung"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Git"
@@ -6368,6 +6438,83 @@ msgstr "Ein Gezik unbekannter Tag-Eintrag; unverändert gelassen"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Zu viele Tags und zu langer Kommentar für eine Datei"
 
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)"
+msgstr "{0} kann nicht verwendet werden: {1} fehlt (libmtp 1.1.17 oder neuer wird benötigt)"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "{0} could not be loaded: {1}"
+msgstr "{0} konnte nicht geladen werden: {1}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "No permission to open the phone (libmtp's udev rules)"
+msgstr "Keine Berechtigung, das Telefon zu öffnen (udev-Regeln von libmtp)"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Another app is using the phone (Image Capture, Android File Transfer). Quit it and try again."
+msgstr "Eine andere App verwendet das Telefon (Digitale Bilder, Android File Transfer). Beende sie und versuche es erneut."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Another app is using the phone. Quit it and try again."
+msgstr "Eine andere App verwendet das Telefon. Beende sie und versuche es erneut."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The file ended early"
+msgstr "Die Datei endete zu früh"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "a partial file {} may remain on the phone"
+msgstr "eine unvollständige Datei {} kann auf dem Telefon bleiben"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "Ein Speicher des Telefons kann nicht gelöscht werden"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The copy stopped on an internal error"
+msgstr "Das Kopieren wurde durch einen internen Fehler abgebrochen"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Storage {}"
+msgstr "Speicher {}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Only {0} of {1} bytes arrived"
+msgstr "Nur {0} von {1} Bytes kamen an"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The phone did not say what it made of {}"
+msgstr "Das Telefon hat nicht mitgeteilt, was es aus {} gemacht hat"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phones need libmtp"
+msgstr "Telefone benötigen libmtp"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Install libmtp (e.g. sudo apt install libmtp9)"
+msgstr "Installiere libmtp (z. B. sudo apt install libmtp9)"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phone"
+msgstr "Telefon"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6496,6 +6643,41 @@ msgstr "Einige Elemente konnten nicht aus dem Archiv geholt werden"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "Archive, die tiefer als {} Ebenen verschachtelt sind, werden nicht geöffnet"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "Ein Name, den kein Pfad aufnehmen kann"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "Die Datei kam unvollständig vom Telefon"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}; die neue Datei bleibt auf dem Telefon als {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}; die alte Datei konnte nicht zurückgelegt werden: {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "Ein Speicher des Telefons kann nicht geändert werden"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "Es hat sich seitdem geändert"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "Es ist nicht leer"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6529,6 +6711,28 @@ msgstr "{0} wird aus {1} gelöscht"
 #, fuzzy
 msgid "Updating {} in the archive"
 msgstr "{} wird im Archiv aktualisiert"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "{n} Element schon auf dem Telefon"
+msgstr[1] "{n} Elemente schon auf dem Telefon"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "Ersetzen löscht einen Ordner dieses Namens mit seinem gesamten Inhalt."
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace on the phone?"
+msgstr "Auf dem Telefon ersetzen?"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "The old file is deleted before the new one is written"
+msgstr "Die alte Datei wird gelöscht, bevor die neue geschrieben wird"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -6829,6 +7033,11 @@ msgstr "pdfium erforderlich"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
+msgid "libmtp needed"
+msgstr "libmtp benötigt"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
 msgid "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
 msgstr "HEIC- und AVIF-Bilder brauchen ffmpeg 9 oder neuer. Das unter [convert] in settings.toml gesetzte ffmpeg ist älter: setzen Sie ffmpeg 9 oder neuer oder entfernen Sie es, um Geziks Download zu nutzen."
 
@@ -6943,6 +7152,21 @@ msgstr "{}-Archive brauchen 7-Zip. Gezik kann es für dieses System noch nicht h
 #, fuzzy
 msgid "Opening {} archives needs 7-Zip: install 7-Zip 25 or newer yourself, or set seven-zip under [tools] in settings.toml."
 msgstr "{}-Archive brauchen 7-Zip: installieren Sie selbst 7-Zip 25 oder neuer oder setzen Sie seven-zip unter [tools] in settings.toml."
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp (~{}, free)."
+msgstr "Telefone benötigen libmtp (~{}, kostenlos)."
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install libmtp)."
+msgstr "Telefone benötigen libmtp. Gezik kann es für dieses System noch nicht herunterladen: Installiere es selbst (brew install libmtp)."
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in settings.toml."
+msgstr "Telefone benötigen libmtp: Installiere es selbst (brew install libmtp) oder setze libmtp unter [devices] in settings.toml."
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
@@ -7381,11 +7605,13 @@ msgid "Run Command"
 msgstr "Befehl ausführen"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "A command is still running. Stop it?"
 msgstr "Ein Befehl läuft noch. Beenden?"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "Stop and Run"
 msgstr "Beenden und ausführen"
@@ -7415,6 +7641,12 @@ msgstr "{0} konnte nicht gestartet werden: {1}"
 #, fuzzy
 msgid "Did not start"
 msgstr "Nicht gestartet"
+
+#. {} is a command put on the clipboard ("git push")
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Copied: {}"
+msgstr "Kopiert: {}"
 
 #: crates/gezik/src/command_line.rs
 #, fuzzy
@@ -9838,6 +10070,120 @@ msgstr "Teilen nicht möglich: {}"
 msgid "Folder sizes are worked out in folders"
 msgstr "Ordnergrößen werden in Ordnern berechnet"
 
+#: crates/gezik/src/git.rs
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git took too long ([git] timeout)"
+msgstr "Git hat zu lange gebraucht ([git] timeout)"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "and {n} more"
+msgid_plural "and {n} more"
+msgstr[0] "und {n} weitere"
+msgstr[1] "und {n} weitere"
+
+#. {} is a lock file of git's (…/.git/index.lock)
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git left {} behind: delete it only if no git is running"
+msgstr "Git hat {} zurückgelassen: nur löschen, wenn kein Git läuft"
+
+#. {} is git's own message (not translated).
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git: {}"
+msgstr "Git: {}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Not in a Git repository"
+msgstr "Nicht in einem Git-Repository"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select files first"
+msgstr "Wählen Sie zuerst Dateien aus"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No branches yet"
+msgstr "Noch keine Branches"
+
+#. the commit dialog's title; {} is the repository's folder name
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Commit to {}"
+msgstr "Commit in {}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git status is not known yet"
+msgstr "Der Git-Status ist noch nicht bekannt"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No changes to discard (staged changes stay: unstage them first)"
+msgstr "Keine Änderungen zum Verwerfen (gestagte Änderungen bleiben: zuerst unstagen)"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file? It goes to the trash first, so you can undo."
+msgid_plural "Discard changes to {n} files? They go to the trash first, so you can undo."
+msgstr[0] "Änderungen an {n} Datei verwerfen? Sie kommt zuerst in den Papierkorb und lässt sich rückgängig machen."
+msgstr[1] "Änderungen an {n} Dateien verwerfen? Sie kommen zuerst in den Papierkorb und lassen sich rückgängig machen."
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file"
+msgid_plural "Discard changes to {n} files"
+msgstr[0] "Änderungen an {n} Datei verwerfen"
+msgstr[1] "Änderungen an {n} Dateien verwerfen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "This drive has no trash: changes are not discarded (they could not be undone)"
+msgstr "Dieses Laufwerk hat keinen Papierkorb: Änderungen werden nicht verworfen (sie ließen sich nicht rückgängig machen)"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard Changes"
+msgstr "Änderungen verwerfen"
+
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Discard"
+msgstr "Verwerfen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "cancelled"
+msgstr "abgebrochen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "{0}; the file is still in the trash at {1} ({2})"
+msgstr "{0}; die Datei liegt noch im Papierkorb unter {1} ({2})"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discarding changes to {n} file"
+msgid_plural "Discarding changes to {n} files"
+msgstr[0] "Änderungen an {n} Datei werden verworfen"
+msgstr[1] "Änderungen an {n} Dateien werden verworfen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "changed since: left as it is"
+msgstr "seitdem geändert: unverändert gelassen"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select one file to compare with HEAD"
+msgstr "Wählen Sie eine Datei zum Vergleich mit HEAD"
+
 #: crates/gezik/src/info.rs
 #, fuzzy
 msgid "Cannot show Properties: {}"
@@ -10795,13 +11141,13 @@ msgstr "{} % übersetzt"
 #, fuzzy
 msgid "{0} (+{n} more)"
 msgid_plural "{0} (+{n} more)"
-msgstr[0] "{0} (+{n} weiterer)"
+msgstr[0] "{0} (+{n} weitere)"
 msgstr[1] "{0} (+{n} weitere)"
 
 #: crates/gezik/src/main.rs
 #, fuzzy
 msgid "cannot watch the config folder for changes: {}"
-msgstr "Konfigurationsordner kann nicht auf Änderungen überwacht werden: {}"
+msgstr "Der Konfigurationsordner kann nicht auf Änderungen überwacht werden: {}"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
@@ -10824,8 +11170,18 @@ msgstr[1] "{} wird gelesen: {n} Elemente"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "Entsperren Sie das Telefon und wählen Sie in seiner USB-Benachrichtigung „Dateiübertragung“"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} existiert nicht mehr"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
+msgid "{} is not connected"
+msgstr "{} ist nicht verbunden"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -10949,6 +11305,11 @@ msgstr "Eine Datei mit diesem Namen existiert bereits"
 msgid "Not in search results: open a folder first"
 msgstr "Nicht in Suchergebnissen: öffnen Sie zuerst einen Ordner"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This device can only be read"
+msgstr "Dieses Gerät kann nur gelesen werden"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -10959,6 +11320,18 @@ msgstr "{} geht in Suchergebnissen"
 #, fuzzy
 msgid "can't be undone"
 msgstr "nicht rückgängig zu machen"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the phone?"
+msgstr "{} vom Telefon löschen?"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+#, fuzzy
+msgid "This cannot be undone."
+msgstr "Dies kann nicht rückgängig gemacht werden."
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -11023,12 +11396,6 @@ msgstr "Papierkorb"
 #, fuzzy
 msgid "Delete {} permanently?"
 msgstr "{} endgültig löschen?"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-#, fuzzy
-msgid "This cannot be undone."
-msgstr "Dies kann nicht rückgängig gemacht werden."
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11399,6 +11766,11 @@ msgstr "pdfium lädt auf diesem System nicht: {}"
 #, fuzzy
 msgid "Could not load pdfium: {}"
 msgstr "pdfium konnte nicht geladen werden: {}"
+
+#: crates/gezik/src/phones.rs
+#, fuzzy
+msgid "{} was disconnected"
+msgstr "{} wurde getrennt"
 
 #: crates/gezik/src/places.rs
 #, fuzzy
@@ -11963,6 +12335,11 @@ msgstr "Öffnen Sie eine Suche, um sie zu speichern"
 #, fuzzy
 msgid "Flat view works in folders"
 msgstr "Flache Ansicht geht in Ordnern"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
+msgid "Phones are not searched"
+msgstr "Telefone werden nicht durchsucht"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
@@ -13946,11 +14323,6 @@ msgstr "{0} wurde geändert, ist aber nicht in {1}"
 
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
-msgid "Discard"
-msgstr "Verwerfen"
-
-#: crates/gezik/src/vfs_mounts.rs
-#, fuzzy
 msgid "Keep a Copy in Downloads"
 msgstr "Kopie in Downloads behalten"
 
@@ -13979,12 +14351,6 @@ msgstr "Eigenschaften nicht lesbar (kein Thread zum Lesen)"
 #, fuzzy
 msgid "Reading properties… {} of {}"
 msgstr "Eigenschaften werden gelesen… {} von {}"
-
-#. {} is git's own message (not translated).
-#: crates/gezik/src/view/folder_git.rs
-#, fuzzy
-msgid "Git: {}"
-msgstr "Git: {}"
 
 #: crates/gezik/src/view/folder_git.rs
 #, fuzzy
@@ -14175,6 +14541,11 @@ msgstr "{}, Tags {}"
 #, fuzzy
 msgid "Stop"
 msgstr "Stoppen"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Open in Terminal"
+msgstr "Im Terminal öffnen"
 
 #: crates/gezik/ui/widgets/command-output.slint
 #, fuzzy
@@ -14663,6 +15034,41 @@ msgstr "Mehr"
 #, fuzzy
 msgid "Saved filters"
 msgstr "Gespeicherte Filter"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit message"
+msgstr "Commit-Nachricht"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "No changes to commit."
+msgstr "Keine Änderungen zum Committen."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Nothing is staged."
+msgstr "Nichts ist gestagt."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "To commit:"
+msgstr "Wird committet:"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Staged:"
+msgstr "Gestagt:"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Stage all changes first"
+msgstr "Zuerst alle Änderungen stagen"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit"
+msgstr "Committen"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy
@@ -15650,6 +16056,30 @@ msgstr "Sekunden, die eine Statusabfrage dauern darf"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "Telefone"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "Android-Telefone (MTP) beim Anschließen zeigen; false: Gezik sucht nicht nach ihnen"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.libmtp"
+msgid "Libmtp"
+msgstr "libmtp"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.libmtp"
+msgid "Path to libmtp (macOS, Linux); empty = Homebrew's or Gezik's download (macOS), the system's (Linux)"
+msgstr "Pfad zu libmtp (macOS, Linux); leer = die von Homebrew oder Gezik heruntergeladene (macOS), die des Systems (Linux)"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:convert.ffmpeg"
 msgid "Ffmpeg"
 msgstr "Ffmpeg"
@@ -15954,6 +16384,14 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Befehle"
 
+#~ #, fuzzy
+#~ msgid "{0} (+{n} more)"
+#~ msgid_plural "{0} (+{n} more)"
+#~ msgstr[0] "{0} (+{n} weiterer)"
+#~ msgstr[1] "{0} (+{n} weitere)"
+#~ #, fuzzy
+#~ msgid "cannot watch the config folder for changes: {}"
+#~ msgstr "Konfigurationsordner kann nicht auf Änderungen überwacht werden: {}"
 #~ #, fuzzy
 #~ msgctxt "setting:view.sort"
 #~ msgid "name | modified | created | type | size | tags | rating"

@@ -69,6 +69,7 @@ const FORGETS: &[fn(WindowId)] = &[
     crate::compare::forget,
     |id| crate::convert::CURRENT.with(|s| s.forget(id)),
     |id| crate::diff::CURRENT.with(|s| s.forget(id)),
+    |id| crate::context_menu::CURRENT.with(|s| s.forget(id)),
     |id| crate::drag::CURRENT.with(|s| s.forget(id)),
     |id| crate::dual::DUAL.with(|s| s.forget(id)),
     |id| crate::info::CURRENT.with(|s| s.forget(id)),
@@ -908,6 +909,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     // Every pane's bars and address go through the same window callbacks.
     path_box::PathBox::connect(&window);
     crate::command_line::CommandLine::connect(&window);
+    crate::git_commands::connect(&window);
     filter::Filter::connect(&window);
     search::Searches::connect(&window);
     let left = panes::Pane {
@@ -1214,6 +1216,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
                 menus.group_header(x, y);
             }
         }
+    });
+    window.on_git_menu(|left, top, right, bottom| {
+        crate::git_commands::bar_menu(popup::Anchor::below(left, top, right, bottom));
     });
     window.on_filter_menu({
         let menus = menus.clone();
@@ -1636,6 +1641,12 @@ fn route(
     }
     if let winit::event::WindowEvent::Focused(true) = event {
         crate::operations::with_current(crate::operations::Operations::clipboard_check);
+        // Git marks: a file changed elsewhere in a sub-folder of the folder shown (which its
+        // watcher does not see) shows once the window comes back; nothing runs outside
+        // repositories, and no folder tree is watched.
+        for pane in crate::panes::all() {
+            pane.view.git_soon();
+        }
     }
     if let winit::event::WindowEvent::DroppedFile(path) = event {
         drag::with_current(|drags| drags.dropped_file(path.clone()));

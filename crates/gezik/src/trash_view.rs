@@ -329,6 +329,15 @@ pub fn allowed(action: Action) -> bool {
         | Action::BrowseArchive
         | Action::RunCommand
         | Action::ToggleCommandOutput
+        | Action::GitStage
+        | Action::GitUnstage
+        | Action::GitCommit
+        | Action::GitPush
+        | Action::GitPull
+        | Action::GitFetch
+        | Action::GitSwitchBranch
+        | Action::GitDiscard
+        | Action::GitCompareHead
         | Action::CopyToOtherPane => false,
     }
 }

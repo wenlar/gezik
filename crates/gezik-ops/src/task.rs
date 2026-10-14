@@ -155,6 +155,9 @@ pub struct Resources {
     /// Paths on every drive the task touches (sources and target folders).
     pub paths: Vec<PathBuf>,
     pub work: Work,
+    /// Places that are no folder on disk (a phone, spec 16 §4.6), by key: two jobs on one
+    /// queue as two on one drive do.
+    pub vfs_roots: Vec<String>,
 }
 
 /// When an item runs. `Before` items run one by one as they are planned (folders to make,
@@ -325,6 +328,17 @@ pub enum Outcome {
     /// Done by the administrator helper and seen on disk: undo runs `undo`, as administrator too.
     AsAdmin {
         undo: gezik_core::elevated::Op,
+    },
+    /// Made on a phone (spec 16 §4.6): undo deletes it there.
+    VfsCreated {
+        at: gezik_core::vfs::VfsPath,
+        /// The phone's id of what was made: undo leaves an object that took its place.
+        id: String,
+    },
+    /// Renamed on a phone: undo renames it back.
+    VfsRenamed {
+        from: gezik_core::vfs::VfsPath,
+        to: gezik_core::vfs::VfsPath,
     },
     /// Nothing changed (a folder that was already there).
     Nothing,

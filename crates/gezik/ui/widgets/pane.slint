@@ -104,6 +104,8 @@ export struct PaneData {
     cmd-dropped: bool,
     // Bumped by each run (the list starts at its end).
     cmd-run: int,
+    // A git command ended wanting a password: Open in Terminal (spec 16 §9.4).
+    cmd-terminal: bool,
     // What came while the list did not follow ("1,204 new lines · End"), or "".
     cmd-new-lines: string,
 }
@@ -805,6 +807,7 @@ export component PaneView inherits Rectangle {
                     state: root.data.cmd-state;
                     dropped: root.data.cmd-dropped;
                     run: root.data.cmd-run;
+                    terminal: root.data.cmd-terminal;
                     new-lines: root.data.cmd-new-lines;
                     follow-changed(on) => { root.command-follow(root.index, on); }
                     mono-font: root.mono-font;

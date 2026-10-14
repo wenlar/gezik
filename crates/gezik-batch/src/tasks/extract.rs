@@ -108,7 +108,7 @@ impl Task for ExtractTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.archive.clone(), self.dir.clone()], work: Work::Disk }
+        Resources { paths: vec![self.archive.clone(), self.dir.clone()], work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

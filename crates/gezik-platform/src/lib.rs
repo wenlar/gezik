@@ -24,6 +24,7 @@ mod locale;
 #[cfg(target_os = "macos")]
 mod mac;
 pub mod meta;
+pub mod mtp;
 pub mod network;
 pub mod open_with;
 mod picture;
@@ -143,7 +144,7 @@ pub use pointer::catch_up_pointer;
 #[cfg(windows)]
 pub use properties::show_properties;
 #[cfg(windows)]
-pub use removal::{RemovalWatch, watch_removal};
+pub use removal::{RemovalWatch, watch_phones, watch_removal};
 #[cfg(windows)]
 pub use session_end::on_session_end;
 #[cfg(windows)]
@@ -167,9 +168,18 @@ mod removal_elsewhere {
     ) -> Option<RemovalWatch> {
         None
     }
+
+    /// Calls `on_change` whenever a USB device comes or goes (`mtp::watch`: on the main thread
+    /// on macOS, on a thread of its own on Linux). Call once, after the first frame.
+    pub fn watch_phones(
+        _window: &impl raw_window_handle::HasWindowHandle,
+        on_change: impl Fn() + Send + 'static,
+    ) -> bool {
+        crate::mtp::watch(on_change)
+    }
 }
 #[cfg(not(windows))]
-pub use removal_elsewhere::{RemovalWatch, watch_removal};
+pub use removal_elsewhere::{RemovalWatch, watch_phones, watch_removal};
 
 #[cfg(test)]
 mod tests {

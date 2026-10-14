@@ -320,7 +320,7 @@ impl Task for ConvertTask {
             ConvertWhat::Text(_) => Work::Disk,
             ConvertWhat::Media(_) => Work::External,
         };
-        Resources { paths, work }
+        Resources { paths, work, vfs_roots: Vec::new() }
     }
 
     fn workers(&self) -> Option<usize> {

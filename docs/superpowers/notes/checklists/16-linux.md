@@ -19,3 +19,14 @@ Numbering goes on from `15-linux.md` (it ends at 285). Results go to `../linux-t
 ### 16d, Git status
 
 291. **Changes show by themselves (inotify).** In a repository folder (`git init`, a commit), in a terminal: `echo x >> a.txt` (orange dot on `a.txt` within about 1 s), `git add a.txt` (green dot), `git commit -m t` (gone), `touch new.txt` (grey `?`). Write `build/` into `.gitignore` with a `build` folder present: it turns faint. The status bar shows `⎇ <branch>`. A folder outside any repository and one on an NFS/SMB mount: `pgrep -a git` shows nothing while you browse them. Without git (`[git] program = "/nonexistent"`): "Install Git to see repository status" once, no error box.
+
+### 16e, Git commands
+
+292. **Credentials and errors.** In a clone over HTTPS with the libsecret helper (`git config --global credential.helper /usr/lib/git-core/git-credential-libsecret`, signed in once in a terminal): change, Stage, Commit… (Ctrl+Enter), Push from the status bar's Git menu: the output streams in the panel, exit code 0, `↑1` goes. In a clone of an HTTPS repository with no credentials stored and no helper: Push fails at once (no hang, `pgrep -a git` shows none left), the panel says `terminal prompts disabled` and **Open in Terminal** opens a terminal in the repository with `git push` on the clipboard. Discard Changes… on a changed file and Ctrl+Z brings it back (GNOME and KDE trash).
+
+### 16g, phones
+
+293. **gvfs first (GNOME).** Plug in an unlocked Android phone in "File transfer" on GNOME (or Cinnamon/MATE): Nautilus mounts it; a row with its name shows under the drives within 2 s. Click it: the tab shows `/run/user/<uid>/gvfs/mtp:host=…` as a plain folder with the storages; copy, paste, rename and delete work as in any folder. Unplug: the row goes.
+294. **libmtp without gvfs.** On KDE (or after `systemctl --user stop gvfs-daemon gvfs-mtp-volume-monitor` and unmounting in Nautilus): click the phone: Gezik opens it through libmtp (`mtp://<name>/…` in the address bar); copy off and on, new folder, rename, delete, ⌘Z/Ctrl+Z of a paste, cancel half way and unplug during a copy as in 411. `pgrep -a gezik` and `ps -T -p $(pgrep gezik)` show one `gezik-phones` thread; idle memory with phones on and off differs by at most 0.05 MB.
+295. **No libmtp.** `sudo apt remove libmtp9` (or a system without it): the phone still shows in the sidebar; clicking it says "Cannot open …: Install libmtp (e.g. sudo apt install libmtp9)". Install it again: the click opens it (no restart).
+296. **No udev rules.** Move `/lib/udev/rules.d/69-libmtp.rules` away, `sudo udevadm control --reload && sudo udevadm trigger`, replug: clicking the phone says "No permission to open the phone (libmtp's udev rules)". Put the rules back, replug: it opens.

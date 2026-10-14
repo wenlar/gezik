@@ -495,6 +495,45 @@ Linux).
   is the next choice. Folders reached through a link or junction are looked at where they
   really are, as git does.
 
+- **Commands** (right-click a row ▸ **Git ▸**, the **Git** menu of the status bar's Git
+  part, the command palette, and on macOS the **Git** menu next to Go; no keys by default):
+  **Stage** (`git add`), **Unstage** (`git restore --staged`), **Commit…**, **Push**,
+  **Pull** (with your own `pull.rebase`/`pull.ff`), **Fetch**, **Switch Branch…** (a menu of
+  up to 50 local branches, the current one marked), **Discard Changes…** and **Compare with
+  HEAD** (the file beside its committed version, in the built-in compare or the program of
+  `[tools] diff`). Nothing runs unless you choose it.
+- **The output**: push, pull, fetch and commit show git's output in the pane's command panel
+  (the one of `>` commands) as it comes, with **Stop**; stage, unstage and switch open it only
+  if they fail. **Run Again** runs the same command again. One command at a time in a
+  repository: another waits for it, and so does the status, which every pane in the
+  repository reads again once it ended.
+- **Commit…**: a message field (several lines; a faint line marks the 72nd column), the staged
+  files, **Stage all changes first** (`git commit -a`). Commit is off with an empty message or
+  nothing staged; Ctrl+Enter (⌘↩) commits, Esc keeps the message for later (for this run of
+  Gezik). The repository's hooks (`pre-commit`, `commit-msg`, `pre-push`) run as with git
+  itself; their output shows in the panel.
+- **Discard Changes…** asks first, then each changed file goes to the trash and git writes it
+  as the index has it (staged changes stay: unstage them first); untracked files only go to
+  the trash. A selected folder stands for the changed files in it. One Ctrl+Z (⌘Z) brings
+  them all back. Not offered on a drive without a trash.
+- **Passwords**: git uses your own credential helper (Git Credential Manager, the macOS
+  Keychain, libsecret) and ssh-agent; it never waits for a password in Gezik
+  (`GIT_TERMINAL_PROMPT=0`). When it needed one, the panel offers **Open in Terminal**: a
+  terminal in the repository with the command on the clipboard.
+- **The status bar's Git menu** also lists the files deleted under the folder shown (they
+  have no row).
+- **Safety of commands**: no program the repository's own config names ever runs (filters,
+  merge and diff drivers, ssh and proxy commands, credential helpers, a remote's upload-pack):
+  your own global settings for them are used instead, or git's defaults. Only commit and push
+  run the repository's hooks (as git does); the other commands, pull included, run none. Push,
+  pull and fetch may use the network by `http`, `https`, `ssh`, `git` and `file` only (never
+  `ext::`, which runs a command), and ssh never waits for a passphrase. Paths go to git as
+  they are (no wildcards), after `--` or, for a long list, through its input. Discard re-reads
+  each file's state first and leaves alone one that changed since. On macOS and Linux Stop
+  lets git end by itself for a second before it is killed.
+- **Changes in sub-folders** of the folder shown, made by another program, show when Gezik's
+  window comes back to the front (or with F5).
+
 ```toml
 [git]
 status = true             # false: no marks, git never runs
@@ -503,6 +542,51 @@ ignored = true            # also mark ignored files (drawn faint)
 network = false           # also look for repositories on network drives
 timeout = 10              # seconds a status may take
 ```
+
+## Phones
+
+Android phones (and other MTP devices: media players, cameras) show under the drives in the
+sidebar once plugged in, found by the system's device event within moments; Gezik does not
+poll and loads nothing for them until you open one. A USB stick or card reader that Windows
+also lists as a portable device is left out (it is a drive already).
+
+- **macOS**: Gezik talks to phones through libmtp, loaded only when a phone is opened. It uses
+  Homebrew's (`brew install libmtp`) if there is one; otherwise opening a phone offers Gezik's
+  download of it (about 1 MB, free; until that download is published the box asks you to
+  install Homebrew's). Image Capture (its `ptpcamerad` helper), Android File Transfer or
+  OpenMTP can hold the phone: Gezik then says "Another app is using the phone"; quit that app
+  and click the phone again. In Image Capture, choose the phone and set "Connecting this
+  phone opens" to "No application" so it does not take the phone each time.
+- **Linux**: Gezik uses the system's libmtp (`sudo apt install libmtp9`; Fedora and Arch:
+  `libmtp`), whose package also brings the udev rules that let you open the phone without
+  root. Where GNOME, Cinnamon or MATE have mounted the phone already (gvfs), Gezik opens
+  gvfs's folder (`/run/user/<uid>/gvfs/mtp:host=…`) instead: it is a plain folder there, and
+  everything works as in any other folder. A phone is found through the kernel's device
+  events, heard by one sleeping thread.
+- `[devices] libmtp` (macOS, Linux) names a libmtp of your own.
+
+- **Open**: click the phone (right-click: Open, Open in new tab), or type
+  `mtp://Pixel 8/Internal shared storage/DCIM` in the address bar. Its top shows the
+  phone's storages ("Internal shared storage", "SD card") as folders. A phone that is
+  locked, or not in **File transfer** mode, shows nothing: unlock it and choose File transfer
+  in its USB notification, then press F5.
+- **Copy off** (Ctrl+C then Ctrl+V into a folder, Copy To…, a drag into a Gezik folder):
+  files come out whole, with the phone's change date. The preview, Quick Look and opening a
+  file with its app take it out first, as inside archives (up to `[archives] preview-limit`).
+- **Copy on** (paste or drop files and folders into a phone folder), **New folder**,
+  **Rename** (F2) and **Delete**. A name already on the phone asks once: Replace, Skip or Keep
+  both. MTP cannot write over a file: a replaced file is written beside the old one, the old
+  one deleted and the new one renamed; where the phone refuses renames Gezik says the old
+  file goes first. Undo (Ctrl+Z) deletes what was copied onto the phone and renames back;
+  **a delete on the phone cannot be undone** (it is asked first). Moving between folders on
+  the phone is a copy and a delete.
+- Jobs on one phone run one after another; each shows its progress and can be cancelled
+  (a file cut short is never left on the phone or on disk). A phone unplugged during a job
+  ends it with an error; its tabs go to This PC with "Pixel 8 was disconnected".
+- Not on phones: search, tags, folder sizes, file properties, Git, the terminal and commands,
+  the Windows shell menu. An iPhone shows its photos read only. Thumbnails in the grid are
+  file icons.
+- `[devices] phones = false` turns it off: Gezik then never looks for phones.
 
 ## System integration
 

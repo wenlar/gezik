@@ -339,6 +339,7 @@ msgstr "更改"
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/filter.rs
 #: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/operations.rs
@@ -354,6 +355,7 @@ msgstr "更改"
 #: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
@@ -407,6 +409,7 @@ msgstr "不可用的名称：{}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 #, fuzzy
 msgid "Cannot move a folder into itself"
 msgstr "无法将文件夹移入其自身"
@@ -1516,6 +1519,11 @@ msgstr "\"off\"、\"local\" 或 \"all\""
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
+msgid "{0}: \"{1}\" must be a full path (it is ignored)"
+msgstr "{0}：“{1}”必须是完整路径（已忽略）"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}：应为 [[rename-presets]] 表，实际为 {1}"
 
@@ -1723,11 +1731,6 @@ msgstr "{0}：应为 1 到 4096 之间的数字，实际为 {1}"
 #, fuzzy
 msgid "{0}: expected a number from 1 to 600, got {1}"
 msgstr "{0}：应为 1 到 600 之间的数字，实际为 {1}"
-
-#: crates/gezik-config/src/settings.rs
-#, fuzzy
-msgid "{0}: \"{1}\" must be a full path (it is ignored)"
-msgstr "{0}：“{1}”必须是完整路径（已忽略）"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2832,6 +2835,69 @@ msgstr "运行命令…"
 #, fuzzy
 msgid "Command Output"
 msgstr "命令输出"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Stage"
+msgstr "暂存"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Unstage"
+msgstr "取消暂存"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Commit…"
+msgstr "提交…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Push"
+msgstr "推送"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Pull"
+msgstr "拉取"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Fetch"
+msgstr "获取"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Switch Branch…"
+msgstr "切换分支…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Discard Changes…"
+msgstr "放弃更改…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Compare with HEAD"
+msgstr "与 HEAD 比较"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -4141,7 +4207,9 @@ msgid_plural "{n} changed"
 msgstr[0] "{n} 项更改"
 
 #. the status bar in a Git repository: files deleted under the folder shown.
+#. a heading in the status bar's Git menu over the deleted files' names
 #: crates/gezik-core/src/git.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "{n} deleted"
 msgid_plural "{n} deleted"
@@ -4208,6 +4276,8 @@ msgstr "评分"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Git"
@@ -6312,6 +6382,83 @@ msgstr "Gezik 无法识别的标签记录；未处理"
 msgid "Too many tags and too long a comment for one file"
 msgstr "单个文件的标签过多且备注过长"
 
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)"
+msgstr "无法使用 {0}：缺少 {1}（需要 libmtp 1.1.17 或更高版本）"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "{0} could not be loaded: {1}"
+msgstr "无法加载 {0}：{1}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "No permission to open the phone (libmtp's udev rules)"
+msgstr "无权打开手机（libmtp 的 udev 规则）"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Another app is using the phone (Image Capture, Android File Transfer). Quit it and try again."
+msgstr "另一个应用正在使用手机（图像捕捉、Android File Transfer）。退出该应用后重试。"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Another app is using the phone. Quit it and try again."
+msgstr "另一个应用正在使用手机。退出该应用后重试。"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The file ended early"
+msgstr "文件提前结束"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "a partial file {} may remain on the phone"
+msgstr "手机上可能残留不完整的文件 {}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "A storage of the phone cannot be deleted"
+msgstr "无法删除手机的存储"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The copy stopped on an internal error"
+msgstr "复制因内部错误而停止"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Storage {}"
+msgstr "存储 {}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "Only {0} of {1} bytes arrived"
+msgstr "{1} 字节中只收到 {0} 字节"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#, fuzzy
+msgid "The phone did not say what it made of {}"
+msgstr "手机未说明为 {} 创建了什么"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phones need libmtp"
+msgstr "手机需要 libmtp"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Install libmtp (e.g. sudo apt install libmtp9)"
+msgstr "请安装 libmtp（例如 sudo apt install libmtp9）"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+#, fuzzy
+msgid "Phone"
+msgstr "手机"
+
 #: crates/gezik-platform/src/network.rs
 #, fuzzy
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
@@ -6440,6 +6587,41 @@ msgstr "部分项目无法从压缩包中取出"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "嵌套超过 {} 层的压缩包不会打开"
 
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A name no path can hold"
+msgstr "任何路径都无法容纳的名称"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "The file came short from the phone"
+msgstr "从手机读取的文件不完整"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}；新文件以 {1} 的名称保留在手机上"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}；无法放回旧文件：{1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "A storage of the phone cannot be changed"
+msgstr "无法更改手机的存储"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It changed since"
+msgstr "此后已更改"
+
+#: crates/gezik-vfs/src/mtp.rs
+#, fuzzy
+msgid "It is not empty"
+msgstr "不是空的"
+
 #: crates/gezik-vfs/src/tasks.rs
 #, fuzzy
 msgid "Copying {}"
@@ -6472,6 +6654,27 @@ msgstr "正在从 {1} 中删除 {0}"
 #, fuzzy
 msgid "Updating {} in the archive"
 msgstr "正在更新压缩包中的 {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "手机上已有 {n} 个项目"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "替换会删除同名文件夹及其中的所有内容。"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "Replace on the phone?"
+msgstr "替换手机上的项目？"
+
+#: crates/gezik-vfs/src/tasks.rs
+#, fuzzy
+msgid "The old file is deleted before the new one is written"
+msgstr "写入新文件之前会先删除旧文件"
 
 #: crates/gezik/src/actions.rs
 #, fuzzy
@@ -6770,6 +6973,11 @@ msgstr "需要 pdfium"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
+msgid "libmtp needed"
+msgstr "需要 libmtp"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
 msgid "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
 msgstr "读取 HEIC 和 AVIF 图片需要 ffmpeg 9 或更高版本。settings.toml 中 [convert] 下设置的 ffmpeg 版本较旧：请将其设为 ffmpeg 9 或更高版本，或将其删除以使用 Gezik 下载的版本。"
 
@@ -6884,6 +7092,21 @@ msgstr "打开 {} 压缩包需要 7-Zip。Gezik 暂时无法为此系统下载�
 #, fuzzy
 msgid "Opening {} archives needs 7-Zip: install 7-Zip 25 or newer yourself, or set seven-zip under [tools] in settings.toml."
 msgstr "打开 {} 压缩包需要 7-Zip：请自行安装 7-Zip 25 或更高版本，或在 settings.toml 的 [tools] 下设置 seven-zip。"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp (~{}, free)."
+msgstr "手机需要 libmtp（约 {}，免费）。"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install libmtp)."
+msgstr "手机需要 libmtp。Gezik 暂时无法为此系统下载它：请自行安装（brew install libmtp）。"
+
+#: crates/gezik/src/archives.rs
+#, fuzzy
+msgid "Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in settings.toml."
+msgstr "手机需要 libmtp：请自行安装（brew install libmtp），或在 settings.toml 的 [devices] 下设置 libmtp。"
 
 #: crates/gezik/src/archives.rs
 #, fuzzy
@@ -7306,11 +7529,13 @@ msgid "Run Command"
 msgstr "运行命令"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "A command is still running. Stop it?"
 msgstr "仍有命令在运行。要停止它吗？"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 #, fuzzy
 msgid "Stop and Run"
 msgstr "停止并运行"
@@ -7340,6 +7565,12 @@ msgstr "无法启动 {0}：{1}"
 #, fuzzy
 msgid "Did not start"
 msgstr "未启动"
+
+#. {} is a command put on the clipboard ("git push")
+#: crates/gezik/src/command_line.rs
+#, fuzzy
+msgid "Copied: {}"
+msgstr "已复制：{}"
 
 #: crates/gezik/src/command_line.rs
 #, fuzzy
@@ -9730,6 +9961,116 @@ msgstr "无法共享：{}"
 msgid "Folder sizes are worked out in folders"
 msgstr "文件夹大小仅在文件夹中计算"
 
+#: crates/gezik/src/git.rs
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git took too long ([git] timeout)"
+msgstr "Git 耗时过长（[git] timeout）"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "and {n} more"
+msgid_plural "and {n} more"
+msgstr[0] "还有 {n} 项"
+
+#. {} is a lock file of git's (…/.git/index.lock)
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git left {} behind: delete it only if no git is running"
+msgstr "Git 留下了 {}：仅在没有 git 运行时才可删除"
+
+#. {} is git's own message (not translated).
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view/folder_git.rs
+#, fuzzy
+msgid "Git: {}"
+msgstr "Git：{}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Not in a Git repository"
+msgstr "不在 Git 仓库中"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select files first"
+msgstr "请先选择文件"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No branches yet"
+msgstr "还没有分支"
+
+#. the commit dialog's title; {} is the repository's folder name
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Commit to {}"
+msgstr "提交到 {}"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Git status is not known yet"
+msgstr "Git 状态尚未知"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "No changes to discard (staged changes stay: unstage them first)"
+msgstr "没有可放弃的更改（已暂存的更改保留：请先取消暂存）"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file? It goes to the trash first, so you can undo."
+msgid_plural "Discard changes to {n} files? They go to the trash first, so you can undo."
+msgstr[0] "放弃 {n} 个文件的更改？文件会先移到回收站，因此可以撤销。"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard changes to {n} file"
+msgid_plural "Discard changes to {n} files"
+msgstr[0] "放弃 {n} 个文件的更改"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "This drive has no trash: changes are not discarded (they could not be undone)"
+msgstr "此驱动器没有回收站：未放弃更改（无法撤销）"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discard Changes"
+msgstr "放弃更改"
+
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/vfs_mounts.rs
+#, fuzzy
+msgid "Discard"
+msgstr "丢弃"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "cancelled"
+msgstr "已取消"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "{0}; the file is still in the trash at {1} ({2})"
+msgstr "{0}；文件仍在回收站中：{1}（{2}）"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Discarding changes to {n} file"
+msgid_plural "Discarding changes to {n} files"
+msgstr[0] "正在放弃 {n} 个文件的更改"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "changed since: left as it is"
+msgstr "之后已更改：保持原样"
+
+#: crates/gezik/src/git_commands.rs
+#, fuzzy
+msgid "Select one file to compare with HEAD"
+msgstr "请选择一个文件与 HEAD 比较"
+
 #: crates/gezik/src/info.rs
 #, fuzzy
 msgid "Cannot show Properties: {}"
@@ -10682,7 +11023,7 @@ msgstr "已翻译 {}%"
 #, fuzzy
 msgid "{0} (+{n} more)"
 msgid_plural "{0} (+{n} more)"
-msgstr[0] "{0}（另有 {n} 条）"
+msgstr[0] "{0}（另有 {n} 项）"
 
 #: crates/gezik/src/main.rs
 #, fuzzy
@@ -10708,8 +11049,18 @@ msgstr[0] "正在读取 {}：{n} 个项目"
 
 #: crates/gezik/src/navigation.rs
 #, fuzzy
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "请解锁手机，并在其 USB 通知中选择“文件传输”"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
 msgid "{} no longer exists"
 msgstr "{} 已不存在"
+
+#: crates/gezik/src/navigation.rs
+#, fuzzy
+msgid "{} is not connected"
+msgstr "{} 未连接"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -10826,6 +11177,11 @@ msgstr "已存在同名文件"
 msgid "Not in search results: open a folder first"
 msgstr "不适用于搜索结果：请先打开文件夹"
 
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "This device can only be read"
+msgstr "此设备只能读取"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -10836,6 +11192,18 @@ msgstr "{} 适用于搜索结果"
 #, fuzzy
 msgid "can't be undone"
 msgstr "无法撤销"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+#, fuzzy
+msgid "Delete {} from the phone?"
+msgstr "从手机删除 {}？"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+#, fuzzy
+msgid "This cannot be undone."
+msgstr "此操作无法撤销。"
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -10897,12 +11265,6 @@ msgstr "移到回收站"
 #, fuzzy
 msgid "Delete {} permanently?"
 msgstr "永久删除 {}？"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-#, fuzzy
-msgid "This cannot be undone."
-msgstr "此操作无法撤销。"
 
 #: crates/gezik/src/operations.rs
 #, fuzzy
@@ -11258,6 +11620,11 @@ msgstr "pdfium 无法在此系统上加载：{}"
 #, fuzzy
 msgid "Could not load pdfium: {}"
 msgstr "无法加载 pdfium：{}"
+
+#: crates/gezik/src/phones.rs
+#, fuzzy
+msgid "{} was disconnected"
+msgstr "{} 已断开连接"
 
 #: crates/gezik/src/places.rs
 #, fuzzy
@@ -11804,6 +12171,11 @@ msgstr "打开搜索后才能保存"
 #, fuzzy
 msgid "Flat view works in folders"
 msgstr "平铺视图仅适用于文件夹"
+
+#: crates/gezik/src/search.rs
+#, fuzzy
+msgid "Phones are not searched"
+msgstr "不搜索手机"
 
 #: crates/gezik/src/search.rs
 #, fuzzy
@@ -13741,11 +14113,6 @@ msgstr "{0} 已更改，但未更新到 {1}"
 
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
-msgid "Discard"
-msgstr "丢弃"
-
-#: crates/gezik/src/vfs_mounts.rs
-#, fuzzy
 msgid "Keep a Copy in Downloads"
 msgstr "在“下载”中保留副本"
 
@@ -13774,12 +14141,6 @@ msgstr "无法读取属性（没有读取线程）"
 #, fuzzy
 msgid "Reading properties… {} of {}"
 msgstr "正在读取属性… {}/{}"
-
-#. {} is git's own message (not translated).
-#: crates/gezik/src/view/folder_git.rs
-#, fuzzy
-msgid "Git: {}"
-msgstr "Git：{}"
 
 #: crates/gezik/src/view/folder_git.rs
 #, fuzzy
@@ -13967,6 +14328,11 @@ msgstr "{}，标签 {}"
 #, fuzzy
 msgid "Stop"
 msgstr "停止"
+
+#: crates/gezik/ui/widgets/command-output.slint
+#, fuzzy
+msgid "Open in Terminal"
+msgstr "在终端中打开"
 
 #: crates/gezik/ui/widgets/command-output.slint
 #, fuzzy
@@ -14455,6 +14821,41 @@ msgstr "更多"
 #, fuzzy
 msgid "Saved filters"
 msgstr "已保存的筛选器"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit message"
+msgstr "提交信息"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "No changes to commit."
+msgstr "没有要提交的更改。"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Nothing is staged."
+msgstr "没有已暂存的内容。"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "To commit:"
+msgstr "将提交："
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Staged:"
+msgstr "已暂存："
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Stage all changes first"
+msgstr "先暂存所有更改"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+#, fuzzy
+msgid "Commit"
+msgstr "提交"
 
 #: crates/gezik/ui/widgets/info.slint
 #, fuzzy
@@ -15441,6 +15842,30 @@ msgstr "一次状态查询可用的秒数"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "手机"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "插入时显示 Android 手机 (MTP)；false：Gezik 不查找它们"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.libmtp"
+msgid "Libmtp"
+msgstr "libmtp"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:devices.libmtp"
+msgid "Path to libmtp (macOS, Linux); empty = Homebrew's or Gezik's download (macOS), the system's (Linux)"
+msgstr "libmtp 的路径（macOS、Linux）；留空 = Homebrew 的或 Gezik 下载的（macOS），系统自带的（Linux）"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
 msgctxt "setting:convert.ffmpeg"
 msgid "Ffmpeg"
 msgstr "ffmpeg"
@@ -15745,6 +16170,13 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "命令"
 
+#~ #, fuzzy
+#~ msgid "{0} (+{n} more)"
+#~ msgid_plural "{0} (+{n} more)"
+#~ msgstr[0] "{0}（另有 {n} 条）"
+#~ #, fuzzy
+#~ msgid "cannot watch the config folder for changes: {}"
+#~ msgstr "无法监视配置文件夹的更改：{}"
 #~ #, fuzzy
 #~ msgctxt "setting:view.sort"
 #~ msgid "name | modified | created | type | size | tags | rating"

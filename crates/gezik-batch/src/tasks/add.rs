@@ -109,7 +109,7 @@ impl Task for AddToArchiveTask {
     fn resources(&self) -> Resources {
         let mut paths = vec![self.archive.clone()];
         paths.extend(put_sources(&self.edits));
-        Resources { paths, work: Work::Cpu }
+        Resources { paths, work: Work::Cpu, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
@@ -933,7 +933,7 @@ impl ExtractCx for Check<'_, '_> {
 fn check_edit(edit: &Edit) -> io::Result<()> {
     let names: Vec<&str> = match edit {
         Edit::Put { to, .. } => vec![to],
-        Edit::MakeDir(name) | Edit::Delete(name) => vec![name],
+        Edit::MakeDir(name) | Edit::Delete(name) | Edit::Unmake { path: name, .. } => vec![name],
         Edit::Rename { from, to } => vec![from, to],
     };
     for name in names {

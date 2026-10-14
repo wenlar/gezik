@@ -150,7 +150,7 @@ impl Task for ElevatedTask {
 
     fn resources(&self) -> Resources {
         let paths = self.ops.iter().flat_map(|op| std::iter::once(op.path()).chain(op.target())).map(Path::to_path_buf);
-        Resources { paths: paths.collect(), work: Work::External }
+        Resources { paths: paths.collect(), work: Work::External, vfs_roots: Vec::new() }
     }
 
     fn workers(&self) -> Option<usize> {

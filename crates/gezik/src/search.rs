@@ -1379,6 +1379,10 @@ impl Searches {
         if !spec.is_query() {
             return self.0.view.set_results_status(Some(t!("Type something to search").into_owned()));
         }
+        // On a phone each folder is a request: no search there (spec 16 §4.7).
+        if matches!(&spec.scope, Scope::Vfs(at) if gezik_vfs::queue_key(&at.root).is_some()) {
+            return self.0.view.set_results_status(Some(t!("Phones are not searched").into_owned()));
+        }
         // Inside an archive: names, sizes and dates in its index (spec 16 §5.5).
         if matches!(spec.scope, Scope::Vfs(_)) && (!spec.content.is_empty() || spec.has_meta() || spec.duplicates) {
             let why = t!("Inside an archive only names, sizes, dates and types are searched");

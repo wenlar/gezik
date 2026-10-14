@@ -246,7 +246,7 @@ impl Task for CompressTask {
     fn resources(&self) -> Resources {
         let mut paths = self.sources.clone();
         paths.push(self.target.clone());
-        Resources { paths, work: Work::Cpu }
+        Resources { paths, work: Work::Cpu, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

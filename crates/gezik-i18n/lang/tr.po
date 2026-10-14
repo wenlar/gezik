@@ -280,6 +280,7 @@ msgstr "Değiştir"
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/filter.rs
 #: crates/gezik/src/finder_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/src/info.rs
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/operations.rs
@@ -295,6 +296,7 @@ msgstr "Değiştir"
 #: crates/gezik/src/vfs_mounts.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/convert.slint
+#: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #: crates/gezik/ui/widgets/settings.slint
@@ -339,6 +341,7 @@ msgstr "Kullanılamayan ad: {}"
 
 #: crates/gezik-batch/src/tasks/add.rs
 #: crates/gezik-ops/src/tasks/move_.rs
+#: crates/gezik/src/operations.rs
 msgid "Cannot move a folder into itself"
 msgstr "Bir klasör kendi içine taşınamaz"
 
@@ -1254,6 +1257,10 @@ msgid "\"off\", \"local\" or \"all\""
 msgstr "\"off\", \"local\" ya da \"all\""
 
 #: crates/gezik-config/src/settings.rs
+msgid "{0}: \"{1}\" must be a full path (it is ignored)"
+msgstr "{0}: \"{1}\" tam yol olmalı (yok sayılır)"
+
+#: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}: [[rename-presets]] tabloları bekleniyordu, gelen: {1}"
 
@@ -1421,10 +1428,6 @@ msgstr "{0}: 1 ile 4096 arası bir sayı bekleniyordu, gelen: {1}"
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected a number from 1 to 600, got {1}"
 msgstr "{0}: 1 ile 600 arası bir sayı bekleniyordu, gelen: {1}"
-
-#: crates/gezik-config/src/settings.rs
-msgid "{0}: \"{1}\" must be a full path (it is ignored)"
-msgstr "{0}: \"{1}\" tam yol olmalı (yok sayılır)"
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: {1}; {{left}} {{right}} is used"
@@ -2345,6 +2348,60 @@ msgstr "Komut çalıştır…"
 #: crates/gezik/ui/widgets/command-output.slint
 msgid "Command Output"
 msgstr "Komut çıktısı"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Stage"
+msgstr "Hazırla"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Unstage"
+msgstr "Hazırlığı kaldır"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Commit…"
+msgstr "İşle (commit)…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Push"
+msgstr "Gönder (push)"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Pull"
+msgstr "Çek (pull)"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Fetch"
+msgstr "Getir (fetch)"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Switch Branch…"
+msgstr "Dal değiştir…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Discard Changes…"
+msgstr "Değişiklikleri at…"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/ui/app.slint
+msgid "Compare with HEAD"
+msgstr "HEAD ile karşılaştır"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "{0}: unknown action"
@@ -3402,7 +3459,9 @@ msgid_plural "{n} changed"
 msgstr[0] "{n} değişiklik"
 
 #. the status bar in a Git repository: files deleted under the folder shown.
+#. a heading in the status bar's Git menu over the deleted files' names
 #: crates/gezik-core/src/git.rs
+#: crates/gezik/src/git_commands.rs
 msgid "{n} deleted"
 msgid_plural "{n} deleted"
 msgstr[0] "{n} silindi"
@@ -3460,6 +3519,8 @@ msgstr "Puan"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/git_commands.rs
 #: crates/gezik/ui/app.slint
 msgid "Git"
 msgstr "Git"
@@ -5171,6 +5232,68 @@ msgstr "Gezik'in tanımadığı bir etiket kaydı; dokunulmadı"
 msgid "Too many tags and too long a comment for one file"
 msgstr "Bir dosya için çok fazla etiket ve çok uzun bir yorum"
 
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "{0} cannot be used: it has no {1} (libmtp 1.1.17 or newer is needed)"
+msgstr "{0} kullanılamıyor: {1} yok (libmtp 1.1.17 ya da daha yenisi gerekir)"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "{0} could not be loaded: {1}"
+msgstr "{0} yüklenemedi: {1}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "No permission to open the phone (libmtp's udev rules)"
+msgstr "Telefonu açma izni yok (libmtp'nin udev kuralları)"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Another app is using the phone (Image Capture, Android File Transfer). Quit it and try again."
+msgstr "Telefonu başka bir uygulama kullanıyor (Görüntü Yakalama, Android File Transfer). Ondan çıkıp yeniden deneyin."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Another app is using the phone. Quit it and try again."
+msgstr "Telefonu başka bir uygulama kullanıyor. Ondan çıkıp yeniden deneyin."
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The file ended early"
+msgstr "Dosya erken bitti"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "a partial file {} may remain on the phone"
+msgstr "telefonda yarım bir {} dosyası kalmış olabilir"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+#: crates/gezik-platform/src/mtp/windows.rs
+#: crates/gezik/src/operations.rs
+msgid "A storage of the phone cannot be deleted"
+msgstr "Telefonun deposu silinemez"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The copy stopped on an internal error"
+msgstr "Kopyalama bir iç hatayla durdu"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Storage {}"
+msgstr "Depolama {}"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "Only {0} of {1} bytes arrived"
+msgstr "{1} bayttan yalnız {0} tanesi geldi"
+
+#: crates/gezik-platform/src/mtp/libmtp.rs
+msgid "The phone did not say what it made of {}"
+msgstr "Telefon {} için ne oluşturduğunu bildirmedi"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phones need libmtp"
+msgstr "Telefonlar için libmtp gerekir"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Install libmtp (e.g. sudo apt install libmtp9)"
+msgstr "libmtp'yi kurun (ör. sudo apt install libmtp9)"
+
+#: crates/gezik-platform/src/mtp/mod.rs
+msgid "Phone"
+msgstr "Telefon"
+
 #: crates/gezik-platform/src/network.rs
 msgid "Type a server address, like \\\\server\\share or smb://server/share"
 msgstr "Bir sunucu adresi yazın, örn. \\\\server\\share ya da smb://server/share"
@@ -5274,6 +5397,34 @@ msgstr "Bazı öğeler arşivden çıkarılamadı"
 msgid "Archives nested more than {} deep are not opened"
 msgstr "{} düzeyden daha derin iç içe arşivler açılmaz"
 
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A name no path can hold"
+msgstr "Hiçbir yolun tutamayacağı bir ad"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "The file came short from the phone"
+msgstr "Dosya telefondan eksik geldi"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the new file is kept on the phone as {1}"
+msgstr "{0}; yeni dosya telefonda {1} adıyla duruyor"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "{0}; the old file could not be put back: {1}"
+msgstr "{0}; eski dosya geri konamadı: {1}"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "A storage of the phone cannot be changed"
+msgstr "Telefonun deposu değiştirilemez"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It changed since"
+msgstr "O zamandan beri değişti"
+
+#: crates/gezik-vfs/src/mtp.rs
+msgid "It is not empty"
+msgstr "Boş değil"
+
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Copying {}"
 msgstr "Kopyalanıyor: {}"
@@ -5300,6 +5451,23 @@ msgstr "Siliniyor: {0} ({1})"
 #: crates/gezik-vfs/src/tasks.rs
 msgid "Updating {} in the archive"
 msgstr "Arşivde güncelleniyor: {}"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "{n} item already on the phone"
+msgid_plural "{n} items already on the phone"
+msgstr[0] "{n} öğe zaten telefonda"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Replace deletes a folder of that name with everything in it."
+msgstr "Değiştir, bu adlı bir klasörü içindeki her şeyle siler."
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "Replace on the phone?"
+msgstr "Telefondaki değiştirilsin mi?"
+
+#: crates/gezik-vfs/src/tasks.rs
+msgid "The old file is deleted before the new one is written"
+msgstr "Yenisi yazılmadan önce eski dosya silinir"
 
 #: crates/gezik/src/actions.rs
 msgid "Commands run on files and folders"
@@ -5545,6 +5713,10 @@ msgid "pdfium needed"
 msgstr "pdfium gerekli"
 
 #: crates/gezik/src/archives.rs
+msgid "libmtp needed"
+msgstr "libmtp gerekli"
+
+#: crates/gezik/src/archives.rs
 msgid "Reading HEIC and AVIF pictures needs ffmpeg 9 or newer. The ffmpeg set under [convert] in settings.toml is older: set it to ffmpeg 9 or newer, or remove it to use Gezik's download."
 msgstr "HEIC ve AVIF resimlerini okumak için ffmpeg 9 ya da daha yenisi gerekir. settings.toml içinde [convert] altında ayarlı ffmpeg daha eski: ffmpeg 9 ya da daha yenisini ayarlayın veya Gezik'in indirdiğini kullanmak için kaldırın."
 
@@ -5637,6 +5809,18 @@ msgstr "{} arşivlerini açmak için 7-Zip gerekir. Gezik bunu bu sistem için h
 #: crates/gezik/src/archives.rs
 msgid "Opening {} archives needs 7-Zip: install 7-Zip 25 or newer yourself, or set seven-zip under [tools] in settings.toml."
 msgstr "{} arşivlerini açmak için 7-Zip gerekir: 7-Zip 25 ya da daha yenisini kendiniz yükleyin veya settings.toml içinde [tools] altında seven-zip ayarlayın."
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp (~{}, free)."
+msgstr "Telefonlar için libmtp gerekir (~{}, ücretsiz)."
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp. Gezik cannot download it for this system yet: install it yourself (brew install libmtp)."
+msgstr "Telefonlar için libmtp gerekir. Gezik onu bu sistem için henüz indiremiyor: kendiniz kurun (brew install libmtp)."
+
+#: crates/gezik/src/archives.rs
+msgid "Phones need libmtp: install it yourself (brew install libmtp), or set libmtp under [devices] in settings.toml."
+msgstr "Telefonlar için libmtp gerekir: kendiniz kurun (brew install libmtp) ya da settings.toml'da [devices] altında libmtp'yi ayarlayın."
 
 #: crates/gezik/src/archives.rs
 msgid "Type the size of a part in MB"
@@ -5983,10 +6167,12 @@ msgid "Run Command"
 msgstr "Komut çalıştır"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 msgid "A command is still running. Stop it?"
 msgstr "Bir komut hâlâ çalışıyor. Durdurulsun mu?"
 
 #: crates/gezik/src/command_line.rs
+#: crates/gezik/src/git_commands.rs
 msgid "Stop and Run"
 msgstr "Durdur ve çalıştır"
 
@@ -6010,6 +6196,11 @@ msgstr "{0} başlatılamadı: {1}"
 #: crates/gezik/src/command_line.rs
 msgid "Did not start"
 msgstr "Başlatılamadı"
+
+#. {} is a command put on the clipboard ("git push")
+#: crates/gezik/src/command_line.rs
+msgid "Copied: {}"
+msgstr "Kopyalandı: {}"
 
 #: crates/gezik/src/command_line.rs
 msgid "No command has run in this pane"
@@ -7949,6 +8140,96 @@ msgstr "Paylaşılamıyor: {}"
 msgid "Folder sizes are worked out in folders"
 msgstr "Klasör boyutları klasörlerde hesaplanır"
 
+#: crates/gezik/src/git.rs
+#: crates/gezik/src/git_commands.rs
+msgid "Git took too long ([git] timeout)"
+msgstr "Git çok uzun sürdü ([git] timeout)"
+
+#: crates/gezik/src/git_commands.rs
+msgid "and {n} more"
+msgid_plural "and {n} more"
+msgstr[0] "ve {n} tane daha"
+
+#. {} is a lock file of git's (…/.git/index.lock)
+#: crates/gezik/src/git_commands.rs
+msgid "Git left {} behind: delete it only if no git is running"
+msgstr "Git geride {} bıraktı: yalnız hiçbir git çalışmıyorsa silin"
+
+#. {} is git's own message (not translated).
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view/folder_git.rs
+msgid "Git: {}"
+msgstr "Git: {}"
+
+#: crates/gezik/src/git_commands.rs
+msgid "Not in a Git repository"
+msgstr "Bir Git deposunda değil"
+
+#: crates/gezik/src/git_commands.rs
+msgid "Select files first"
+msgstr "Önce dosyaları seçin"
+
+#: crates/gezik/src/git_commands.rs
+msgid "No branches yet"
+msgstr "Henüz dal yok"
+
+#. the commit dialog's title; {} is the repository's folder name
+#: crates/gezik/src/git_commands.rs
+msgid "Commit to {}"
+msgstr "İşle: {}"
+
+#: crates/gezik/src/git_commands.rs
+msgid "Git status is not known yet"
+msgstr "Git durumu henüz bilinmiyor"
+
+#: crates/gezik/src/git_commands.rs
+msgid "No changes to discard (staged changes stay: unstage them first)"
+msgstr "Atılacak değişiklik yok (hazırlanmış değişiklikler kalır: önce hazırlığı kaldırın)"
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discard changes to {n} file? It goes to the trash first, so you can undo."
+msgid_plural "Discard changes to {n} files? They go to the trash first, so you can undo."
+msgstr[0] "{n} dosyadaki değişiklikler atılsın mı? Önce Çöp Sepeti'ne gider, geri alabilirsiniz."
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discard changes to {n} file"
+msgid_plural "Discard changes to {n} files"
+msgstr[0] "{n} dosyadaki değişiklikleri at"
+
+#: crates/gezik/src/git_commands.rs
+msgid "This drive has no trash: changes are not discarded (they could not be undone)"
+msgstr "Bu sürücüde çöp sepeti yok: değişiklikler atılmadı (geri alınamazdı)"
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discard Changes"
+msgstr "Değişiklikleri at"
+
+#: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/vfs_mounts.rs
+msgid "Discard"
+msgstr "Değişikliği at"
+
+#: crates/gezik/src/git_commands.rs
+msgid "cancelled"
+msgstr "iptal edildi"
+
+#: crates/gezik/src/git_commands.rs
+msgid "{0}; the file is still in the trash at {1} ({2})"
+msgstr "{0}; dosya hâlâ çöpte: {1} ({2})"
+
+#: crates/gezik/src/git_commands.rs
+msgid "Discarding changes to {n} file"
+msgid_plural "Discarding changes to {n} files"
+msgstr[0] "{n} dosyadaki değişiklikler atılıyor"
+
+#: crates/gezik/src/git_commands.rs
+msgid "changed since: left as it is"
+msgstr "o zamandan beri değişti: olduğu gibi bırakıldı"
+
+#: crates/gezik/src/git_commands.rs
+msgid "Select one file to compare with HEAD"
+msgstr "HEAD ile karşılaştırmak için bir dosya seçin"
+
 #: crates/gezik/src/info.rs
 msgid "Cannot show Properties: {}"
 msgstr "Özellikler gösterilemiyor: {}"
@@ -8752,8 +9033,16 @@ msgid_plural "Reading {}: {n} items"
 msgstr[0] "Okunuyor: {} ({n} öğe)"
 
 #: crates/gezik/src/navigation.rs
+msgid "Unlock the phone and choose File transfer in its USB notification"
+msgstr "Telefonun kilidini açın ve USB bildiriminde Dosya aktarımı'nı seçin"
+
+#: crates/gezik/src/navigation.rs
 msgid "{} no longer exists"
 msgstr "{} artık yok"
+
+#: crates/gezik/src/navigation.rs
+msgid "{} is not connected"
+msgstr "{} bağlı değil"
 
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
@@ -8849,6 +9138,10 @@ msgstr "Bu adda bir dosya zaten var"
 msgid "Not in search results: open a folder first"
 msgstr "Arama sonuçlarında olmaz: önce bir klasör açın"
 
+#: crates/gezik/src/operations.rs
+msgid "This device can only be read"
+msgstr "Bu aygıt yalnız okunabilir"
+
 #. {} is a command's name, "Copy with folders"
 #: crates/gezik/src/operations.rs
 msgid "{} works in search results"
@@ -8857,6 +9150,16 @@ msgstr "{} arama sonuçlarında çalışır"
 #: crates/gezik/src/operations.rs
 msgid "can't be undone"
 msgstr "geri alınamaz"
+
+#. {} is a name or "3 items"
+#: crates/gezik/src/operations.rs
+msgid "Delete {} from the phone?"
+msgstr "{} telefondan silinsin mi?"
+
+#: crates/gezik/src/operations.rs
+#: crates/gezik/src/trash_view.rs
+msgid "This cannot be undone."
+msgstr "Bu işlem geri alınamaz."
 
 #. {} is a name or "3 items"
 #: crates/gezik/src/operations.rs
@@ -8907,11 +9210,6 @@ msgstr "Çöpe at"
 #: crates/gezik/src/operations.rs
 msgid "Delete {} permanently?"
 msgstr "{} kalıcı olarak silinsin mi?"
-
-#: crates/gezik/src/operations.rs
-#: crates/gezik/src/trash_view.rs
-msgid "This cannot be undone."
-msgstr "Bu işlem geri alınamaz."
 
 #: crates/gezik/src/operations.rs
 msgid "Cannot duplicate a drive"
@@ -9201,6 +9499,10 @@ msgstr "pdfium bu sistemde yüklenmiyor: {}"
 #: crates/gezik/src/pdf.rs
 msgid "Could not load pdfium: {}"
 msgstr "pdfium yüklenemedi: {}"
+
+#: crates/gezik/src/phones.rs
+msgid "{} was disconnected"
+msgstr "{} çıkarıldı"
 
 #: crates/gezik/src/places.rs
 msgid "{} (all files)"
@@ -9644,6 +9946,10 @@ msgstr "Kaydetmek için bir arama açın"
 #: crates/gezik/src/search.rs
 msgid "Flat view works in folders"
 msgstr "Düz görünüm klasörlerde çalışır"
+
+#: crates/gezik/src/search.rs
+msgid "Phones are not searched"
+msgstr "Telefonlarda arama yapılmaz"
 
 #: crates/gezik/src/search.rs
 msgid "Inside an archive only names, sizes, dates and types are searched"
@@ -11209,10 +11515,6 @@ msgid "{0} changed but is not in {1}"
 msgstr "{0} değişti ama {1} içinde güncellenmedi"
 
 #: crates/gezik/src/vfs_mounts.rs
-msgid "Discard"
-msgstr "Değişikliği at"
-
-#: crates/gezik/src/vfs_mounts.rs
 msgid "Keep a Copy in Downloads"
 msgstr "İndirilenler'de bir kopya tut"
 
@@ -11236,11 +11538,6 @@ msgstr "Özellikler okunamadı (okuyacak iş parçacığı yok)"
 #: crates/gezik/src/view/folder_fields.rs
 msgid "Reading properties… {} of {}"
 msgstr "Özellikler okunuyor… {} / {}"
-
-#. {} is git's own message (not translated).
-#: crates/gezik/src/view/folder_git.rs
-msgid "Git: {}"
-msgstr "Git: {}"
 
 #: crates/gezik/src/view/folder_git.rs
 msgid "Git status took too long ([git] timeout)"
@@ -11392,6 +11689,10 @@ msgstr "{}, etiketler: {}"
 #: crates/gezik/ui/widgets/filter-bar.slint
 msgid "Stop"
 msgstr "Durdur"
+
+#: crates/gezik/ui/widgets/command-output.slint
+msgid "Open in Terminal"
+msgstr "Terminalde aç"
 
 #: crates/gezik/ui/widgets/command-output.slint
 msgid "Run Again"
@@ -11786,6 +12087,34 @@ msgstr "Diğer"
 #: crates/gezik/ui/widgets/filter-bar.slint
 msgid "Saved filters"
 msgstr "Kayıtlı filtreler"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Commit message"
+msgstr "Commit iletisi"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "No changes to commit."
+msgstr "İşlenecek değişiklik yok."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Nothing is staged."
+msgstr "Hazırlanmış bir şey yok."
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "To commit:"
+msgstr "İşlenecekler:"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Staged:"
+msgstr "Hazırlananlar:"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Stage all changes first"
+msgstr "Önce bütün değişiklikleri hazırla"
+
+#: crates/gezik/ui/widgets/git-commit.slint
+msgid "Commit"
+msgstr "İşle"
 
 #: crates/gezik/ui/widgets/info.slint
 msgid "Sharing & Permissions"
@@ -12593,6 +12922,26 @@ msgid "Seconds a status may take"
 msgstr "Bir durum sorgusunun sürebileceği saniye"
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.phones"
+msgid "Phones"
+msgstr "Telefonlar"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.phones"
+msgid "Show Android phones (MTP) when plugged in; false: Gezik does not look for them"
+msgstr "Takılınca Android telefonları (MTP) göster; false: Gezik onları aramaz"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.libmtp"
+msgid "Libmtp"
+msgstr "libmtp"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:devices.libmtp"
+msgid "Path to libmtp (macOS, Linux); empty = Homebrew's or Gezik's download (macOS), the system's (Linux)"
+msgstr "libmtp yolu (macOS, Linux); boş = Homebrew'unki ya da Gezik'in indirdiği (macOS), sistemin (Linux)"
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:convert.ffmpeg"
 msgid "Ffmpeg"
 msgstr "Ffmpeg"
@@ -12847,6 +13196,11 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Komutlar"
 
+#~ msgid "{0} (+{n} more)"
+#~ msgid_plural "{0} (+{n} more)"
+#~ msgstr[0] "{0} (+{n} daha)"
+#~ msgid "cannot watch the config folder for changes: {}"
+#~ msgstr "yapılandırma klasöründeki değişiklikler izlenemiyor: {}"
 #~ msgctxt "setting:view.sort"
 #~ msgid "name | modified | created | type | size | tags | rating"
 #~ msgstr "name | modified | created | type | size | tags | rating"

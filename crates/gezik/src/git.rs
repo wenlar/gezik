@@ -373,9 +373,17 @@ fn run(
     deadline: Instant,
     stop: &AtomicBool,
 ) -> Result<(std::process::ExitStatus, Vec<u8>, String), Outcome> {
+    run_command(command(program, args, dir, config), deadline, stop)
+}
+
+/// `run` with the command made.
+fn run_command(
+    command: std::process::Command,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<(std::process::ExitStatus, Vec<u8>, String), Outcome> {
     let (mut child, mut stdout, mut stderr) =
-        gezik_platform::ChildProcess::spawn_piped(command(program, args, dir, config))
-            .map_err(|e| Outcome::Failed(e.to_string()))?;
+        gezik_platform::ChildProcess::spawn_piped(command).map_err(|e| Outcome::Failed(e.to_string()))?;
     let out = std::thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stdout.read_to_end(&mut bytes);
@@ -433,6 +441,184 @@ fn concerns(event: &Event, roots: &[PathBuf]) -> bool {
 pub fn prefix(root: &Path, dir: &Path) -> String {
     let rest = dir.strip_prefix(root).unwrap_or(Path::new(""));
     rest.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+}
+
+/// What a git call lets the repository's own config do (spec 16 §9.4). Every call keeps the
+/// ground above: no prompt, git by its full path (2.31 or newer), the environment's repository
+/// redirections removed, fsmonitor off, settings passed in the environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trust {
+    /// Gezik's own reads and the local commands (stage, unstage, switch, restore): as a status,
+    /// the repository's own filter drivers emptied and no transport.
+    Local,
+    /// fetch, pull: as `Local`, with transport by [`PROTOCOLS`] only.
+    Network,
+    /// commit: its hooks and filters run as git runs them (spec 16 §9.2); no transport.
+    Hooks,
+    /// push: its hooks run, transport by [`PROTOCOLS`] only.
+    HooksNetwork,
+}
+
+/// The protocols push, pull and fetch may use: never `ext::` (a command line) or another one.
+pub const PROTOCOLS: &str = "http:https:ssh:git:file";
+
+/// The repository settings that name a program git runs (spec 16 §9.4): filter drivers, merge
+/// and diff drivers, ssh and proxy commands, credential helpers, a remote's upload-pack and
+/// receive-pack (a `file` remote runs them here). Keys as git writes them (section and key in
+/// lower case).
+const PROGRAM_KEYS: &str = r"^(filter\..*\.(clean|process|smudge)|merge\..*\.driver|core\.(sshcommand|gitproxy|askpass)|credential\.(.*\.)?helper|remote\..*\.(uploadpack|receivepack|proxy)|diff\..*\.(command|textconv))$";
+
+/// What a program setting of the repository's own is replaced by when the user's own config has
+/// none: nothing, or what git does without it.
+fn blank(key: &str) -> &'static str {
+    if key.starts_with("merge.") {
+        // Git's own three-way merge of the file, as an external driver.
+        "git merge-file --marker-size=%L %A %O %B"
+    } else if key.ends_with(".uploadpack") {
+        "git-upload-pack"
+    } else if key.ends_with(".receivepack") {
+        "git-receive-pack"
+    } else {
+        ""
+    }
+}
+
+/// The settings that replace the program settings the repository's own config sets (`local`,
+/// `worktree` scope, files it includes too), from `config -z --show-scope --get-regexp`
+/// (`scope\0key\nvalue\0…`): each such key gets its blank and then the user's own values for it
+/// again (system, global, command line), so the last one is theirs. Credential helpers are a
+/// list: it is reset and the user's helpers come back in their order. A key with `=` or a line
+/// break is refused.
+fn overrides(out: &[u8]) -> Result<Vec<(String, String)>, String> {
+    let mut words = out.split(|b| *b == 0).map(String::from_utf8_lossy);
+    let mut entries: Vec<(bool, String, String)> = Vec::new();
+    while let (Some(scope), Some(pair)) = (words.next(), words.next()) {
+        let (key, value) = pair.split_once('\n').unwrap_or((&pair, ""));
+        entries.push((matches!(&*scope, "local" | "worktree"), key.to_owned(), value.to_owned()));
+    }
+    let credential = |key: &str| key.starts_with("credential.");
+    let mut keys: Vec<&str> = Vec::new();
+    for (own, key, _) in &entries {
+        if *own && !keys.contains(&key.as_str()) {
+            if key.contains(['=', '\n', '\r']) {
+                return Err(format!(
+                    "the repository's setting \"{}\" has a name Gezik does not pass to git",
+                    key.escape_debug()
+                ));
+            }
+            keys.push(key);
+        }
+    }
+    let mut out = Vec::new();
+    for key in keys.iter().filter(|k| !credential(k)) {
+        out.push(((*key).to_owned(), blank(key).to_owned()));
+        out.extend(entries.iter().filter(|(own, k, _)| !own && k == key).map(|(_, k, v)| (k.clone(), v.clone())));
+    }
+    if keys.iter().any(|k| credential(k)) {
+        for key in keys.iter().filter(|k| credential(k)) {
+            out.push(((*key).to_owned(), String::new()));
+        }
+        out.extend(entries.iter().filter(|(own, k, _)| !own && credential(k)).map(|(_, k, v)| (k.clone(), v.clone())));
+    }
+    Ok(out)
+}
+
+/// An empty folder of Gezik's own for `core.hooksPath`: no hook runs (a repository's own
+/// `core.hooksPath` is overridden too). Made once a run.
+fn no_hooks() -> Result<PathBuf, Outcome> {
+    static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+    let mut dir = lock(&DIR);
+    if let Some(dir) = dir.as_ref().filter(|d| d.is_dir()) {
+        return Ok(dir.clone());
+    }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+    // shortcut: an empty folder left in the temp folder after Gezik quits; a cleanup is not
+    // worth its code.
+    let made = std::env::temp_dir().join(format!("gezik-no-hooks-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&made).map_err(|e| Outcome::Failed(e.to_string()))?;
+    *dir = Some(made.clone());
+    Ok(made)
+}
+
+/// Whether ssh must be told not to ask (`GIT_SSH_COMMAND=ssh -o BatchMode=yes`): neither the
+/// environment (`GIT_SSH`, `GIT_SSH_COMMAND`) nor the user's own config names an ssh command.
+pub fn batch_ssh(env_ssh: bool, user_ssh_command: bool) -> bool {
+    !env_ssh && !user_ssh_command
+}
+
+/// The git command `args` in `dir` as `trust` allows (spec 16 §9.4). Always: the program
+/// settings of the repository's own config replaced by the user's or nothing (a `git config`
+/// look first; a config that cannot be read refuses the command). `Local` and `Network`: no
+/// hooks at all. `Network`, `HooksNetwork`: transport by [`PROTOCOLS`] only, ssh never asks.
+/// Blocking.
+pub fn prepared(
+    args: &[OsString],
+    dir: &Path,
+    trust: Trust,
+    stop: &AtomicBool,
+) -> Result<std::process::Command, Outcome> {
+    let program = program()?;
+    let network = matches!(trust, Trust::Network | Trust::HooksNetwork);
+    let mut config = safe_config();
+    if network {
+        config.retain(|(key, _)| key != "protocol.allow");
+    }
+    let deadline = Instant::now() + Duration::from_secs(settings().timeout.into());
+    let listing = ["config", "-z", "--show-scope", "--get-regexp", PROGRAM_KEYS].map(OsString::from);
+    let (code, out, errors) = run(&program, &listing, dir, &config, deadline, stop)?;
+    if !matches!(code.code(), Some(0 | 1)) {
+        return Err(Outcome::Failed(format!("git too old or config unreadable: {}", first_line(&errors))));
+    }
+    let user_ssh = out.split(|b| *b == 0).collect::<Vec<_>>().chunks(2).any(|pair| {
+        pair.len() == 2 && !matches!(pair[0], b"local" | b"worktree") && pair[1].starts_with(b"core.sshcommand\n")
+    });
+    let (set, packs) = overrides(&out)
+        .map_err(Outcome::Failed)?
+        .into_iter()
+        .partition::<Vec<_>, _>(|(key, _)| !(key.ends_with(".uploadpack") || key.ends_with(".receivepack")));
+    config.extend(set);
+    if matches!(trust, Trust::Local | Trust::Network) {
+        config.push(("core.hooksPath".to_owned(), no_hooks()?.to_string_lossy().into_owned()));
+    }
+    let mut args = args.to_vec();
+    // A remote's upload-pack and receive-pack cannot be set twice (git keeps the first, the
+    // repository's): the command's own option replaces them (the user's value, else git's).
+    let pack = |end: &str| packs.iter().rev().find(|(key, _)| key.ends_with(end)).map(|(_, value)| value.clone());
+    let option = match args.first().and_then(|a| a.to_str()) {
+        Some("fetch" | "pull") => pack(".uploadpack").map(|v| format!("--upload-pack={v}")),
+        Some("push") => pack(".receivepack").map(|v| format!("--receive-pack={v}")),
+        _ => None,
+    };
+    if let Some(option) = option {
+        args.insert(1, option.into());
+    }
+    let mut command = command(&program, &args, dir, &config);
+    command.env("GIT_LITERAL_PATHSPECS", "1");
+    if network {
+        command.env_remove("GIT_NO_LAZY_FETCH").env("GIT_ALLOW_PROTOCOL", PROTOCOLS);
+        let env_ssh = ["GIT_SSH", "GIT_SSH_COMMAND"].iter().any(|v| std::env::var_os(v).is_some_and(|v| !v.is_empty()));
+        if batch_ssh(env_ssh, user_ssh) {
+            command.env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
+        }
+    }
+    Ok(command)
+}
+
+/// Runs `args` in `dir` as `trust` allows and gives its output, or git's first error line
+/// (Gezik's own reads: the branches, the staged files, a file at HEAD; a discard's restore).
+/// Blocking.
+pub fn read(args: &[&str], dir: &Path, trust: Trust) -> Result<Vec<u8>, String> {
+    let stop = AtomicBool::new(false);
+    let args: Vec<OsString> = args.iter().map(OsString::from).collect();
+    let failed = |outcome: Outcome| match outcome {
+        Outcome::Failed(why) => why,
+        Outcome::Missing => gezik_core::git::missing_text(),
+        _ => gezik_i18n::t!("Git took too long ([git] timeout)").into_owned(),
+    };
+    let command = prepared(&args, dir, trust, &stop).map_err(failed)?;
+    let deadline = Instant::now() + Duration::from_secs(settings().timeout.into());
+    let (code, out, errors) = run_command(command, deadline, &stop).map_err(failed)?;
+    if code.success() { Ok(out) } else { Err(first_line(&errors)) }
 }
 
 #[cfg(test)]
@@ -586,6 +772,32 @@ mod tests {
         assert_eq!(parse_version("git version 2.39.5 (Apple Git-154)"), Some((2, 39)));
         assert_eq!(parse_version("hub version 2"), None);
         assert!(parse_version("git version 2.30.1").unwrap() < MIN_VERSION);
+    }
+
+    #[test]
+    fn the_repository_s_program_settings_give_way_to_the_user_s() {
+        let out = b"global\0filter.lfs.smudge\ngit-lfs smudge\0local\0filter.lfs.smudge\nevil\0\
+            global\0credential.helper\nmanager\0local\0credential.helper\n!evil\0\
+            worktree\0credential.https://x.helper\n!evil2\0local\0remote.origin.uploadpack\nevil\0\
+            local\0merge.m.driver\nevil\0local\0core.sshcommand\nevil\0";
+        let set = overrides(out).unwrap();
+        let pairs: Vec<(&str, &str)> = set.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(
+            pairs,
+            [
+                ("filter.lfs.smudge", ""),
+                ("filter.lfs.smudge", "git-lfs smudge"),
+                ("remote.origin.uploadpack", "git-upload-pack"),
+                ("merge.m.driver", "git merge-file --marker-size=%L %A %O %B"),
+                ("core.sshcommand", ""),
+                ("credential.helper", ""),
+                ("credential.https://x.helper", ""),
+                ("credential.helper", "manager"),
+            ]
+        );
+        assert!(overrides(b"global\0core.sshcommand\nmine\0").unwrap().is_empty(), "the user's own stay as they are");
+        assert!(overrides(b"local\0filter.a=b.smudge\nx\0").is_err());
+        assert!(batch_ssh(false, false) && !batch_ssh(true, false) && !batch_ssh(false, true));
     }
 
     #[test]

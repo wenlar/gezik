@@ -727,7 +727,7 @@ impl Engine {
         let kind = first.kind();
         let background = tasks.iter().all(|task| task.kind() == TaskKind::Delete);
         let paths: Vec<PathBuf> = tasks.iter().flat_map(|task| task.resources().paths).collect();
-        let roots = lexical_roots(paths.iter().map(PathBuf::as_path));
+        let roots = lexical_roots(paths.iter().map(PathBuf::as_path)).with(vfs_keys(&tasks));
         let job = Arc::new(Job {
             id,
             tasks,
@@ -961,6 +961,11 @@ fn waiting(job: &Job) -> bool {
 }
 
 /// Whether `a` and `b` share a drive, as `wait_turn` sees it.
+/// The queue keys of the places that are no folder on disk `tasks` touch (spec 16 §4.6).
+pub(crate) fn vfs_keys(tasks: &[Arc<dyn Task>]) -> Vec<String> {
+    tasks.iter().flat_map(|task| task.resources().vfs_roots).map(|key| format!("vfs:{key}")).collect()
+}
+
 fn share_a_drive(a: &Job, b: &Job) -> bool {
     if a.drives_known.load(Ordering::SeqCst) && b.drives_known.load(Ordering::SeqCst) {
         lock(&a.drives).intersects(&lock(&b.drives))
@@ -1003,6 +1008,41 @@ pub fn move_next_to<T>(list: &mut Vec<T>, at: usize, partner: usize) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn jobs_on_one_phone_share_a_key() {
+        struct OnPhone(&'static str);
+        impl Task for OnPhone {
+            fn kind(&self) -> crate::task::TaskKind {
+                crate::task::TaskKind::Copy
+            }
+            fn title(&self) -> String {
+                String::new()
+            }
+            fn count(&self) -> usize {
+                1
+            }
+            fn resources(&self) -> crate::task::Resources {
+                crate::task::Resources {
+                    paths: Vec::new(),
+                    work: crate::task::Work::Disk,
+                    vfs_roots: vec![self.0.into()],
+                }
+            }
+            fn plan(&self, _: &mut dyn crate::task::ScanSink) {}
+            fn run(
+                &self,
+                _: &crate::task::PlanItem,
+                _: &crate::task::RunCx<'_>,
+            ) -> std::io::Result<crate::task::Outcome> {
+                Ok(crate::task::Outcome::Nothing)
+            }
+        }
+        let keys = |id| DriveSet::default().with(vfs_keys(&[Arc::new(OnPhone(id)) as Arc<dyn Task>]));
+        assert!(keys("usb#a").intersects(&keys("usb#a")));
+        assert!(!keys("usb#a").intersects(&keys("usb#b")));
+        assert!(!keys("c:").intersects(&lexical_roots([Path::new("c:")])), "never a drive's key");
+    }
+
     use super::*;
     use crate::testing::{FakeTask, Gate, defaults, engine, finish, test_dir};
     use crate::testing::{read, write};
@@ -1222,7 +1262,7 @@ mod tests {
             1
         }
         fn resources(&self) -> crate::task::Resources {
-            crate::task::Resources { paths: vec![self.0.clone()], work: crate::task::Work::Disk }
+            crate::task::Resources { paths: vec![self.0.clone()], work: crate::task::Work::Disk, vfs_roots: Vec::new() }
         }
         fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
             sink.item(
@@ -1282,7 +1322,11 @@ mod tests {
             1
         }
         fn resources(&self) -> crate::task::Resources {
-            crate::task::Resources { paths: vec![self.target.clone()], work: crate::task::Work::Disk }
+            crate::task::Resources {
+                paths: vec![self.target.clone()],
+                work: crate::task::Work::Disk,
+                vfs_roots: Vec::new(),
+            }
         }
         fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
             let facts = gezik_core::ops::conflict::Facts { is_dir: false, size: 1, modified: None };
@@ -1323,7 +1367,11 @@ mod tests {
             1
         }
         fn resources(&self) -> crate::task::Resources {
-            crate::task::Resources { paths: vec![self.target.clone()], work: crate::task::Work::External }
+            crate::task::Resources {
+                paths: vec![self.target.clone()],
+                work: crate::task::Work::External,
+                vfs_roots: Vec::new(),
+            }
         }
         fn plan(&self, sink: &mut dyn crate::task::ScanSink) {
             let facts = gezik_core::ops::conflict::Facts { is_dir: false, size: 4, modified: None };

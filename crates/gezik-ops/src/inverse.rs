@@ -5,16 +5,28 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use gezik_core::attrs::Wanted;
 use gezik_core::ops::conflict::Facts;
 use gezik_core::ops::paths::{cover, path_key};
+use gezik_core::vfs::{Edit, VfsRoot};
 
 use crate::task::{Outcome, Task};
 use crate::tasks::{
     ElevatedTask, MoveTask, RenameTask, RestoreTask, SetAttributesTask, SwapBackTask, TagsTask, TrashTask,
 };
+
+/// Makes the task that applies `edits` to a place that is no folder on disk (a phone). Set by
+/// gezik-vfs, which builds on this crate.
+pub type VfsUndo = fn(VfsRoot, Vec<Edit>) -> Arc<dyn Task>;
+
+static VFS_UNDO: OnceLock<VfsUndo> = OnceLock::new();
+
+/// Tells undo how to change places that are no folder on disk (once; later calls change nothing).
+pub fn set_vfs_undo(undo: VfsUndo) {
+    let _ = VFS_UNDO.set(undo);
+}
 
 /// Files are checked before undo touches them; folders are not (they change as files land).
 fn expect(facts: &Facts) -> Option<Facts> {
@@ -65,6 +77,26 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     let mut admin = Vec::new();
     let mut flat = Vec::new();
     flatten(outcomes, &mut flat);
+    // On a phone: what was made is deleted there, what was renamed gets its name back (the
+    // last rename first), each place in one task.
+    let mut places: Vec<(VfsRoot, Vec<Edit>)> = Vec::new();
+    for outcome in flat.iter().rev() {
+        let (root, edit) = match outcome {
+            Outcome::VfsCreated { at, id } => (&at.root, Edit::Unmake { path: at.inner.clone(), id: id.clone() }),
+            Outcome::VfsRenamed { from, to } => {
+                (&to.root, Edit::Rename { from: to.inner.clone(), to: from.inner.clone() })
+            }
+            _ => continue,
+        };
+        match places.iter_mut().find(|(r, _)| r == root) {
+            Some((_, edits)) => edits.push(edit),
+            None => places.push((root.clone(), vec![edit])),
+        }
+    }
+    let vfs_tasks: Vec<Arc<dyn Task>> = match VFS_UNDO.get() {
+        Some(undo) => places.into_iter().map(|(root, edits)| undo(root, edits)).collect(),
+        None => Vec::new(),
+    };
     // A file made in place of one the job trashed (an archive written anew): undone as a swap
     // that keeps the newer file unless the older one can come back.
     let replaced: HashSet<Vec<String>> = flat
@@ -130,7 +162,11 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
             }
             Outcome::MetaChanged { path, before, after } => metas.push((path.clone(), after.clone(), before.clone())),
             Outcome::AsAdmin { undo } => admin.push(undo.clone()),
-            Outcome::Deleted { .. } | Outcome::Nothing | Outcome::Several(_) => {}
+            Outcome::Deleted { .. }
+            | Outcome::VfsCreated { .. }
+            | Outcome::VfsRenamed { .. }
+            | Outcome::Nothing
+            | Outcome::Several(_) => {}
         }
     }
     // A folder brought back together with what was inside it (the redo of undoing a copy with
@@ -174,7 +210,7 @@ pub(crate) fn build(outcomes: &[Outcome]) -> Vec<Arc<dyn Task>> {
     // Renames in one folder may swap names: they go back in an order that never collides.
     let (renamed, moved): (Vec<_>, Vec<_>) =
         moved.into_iter().partition(|(now, was, _)| now.parent().is_some() && now.parent() == was.parent());
-    let mut tasks: Vec<Arc<dyn Task>> = Vec::new();
+    let mut tasks: Vec<Arc<dyn Task>> = vfs_tasks;
     if !swaps.is_empty() {
         tasks.push(Arc::new(SwapBackTask::new(swaps)));
     }
@@ -352,6 +388,30 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].kind(), TaskKind::Tags);
         assert_eq!(tasks[0].count(), 2);
+    }
+
+    #[test]
+    fn phone_changes_go_back_through_the_registered_maker() {
+        use gezik_core::vfs::VfsPath;
+        fn maker(root: VfsRoot, edits: Vec<Edit>) -> Arc<dyn Task> {
+            assert_eq!(root.name(), "P");
+            assert_eq!(
+                edits,
+                [
+                    Edit::Rename { from: "S/b.txt".into(), to: "S/a.txt".into() },
+                    Edit::Unmake { path: "S/new".into(), id: "7".into() },
+                ],
+                "the last change first"
+            );
+            Arc::new(crate::testing::AskingTask)
+        }
+        set_vfs_undo(maker);
+        let top = VfsPath { root: VfsRoot::Device { id: "1".into(), name: "P".into() }, inner: "S".into() };
+        let outcomes = vec![Outcome::Several(vec![
+            Outcome::VfsCreated { at: top.join("new"), id: "7".into() },
+            Outcome::VfsRenamed { from: top.join("a.txt"), to: top.join("b.txt") },
+        ])];
+        assert_eq!(build(&outcomes).len(), 1, "one task for one phone");
     }
 
     #[test]

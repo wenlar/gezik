@@ -132,7 +132,7 @@ impl Task for DownloadTask {
     }
 
     fn resources(&self) -> Resources {
-        Resources { paths: vec![self.tools_dir.clone()], work: Work::External }
+        Resources { paths: vec![self.tools_dir.clone()], work: Work::External, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {

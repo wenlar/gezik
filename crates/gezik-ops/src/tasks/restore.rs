@@ -41,7 +41,7 @@ impl Task for RestoreTask {
     fn resources(&self) -> Resources {
         let mut paths: Vec<PathBuf> = self.pairs.iter().map(|(trashed, _)| trashed.clone()).collect();
         paths.extend(self.pairs.iter().filter_map(|(_, original)| original.parent().map(|p| p.to_path_buf())));
-        Resources { paths, work: Work::Disk }
+        Resources { paths, work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
@@ -121,7 +121,7 @@ impl Task for SwapBackTask {
     fn resources(&self) -> Resources {
         let mut paths: Vec<PathBuf> = self.pairs.iter().map(|(trashed, _, _)| trashed.clone()).collect();
         paths.extend(self.pairs.iter().map(|(_, original, _)| original.clone()));
-        Resources { paths, work: Work::Disk }
+        Resources { paths, work: Work::Disk, vfs_roots: Vec::new() }
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
