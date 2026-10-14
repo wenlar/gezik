@@ -41,6 +41,12 @@ jobs:
   windows:
     needs: version
     runs-on: windows-latest
+    # Azure trusts this job's OIDC token through a federated credential bound to the
+    # `release` environment.
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
     timeout-minutes: 90
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -56,6 +62,24 @@ jobs:
         with:
           key: release
       - run: cargo build --release -p gezik
+      # Authenticode signing with Azure Artifact Signing (docs/releasing.md#windows-signing).
+      # Skipped until the repository variables exist, so unsigned builds still work.
+      - if: vars.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/login@v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - if: vars.AZURE_SIGNING_ACCOUNT != ''
+        uses: azure/artifact-signing-action@v2.0.0
+        with:
+          endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.AZURE_CERT_PROFILE }}
+          files: ${{ github.workspace }}\target\release\gezik.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
       # Two zips: the plain one keeps settings in %APPDATA%\gezik; the portable one has the
       # empty `gezik-portable` marker next to gezik.exe, so settings stay in gezik-data\ beside it.
       - name: Package
@@ -82,6 +106,7 @@ jobs:
     timeout-minutes: 120
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
       # Marks the packages that replace themselves on an update (crates/gezik/src/update.rs).
       GEZIK_RELEASE_BUILD: "1"
     steps:
@@ -100,12 +125,48 @@ jobs:
           mkdir -p stage
           lipo -create -output stage/gezik \
             target/aarch64-apple-darwin/release/gezik target/x86_64-apple-darwin/release/gezik
+      # Developer ID signing and notarization (docs/releasing.md#macos-signing); skipped until
+      # the secrets exist, then make-app.sh signs ad hoc as before.
+      - name: Signing keychain
+        if: env.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          kc=$RUNNER_TEMP/sign.keychain-db; pw=$(uuidgen)
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          id=$(security find-identity -v -p codesigning "$kc" | sed -n 's/.*"\(Developer ID Application: .*\)"/\1/p' | head -1)
+          [ -n "$id" ] || { echo "no Developer ID Application identity in the certificate"; exit 1; }
+          echo "SIGN_IDENTITY=$id" >> "$GITHUB_ENV"
       - name: Gezik.app
         run: |
           mkdir -p stage/dmg
           scripts/macos/make-app.sh stage/gezik "$VERSION" stage/dmg
           cp LICENSE.md THIRD-PARTY.md README.md stage/dmg/
           ln -s /Applications stage/dmg/Applications
+      # Before the dmg and the update tarball, so both carry the stapled ticket. Usually minutes;
+      # a new team's first submissions can take hours, then the run fails within the job limit.
+      - name: Notarize
+        if: env.MACOS_CERT_P12 != ''
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          printf '%s' "$APPLE_API_KEY" > "$RUNNER_TEMP/key.p8"
+          ditto -c -k --keepParent stage/dmg/Gezik.app "$RUNNER_TEMP/Gezik.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/Gezik.zip" --wait --timeout 75m \
+            --key "$RUNNER_TEMP/key.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER"
+          rm "$RUNNER_TEMP/key.p8"
+          # Fails when Apple refused it: there is no ticket to staple.
+          xcrun stapler staple stage/dmg/Gezik.app
+          spctl --assess --type exec -vv stage/dmg/Gezik.app
       - name: Disk image
         run: |
           mkdir -p dist
