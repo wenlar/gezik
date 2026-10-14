@@ -89,6 +89,39 @@ or every such library re-signed with Gezik's team identity (impossible for Homeb
 
 **Linux.** No warning: `tar xzf gezik-<v>-linux-x64.tar.gz && ./gezik-<v>-linux-x64/gezik`.
 
+## Windows signing
+
+`release.yml` signs `gezik.exe` with [Azure Artifact Signing](https://learn.microsoft.com/azure/trusted-signing/quickstart)
+(Wenlar LLC, a US company, is eligible) before zipping it, so `SHA256SUMS.txt` covers the
+signed file. Until the repository variables below exist, the two signing steps are skipped and
+the build stays unsigned. Signing puts "Wenlar LLC" in place of "Unknown publisher" at once;
+SmartScreen's "Windows protected your PC" may still show until the certificate earns
+reputation through downloads. Once signed builds ship, update the Windows line of
+`docs/release-notes-unsigned.md` and [What users see](#what-users-see-without-signing).
+
+One-time setup in the Azure portal:
+
+1. Create a subscription and a resource group, register the `Microsoft.CodeSigning` resource
+   provider, and create an **Artifact Signing account** (Basic, $9.99/month). Note its region's
+   endpoint, e.g. `https://eus.codesigning.azure.net/`.
+2. In the account, give yourself the **Artifact Signing Identity Verifier** role, then
+   Identity validation ▸ New ▸ **Organization**, public trust, with Wenlar LLC's legal details.
+   Microsoft checks them; this can take days.
+3. When it is approved, Certificate profiles ▸ create a **Public Trust** profile on that
+   identity.
+4. Microsoft Entra ID ▸ App registrations ▸ new registration (e.g. `gezik-release`). In it,
+   Certificates & secrets ▸ Federated credentials ▸ add **GitHub Actions**: organization
+   `wenlar`, repository `gezik`, entity **Environment**, name `release`.
+5. In the signing account's Access control (IAM), give that app the
+   **Artifact Signing Certificate Profile Signer** role.
+6. In GitHub, Settings ▸ Secrets and variables ▸ Actions ▸ **Variables** (none of them is
+   secret): `AZURE_CLIENT_ID` (the app's client ID), `AZURE_TENANT_ID`,
+   `AZURE_SUBSCRIPTION_ID`, `AZURE_SIGNING_ENDPOINT`, `AZURE_SIGNING_ACCOUNT`,
+   `AZURE_CERT_PROFILE`.
+
+Check a run by hand (`gh workflow run release.yml -f version=0.0.0-sign`): in the downloaded
+zip, `Get-AuthenticodeSignature gezik.exe` should say `Valid` with Wenlar LLC.
+
 ## Checking a download
 
 Download `SHA256SUMS.txt` next to the package, then:
