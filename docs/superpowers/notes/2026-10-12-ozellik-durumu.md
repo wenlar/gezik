@@ -1,6 +1,6 @@
 # Özellik durumu: rakip özetine göre (2026-10-12)
 
-- **Tarih:** 2026-10-12, 14. ve 15. adımlardan sonra 2026-10-13'te güncellendi. **Taban:** `master` e2c5f46 (PR #128: 15e+15f). 5–14. adımlar birleşti: 12 Etiketler (#91–#97), 13 Önizleme 2 (#92, #98–#100, #102, #103), 14 Taşınabilirlik (#104, #105, #108–#110, #112).
+- **Tarih:** 2026-10-12; 2026-10-13'te (14, 15. adımlar) ve 2026-10-15'te (16. adım, `where`, commands-more, otomatik güncelleme, macOS imzası, 0.1.0-rc.3) güncellendi. **Taban:** `master` 50d2c973 (PR #160: 0.1.0-rc.3). 5–16. adımlar birleşti: 12 Etiketler (#91–#97), 13 Önizleme 2 (#92, #98–#100, #102, #103), 14 Taşınabilirlik (#104, #105, #108–#110, #112), 15 Yerelleştirme (#120–#128), 16 Gelişmiş (#139–#153), otomatik güncelleme (#157), imza (#159).
 - **Kaynak:** `2026-10-07-rakip-ozet.md` §1 tablosu (1–66), §3 ayırt edici yanlar, önerilmeyenler (§1 ve §6).
 - **Nasıl denetlendi:** her satır `docs/features.md`, `README.md`, adım spec'lerinin "Kapsam dışı" bölümleri, `2026-10-03-ayarlar-ve-tema-followups.md`'deki adım notları ve gerekince kodla (`shortcuts.rs` eylem listesi, `settings.rs`, `preview.rs`, komut yer tutucuları) karşılaştırıldı. PR numaraları `git log --merges`'ten.
 
@@ -10,12 +10,12 @@ Rakip kısaltmaları rakip özetindeki gibi: OC, Fi, DO, FP, Far, FL, PF, TC.
 
 | Durum | §1 tablosu (66 satır) | Önerilmeyenler (13 madde) |
 |---|---|---|
-| ✅ Var | 54 | 0 |
-| 🟡 Kısmen | 6 | 0 |
-| 🔜 Planlı | 5 | 0 |
+| ✅ Var | 57 | 0 |
+| 🟡 Kısmen | 7 | 0 |
+| 🔜 Planlı | 1 | 0 |
 | ❌ Yok / bilerek kapsam dışı | 1 | 13 |
 
-Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65); 15. adım satır 9'u; 16. adım (16a, 16b) satır 12'yi; commands-more satır 30'u.
+Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen, 8'i Planlı, 34'ü Yok idi. İlk sürümde (2026-10-12, 11. adımdan sonra) 44 Var, 12 Kısmen, 9 Planlı idi; 12–14. adımlar yedi satırı Var'a taşıdı (5, 13, 18, 21, 25, 50, 65); 15. adım satır 9'u; 16. adım satır 12, 40 ve 53'ü (44 Kısmen kaldı); commands-more satır 30'u; otomatik güncelleme (#157) satır 17'yi. 2026-10-13'teki özet sayıları tabloyla tutmuyordu (54/6/5); bu güncellemede tablodan yeniden sayıldı.
 
 ## Ana tablo
 
@@ -34,12 +34,12 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 9 | Arayüz çevirisi (önce Türkçe) | 7/8 | Yok | ✅ Var | 15 (#120, #123, #125–#128): İngilizce, Türkçe; Almanca, İspanyolca, Fransızca, Çince makine çevirisi; `.po` dosyasıyla yeni dil |
 | 10 | Yol tamamlama, son klasörler, geçmiş, ortam değişkeni | 7/8 | Kısmen (Ctrl+L) | ✅ Var | 6b (#14): tamamlama, Recent/Frequent, `~`, `%AD%` |
 | 11 | Görünüm seçenekleri (gizli/sistem, uzantı, klasörler önce, biçimler) | 7/8 | Kısmen | ✅ Var | 7b (#19): `[view]` ve View menüsü |
-| 12 | Arşivin içinde klasör gibi gezinme | 7/8 | Planlı | ✅ Var | 16a (#139): zip, 7z, tar, rar, iso ve 7-Zip'in okuduğu her biçimde gezinme, önizleme, arama, iç içe arşiv; 16b: içine bırakma, yapıştırma, silme, yeniden adlandırma, yeni klasör, taşıma, iç içe yazma, "Update in Archive", geri alma |
+| 12 | Arşivin içinde klasör gibi gezinme | 7/8 | Planlı | ✅ Var | 16a (#139): zip, 7z, tar, rar, iso ve 7-Zip'in okuduğu her biçimde gezinme, önizleme, arama, iç içe arşiv; 16b (#142): içine bırakma, yapıştırma, silme, yeniden adlandırma, yeni klasör, taşıma, iç içe yazma, "Update in Archive", geri alma |
 | 13 | Zengin önizleme (video/ses, çok sayfalı PDF, renklendirme, yakınlaştırma, hex) | 7/8 | Kısmen | ✅ Var | 13a (#92) renkli kod, büyük metin, hex; 13b (#98) PDF sayfaları (pdfium, istekle) ve resim yakınlaştırma; 13c (#99) ffmpeg ile video/ses |
 | 14 | Varsayılan dosya yöneticisi (Win+E, `NSFileViewer`) | 6/8 | Yok | ✅ Var | 9b4 (#42), geri alınabilir. Windows'ta başka programların "Klasörde göster"i yönlendirilemiyor (9b11 düştü) |
 | 15 | Kısayol / symlink / hardlink / junction oluşturma | 7/8 | Yok | 🟡 Kısmen | 7c (#20): `.lnk`, junction, symlink; macOS takma ad 9a1 (#34). Hardlink bilerek kapsam dışı (7 spec) |
 | 16 | Terminalde aç (seçim, yönetici olarak) | 6/8 | Yok | ✅ Var | 7a (#17): Shift+F4, `[terminal] command`, Windows'ta yönetici olarak |
-| 17 | Otomatik güncelleme | 5/8 | Planlı | 🔜 Planlı | Yayın hazırlığı |
+| 17 | Otomatik güncelleme | 5/8 | Planlı | ✅ Var | #157: yalnız yayımlanmış GitHub sürümüyle tetiklenir, arka planda indirir, SHA256SUMS ile doğrular, kapanınca kurar; kanal çalışan sürümü izler; ayarlardan kapatılır. İlk kez 0.1.0-rc.3 ile çıktı |
 | 18 | Etiketler (renk, kenar çubuğu, süz/sırala, Finder uyumu) | 5/8 | Planlı | ✅ Var | 12a–12c (#91, #93, #94), 12e (#96): Finder xattr, Linux `user.xdg.*`, Windows `:gezik.meta` akışı + merkezi kayıt; TAGS kenar çubuğu, `tag:` süzgeci, Spotlight araması |
 | 19 | Favori grupları, takma ad, simge/renk, numaralı kısayol | 6/8 | Kısmen | 🟡 Kısmen | 7b (#19): takma ad, grup, Alt+1…9. Simge ve renk bilerek kapsam dışı (7 spec) |
 | 20 | Gruplama (tür, tarih, boyut, etiket) | 5/8 | Yok | ✅ Var | 10d (#58): tür, tarih, boyut; etiket ve puan 12c/12d (#94, #95); meta veri alanları 13e (#102) |
@@ -52,7 +52,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 27 | Komut paleti / Quick Open | 4/8 | Planlı | ✅ Var | 8b (#29): Ctrl+Shift+P, Ctrl+P, `>` |
 | 28 | Sekme kolaylıkları (kapatılanı aç, Ctrl+1…9, seçici) | 5/8 | Yok | ✅ Var | 6a (#13): Ctrl+Shift+T, Ctrl+1…9, Ctrl+Shift+A |
 | 29 | Desenle seç/bırak, ters çevir, aynı uzantı, önceki seçim | 5/8 | Yok | ✅ Var | 6a (#13) |
-| 30 | `[[commands]]` büyütme (kısayol, alt menü, `ask`, `{files}`, diğer panel, iki dosya) | 5/8 | Kısmen | ✅ Var | 6b (#14): `shortcut`, `menu`, `ask`, `{files}`; commands-more: `{other}`, `{other-files}`, `menu = "Resimler/Boyut"` (iç içe başlık) |
+| 30 | `[[commands]]` büyütme (kısayol, alt menü, `ask`, `{files}`, diğer panel, iki dosya) | 5/8 | Kısmen | ✅ Var | 6b (#14): `shortcut`, `menu`, `ask`, `{files}`; commands-more (#155): `{other}`, `{other-files}`, `menu = "Resimler/Boyut"` (iç içe başlık; gerçek alt alt menü değil) |
 | 31 | Sağlama toplamı | 5/8 | Yok | ✅ Var | 11a (#78): CRC32–SHA-512, doğrulama, CSV |
 | 32 | Klasör ağacı | 5/8 | Yok | ✅ Var | 10c (#59): kenar çubuğunda |
 | 33 | Çöp kutusu görünümü | 5/8 | Kısmen (Ctrl+Z) | ✅ Var | 9b2 (#37): Put Back, kalıcı sil, boşalt |
@@ -62,11 +62,11 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 37 | Sistem geneli kısayol, tepsi, girişte başlama | 5/8 | Yok | ✅ Var | 9b9 (#57), varsayılan kapalı. Linux tepsi menüsü yok |
 | 38 | Yönetici yetkisiyle işlem | 5/8 | Yok | ✅ Var | 9b7 (#46): tek seferlik yardımcı, "Retry as administrator" |
 | 39 | Tarayıcı/e-postadan sanal dosya bırakma | 3/8 | Yok | ✅ Var | 9b8 (#55): Windows ve macOS; Linux XDS bilerek kapsam dışı |
-| 40 | Git | 3/8 | Planlı | ✅ Var | 16d (#147) durum: işaretler, sütun, süzgeç, gruplama, dal; 16e komutlar: stage/unstage, commit, push/pull/fetch, dal değiştirme, çöpe giden discard, HEAD ile karşılaştırma |
+| 40 | Git | 3/8 | Planlı | ✅ Var | 16d (#147) durum: işaretler, sütun, süzgeç, gruplama, dal; 16e (#150) komutlar: stage/unstage, commit, push/pull/fetch, dal değiştirme, çöpe giden discard, HEAD ile karşılaştırma |
 | 41 | Eşli gezinme | 4/8 | Yok | ✅ Var | 10b (#64): Sync Browsing |
 | 42 | Tek tıkla açma | 4/8 | Yok | ✅ Var | 7b (#19): `single-click-open` |
 | 43 | Komut satırı seçenekleri | 4/8 | Kısmen | ✅ Var | 9b1 (#35): `--new-tab`, `--new-window`, `--select`; PATH 9b3 (#38) |
-| 44 | MTP / telefon | 4/8 | Kısmen | 🟡 Kısmen | 16f: Windows (WPD) kenar çubuğu, gezinme, kopyalama, yeni klasör, yeniden adlandırma, silme. 16g: macOS (IOKit, Homebrew libmtp; indirme paketi yayımlanmayı bekliyor) ve Linux (netlink, sistem libmtp, gvfs önceliği) kodda; gerçek telefonla macOS/Linux denetimi yapılmadığı için 🟡 (denetim listeleri macOS 409–412, Linux 293–296) |
+| 44 | MTP / telefon | 4/8 | Kısmen | 🟡 Kısmen | 16f (#151): Windows (WPD) kenar çubuğu, gezinme, kopyalama, yeni klasör, yeniden adlandırma, silme. 16g (#152): macOS (IOKit, Homebrew libmtp; indirme paketi yayımlanmayı bekliyor) ve Linux (netlink, sistem libmtp, gvfs önceliği) kodda; gerçek telefonla macOS/Linux denetimi yapılmadığı için 🟡 (denetim listeleri macOS 409–412, Linux 293–296) |
 | 45 | macOS sistem simgeleri, QuickLook | 2/8 | Yok | ✅ Var | 9a1 (#34), sistem paneli 9a2 (#36) |
 | 46 | Panodaki resmi/metni dosya olarak yapıştırma | 2/8 | Yok | ✅ Var | 7c (#20) |
 | 47 | Yeni dosya şablonları; seçimle yeni klasör | 3/8 | Kısmen | ✅ Var | 7c (#20): `templates/`, Ctrl+Alt+N |
@@ -75,7 +75,7 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 50 | Vurgulama kuralları, sıralama grupları | 3/8 | Kısmen (tür rengi) | ✅ Var | 12f (#97): `[[highlight-rules]]` ad, tür, boyut, yaş, etiket, puan, yoruma göre renk ve kalınlık |
 | 51 | Düz görünüm | 3/8 | Yok | ✅ Var | 8a (#22): Ctrl+B |
 | 52 | Yinelenen dosya bulucu | 3/8 | Yok | ✅ Var | 11f (#81) |
-| 53 | Gömülü terminal / adres çubuğunda komut | 3/8 | Yok | ✅ Var | 16c: `>` + Enter bulunulan klasörde kabukta; çıktı paneli, Stop, geçmiş (terminal öykünücüsü değil) |
+| 53 | Gömülü terminal / adres çubuğunda komut | 3/8 | Yok | ✅ Var | 16c (#143, #145, #148): `>` + Enter bulunulan klasörde kabukta; çıktı paneli, Stop, geçmiş (terminal öykünücüsü değil) |
 | 54 | İki dosyayı karşılaştırma | 3/8 | Yok | ✅ Var | 11c (#75): yan yana ve `[tools] diff` |
 | 55 | Görünür işlem günlüğü | 3/8 | Kısmen | ✅ Var | 7c (#20): işlem panelinin History sekmesi; kalıcı log bilerek yok |
 | 56 | Listede ve kenar çubuğunda yaylı klasörler | 2/8 | Kısmen (yalnız sekmede) | 🟡 Kısmen | Hâlâ yalnız sekmede; bilerek kapsam dışı (7 spec) |
@@ -87,8 +87,8 @@ Rakip özetinde (2026-10-07) 66 satırın hiçbiri "Var" değildi: 24'ü Kısmen
 | 62 | Dosya bölme / birleştirme | 2/8 | Kısmen | ✅ Var | 11i (#79): `.001` + `.crc` |
 | 63 | Otomatik görünüm kuralları | 1/8 | Kısmen | ✅ Var | 10f (#60): `[[view-rules]]` |
 | 64 | Kilitli sekmeler | 2/8 | Yok | ✅ Var | 6a (#13); kilit oturumla gelir (7a) |
-| 65 | Taşınabilir mod | 4/8 | Kısmen (`GEZIK_CONFIG_DIR`) | ✅ Var | 14e (#110): exe yanındaki `gezik-portable` işareti → `gezik-data/`; makine başına sistem günlüğü. Hazır taşınabilir paket Yayın hazırlığında |
-| 66 | Meta veri alanlarını her yerde kullanma | 2/8 | Kısmen (EXIF tarihi adda) | 🟡 Kısmen | 13e/13f (#102, #103): sütun, süzgeç, arama (`artist:… duration>3m`), ad şablonu (`{track:02} {artist}`), vurgulama kuralında `where` (`duration>1h`). Eksik: etiketlerin alan kaydına bağlanması |
+| 65 | Taşınabilir mod | 4/8 | Kısmen (`GEZIK_CONFIG_DIR`) | ✅ Var | 14e (#110): exe yanındaki `gezik-portable` işareti → `gezik-data/`; makine başına sistem günlüğü. Hazır taşınabilir zip #121'den beri her sürümde |
+| 66 | Meta veri alanlarını her yerde kullanma | 2/8 | Kısmen (EXIF tarihi adda) | 🟡 Kısmen | 13e/13f (#102, #103): sütun, süzgeç, arama (`artist:… duration>3m`), ad şablonu (`{track:02} {artist}`), vurgulama kuralında `where` (#154, `duration>1h`). Eksik: etiketlerin alan kaydına bağlanması |
 
 ### Önerilmeyenler (rakip özeti §1 ve §6)
 
@@ -127,38 +127,32 @@ Rakip özeti §3'ün listesi bugün de geçerli; aşağıda o liste ve sonradan 
 - **Türkçe harf sırasıyla doğal sıralama.**
 - **Eşitleme klasöründe çok bilgisayarlı ayarlar** (14f, #112): paylaşılan ve bilgisayara özel katman, çevrimdışı bekleyen değişikliklerin yalnız farkıyla uygulanması, bulut servislerinin çakışan kopyalarını anahtar anahtar inceleme; hiçbir şey kendiliğinden birleşmez.
 - **GitHub'dan tema kurma** (14c, #108) yalnız veri olarak: zip diske açılmaz, boyut sınırlı, kurmadan önce önizleme.
+- **Yalnız yayımlanmış sürümle tetiklenen, SHA256SUMS ile doğrulanan otomatik güncelleme** (#157): taslak ya da etiket hiçbir kullanıcıya gitmez; güncelleme kapanışta kurulur, açık iş yarıda kalmaz. Otomatik güncellemenin kendisi rakiplerde var (satır 17); bu iki güvence rakip notlarında geçmiyor.
 - Rakip özetinde "planlı" geçen **şifreli, hesapsız ayar senkronu** henüz yok (17. adım); 14f bir eşitleme klasörü kullanır, şifrelemez.
 
 Bu listeye girmeyenler: **görünüm kuralları** (TC'de var, satır 63), **bırakma yığını** (Fi ve PF'de var, satır 48), **boyut haritası** (PF'de var), **komut paleti** ve **Git** (rakip özeti §3 düzeltmesi).
 
 ## Kalan boşluklar
 
-**12–14. adımlardan kalanlar**
-- 66'nın eksiği: vurgulama kuralında `where`, etiketlerin meta veri alanı kaydına bağlanması
-- macOS ve Linux'ta 12–14. adımlar gerçek cihazda sınanmadı (macOS: `checklists/release-macos.md`, #111; Linux: Docker turu sürüyor)
+**Yol haritasındaki adımlar**
+- 17 Bulut senkronu: ayarların şifreli, hesapsız senkronu (tablo satırı değil, §3)
+- 18 Uzak bağlantılar (açık karar): satır 24, SFTP, FTP, WebDAV, S3
 
-**Yayın hazırlığı**
-- 17 Otomatik güncelleme
-- 65'in eksiği: imza, AppImage (zip paketleri #121 ile var; 0.1.0-rc.1 imzasız ön sürüm olarak yayımlandı)
+**Yayın**
+- Windows imzası: `release.yml` hazır (#159), Azure Artifact Signing aboneliği Microsoft desteğinde bekliyor. macOS 0.1.0-rc.3'ten beri imzalı ve notarize
+- Microsoft Store (MSIX) ve imzalı kurulum programı: planlanmadı
 
-**16 Gelişmiş**
-- 12 Arşivin içinde gezinme
-- 40 Git
-- 44 MTP / telefon
-- 53 Adres çubuğunda komut / gömülü terminal
-
-**17 Bulut senkronu**
-- Ayarların şifreli, hesapsız senkronu (tablo satırı değil, §3)
-
-**18 Uzak bağlantılar** (açık karar)
-- 24 SFTP, FTP, WebDAV, S3
+**Gerçek cihazda sınanmayanlar**
+- 44: macOS ve Linux'ta gerçek telefon (denetim listeleri macOS 409–412, Linux 293–296); macOS libmtp indirme paketi yayımlanmayı bekliyor
+- 12–16. adımlar macOS ve Linux'ta denetim listeleriyle (`checklists/`)
 
 **Planı olmayan kısmi ya da bilerek dışarıda kalanlar**
 - 6 Ağ keşfi (9 spec)
 - 15 Hardlink oluşturma (7 spec)
 - 19 Sabitlenen klasöre simge ve renk (7 spec)
 - 26 Zaman damgası ve ACL düzenleme (9 spec)
-- 30 `[[commands]]`'ta diğer bölme yer tutucusu, iç içe alt menü
+- 30'un sınırı: `menu = "A/B"` gerçek alt alt menü değil, gri başlık
 - 56 Listede ve kenar çubuğunda yaylı klasörler (7 spec)
 - 58 Yerleştirilebilir paneller (10 spec)
+- 66'nın eksiği: etiketlerin meta veri alanı kaydına bağlanması (iç düzen, bilerek atlandı)
 - 14'ün sınırı: Windows'ta başka programların "Klasörde göster"i (9b11 düştü)
