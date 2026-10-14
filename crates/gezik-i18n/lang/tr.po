@@ -520,6 +520,7 @@ msgid "its output folder could not be made"
 msgstr "çıktı klasörü oluşturulamadı"
 
 #: crates/gezik-batch/src/tasks/download.rs
+#: crates/gezik/src/update.rs
 msgid "{} is not in the download"
 msgstr "İndirilen pakette {} yok"
 
@@ -958,6 +959,21 @@ msgid "auto"
 msgstr "otomatik"
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:update.channel"
+msgid "auto"
+msgstr "otomatik"
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:update.channel"
+msgid "stable"
+msgstr "kararlı"
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:update.channel"
+msgid "pre"
+msgstr "ön sürüm"
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:layout.sidebar"
 msgid "left"
 msgstr "sol"
@@ -1372,6 +1388,10 @@ msgstr "tablo bekleniyordu"
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected \"jump\" or \"filter\", got {1}"
 msgstr "{0}: \"jump\" ya da \"filter\" bekleniyordu, gelen: {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected \"auto\", \"stable\" or \"pre\", got {1}"
+msgstr "{0}: \"auto\", \"stable\" ya da \"pre\" bekleniyordu, gelen: {1}"
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected \"system\" or \"gezik\", got {1}"
@@ -2402,6 +2422,12 @@ msgstr "Değişiklikleri at…"
 #: crates/gezik/ui/app.slint
 msgid "Compare with HEAD"
 msgstr "HEAD ile karşılaştır"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/settings_window/themes.rs
+#: crates/gezik/ui/app.slint
+msgid "Check for Updates"
+msgstr "Güncellemeleri denetle"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "{0}: unknown action"
@@ -4481,6 +4507,7 @@ msgstr[0] "{n} dosya yalnız çevrimiçi. Sağlama toplamlarını hesaplamak iç
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/preview/media.rs
 #: crates/gezik/src/preview/pdf.rs
+#: crates/gezik/src/update.rs
 msgid "Download"
 msgstr "İndir"
 
@@ -5514,6 +5541,7 @@ msgstr "Gezik tam olarak şunu yapmak için sistemden yönetici hakları ister:"
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -10461,6 +10489,10 @@ msgid "Other copy"
 msgstr "Diğer kopya"
 
 #: crates/gezik/src/settings_window/backup.rs
+msgid "Check Now"
+msgstr "Şimdi denetle"
+
+#: crates/gezik/src/settings_window/backup.rs
 msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
 msgstr "Gezik'in yanındaki gezik-portable dosyası her şeyi bu klasörde tutar. Klasör salt okunur: değişiklikler kaydedilmez. Bu bilgisayarın ayarlar klasörünü yeniden kullanmak için o dosyayı silin (veriler kalır); Dışa aktar ve İçe aktar ayarları ikisi arasında taşır."
 
@@ -10471,6 +10503,10 @@ msgstr "Gezik'in yanındaki gezik-portable dosyası her şeyi bu klasörde tutar
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Portable: settings are kept in {}"
 msgstr "Taşınabilir: ayarların yeri {}"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Updates"
+msgstr "Güncellemeler"
 
 #: crates/gezik/src/settings_window/backup.rs
 msgid "This folder has Gezik settings already"
@@ -10722,10 +10758,6 @@ msgstr "Varsayılan tuşunu kullanıyor"
 #: crates/gezik/src/settings_window/themes.rs
 msgid "Use Now"
 msgstr "Şimdi kullan"
-
-#: crates/gezik/src/settings_window/themes.rs
-msgid "Check for Updates"
-msgstr "Güncellemeleri denetle"
 
 #: crates/gezik/src/settings_window/themes.rs
 msgid "Open Source Page"
@@ -11507,6 +11539,82 @@ msgid "Permanently delete {} item? This cannot be undone."
 msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "{} öğe kalıcı olarak silinsin mi? Bu geri alınamaz."
 
+#: crates/gezik/src/update.rs
+msgid "Already checking for updates"
+msgstr "Güncellemeler zaten denetleniyor"
+
+#: crates/gezik/src/update.rs
+msgid "Checking for updates…"
+msgstr "Güncellemeler denetleniyor…"
+
+#: crates/gezik/src/update.rs
+msgid "Updated to {}"
+msgstr "{} sürümüne güncellendi"
+
+#: crates/gezik/src/update.rs
+msgid "What's new"
+msgstr "Yenilikler"
+
+#: crates/gezik/src/update.rs
+msgid "Gezik is up to date"
+msgstr "Gezik güncel"
+
+#: crates/gezik/src/update.rs
+msgid "Up to date"
+msgstr "Güncel"
+
+#: crates/gezik/src/update.rs
+msgid "Could not check for updates: {}"
+msgstr "Güncellemeler denetlenemedi: {}"
+
+#: crates/gezik/src/update.rs
+msgid "Could not check: {}"
+msgstr "Denetlenemedi: {}"
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {} is ready — installs when you close it"
+msgstr "Gezik {} hazır: kapanınca kurulacak"
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {} is out"
+msgstr "Gezik {} çıktı"
+
+#: crates/gezik/src/update.rs
+msgid "Restart now"
+msgstr "Şimdi yeniden başlat"
+
+#: crates/gezik/src/update.rs
+msgid "Checking…"
+msgstr "Denetleniyor…"
+
+#: crates/gezik/src/update.rs
+msgid "Not checked since Gezik started"
+msgstr "Gezik açıldığından beri denetlenmedi"
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {}. Last check: {}"
+msgstr "Gezik {}. Son denetim: {}"
+
+#: crates/gezik/src/update.rs
+msgid "Gezik {}. Not checked yet"
+msgstr "Gezik {}. Henüz denetlenmedi"
+
+#: crates/gezik/src/update.rs
+msgid "GitHub's answer could not be read"
+msgstr "GitHub'ın yanıtı okunamadı"
+
+#: crates/gezik/src/update.rs
+msgid "the downloaded Gezik does not start here or is not {}"
+msgstr "indirilen Gezik burada çalışmıyor ya da {} değil"
+
+#: crates/gezik/src/update.rs
+msgid "{} is not in SHA256SUMS.txt"
+msgstr "{} SHA256SUMS.txt içinde yok"
+
+#: crates/gezik/src/update.rs
+msgid "{} does not match its SHA-256"
+msgstr "{} SHA-256 değeriyle uyuşmuyor"
+
 #. {} is a file opened from inside an archive and saved by its app
 #: crates/gezik/src/vfs_mounts.rs
 msgid "{} changed"
@@ -11687,6 +11795,10 @@ msgstr "Sekmeyi kilitle"
 #: crates/gezik/ui/app.slint
 msgid "Open Tab Set"
 msgstr "Sekme setini aç"
+
+#: crates/gezik/ui/app.slint
+msgid "Help"
+msgstr "Yardım"
 
 #: crates/gezik/ui/app.slint
 msgid "Close the compare"
@@ -12596,6 +12708,26 @@ msgstr "En yüksek hız"
 msgctxt "setting:files.max-speed"
 msgid "The most a copy or move may take, as \"20 MB/s\", \"500 KB/s\" or \"1.5 GB/s\" (1 MB = 1,000,000 bytes); empty = no limit. Each job can change it in its ... menu."
 msgstr "Bir kopyalama ya da taşımanın en yüksek hızı: \"20 MB/s\", \"500 KB/s\" ya da \"1.5 GB/s\" (1 MB = 1.000.000 bayt); boş = sınır yok. Her iş bunu kendi ... menüsünde değiştirebilir."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.check"
+msgid "Check"
+msgstr "Güncellemeleri kendiliğinden denetle"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.check"
+msgid "Gezik looks for a newer published release on GitHub by itself: at most once a day, one request to api.github.com. A newer one is downloaded in the background, checked against the release's SHA256SUMS.txt and installed when Gezik closes. false: only Check for Updates looks."
+msgstr "Gezik GitHub'da yayımlanmış daha yeni bir sürümü kendiliğinden arar: günde en çok bir kez, api.github.com'a tek bir istek. Yenisi arka planda indirilir, sürümün SHA256SUMS.txt dosyasıyla denetlenir ve Gezik kapanınca kurulur. false: yalnızca Güncellemeleri denetle bakar."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.channel"
+msgid "Channel"
+msgstr "Kanal"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:update.channel"
+msgid "auto (pre-releases while this is one) | stable | pre"
+msgstr "auto (bu bir ön sürümken ön sürümler de) | stable | pre"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:theme"

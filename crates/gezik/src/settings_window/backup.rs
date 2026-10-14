@@ -32,6 +32,7 @@ pub(super) const THIS_COPY: &str = tx!("This copy");
 pub(super) const OTHER_COPY: &str = tx!("Other copy");
 pub(super) const MERGE: &str = tx!("Merge");
 pub(super) const CANCEL: &str = tx!("Cancel");
+pub(super) const CHECK_NOW: &str = tx!("Check Now");
 
 thread_local! {
     /// The last import of this run, for Undo Import (it outlives the window).
@@ -48,6 +49,8 @@ pub(super) fn set_last(undo: Option<Undo>) {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Row {
+    /// General's last row (2026-10-14 güncelleme spec): the last update check and Check Now.
+    Updates,
     /// Portable mode's data folder (spec 14 §9.1).
     Portable,
     /// Keep Settings in a Folder, or the sync folder in use (spec 14 §8).
@@ -158,6 +161,10 @@ impl Backup {
             all.push(Row::Undo);
         }
         let query = query.to_lowercase();
+        // On the General page, after the `[update]` fields; a search finds it from any page.
+        if !query.is_empty() {
+            all.insert(0, Row::Updates);
+        }
         all.into_iter()
             .filter(|row| {
                 let item = self.item(*row);
@@ -196,6 +203,10 @@ impl Backup {
                         description.into_owned(),
                         vec![OPEN_DATA],
                     )
+                }
+                Row::Updates => {
+                    let (last, about) = crate::update::last_check();
+                    (1, t!("Updates").into_owned(), "check-updates".to_owned(), last, about, vec![CHECK_NOW])
                 }
                 Row::Sync => self.sync_item(),
                 Row::Existing => (

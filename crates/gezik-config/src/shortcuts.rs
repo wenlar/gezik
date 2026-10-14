@@ -557,6 +557,8 @@ actions! {
     GitDiscard,
     /// the selected file beside its HEAD version.
     GitCompareHead,
+    /// Looks for a newer Gezik now, whatever `[update] check` says (no key).
+    CheckUpdates,
 }
 
 impl Action {
@@ -706,6 +708,7 @@ impl Action {
             Action::GitSwitchBranch => "git-switch-branch",
             Action::GitDiscard => "git-discard",
             Action::GitCompareHead => "git-compare-head",
+            Action::CheckUpdates => "check-updates",
         }
     }
 
@@ -868,6 +871,7 @@ impl Action {
             Action::GitSwitchBranch => tx!("Switch Branch…"),
             Action::GitDiscard => tx!("Discard Changes…"),
             Action::GitCompareHead => tx!("Compare with HEAD"),
+            Action::CheckUpdates => tx!("Check for Updates"),
         }
     }
 
@@ -2433,11 +2437,11 @@ copy-path = \"ctrl+k\"
         assert_eq!(Action::from_name("browse-archive"), Some(Action::BrowseArchive));
         assert_eq!(Action::from_name("run-command"), Some(Action::RunCommand));
         assert_eq!(Action::from_name("toggle-command-output"), Some(Action::ToggleCommandOutput));
-        for name in ["git-stage", "git-commit", "git-switch-branch", "git-discard", "git-compare-head"] {
+        for name in ["git-stage", "git-commit", "git-switch-branch", "git-discard", "git-compare-head", "check-updates"] {
             let action = Action::from_name(name).unwrap();
             assert!(action.default_texts(Platform::Other).is_empty() && action.default_texts(Platform::Mac).is_empty());
         }
-        assert_eq!(Action::ALL.len(), 144);
+        assert_eq!(Action::ALL.len(), 145);
     }
 
     #[test]

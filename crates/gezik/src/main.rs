@@ -73,6 +73,7 @@ mod terminal;
 mod theme_bridge;
 mod translator;
 mod trash_view;
+mod update;
 mod vfs_mounts;
 mod view;
 mod view_options;
@@ -384,6 +385,7 @@ fn perform(
         | Action::InstallTheme
         | Action::ExportSettings
         | Action::ImportSettings
+        | Action::CheckUpdates
         | Action::BrowseArchive
         | Action::RunCommand
         | Action::ToggleCommandOutput
@@ -986,6 +988,8 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     }
     cli.make_absolute();
+    // Restart Now (update.rs): the Gezik that started this one lets go of the channel first.
+    update::wait_for_restarter();
     // A running Gezik takes the paths (spec 5.2): tried before any window or settings, so a
     // second call costs only the attempt. --new-window asks it for a new window (spec 10 §9.3).
     let key = instance::key(gezik_config::paths::config_dir().as_deref());
@@ -1362,7 +1366,10 @@ fn main() -> Result<(), slint::PlatformError> {
     #[cfg(target_os = "macos")]
     gezik_platform::terminate::install(Box::new({
         let save_and_quit = save_and_quit.clone();
-        move || save_and_quit()
+        move || {
+            save_and_quit();
+            update::finish();
+        }
     }));
     // A window's close button.
     let close_requested: Rc<dyn Fn() -> slint::CloseRequestResponse> = {
@@ -1448,6 +1455,13 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         });
     }
+    // Updates (2026-10-14 spec): the first Gezik only, with a data folder it may write.
+    if !secondary
+        && !location.read_only
+        && let Some(store) = &config
+    {
+        update::start(store.clone(), process.state.update_checked, process.state.update_told.clone());
+    }
     resident::start();
     // Deviation 13: hiding the last window must not end the event loop.
     if !hidden {
@@ -1462,6 +1476,8 @@ fn main() -> Result<(), slint::PlatformError> {
     // what was taken out of archives for a preview or an app goes (spec 16 §4.5).
     vfs_mounts::rescue();
     gezik_vfs::stage::remove_area();
+    // A ready update is swapped in now that everything is saved (and Restart Now starts it).
+    update::finish();
     ran
 }
 

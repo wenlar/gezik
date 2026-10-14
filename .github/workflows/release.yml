@@ -112,6 +112,12 @@ jobs:
             [ $i = 3 ] && exit 1; sleep 10
           done
           hdiutil verify "dist/gezik-$VERSION-macos-universal.dmg"
+      # The same Gezik.app for the automatic update (docs/releasing.md): a tarball Gezik unpacks
+      # itself, no disk image to mount. No AppleDouble files or extended attributes in it.
+      - name: Update package
+        run: |
+          COPYFILE_DISABLE=1 tar --no-mac-metadata -C stage/dmg -czf "dist/gezik-$VERSION-macos-universal.app.tar.gz" Gezik.app
+          tar -tzf "dist/gezik-$VERSION-macos-universal.app.tar.gz" | grep -qx 'Gezik.app/Contents/MacOS/gezik'
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: macos

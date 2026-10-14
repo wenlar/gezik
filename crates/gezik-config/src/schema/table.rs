@@ -142,6 +142,17 @@ pub const FIELDS: &[Field] = &[
     f(Some("files"), "copy-threads", General, Choice(THREADS)),
     f(Some("files"), "verify", General, Bool),
     f(Some("files"), "max-speed", General, Text),
+    f(Some("update"), "check", General, Bool),
+    f(
+        Some("update"),
+        "channel",
+        General,
+        Choice(&[
+            tx!("choice:update.channel" => "auto"),
+            tx!("choice:update.channel" => "stable"),
+            tx!("choice:update.channel" => "pre"),
+        ]),
+    ),
     f(None, "theme", Appearance, Theme),
     f(None, "theme-light", Appearance, Theme),
     f(None, "theme-dark", Appearance, Theme),

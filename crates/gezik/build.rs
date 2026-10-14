@@ -4,6 +4,13 @@ fn main() {
     let config = slint_build::CompilerConfiguration::new()
         .with_default_translation_context(slint_build::DefaultTranslationContext::None);
     slint_build::compile_with_config("ui/app.slint", config).expect("failed to compile Slint UI");
+    // The `measure` profile (Cargo.toml) gets `gezik_measure`: like debug builds it reads the
+    // update feed's test override (update.rs). Its build folder is `<target>/[<triple>/]measure/`.
+    println!("cargo::rustc-check-cfg=cfg(gezik_measure)");
+    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    if out.ancestors().nth(3).and_then(|p| p.file_name()).is_some_and(|name| name == "measure") {
+        println!("cargo::rustc-cfg=gezik_measure");
+    }
     // macOS names an app without a bundle by its Info.plist when the executable carries one:
     // the menu bar then says "Gezik" (and "About/Hide/Quit Gezik"), not the file name.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {

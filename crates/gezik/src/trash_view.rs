@@ -260,6 +260,7 @@ pub fn allowed(action: Action) -> bool {
         | Action::InstallTheme
         | Action::ExportSettings
         | Action::ImportSettings
+        | Action::CheckUpdates
         | Action::ConnectToServer
         | Action::GroupNone
         | Action::GroupType

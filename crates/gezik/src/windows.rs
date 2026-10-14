@@ -971,6 +971,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     let _diff = crate::diff::Diff::new(&window, dialogs.clone(), config.clone(), state.diff);
     crate::checksums::install(&window);
     crate::compare::install(&window);
+    crate::update::install(&window);
     let _convert = convert::Convert::new(&window, ops.clone(), dialogs.clone(), config.clone(), state.convert.clone());
     window.on_op_pause({
         let ops = ops.clone();

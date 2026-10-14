@@ -274,6 +274,20 @@ impl Default for SessionSettings {
     }
 }
 
+/// `[update]` (2026-10-14 güncelleme spec): whether Gezik looks for a newer release by itself
+/// (once a day at most), and which releases count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdateSettings {
+    pub check: bool,
+    pub channel: gezik_core::update::Channel,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        UpdateSettings { check: true, channel: gezik_core::update::Channel::Auto }
+    }
+}
+
 /// `[system]` (spec 13.1): how Gezik meets the system: the single instance (9b1), what Space
 /// shows on macOS (9a2), the tray icon and the global shortcut (9b9). Start at login is not a
 /// setting: it is a system change in system-changes.toml (9b9 deviation 1).
@@ -435,6 +449,7 @@ pub struct Settings {
     pub history: HistorySettings,
     pub session: SessionSettings,
     pub system: SystemSettings,
+    pub update: UpdateSettings,
     /// `[sidebar] cloud`: the CLOUD section (spec 13.1); roots are found either way.
     pub sidebar_cloud: bool,
     /// `[sidebar] tags`: the TAGS section (spec 12 §7.1).
@@ -496,6 +511,7 @@ impl Default for Settings {
             history: HistorySettings::default(),
             session: SessionSettings::default(),
             system: SystemSettings::default(),
+            update: UpdateSettings::default(),
             sidebar_cloud: true,
             sidebar_tags: true,
             sidebar_tree_follow: false,
@@ -790,6 +806,13 @@ impl Settings {
             Some(value) => match value.as_table() {
                 Some(system) => settings.system = parse_system(system, file, warnings),
                 None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "system", value))),
+            },
+        }
+        match table.get("update") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(update) => settings.update = parse_update(update, file, warnings),
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "update", value))),
             },
         }
         match table.get("sidebar") {
@@ -1465,6 +1488,24 @@ fn parse_session(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -
     out
 }
 
+fn parse_update(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> UpdateSettings {
+    let mut out = UpdateSettings::default();
+    let mut warn = |text: String| warnings.push(Warning::new(file, text));
+    if let Some(value) = table.get("check") {
+        match value.as_bool() {
+            Some(on) => out.check = on,
+            None => warn(t!("{0}: expected true or false, got {1}", "update.check", value)),
+        }
+    }
+    if let Some(value) = table.get("channel") {
+        match value.as_str().and_then(gezik_core::update::Channel::from_key) {
+            Some(channel) => out.channel = channel,
+            None => warn(t!("{0}: expected \"auto\", \"stable\" or \"pre\", got {1}", "update.channel", value)),
+        }
+    }
+    out
+}
+
 fn parse_system(table: &toml::Table, file: &str, warnings: &mut Vec<Warning>) -> SystemSettings {
     let mut out = SystemSettings::default();
     if let Some(value) = table.get("single-instance") {
@@ -2022,6 +2063,10 @@ pub struct State {
     pub operations_collapsed: bool,
     /// The first close with the tray icon on said once that Gezik keeps running (9b9).
     pub tray_told: bool,
+    /// The last look for a newer release (`[update] checked`, Unix seconds), and the version
+    /// whose note was shown (`told`): once per version.
+    pub update_checked: Option<u64>,
+    pub update_told: Option<String>,
     /// A tag was written once (`[tags] used`): `[tags] dots = "auto"` shows dots then (spec 12 §5.4).
     pub tags_used: bool,
     /// The rename layer's last rules.
@@ -2336,6 +2381,16 @@ impl State {
             preview_volume,
             operations_collapsed,
             tray_told,
+            update_checked: table
+                .get("update")
+                .and_then(|v| v.get("checked"))
+                .and_then(|v| v.as_integer())
+                .and_then(|n| u64::try_from(n).ok()),
+            update_told: table
+                .get("update")
+                .and_then(|v| v.get("told"))
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
             tags_used: table
                 .get("tags")
                 .and_then(|v| v.as_table())
@@ -2430,6 +2485,16 @@ impl State {
             let mut tray = toml::Table::new();
             tray.insert("told".into(), toml::Value::Boolean(true));
             root.insert("tray".into(), toml::Value::Table(tray));
+        }
+        if self.update_checked.is_some() || self.update_told.is_some() {
+            let mut update = toml::Table::new();
+            if let Some(at) = self.update_checked.and_then(|at| i64::try_from(at).ok()) {
+                update.insert("checked".into(), toml::Value::Integer(at));
+            }
+            if let Some(version) = &self.update_told {
+                update.insert("told".into(), toml::Value::String(version.clone()));
+            }
+            root.insert("update".into(), toml::Value::Table(update));
         }
         if self.tags_used {
             let mut tags = toml::Table::new();
@@ -4677,5 +4742,36 @@ shell-args = \"-c\"
         assert!(text.contains("[tray]\ntold = true"), "{text}");
         assert!(State::parse(&text).tray_told);
         assert!(!State::default().to_toml().contains("[tray]"), "nothing written while false");
+    }
+
+    #[test]
+    fn the_last_update_check_is_remembered() {
+        let state = State { update_checked: Some(1_800_000_000), update_told: Some("0.2.0".into()), ..State::default() };
+        let text = state.to_toml();
+        assert!(text.contains("[update]
+checked = 1800000000
+told = \"0.2.0\""), "{text}");
+        assert_eq!(State::parse(&text), state);
+        assert!(!State::default().to_toml().contains("[update]"));
+    }
+
+    #[test]
+    fn updates_are_on_and_follow_the_running_version_unless_told_otherwise() {
+        use gezik_core::update::Channel;
+        assert_eq!(Settings::default().update, UpdateSettings { check: true, channel: Channel::Auto });
+        let (settings, warnings) = parse("[update]
+check = false
+channel = \"stable\"
+");
+        assert_eq!(settings.update, UpdateSettings { check: false, channel: Channel::Stable });
+        assert!(warnings.is_empty());
+        let (settings, warnings) = parse("[update]
+check = 1
+channel = \"beta\"
+");
+        assert_eq!(settings.update, UpdateSettings::default(), "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "update.check: expected true or false, got 1");
+        assert_eq!(warnings[1].message, "update.channel: expected \"auto\", \"stable\" or \"pre\", got \"beta\"");
+        assert_eq!(parse(include_str!("../templates/settings.toml")).0.update, UpdateSettings::default());
     }
 }

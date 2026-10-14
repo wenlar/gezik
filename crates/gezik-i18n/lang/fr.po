@@ -627,6 +627,7 @@ msgid "its output folder could not be made"
 msgstr "son dossier de sortie n'a pas pu être créé"
 
 #: crates/gezik-batch/src/tasks/download.rs
+#: crates/gezik/src/update.rs
 #, fuzzy
 msgid "{} is not in the download"
 msgstr "{} n'est pas dans le téléchargement"
@@ -1172,6 +1173,24 @@ msgstr "auto"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
+msgctxt "choice:update.channel"
+msgid "auto"
+msgstr "automatique"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:update.channel"
+msgid "stable"
+msgstr "stable"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:update.channel"
+msgid "pre"
+msgstr "préversion"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
 msgctxt "choice:layout.sidebar"
 msgid "left"
 msgstr "gauche"
@@ -1674,6 +1693,11 @@ msgstr "table attendue"
 #, fuzzy
 msgid "{0}: expected \"jump\" or \"filter\", got {1}"
 msgstr "{0} : \"jump\" ou \"filter\" attendu, reçu {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
+msgid "{0}: expected \"auto\", \"stable\" or \"pre\", got {1}"
+msgstr "{0} : \"auto\", \"stable\" ou \"pre\" attendu, reçu {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2913,6 +2937,13 @@ msgstr "Annuler les modifications…"
 #, fuzzy
 msgid "Compare with HEAD"
 msgstr "Comparer avec HEAD"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/settings_window/themes.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Check for Updates"
+msgstr "Rechercher des mises à jour"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -5503,6 +5534,7 @@ msgstr[1] "{n} fichiers sont uniquement en ligne. Les télécharger pour calcule
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/preview/media.rs
 #: crates/gezik/src/preview/pdf.rs
+#: crates/gezik/src/update.rs
 #, fuzzy
 msgid "Download"
 msgstr "Télécharger"
@@ -6788,6 +6820,7 @@ msgstr "Gezik demande au système des droits d'administrateur pour faire exactem
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -12983,6 +13016,11 @@ msgstr "Autre copie"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
+msgid "Check Now"
+msgstr "Vérifier maintenant"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
 msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
 msgstr "Un fichier gezik-portable à côté de Gezik conserve tout dans ce dossier. Il est en lecture seule : les modifications ne sont pas enregistrées. Supprimez ce fichier pour réutiliser le dossier des paramètres de cet ordinateur (les données restent) ; Exporter et Importer transfèrent les paramètres entre les deux."
 
@@ -12995,6 +13033,11 @@ msgstr "Un fichier gezik-portable à côté de Gezik conserve tout dans ce dossi
 #, fuzzy
 msgid "Portable: settings are kept in {}"
 msgstr "Portable : les paramètres sont conservés dans {}"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Updates"
+msgstr "Mises à jour"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
@@ -13313,11 +13356,6 @@ msgstr "Il a son raccourci par défaut"
 #, fuzzy
 msgid "Use Now"
 msgstr "Utiliser"
-
-#: crates/gezik/src/settings_window/themes.rs
-#, fuzzy
-msgid "Check for Updates"
-msgstr "Rechercher des mises à jour"
 
 #: crates/gezik/src/settings_window/themes.rs
 #, fuzzy
@@ -14313,6 +14351,101 @@ msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "Supprimer définitivement {} élément ? Action irréversible."
 msgstr[1] "Supprimer définitivement {} éléments ? Action irréversible."
 
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Already checking for updates"
+msgstr "Recherche de mises à jour déjà en cours"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Checking for updates…"
+msgstr "Recherche de mises à jour…"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Updated to {}"
+msgstr "Mis à jour vers {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "What's new"
+msgstr "Nouveautés"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik is up to date"
+msgstr "Gezik est à jour"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Up to date"
+msgstr "À jour"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Could not check for updates: {}"
+msgstr "Impossible de rechercher les mises à jour : {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Could not check: {}"
+msgstr "Vérification impossible : {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {} is ready — installs when you close it"
+msgstr "Gezik {} est prêt – installé à la fermeture"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {} is out"
+msgstr "Gezik {} est disponible"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Restart now"
+msgstr "Redémarrer maintenant"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Checking…"
+msgstr "Vérification…"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Not checked since Gezik started"
+msgstr "Pas vérifié depuis le démarrage de Gezik"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {}. Last check: {}"
+msgstr "Gezik {}. Dernière vérification : {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {}. Not checked yet"
+msgstr "Gezik {}. Pas encore vérifié"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "GitHub's answer could not be read"
+msgstr "Impossible de lire la réponse de GitHub"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "the downloaded Gezik does not start here or is not {}"
+msgstr "le Gezik téléchargé ne démarre pas ici ou n'est pas {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "{} is not in SHA256SUMS.txt"
+msgstr "{} n'est pas dans SHA256SUMS.txt"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "{} does not match its SHA-256"
+msgstr "{} ne correspond pas à son SHA-256"
+
 #. {} is a file opened from inside an archive and saved by its app
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
@@ -14539,6 +14672,11 @@ msgstr "Verrouiller l'onglet"
 #, fuzzy
 msgid "Open Tab Set"
 msgstr "Ouvrir un jeu d'onglets"
+
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Help"
+msgstr "Aide"
 
 #: crates/gezik/ui/app.slint
 #, fuzzy
@@ -15665,6 +15803,30 @@ msgstr "Vitesse max"
 msgctxt "setting:files.max-speed"
 msgid "The most a copy or move may take, as \"20 MB/s\", \"500 KB/s\" or \"1.5 GB/s\" (1 MB = 1,000,000 bytes); empty = no limit. Each job can change it in its ... menu."
 msgstr "Débit maximal d'une copie ou d'un déplacement, comme \"20 MB/s\", \"500 KB/s\" ou \"1.5 GB/s\" (1 MB = 1 000 000 octets) ; vide = sans limite. Chaque tâche peut le changer dans son menu (...)."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.check"
+msgid "Check"
+msgstr "Vérifier automatiquement"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.check"
+msgid "Gezik looks for a newer published release on GitHub by itself: at most once a day, one request to api.github.com. A newer one is downloaded in the background, checked against the release's SHA256SUMS.txt and installed when Gezik closes. false: only Check for Updates looks."
+msgstr "Gezik recherche lui-même une version publiée plus récente sur GitHub : au plus une fois par jour, une requête à api.github.com. La nouvelle est téléchargée en arrière-plan, vérifiée avec le SHA256SUMS.txt de la version et installée à la fermeture de Gezik. false : seule « Rechercher des mises à jour » cherche."
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.channel"
+msgid "Channel"
+msgstr "Canal"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.channel"
+msgid "auto (pre-releases while this is one) | stable | pre"
+msgstr "auto (préversions tant que celle-ci en est une) | stable | pre"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

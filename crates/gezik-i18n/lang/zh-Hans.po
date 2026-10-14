@@ -625,6 +625,7 @@ msgid "its output folder could not be made"
 msgstr "无法创建其输出文件夹"
 
 #: crates/gezik-batch/src/tasks/download.rs
+#: crates/gezik/src/update.rs
 #, fuzzy
 msgid "{} is not in the download"
 msgstr "下载内容中没有 {}"
@@ -1159,6 +1160,24 @@ msgstr "自动"
 
 #: crates/gezik-config/src/schema/table.rs
 #, fuzzy
+msgctxt "choice:update.channel"
+msgid "auto"
+msgstr "自动"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:update.channel"
+msgid "stable"
+msgstr "稳定版"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
+msgctxt "choice:update.channel"
+msgid "pre"
+msgstr "预发布版"
+
+#: crates/gezik-config/src/schema/table.rs
+#, fuzzy
 msgctxt "choice:layout.sidebar"
 msgid "left"
 msgstr "左侧"
@@ -1661,6 +1680,11 @@ msgstr "应为表"
 #, fuzzy
 msgid "{0}: expected \"jump\" or \"filter\", got {1}"
 msgstr "{0}：应为 \"jump\" 或 \"filter\"，实际为 {1}"
+
+#: crates/gezik-config/src/settings.rs
+#, fuzzy
+msgid "{0}: expected \"auto\", \"stable\" or \"pre\", got {1}"
+msgstr "{0}：应为 \"auto\"、\"stable\" 或 \"pre\"，实际为 {1}"
 
 #: crates/gezik-config/src/settings.rs
 #, fuzzy
@@ -2898,6 +2922,13 @@ msgstr "放弃更改…"
 #, fuzzy
 msgid "Compare with HEAD"
 msgstr "与 HEAD 比较"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/src/settings_window/themes.rs
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Check for Updates"
+msgstr "检查更新"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -5449,6 +5480,7 @@ msgstr[0] "{n} 个文件仅在线。下载它们以计算校验和？"
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/preview/media.rs
 #: crates/gezik/src/preview/pdf.rs
+#: crates/gezik/src/update.rs
 #, fuzzy
 msgid "Download"
 msgstr "下载"
@@ -6730,6 +6762,7 @@ msgstr "Gezik 将向系统请求管理员权限，仅用于执行以下操作：
 #: crates/gezik/src/operations.rs
 #: crates/gezik/src/resident.rs
 #: crates/gezik/src/search.rs
+#: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/command-output.slint
 #: crates/gezik/ui/widgets/diff.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
@@ -12811,6 +12844,11 @@ msgstr "另一副本"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
+msgid "Check Now"
+msgstr "立即检查"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
 msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
 msgstr "Gezik 旁边的 gezik-portable 文件会让所有内容保存在此文件夹中。它是只读的：更改不会保存。删除该文件即可重新使用此电脑的设置文件夹（数据会保留）；“导出”和“导入”可在两者之间转移设置。"
 
@@ -12823,6 +12861,11 @@ msgstr "Gezik 旁边的 gezik-portable 文件会让所有内容保存在此文�
 #, fuzzy
 msgid "Portable: settings are kept in {}"
 msgstr "便携模式：设置保存在 {}"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Updates"
+msgstr "更新"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
@@ -13134,11 +13177,6 @@ msgstr "已是默认快捷键"
 #, fuzzy
 msgid "Use Now"
 msgstr "立即使用"
-
-#: crates/gezik/src/settings_window/themes.rs
-#, fuzzy
-msgid "Check for Updates"
-msgstr "检查更新"
 
 #: crates/gezik/src/settings_window/themes.rs
 #, fuzzy
@@ -14103,6 +14141,101 @@ msgid "Permanently delete {} item? This cannot be undone."
 msgid_plural "Permanently delete {} items? This cannot be undone."
 msgstr[0] "永久删除 {} 个项目？此操作无法撤销。"
 
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Already checking for updates"
+msgstr "正在检查更新"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Checking for updates…"
+msgstr "正在检查更新…"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Updated to {}"
+msgstr "已更新到 {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "What's new"
+msgstr "新功能"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik is up to date"
+msgstr "Gezik 已是最新版本"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Up to date"
+msgstr "已是最新"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Could not check for updates: {}"
+msgstr "无法检查更新：{}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Could not check: {}"
+msgstr "无法检查：{}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {} is ready — installs when you close it"
+msgstr "Gezik {} 已就绪——关闭时安装"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {} is out"
+msgstr "Gezik {} 已发布"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Restart now"
+msgstr "立即重启"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Checking…"
+msgstr "正在检查…"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Not checked since Gezik started"
+msgstr "Gezik 启动后尚未检查"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {}. Last check: {}"
+msgstr "Gezik {}。上次检查：{}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "Gezik {}. Not checked yet"
+msgstr "Gezik {}。尚未检查"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "GitHub's answer could not be read"
+msgstr "无法读取 GitHub 的响应"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "the downloaded Gezik does not start here or is not {}"
+msgstr "下载的 Gezik 无法在此运行或不是 {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "{} is not in SHA256SUMS.txt"
+msgstr "SHA256SUMS.txt 中没有 {}"
+
+#: crates/gezik/src/update.rs
+#, fuzzy
+msgid "{} does not match its SHA-256"
+msgstr "{} 与其 SHA-256 不符"
+
 #. {} is a file opened from inside an archive and saved by its app
 #: crates/gezik/src/vfs_mounts.rs
 #, fuzzy
@@ -14326,6 +14459,11 @@ msgstr "锁定标签页"
 #, fuzzy
 msgid "Open Tab Set"
 msgstr "打开标签页组"
+
+#: crates/gezik/ui/app.slint
+#, fuzzy
+msgid "Help"
+msgstr "帮助"
 
 #: crates/gezik/ui/app.slint
 #, fuzzy
@@ -15451,6 +15589,30 @@ msgstr "最大速度"
 msgctxt "setting:files.max-speed"
 msgid "The most a copy or move may take, as \"20 MB/s\", \"500 KB/s\" or \"1.5 GB/s\" (1 MB = 1,000,000 bytes); empty = no limit. Each job can change it in its ... menu."
 msgstr "复制或移动的速度上限，如 \"20 MB/s\"、\"500 KB/s\" 或 \"1.5 GB/s\"（1 MB = 1,000,000 字节）；留空 = 不限速。每个任务可在其 ... 菜单中更改。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.check"
+msgid "Check"
+msgstr "自动检查"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.check"
+msgid "Gezik looks for a newer published release on GitHub by itself: at most once a day, one request to api.github.com. A newer one is downloaded in the background, checked against the release's SHA256SUMS.txt and installed when Gezik closes. false: only Check for Updates looks."
+msgstr "Gezik 自动在 GitHub 上查找更新的已发布版本：每天最多一次，向 api.github.com 发送一个请求。新版本在后台下载，用该版本的 SHA256SUMS.txt 校验，并在 Gezik 关闭时安装。false：只有“检查更新”才会查找。"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.channel"
+msgid "Channel"
+msgstr "渠道"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:update.channel"
+msgid "auto (pre-releases while this is one) | stable | pre"
+msgstr "auto（当前为预发布版时包括预发布版）| stable | pre"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

@@ -612,6 +612,11 @@ also lists as a portable device is left out (it is a drive already).
   Linux Gezik's Info window with owner, group and permissions (each change is one Ctrl+Z,
   **Apply to enclosed items…** for folders). On macOS also the Hidden and Locked flags and
   the app that opens the file (**Change All…**).
+- **Updates**: Gezik looks for a newer published release once a day at most (one request to
+  `api.github.com`), downloads it in the background, checks its SHA-256 and installs it when it
+  closes; **Restart now** in the status bar installs it at once. **Check for Updates**
+  (command palette, macOS Help menu) asks now. `[update] check = false` turns it off. See
+  [Updates](configuration.md#updates).
 - **macOS**: Finder's icons, localized names and Quick Look thumbnails; aliases open their
   original (**Make Alias**, ⌃⌘A); apps and other packages open instead of being entered
   (**Show Package Contents**); **Open With ▸**, **Share…** and **Quick Actions ▸** in the row

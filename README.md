@@ -89,6 +89,8 @@ Portable mode: put an empty file named `gezik-portable` next to Gezik (next to `
 
 Sync folder: Settings ▸ Sync and Backup ▸ Keep Settings in a Folder puts settings, themes and templates in a OneDrive, Dropbox, iCloud Drive or Syncthing folder shared by your computers; each keeps its own state, views, tools and tray. Changes made on two computers at once are never lost silently: Gezik re-applies its own edit when the file changed under it, notices the sync service's conflicting copy and lets you review it key by key. Without the folder Gezik starts from its last copy, read-only. [More](docs/configuration.md#sync-folder)
 
+Updates: Gezik updates itself from its published GitHub Releases. Once a day at most it sends one request to `api.github.com` (no account, nothing about you or your files); a newer version is downloaded in the background, checked against the release's SHA-256 sums and installed when Gezik closes. Turn it off with `[update] check = false` (Settings ▸ General); **Check for Updates** in the command palette still asks when you choose it. Where Gezik can't replace its own files (Program Files, `/usr`) it only says that a new version is out. [More](docs/configuration.md#updates)
+
 → [Configuration](docs/configuration.md) · [Writing a theme](docs/themes.md) · [Keyboard shortcuts](docs/shortcuts.md)
 
 ## Build

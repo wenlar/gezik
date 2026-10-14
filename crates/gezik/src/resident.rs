@@ -225,6 +225,13 @@ pub fn set_hooks(hooks: Hooks) {
     with(|s| s.hooks = Some(Rc::new(hooks)));
 }
 
+/// Quits Gezik as the tray menu's Quit does (Restart Now).
+pub fn quit() {
+    if let Some(hooks) = with(|s| s.hooks.clone()) {
+        (hooks.quit)();
+    }
+}
+
 /// End of main, the window and its parts up: what the settings asked for starts now.
 pub fn start() {
     with(|s| s.started = true);
