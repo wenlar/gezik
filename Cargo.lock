@@ -1740,7 +1740,7 @@ dependencies = [
 
 [[package]]
 name = "gezik"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "embed-resource",
  "gezik-batch",
@@ -1764,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "gezik-batch"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "ar",
  "bzip2",
@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "gezik-config"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "dirs",
  "gezik-core",
@@ -1809,7 +1809,7 @@ dependencies = [
 
 [[package]]
 name = "gezik-core"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "gezik-i18n",
  "icu_normalizer",
@@ -1819,14 +1819,14 @@ dependencies = [
 
 [[package]]
 name = "gezik-i18n"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "miniz_oxide 0.9.1",
 ]
 
 [[package]]
 name = "gezik-ops"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "crc32fast",
  "dirs",
@@ -1841,7 +1841,7 @@ dependencies = [
 
 [[package]]
 name = "gezik-platform"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "block2 0.6.2",
  "dirs",
@@ -1868,7 +1868,7 @@ dependencies = [
 
 [[package]]
 name = "gezik-search"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "gezik-batch",
  "gezik-core",
@@ -1881,7 +1881,7 @@ dependencies = [
 
 [[package]]
 name = "gezik-vfs"
-version = "0.1.0-rc.2"
+version = "0.1.0-rc.3"
 dependencies = [
  "flate2",
  "gezik-batch",

@@ -72,13 +72,13 @@ or a draft reaches no one. Gezik takes the file of its own kind (the zip, the po
 **Run anyway**. To avoid it for the whole folder: right-click the zip ▸ Properties ▸ tick
 **Unblock** before extracting, or in PowerShell `Unblock-File gezik.exe`.
 
-**macOS.** The app is signed ad hoc, not notarized. Opening it from the dmg (or after copying to
-Applications) shows "Apple could not verify "Gezik" is free of malware…". Click **Done**, then
-System Settings ▸ Privacy & Security ▸ scroll to "Gezik was blocked…" ▸ **Open Anyway**, and
-confirm with your password. This is needed once. (On older macOS: right-click ▸ Open.)
-In Terminal the same is `xattr -dr com.apple.quarantine /Applications/Gezik.app`.
-Run Gezik from Applications, not from the dmg or Downloads: macOS runs a quarantined app from a
-random read-only copy (App Translocation), where portable mode can't work.
+**macOS.** Since 0.1.0-rc.3 the app is signed with a Developer ID and notarized (see
+[macOS signing](#macos-signing)), so it opens without a warning. Builds made without the
+signing secrets (a fork, a local `make-app.sh`) are signed ad hoc: opening one shows "Apple
+could not verify "Gezik" is free of malware…"; click **Done**, then System Settings ▸ Privacy &
+Security ▸ **Open Anyway**, or `xattr -dr com.apple.quarantine /Applications/Gezik.app`.
+Run Gezik from Applications, not from the dmg or Downloads: macOS runs a quarantined unsigned
+app from a random read-only copy (App Translocation), where portable mode can't work.
 
 **Linux.** No warning: `tar xzf gezik-<v>-linux-x64.tar.gz && ./gezik-<v>-linux-x64/gezik`.
 
@@ -87,7 +87,7 @@ random read-only copy (App Translocation), where portable mode can't work.
 `release.yml` signs `gezik.exe` with [Azure Artifact Signing](https://learn.microsoft.com/azure/trusted-signing/quickstart)
 (Wenlar LLC, a US company, is eligible) before zipping it, so `SHA256SUMS.txt` covers the
 signed file. Until the repository variables below exist, the two signing steps are skipped and
-the build stays unsigned. Signing puts "Wenlar LLC" in place of "Unknown publisher" at once;
+the build stays unsigned (it is in 0.1.0-rc.3). Signing puts "Wenlar LLC" in place of "Unknown publisher" at once;
 SmartScreen's "Windows protected your PC" may still show until the certificate earns
 reputation through downloads. Once signed builds ship, update the Windows line of
 `docs/release-notes-unsigned.md` and [What users see](#what-users-see-without-signing).
@@ -120,9 +120,7 @@ zip, `Get-AuthenticodeSignature gezik.exe` should say `Valid` with Wenlar LLC.
 `release.yml` signs `Gezik.app` with the Developer ID certificate (hardened runtime, timestamp,
 `scripts/macos/gezik.entitlements`), has Apple notarize it and staples the ticket, before the
 dmg and the update tarball are made. Until the secrets below exist, the steps are skipped and
-`make-app.sh` signs ad hoc as before. Once notarized builds ship, update the macOS line of
-`docs/release-notes-unsigned.md` and [What users see](#what-users-see-without-signing).
-
+`make-app.sh` signs ad hoc as before. 
 The entitlement `com.apple.security.cs.disable-library-validation` is there because Gezik loads
 libraries it did not ship with at run time: Homebrew's or the downloaded ad hoc signed libmtp for
 phones, and the downloaded pdfium in the PDF worker. Without it the hardened runtime refuses them
