@@ -3,6 +3,7 @@
 
 pub mod batch_toml;
 pub mod bundle;
+pub mod cloud_sync;
 mod highlight_rules;
 pub mod paths;
 pub mod pins;
