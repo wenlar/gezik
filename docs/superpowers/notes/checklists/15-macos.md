@@ -9,7 +9,7 @@ Numbering goes on from `../macos-test.md` (it ends at 387). Results go to `../ma
 
 ### 15d, CJK font fallback
 
-395. **Han characters.** A folder with `测试这检查对齐.txt` and `日本語のファイル.txt`, English system: the Chinese name draws in PingFang SC with no empty boxes (`这`, `对`); the Japanese name's kana in Hiragino. Then System Settings ▸ General ▸ Language & Region: add 日本語 below English, restart Gezik: the Kanji of both names take the Japanese forms (Hiragino; `这` may fall back), and nothing else changes. Remove 日本語 afterwards.
+395. **Han characters.** A folder with `测试这检查对齐.txt`, `日本語のファイル.txt` and `直骨角今令.txt`, English system: the Chinese name draws with no empty boxes (`这`, `对`; in PingFang SC, or Hiragino Sans GB where fontique does not list PingFang); the Japanese name's kana in Hiragino. Then System Settings ▸ General ▸ Language & Region: add 日本語 below English, restart Gezik: the Kanji take the Japanese forms (Hiragino Sans; `这` may fall back), and nothing else changes. Most of the first two names' characters look the same in both forms: compare `令` (Japanese: the last stroke like マ; Chinese: a dot) and `直` in the third. Remove 日本語 afterwards.
 
 ### 15b, the interface's texts
 
