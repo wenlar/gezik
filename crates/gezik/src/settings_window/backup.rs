@@ -33,6 +33,15 @@ pub(super) const OTHER_COPY: &str = tx!("Other copy");
 pub(super) const MERGE: &str = tx!("Merge");
 pub(super) const CANCEL: &str = tx!("Cancel");
 pub(super) const CHECK_NOW: &str = tx!("Check Now");
+pub(super) const START_CLOUD: &str = tx!("Start Syncing…");
+pub(super) const JOIN_CLOUD: &str = tx!("Join With a Code…");
+pub(super) const SYNC_NOW: &str = tx!("Sync Now");
+pub(super) const SHOW_CODE: &str = tx!("Show Code");
+pub(super) const STOP_CLOUD: &str = tx!("Stop Syncing");
+pub(super) const DELETE_CLOUD: &str = tx!("Delete from Server…");
+pub(super) const START_AGAIN: &str = tx!("Start Syncing Again");
+pub(super) const COPY_CODE: &str = tx!("Copy");
+pub(super) const DELETE: &str = tx!("Delete");
 
 thread_local! {
     /// The last import of this run, for Undo Import (it outlives the window).
@@ -57,6 +66,14 @@ pub(super) enum Row {
     Sync,
     /// The folder chosen has settings already: Use or Replace.
     Existing,
+    /// Cloud Sync (spec 17 §5.4): Start or Join, or how it went and its buttons.
+    Cloud,
+    /// Join With a Code's code.
+    CloudJoin,
+    /// The code shown, with Copy.
+    CloudCode,
+    /// Delete from Server's Delete or Cancel.
+    CloudDelete,
     /// A conflicting copy in the sync folder.
     Conflict(usize),
     /// A key the copies under review differ in.
@@ -103,6 +120,17 @@ pub(super) struct Backup {
     /// The sync folder's conflicting copies (`settings (1).toml`, `themes/nord (1).toml`).
     pub conflicts: Vec<String>,
     pub review: Option<Review>,
+    /// The shared folder is the cloud sync's.
+    pub cloud: bool,
+    /// `[cloud-sync] server`.
+    pub server: String,
+    /// Join With a Code chosen, and its code as typed.
+    pub joining: bool,
+    pub join_code: String,
+    /// The code shown (Start Syncing, Show Code).
+    pub code: Option<String>,
+    /// Delete from Server asked.
+    pub deleting: bool,
 }
 
 /// A conflicting copy under review (spec 14 §8.3): the keys it differs in, and those taken from it.
@@ -147,6 +175,16 @@ impl Backup {
         if let Some(review) = &self.review {
             all.extend((0..review.differences.len()).map(Row::Difference));
             all.push(Row::Merge);
+        }
+        all.push(Row::Cloud);
+        for (row, shown) in [
+            (Row::CloudCode, self.code.is_some()),
+            (Row::CloudJoin, self.joining && !self.cloud),
+            (Row::CloudDelete, self.deleting && self.cloud),
+        ] {
+            if shown {
+                all.push(row);
+            }
         }
         all.extend([Row::Export, Row::Templates, Row::Views, Row::Import]);
         if let Some(preview) = &self.preview {
@@ -209,6 +247,37 @@ impl Backup {
                     (1, t!("Updates").into_owned(), "check-updates".to_owned(), last, about, vec![CHECK_NOW])
                 }
                 Row::Sync => self.sync_item(),
+                Row::Cloud => self.cloud_item(),
+                Row::CloudJoin => (
+                    2,
+                    t!("Sync Code").into_owned(),
+                    "cloud-sync.code".to_owned(),
+                    self.join_code.clone(),
+                    t!("Type or paste the code Start Syncing gave on the other computer and press Enter. This \
+                        computer's settings are backed up first, then the cloud copy is used; nothing is merged.")
+                    .into_owned(),
+                    Vec::new(),
+                ),
+                Row::CloudCode => (
+                    1,
+                    self.code.clone().unwrap_or_default(),
+                    "cloud-sync.code".to_owned(),
+                    t!("Sync Code").into_owned(),
+                    t!("Keep this code. It is the only way to reach your settings from another device; Gezik \
+                        cannot recover it. Anyone with this code can read your settings.")
+                    .into_owned(),
+                    vec![COPY_CODE],
+                ),
+                Row::CloudDelete => (
+                    1,
+                    t!("Delete the cloud copy?").into_owned(),
+                    "cloud-sync".to_owned(),
+                    t!("Choose").into_owned(),
+                    t!("Removes the encrypted copy from the server for every computer that uses this code, then \
+                        stops syncing here. This computer keeps its settings.")
+                    .into_owned(),
+                    vec![DELETE, CANCEL],
+                ),
                 Row::Existing => (
                     1,
                     t!("This folder has Gezik settings already").into_owned(),
@@ -385,9 +454,46 @@ impl Backup {
         }
     }
 
+    /// Cloud Sync: Start or Join (not with a sync folder), or how the last round went.
+    fn cloud_item(&self) -> (i32, String, String, String, String, Vec<&'static str>) {
+        let (title, key) = (t!("Cloud Sync").into_owned(), "cloud-sync".to_owned());
+        if !self.cloud && self.synced.is_some() {
+            return (
+                6,
+                title,
+                key,
+                t!("Off").into_owned(),
+                t!("Stop keeping settings in a folder first").into_owned(),
+                Vec::new(),
+            );
+        }
+        if !self.cloud {
+            let description = t!(
+                "Keeps settings.toml, the themes and the templates the same on your computers, with no account: \
+                 Start Syncing gives a secret code, Join With a Code takes it on another computer. The server ({}) \
+                 keeps only an encrypted copy it cannot read.",
+                self.server
+            );
+            return (1, title, key, t!("Off").into_owned(), description, vec![START_CLOUD, JOIN_CLOUD]);
+        }
+        let mut options = vec![SYNC_NOW, SHOW_CODE, STOP_CLOUD, DELETE_CLOUD];
+        if crate::cloud_sync::removed() {
+            options.insert(0, START_AGAIN);
+        }
+        let description = t!("Settings sync when Gezik starts, a few seconds after a change and when it closes; Sync \
+                              Now brings the other computers' changes in at once. This computer's own values are in \
+                              settings.local.toml. Stop Syncing copies the settings back here and leaves the cloud \
+                              copy; Delete from Server removes it.");
+        (1, title, key, crate::cloud_sync::status(), description.into_owned(), options)
+    }
+
     /// Keep Settings in a Folder (a path and Enter), or the sync folder in use.
     fn sync_item(&self) -> (i32, String, String, String, String, Vec<&'static str>) {
         let key = gezik_config::sync_folder::LOCATION_FILE.to_owned();
+        if self.cloud {
+            let title = t!("Keep Settings in a Folder").into_owned();
+            return (6, title, key, t!("Off").into_owned(), t!("Stop Cloud Sync first").into_owned(), Vec::new());
+        }
         let Some(folder) = &self.synced else {
             let suggest = match &self.suggest {
                 Some(cloud) => format!(" {}", t!("(say, {})", cloud.join("Gezik").display())),
@@ -552,6 +658,7 @@ mod tests {
             rows,
             [
                 Row::Sync,
+                Row::Cloud,
                 Row::Export,
                 Row::Templates,
                 Row::Views,
@@ -583,6 +690,30 @@ mod tests {
         assert_eq!(chosen, ["settings.toml"], "unticked and the same are not written");
         assert!(backup.preview.is_none());
         assert_eq!(backup.rows("restore"), [Row::Restore]);
+    }
+
+    #[test]
+    fn the_cloud_rows_follow_its_state_and_the_sync_folder() {
+        let mut backup = Backup { server: "https://sync.example.com".to_owned(), ..Backup::default() };
+        let cloud = backup.item(Row::Cloud);
+        assert_eq!((cloud.kind, cloud.value.as_str()), (1, "Off"));
+        assert!(cloud.description.contains("https://sync.example.com"));
+        let options: Vec<String> = cloud.options.iter().map(|o| o.to_string()).collect();
+        assert_eq!(options, [START_CLOUD, JOIN_CLOUD]);
+        backup.joining = true;
+        assert_eq!(backup.rows("")[..3], [Row::Sync, Row::Cloud, Row::CloudJoin]);
+        // A sync folder in use: no Start or Join, and why.
+        backup.synced = Some(PathBuf::from("/u/Dropbox/Gezik"));
+        let cloud = backup.item(Row::Cloud);
+        assert_eq!((cloud.kind, cloud.description.as_str()), (6, "Stop keeping settings in a folder first"));
+        // On: the folder row says why it is off, the cloud row has its buttons.
+        (backup.cloud, backup.joining, backup.deleting) = (true, false, true);
+        backup.code = Some("7KQ2M-X9D4R-AAAAA-BBBBB-CCCCC".to_owned());
+        assert_eq!(backup.item(Row::Sync).kind, 6);
+        let options: Vec<String> = backup.item(Row::Cloud).options.iter().map(|o| o.to_string()).collect();
+        assert_eq!(options[..], [SYNC_NOW, SHOW_CODE, STOP_CLOUD, DELETE_CLOUD]);
+        assert_eq!(backup.rows("")[1..4], [Row::Cloud, Row::CloudCode, Row::CloudDelete]);
+        assert!(backup.item(Row::CloudCode).description.starts_with("Keep this code."));
     }
 
     #[test]

@@ -14,7 +14,7 @@ pub enum Page {
     Keyboard,
     System,
     Advanced,
-    /// Export, import and the backups (no fields: `settings_window`'s rows).
+    /// The cloud sync's server, then export, import and the backups (`settings_window`'s rows).
     SyncAndBackup,
 }
 
@@ -154,6 +154,7 @@ pub const FIELDS: &[Field] = &[
             tx!("choice:update.channel" => "pre"),
         ]),
     ),
+    f(Some("cloud-sync"), "server", Page::SyncAndBackup, Text),
     f(None, "theme", Appearance, Theme),
     f(None, "theme-light", Appearance, Theme),
     f(None, "theme-dark", Appearance, Theme),

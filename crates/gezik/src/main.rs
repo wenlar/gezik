@@ -8,6 +8,7 @@ mod batch_rename;
 mod checksums;
 mod cli;
 mod cloud;
+mod cloud_sync;
 mod command_line;
 mod compare;
 mod conflicts;
@@ -391,6 +392,8 @@ fn perform(
         | Action::ExportSettings
         | Action::ImportSettings
         | Action::CheckUpdates
+        | Action::CloudSyncNow
+        | Action::CloudSyncShow
         | Action::BrowseArchive
         | Action::RunCommand
         | Action::ToggleCommandOutput
@@ -1317,6 +1320,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     // filter, a pin or a default just sent to settings.toml as well).
                     store.flush_state();
                     store.flush_settings();
+                    // What waits for the cloud goes now (3 s at most; spec 17 §5.2).
+                    cloud_sync::at_close();
                     // A view change still waiting for its timer is handed over, then written.
                     view.flush_memory();
                     store.flush_views();
@@ -1469,6 +1474,7 @@ fn main() -> Result<(), slint::PlatformError> {
         && let Some(store) = &config
     {
         update::start(store.clone(), process.state.update_checked, process.state.update_told.clone());
+        cloud_sync::begin(store.clone());
     }
     resident::start();
     // Deviation 13: hiding the last window must not end the event loop.

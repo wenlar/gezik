@@ -41,10 +41,11 @@ pub fn location_text(folder: &Path, known: &KnownDirs) -> String {
     )
 }
 
-/// The sync folder `local`'s `location.toml` names: one `open` when there is none.
+/// The sync folder `local`'s `location.toml` names (`{local}` is `local`): one `open` when
+/// there is none.
 pub fn read_location(local: &Path, known: &KnownDirs) -> Option<PathBuf> {
     let text = std::fs::read_to_string(local.join(LOCATION_FILE)).ok()?;
-    parse_location(&text, known)
+    parse_location(&text, &known.clone().and("local", local.to_path_buf()))
 }
 
 /// A conflicting copy's original file (`settings.toml`), and whether only a number in its name
@@ -443,6 +444,11 @@ mod tests {
         assert_eq!(read_location(&dir, &known), None, "none: no sync folder");
         std::fs::write(dir.join(LOCATION_FILE), location_text(&dir.join("Sync/Gezik"), &known)).unwrap();
         assert_eq!(read_location(&dir, &known), Some(dir.join("Sync").join("Gezik")));
+        // The cloud sync's folder, in the local folder wherever that is (a portable drive's letter).
+        let text = location_text(&dir.join("cloud"), &known.clone().and("local", dir.clone()));
+        assert!(text.contains("shared = \"{local}/cloud\""), "{text}");
+        std::fs::write(dir.join(LOCATION_FILE), text).unwrap();
+        assert_eq!(read_location(&dir, &known), Some(dir.join("cloud")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

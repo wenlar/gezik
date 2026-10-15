@@ -834,6 +834,10 @@ msgstr[0] "{n} ayar değişikliği: {}"
 msgid "{0} settings change: {1} and {2} more"
 msgstr "{0} ayar değişikliği: {1} ve {2} tane daha"
 
+#: crates/gezik-config/src/cloud_sync/code.rs
+msgid "This code has a typo"
+msgstr "Bu kodda yazım hatası var"
+
 #: crates/gezik-config/src/highlight_rules.rs
 msgid "{0}: expected [[highlight-rules]] tables, got {1}"
 msgstr "{0}: [[highlight-rules]] tabloları bekleniyordu, gelen: {1}"
@@ -1773,6 +1777,7 @@ msgstr "Hızlı bakış"
 #: crates/gezik/src/copy_to.rs
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/integration.rs
+#: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/ui/app.slint
 msgid "Copy"
 msgstr "Kopyala"
@@ -2466,6 +2471,14 @@ msgstr "HEAD ile karşılaştır"
 #: crates/gezik/ui/app.slint
 msgid "Check for Updates"
 msgstr "Güncellemeleri denetle"
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Sync Settings Now"
+msgstr "Ayarları şimdi eşitle"
+
+#: crates/gezik-config/src/shortcuts.rs
+msgid "Show Sync Code"
+msgstr "Eşitleme kodunu göster"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "{0}: unknown action"
@@ -5163,6 +5176,7 @@ msgstr "sunucu yanıt vermedi"
 
 #: crates/gezik-platform/src/http/macos.rs
 #: crates/gezik-platform/src/http/windows.rs
+#: crates/gezik/src/cloud_sync.rs
 msgid "the server answered {}"
 msgstr "sunucu yanıtı: {}"
 
@@ -5182,6 +5196,11 @@ msgstr "indirme beklenenden büyük"
 #: crates/gezik-platform/src/http/unix.rs
 msgid "Install curl with your package manager (sudo apt install curl)"
 msgstr "curl'ü paket yöneticinizle yükleyin (sudo apt install curl)"
+
+#: crates/gezik-platform/src/http/unix.rs
+#: crates/gezik-platform/src/http/windows.rs
+msgid "the server's answer was not understood"
+msgstr "sunucunun yanıtı anlaşılamadı"
 
 #: crates/gezik-platform/src/http/unix.rs
 msgid "the download failed"
@@ -5210,11 +5229,6 @@ msgstr "sunucunun sertifikası doğrulanamadı"
 #: crates/gezik-platform/src/http/unix.rs
 msgid "the server asked for a login"
 msgstr "sunucu oturum açma istedi"
-
-#: crates/gezik-platform/src/http/unix.rs
-#: crates/gezik-platform/src/http/windows.rs
-msgid "the server's answer was not understood"
-msgstr "sunucunun yanıtı anlaşılamadı"
 
 #: crates/gezik-platform/src/http/unix.rs
 msgid "the server answered with an error"
@@ -5628,6 +5642,7 @@ msgstr "Bunları atla"
 #: crates/gezik/src/compare.rs
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/operations.rs
+#: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/trash_view.rs
 msgid "Delete"
 msgstr "Sil"
@@ -6260,6 +6275,92 @@ msgstr "Bir bulut klasöründe değil"
 #: crates/gezik/src/cloud.rs
 msgid "Choose the items first"
 msgstr "Önce öğeleri seçin"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Not synced — offline"
+msgstr "Eşitlenmedi — çevrimdışı"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "This code is no longer valid"
+msgstr "Bu kod artık geçerli değil"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Too large to sync (8 MB). Large templates are the usual cause."
+msgstr "Eşitlemek için çok büyük (8 MB). Genellikle büyük şablonlardan olur."
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Another device is syncing — try again"
+msgstr "Başka bir cihaz eşitliyor — yeniden deneyin"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Your cloud copy was removed after a year without use. Start Syncing again?"
+msgstr "Bulut kopyanız bir yıl kullanılmadığı için silindi. Eşitleme yeniden başlatılsın mı?"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "No settings found for this code"
+msgstr "Bu kod için ayar bulunamadı"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Not synced: {}"
+msgstr "Eşitlenmedi: {}"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "the server sent no version"
+msgstr "sunucu sürüm göndermedi"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Cloud Sync is off"
+msgstr "Bulut eşitleme kapalı"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_backup.rs
+msgid "Cannot remove {0}: {1}"
+msgstr "{0} kaldırılamıyor: {1}"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_backup.rs
+#: crates/gezik/src/settings_window.rs
+msgid "Cannot write {0}: {1}"
+msgstr "{0} yazılamıyor: {1}"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Settings synced; a key changed on both computers: Review… in Settings > Sync and Backup"
+msgstr "Ayarlar eşitlendi; bir anahtar iki bilgisayarda da değişmiş: Ayarlar > Eşitleme ve yedekleme'de Gözden geçir…"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Settings synced"
+msgstr "Ayarlar eşitlendi"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Cloud Sync is off: Settings > Sync and Backup turns it on"
+msgstr "Bulut eşitleme kapalı: Ayarlar > Eşitleme ve yedekleme'den açılır"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_window.rs
+msgid "Syncing…"
+msgstr "Eşitleniyor…"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Not synced since Gezik started"
+msgstr "Gezik açıldığından beri eşitlenmedi"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Synced just now"
+msgstr "Az önce eşitlendi"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "{n} dakika önce eşitlendi"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "{n} saat önce eşitlendi"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Synced {}"
+msgstr "Eşitlendi: {}"
 
 #: crates/gezik/src/command_line.rs
 msgid "{} s"
@@ -8694,6 +8795,7 @@ msgstr "Önce {} dosyasını düzeltin ya da silin"
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/palette.rs
 #: crates/gezik/src/settings_window.rs
+#: crates/gezik/src/settings_window/backup.rs
 msgid "Off"
 msgstr "Kapalı"
 
@@ -10313,11 +10415,6 @@ msgid "{} is there already: give another name"
 msgstr "{} zaten var: başka bir ad verin"
 
 #: crates/gezik/src/settings_backup.rs
-#: crates/gezik/src/settings_window.rs
-msgid "Cannot write {0}: {1}"
-msgstr "{0} yazılamıyor: {1}"
-
-#: crates/gezik/src/settings_backup.rs
 msgid "{} is larger than 300 MB: not a settings export"
 msgstr "{} 300 MB'ı aşıyor: ayar dışa aktarımı değil"
 
@@ -10373,10 +10470,6 @@ msgstr "{} geri konamıyor: yedekte yok"
 #: crates/gezik/src/settings_backup.rs
 msgid "Cannot put back {0}: {1}"
 msgstr "{0} geri konamıyor: {1}"
-
-#: crates/gezik/src/settings_backup.rs
-msgid "Cannot remove {0}: {1}"
-msgstr "{0} kaldırılamıyor: {1}"
 
 #: crates/gezik/src/settings_backup.rs
 msgid "Type the whole path of a folder"
@@ -10633,6 +10726,66 @@ msgid "Merging…"
 msgstr "Birleştiriliyor…"
 
 #: crates/gezik/src/settings_window.rs
+msgid "Backing up, then starting Cloud Sync…"
+msgstr "Yedekleniyor, ardından bulut eşitleme başlatılıyor…"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Keep this code: another computer joins with it"
+msgstr "Bu kodu saklayın: başka bir bilgisayar bununla katılır"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Type the code from the other computer and press Enter"
+msgstr "Öbür bilgisayardaki kodu yazın ve Enter'a basın"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Reading the code…"
+msgstr "Kod okunuyor…"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Anyone with this code can read your settings"
+msgstr "Bu kodu bilen herkes ayarlarınızı okuyabilir"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Cannot read the code: cloud-sync.toml is missing or broken"
+msgstr "Kod okunamıyor: cloud-sync.toml yok ya da bozuk"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Settings are kept on this computer again; the cloud copy is as it was"
+msgstr "Ayarlar yeniden bu bilgisayarda tutuluyor; bulut kopyası olduğu gibi kaldı"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Starting Cloud Sync again…"
+msgstr "Bulut eşitleme yeniden başlatılıyor…"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Looking for the cloud copy…"
+msgstr "Bulut kopyası aranıyor…"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Your previous settings were backed up. Restore Backup ▸ brings them back."
+msgstr "Önceki ayarlarınız yedeklendi. Yedeği geri yükle ▸ onları geri getirir."
+
+#: crates/gezik/src/settings_window.rs
+msgid "Copied the code"
+msgstr "Kod kopyalandı"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Deleting the cloud copy…"
+msgstr "Bulut kopyası siliniyor…"
+
+#: crates/gezik/src/settings_window.rs
+msgid "The cloud copy is deleted; settings are kept on this computer"
+msgstr "Bulut kopyası silindi; ayarlar bu bilgisayarda tutuluyor"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Nothing deleted"
+msgstr "Hiçbir şey silinmedi"
+
+#: crates/gezik/src/settings_window.rs
+msgid "Cloud Sync is off: Start Syncing or Join With a Code"
+msgstr "Bulut eşitleme kapalı: Eşitlemeyi başlat ya da Kodla katıl"
+
+#: crates/gezik/src/settings_window.rs
 msgid "Not a conflicting copy"
 msgstr "Çakışan bir kopya değil"
 
@@ -10704,6 +10857,34 @@ msgid "Check Now"
 msgstr "Şimdi denetle"
 
 #: crates/gezik/src/settings_window/backup.rs
+msgid "Start Syncing…"
+msgstr "Eşitlemeyi başlat…"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Join With a Code…"
+msgstr "Kodla katıl…"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Sync Now"
+msgstr "Şimdi eşitle"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Show Code"
+msgstr "Kodu göster"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Stop Syncing"
+msgstr "Eşitlemeyi durdur"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Delete from Server…"
+msgstr "Sunucudan sil…"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Start Syncing Again"
+msgstr "Eşitlemeyi yeniden başlat"
+
+#: crates/gezik/src/settings_window/backup.rs
 msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
 msgstr "Gezik'in yanındaki gezik-portable dosyası her şeyi bu klasörde tutar. Klasör salt okunur: değişiklikler kaydedilmez. Bu bilgisayarın ayarlar klasörünü yeniden kullanmak için o dosyayı silin (veriler kalır); Dışa aktar ve İçe aktar ayarları ikisi arasında taşır."
 
@@ -10718,6 +10899,26 @@ msgstr "Taşınabilir: ayarların yeri {}"
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Updates"
 msgstr "Güncellemeler"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Sync Code"
+msgstr "Eşitleme kodu"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Type or paste the code Start Syncing gave on the other computer and press Enter. This computer's settings are backed up first, then the cloud copy is used; nothing is merged."
+msgstr "Öbür bilgisayarda Eşitlemeyi başlat'ın verdiği kodu yazın ya da yapıştırın ve Enter'a basın. Bu bilgisayarın ayarları önce yedeklenir, sonra bulut kopyası kullanılır; birleştirme yapılmaz."
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Keep this code. It is the only way to reach your settings from another device; Gezik cannot recover it. Anyone with this code can read your settings."
+msgstr "Bu kodu saklayın. Ayarlarınıza başka bir cihazdan ulaşmanın tek yolu budur; Gezik onu geri getiremez. Bu kodu bilen herkes ayarlarınızı okuyabilir."
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Delete the cloud copy?"
+msgstr "Bulut kopyası silinsin mi?"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Removes the encrypted copy from the server for every computer that uses this code, then stops syncing here. This computer keeps its settings."
+msgstr "Şifreli kopyayı bu kodu kullanan bütün bilgisayarlar için sunucudan siler, sonra burada eşitlemeyi durdurur. Bu bilgisayar ayarlarını korur."
 
 #: crates/gezik/src/settings_window/backup.rs
 msgid "This folder has Gezik settings already"
@@ -10846,12 +11047,32 @@ msgid "Puts back the files the last import replaced, byte for byte, from backups
 msgstr "Son içe aktarmanın değiştirdiği dosyaları backups/{} içinden bayt bayt geri koyar ve eklediklerini kaldırır"
 
 #: crates/gezik/src/settings_window/backup.rs
-msgid "(say, {})"
-msgstr "(örneğin {})"
+msgid "Cloud Sync"
+msgstr "Bulut eşitleme"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Stop keeping settings in a folder first"
+msgstr "Önce ayarları klasörde tutmayı bırakın"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Keeps settings.toml, the themes and the templates the same on your computers, with no account: Start Syncing gives a secret code, Join With a Code takes it on another computer. The server ({}) keeps only an encrypted copy it cannot read."
+msgstr "settings.toml'u, temaları ve şablonları bilgisayarlarınızda hesap açmadan aynı tutar: Eşitlemeyi başlat gizli bir kod verir, Kodla katıl onu başka bir bilgisayarda alır. Sunucu ({}) yalnızca okuyamadığı şifreli bir kopya tutar."
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Settings sync when Gezik starts, a few seconds after a change and when it closes; Sync Now brings the other computers' changes in at once. This computer's own values are in settings.local.toml. Stop Syncing copies the settings back here and leaves the cloud copy; Delete from Server removes it."
+msgstr "Ayarlar Gezik açılınca, bir değişiklikten birkaç saniye sonra ve kapanınca eşitlenir; Şimdi eşitle öbür bilgisayarların değişikliklerini hemen getirir. Bu bilgisayarın kendi değerleri settings.local.toml'dadır. Eşitlemeyi durdur ayarları buraya geri kopyalar ve bulut kopyasını bırakır; Sunucudan sil onu kaldırır."
 
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Keep Settings in a Folder"
 msgstr "Ayarları bir klasörde tut"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "Stop Cloud Sync first"
+msgstr "Önce bulut eşitlemeyi durdurun"
+
+#: crates/gezik/src/settings_window/backup.rs
+msgid "(say, {})"
+msgstr "(örneğin {})"
 
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Type a folder in OneDrive, Dropbox, iCloud Drive or Syncthing{} and press Enter: settings.toml, the themes and the templates are kept there for every computer that uses it. State, folder views, tools, backups and the tag store stay on this computer, and so do [system] and what you mark Only on This Computer (right-click a setting)."
@@ -12993,6 +13214,16 @@ msgstr "Kanal"
 msgctxt "setting:update.channel"
 msgid "auto (pre-releases while this is one) | stable | pre"
 msgstr "auto (bu bir ön sürümken ön sürümler de) | stable | pre"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:cloud-sync.server"
+msgid "Server"
+msgstr "Sunucu"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:cloud-sync.server"
+msgid "Where Cloud Sync (Settings > Sync and Backup) keeps the encrypted copy of these settings. Every computer that shares a sync code uses the same server; to run your own see the docs (docs/cloud-sync-server.md). It only sees encrypted bytes, never the settings or the code."
+msgstr "Bulut eşitlemenin (Ayarlar > Eşitleme ve yedekleme) bu ayarların şifreli kopyasını tuttuğu yer. Bir eşitleme kodunu paylaşan her bilgisayar aynı sunucuyu kullanır; kendi sunucunuzu çalıştırmak için belgelere bakın (docs/cloud-sync-server.md). Sunucu yalnızca şifreli baytları görür, ayarları ya da kodu asla görmez."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:theme"

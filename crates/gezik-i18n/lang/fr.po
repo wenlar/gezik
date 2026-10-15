@@ -1019,6 +1019,11 @@ msgstr[1] "{n} modifications de paramètres : {}"
 msgid "{0} settings change: {1} and {2} more"
 msgstr "{0} modifications de paramètres : {1} et {2} de plus"
 
+#: crates/gezik-config/src/cloud_sync/code.rs
+#, fuzzy
+msgid "This code has a typo"
+msgstr "Ce code contient une faute de frappe"
+
 #: crates/gezik-config/src/highlight_rules.rs
 #, fuzzy
 msgid "{0}: expected [[highlight-rules]] tables, got {1}"
@@ -2163,6 +2168,7 @@ msgstr "Coup d'œil"
 #: crates/gezik/src/copy_to.rs
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/integration.rs
+#: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Copy"
@@ -2989,6 +2995,16 @@ msgstr "Comparer avec HEAD"
 #, fuzzy
 msgid "Check for Updates"
 msgstr "Rechercher des mises à jour"
+
+#: crates/gezik-config/src/shortcuts.rs
+#, fuzzy
+msgid "Sync Settings Now"
+msgstr "Synchroniser les paramètres maintenant"
+
+#: crates/gezik-config/src/shortcuts.rs
+#, fuzzy
+msgid "Show Sync Code"
+msgstr "Afficher le code de synchronisation"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -6347,6 +6363,7 @@ msgstr "le serveur n'a pas répondu"
 
 #: crates/gezik-platform/src/http/macos.rs
 #: crates/gezik-platform/src/http/windows.rs
+#: crates/gezik/src/cloud_sync.rs
 #, fuzzy
 msgid "the server answered {}"
 msgstr "le serveur a répondu {}"
@@ -6371,6 +6388,12 @@ msgstr "le téléchargement est plus volumineux que prévu"
 #, fuzzy
 msgid "Install curl with your package manager (sudo apt install curl)"
 msgstr "Installez curl avec votre gestionnaire de paquets (sudo apt install curl)"
+
+#: crates/gezik-platform/src/http/unix.rs
+#: crates/gezik-platform/src/http/windows.rs
+#, fuzzy
+msgid "the server's answer was not understood"
+msgstr "la réponse du serveur n'a pas été comprise"
 
 #: crates/gezik-platform/src/http/unix.rs
 #, fuzzy
@@ -6406,12 +6429,6 @@ msgstr "le certificat du serveur n'a pas pu être vérifié"
 #, fuzzy
 msgid "the server asked for a login"
 msgstr "le serveur a demandé une identification"
-
-#: crates/gezik-platform/src/http/unix.rs
-#: crates/gezik-platform/src/http/windows.rs
-#, fuzzy
-msgid "the server's answer was not understood"
-msgstr "la réponse du serveur n'a pas été comprise"
 
 #: crates/gezik-platform/src/http/unix.rs
 #, fuzzy
@@ -6923,6 +6940,7 @@ msgstr "Les ignorer"
 #: crates/gezik/src/compare.rs
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/operations.rs
+#: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/trash_view.rs
 #, fuzzy
 msgid "Delete"
@@ -7716,6 +7734,114 @@ msgstr "Pas dans un dossier cloud"
 #, fuzzy
 msgid "Choose the items first"
 msgstr "Choisissez d'abord les éléments"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Not synced — offline"
+msgstr "Non synchronisé — hors ligne"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "This code is no longer valid"
+msgstr "Ce code n'est plus valide"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Too large to sync (8 MB). Large templates are the usual cause."
+msgstr "Trop volumineux pour la synchronisation (8 Mo). Les gros modèles en sont la cause habituelle."
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Another device is syncing — try again"
+msgstr "Un autre appareil synchronise — réessayez"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Your cloud copy was removed after a year without use. Start Syncing again?"
+msgstr "Votre copie dans le cloud a été supprimée après un an sans utilisation. Relancer la synchronisation ?"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "No settings found for this code"
+msgstr "Aucun paramètre trouvé pour ce code"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Not synced: {}"
+msgstr "Non synchronisé : {}"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "the server sent no version"
+msgstr "le serveur n'a envoyé aucune version"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Cloud Sync is off"
+msgstr "La synchronisation cloud est désactivée"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_backup.rs
+#, fuzzy
+msgid "Cannot remove {0}: {1}"
+msgstr "Impossible de supprimer {0} : {1}"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_backup.rs
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Cannot write {0}: {1}"
+msgstr "Impossible d'écrire {0} : {1}"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Settings synced; a key changed on both computers: Review… in Settings > Sync and Backup"
+msgstr "Paramètres synchronisés ; une clé a changé sur les deux ordinateurs : Examiner… dans Paramètres > Synchronisation et sauvegarde"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Settings synced"
+msgstr "Paramètres synchronisés"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Cloud Sync is off: Settings > Sync and Backup turns it on"
+msgstr "La synchronisation cloud est désactivée : activez-la dans Paramètres > Synchronisation et sauvegarde"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Syncing…"
+msgstr "Synchronisation…"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Not synced since Gezik started"
+msgstr "Non synchronisé depuis le démarrage de Gezik"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced just now"
+msgstr "Synchronisé à l'instant"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "Synchronisé il y a {n} minute"
+msgstr[1] "Synchronisé il y a {n} minutes"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "Synchronisé il y a {n} heure"
+msgstr[1] "Synchronisé il y a {n} heures"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced {}"
+msgstr "Synchronisé : {}"
 
 #: crates/gezik/src/command_line.rs
 #, fuzzy
@@ -10760,6 +10886,7 @@ msgstr "Corrigez ou supprimez d'abord {}"
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/palette.rs
 #: crates/gezik/src/settings_window.rs
+#: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
 msgid "Off"
 msgstr "Désactivé"
@@ -12787,12 +12914,6 @@ msgid "{} is there already: give another name"
 msgstr "{} existe déjà : choisissez un autre nom"
 
 #: crates/gezik/src/settings_backup.rs
-#: crates/gezik/src/settings_window.rs
-#, fuzzy
-msgid "Cannot write {0}: {1}"
-msgstr "Impossible d'écrire {0} : {1}"
-
-#: crates/gezik/src/settings_backup.rs
 #, fuzzy
 msgid "{} is larger than 300 MB: not a settings export"
 msgstr "{} dépasse 300 Mo : ce n'est pas un export de paramètres"
@@ -12862,11 +12983,6 @@ msgstr "Impossible de restaurer {} : absent de la sauvegarde"
 #, fuzzy
 msgid "Cannot put back {0}: {1}"
 msgstr "Impossible de restaurer {0} : {1}"
-
-#: crates/gezik/src/settings_backup.rs
-#, fuzzy
-msgid "Cannot remove {0}: {1}"
-msgstr "Impossible de supprimer {0} : {1}"
 
 #: crates/gezik/src/settings_backup.rs
 #, fuzzy
@@ -13189,6 +13305,81 @@ msgstr "Fusion…"
 
 #: crates/gezik/src/settings_window.rs
 #, fuzzy
+msgid "Backing up, then starting Cloud Sync…"
+msgstr "Sauvegarde, puis démarrage de la synchronisation cloud…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Keep this code: another computer joins with it"
+msgstr "Conservez ce code : un autre ordinateur s'y joint avec"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Type the code from the other computer and press Enter"
+msgstr "Saisissez le code de l'autre ordinateur et appuyez sur Entrée"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Reading the code…"
+msgstr "Lecture du code…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Anyone with this code can read your settings"
+msgstr "Toute personne disposant de ce code peut lire vos paramètres"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Cannot read the code: cloud-sync.toml is missing or broken"
+msgstr "Impossible de lire le code : cloud-sync.toml est absent ou endommagé"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Settings are kept on this computer again; the cloud copy is as it was"
+msgstr "Les paramètres sont de nouveau conservés sur cet ordinateur ; la copie cloud reste telle quelle"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Starting Cloud Sync again…"
+msgstr "Redémarrage de la synchronisation cloud…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Looking for the cloud copy…"
+msgstr "Recherche de la copie cloud…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Your previous settings were backed up. Restore Backup ▸ brings them back."
+msgstr "Vos paramètres précédents ont été sauvegardés. Restaurer la sauvegarde ▸ les rétablit."
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Copied the code"
+msgstr "Code copié"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Deleting the cloud copy…"
+msgstr "Suppression de la copie cloud…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "The cloud copy is deleted; settings are kept on this computer"
+msgstr "La copie cloud est supprimée ; les paramètres sont conservés sur cet ordinateur"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Nothing deleted"
+msgstr "Rien n'a été supprimé"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Cloud Sync is off: Start Syncing or Join With a Code"
+msgstr "La synchronisation cloud est désactivée : Démarrer la synchronisation ou Rejoindre avec un code"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
 msgid "Not a conflicting copy"
 msgstr "Pas une copie en conflit"
 
@@ -13280,6 +13471,41 @@ msgstr "Vérifier maintenant"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
+msgid "Start Syncing…"
+msgstr "Démarrer la synchronisation…"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Join With a Code…"
+msgstr "Rejoindre avec un code…"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Sync Now"
+msgstr "Synchroniser maintenant"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Show Code"
+msgstr "Afficher le code"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Stop Syncing"
+msgstr "Arrêter la synchronisation"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Delete from Server…"
+msgstr "Supprimer du serveur…"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Start Syncing Again"
+msgstr "Relancer la synchronisation"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
 msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
 msgstr "Un fichier gezik-portable à côté de Gezik conserve tout dans ce dossier. Il est en lecture seule : les modifications ne sont pas enregistrées. Supprimez ce fichier pour réutiliser le dossier des paramètres de cet ordinateur (les données restent) ; Exporter et Importer transfèrent les paramètres entre les deux."
 
@@ -13297,6 +13523,31 @@ msgstr "Portable : les paramètres sont conservés dans {}"
 #, fuzzy
 msgid "Updates"
 msgstr "Mises à jour"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Sync Code"
+msgstr "Code de synchronisation"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Type or paste the code Start Syncing gave on the other computer and press Enter. This computer's settings are backed up first, then the cloud copy is used; nothing is merged."
+msgstr "Saisissez ou collez le code donné par Démarrer la synchronisation sur l'autre ordinateur et appuyez sur Entrée. Les paramètres de cet ordinateur sont d'abord sauvegardés, puis la copie cloud est utilisée ; rien n'est fusionné."
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Keep this code. It is the only way to reach your settings from another device; Gezik cannot recover it. Anyone with this code can read your settings."
+msgstr "Conservez ce code. C'est le seul moyen d'accéder à vos paramètres depuis un autre appareil ; Gezik ne peut pas le récupérer. Toute personne disposant de ce code peut lire vos paramètres."
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Delete the cloud copy?"
+msgstr "Supprimer la copie cloud ?"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Removes the encrypted copy from the server for every computer that uses this code, then stops syncing here. This computer keeps its settings."
+msgstr "Supprime du serveur la copie chiffrée pour tous les ordinateurs qui utilisent ce code, puis arrête la synchronisation ici. Cet ordinateur garde ses paramètres."
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
@@ -13459,13 +13710,38 @@ msgstr "Remet à l'identique les fichiers remplacés par la dernière importatio
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
-msgid "(say, {})"
-msgstr "(par exemple, {})"
+msgid "Cloud Sync"
+msgstr "Synchronisation cloud"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Stop keeping settings in a folder first"
+msgstr "Cessez d'abord de conserver les paramètres dans un dossier"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Keeps settings.toml, the themes and the templates the same on your computers, with no account: Start Syncing gives a secret code, Join With a Code takes it on another computer. The server ({}) keeps only an encrypted copy it cannot read."
+msgstr "Garde settings.toml, les thèmes et les modèles identiques sur vos ordinateurs, sans compte : Démarrer la synchronisation donne un code secret, Rejoindre avec un code l'utilise sur un autre ordinateur. Le serveur ({}) ne conserve qu'une copie chiffrée qu'il ne peut pas lire."
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Settings sync when Gezik starts, a few seconds after a change and when it closes; Sync Now brings the other computers' changes in at once. This computer's own values are in settings.local.toml. Stop Syncing copies the settings back here and leaves the cloud copy; Delete from Server removes it."
+msgstr "Les paramètres se synchronisent au démarrage de Gezik, quelques secondes après une modification et à sa fermeture ; Synchroniser maintenant récupère aussitôt les modifications des autres ordinateurs. Les valeurs propres à cet ordinateur sont dans settings.local.toml. Arrêter la synchronisation recopie les paramètres ici et laisse la copie cloud ; Supprimer du serveur l'efface."
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
 msgid "Keep Settings in a Folder"
 msgstr "Garder les paramètres dans un dossier"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Stop Cloud Sync first"
+msgstr "Arrêtez d'abord la synchronisation cloud"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "(say, {})"
+msgstr "(par exemple, {})"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
@@ -16153,6 +16429,18 @@ msgstr "Canal"
 msgctxt "setting:update.channel"
 msgid "auto (pre-releases while this is one) | stable | pre"
 msgstr "auto (préversions tant que celle-ci en est une) | stable | pre"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:cloud-sync.server"
+msgid "Server"
+msgstr "Serveur"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:cloud-sync.server"
+msgid "Where Cloud Sync (Settings > Sync and Backup) keeps the encrypted copy of these settings. Every computer that shares a sync code uses the same server; to run your own see the docs (docs/cloud-sync-server.md). It only sees encrypted bytes, never the settings or the code."
+msgstr "Où la synchronisation cloud (Paramètres > Synchronisation et sauvegarde) conserve la copie chiffrée de ces paramètres. Tous les ordinateurs qui partagent un code utilisent le même serveur ; pour héberger le vôtre, voir la documentation (docs/cloud-sync-server.md). Il ne voit que des octets chiffrés, jamais les paramètres ni le code."
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

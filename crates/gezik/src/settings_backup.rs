@@ -553,7 +553,9 @@ pub fn start_sync(
     if let Some(machine) = machine {
         let _ = sync_folder::add_machine(folder, machine);
     }
-    let text = sync_folder::location_text(folder, &gezik_config::paths::KnownDirs::system());
+    // `{local}/cloud` for the cloud sync's folder, wherever this computer's folder is.
+    let known = gezik_config::paths::KnownDirs::system().and("local", folders.local.clone());
+    let text = sync_folder::location_text(folder, &known);
     let location = folders.local.join(LOCATION_FILE);
     write_atomic_bytes(&location, text.as_bytes())
         .map_err(|err| t!("Cannot write {0}: {1}", location.display(), describe(&err)))?;

@@ -261,6 +261,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::ExportSettings
         | Action::ImportSettings
         | Action::CheckUpdates
+        | Action::CloudSyncNow
+        | Action::CloudSyncShow
         | Action::ConnectToServer
         | Action::GroupNone
         | Action::GroupType

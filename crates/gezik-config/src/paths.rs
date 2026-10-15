@@ -167,7 +167,8 @@ pub fn location() -> &'static Location {
         let mut location = locate(choice, writable);
         if let Some(dirs) = location.dirs.as_mut()
             && let Ok(text) = std::fs::read_to_string(dirs.local.join(crate::sync_folder::LOCATION_FILE))
-            && let Some(folder) = crate::sync_folder::parse_location(&text, &KnownDirs::system())
+            && let Some(folder) =
+                crate::sync_folder::parse_location(&text, &KnownDirs::system().and("local", dirs.local.clone()))
         {
             (dirs.shared, dirs.synced) = (folder, true);
         }
@@ -189,6 +190,14 @@ impl KnownDirs {
     pub fn new(mut dirs: Vec<(&'static str, PathBuf)>) -> Self {
         dirs.sort_by_key(|(_, path)| std::cmp::Reverse(path.components().count()));
         Self { dirs }
+    }
+
+    /// These and `dir` as `{token}` (`{local}`: the cloud sync's folder is in this computer's own).
+    pub fn and(self, token: &'static str, dir: PathBuf) -> Self {
+        let mut dirs = self.dirs;
+        // First, so it wins over a known folder of the same depth.
+        dirs.insert(0, (token, dir));
+        Self::new(dirs)
     }
 
     /// The current user's folders on this machine.

@@ -96,6 +96,9 @@ impl Shown {
         backup.synced = store.as_ref().filter(|s| s.is_synced()).map(ConfigStore::shared_dir);
         backup.unsaved = store.map_or(0, |s| s.unsaved());
         backup.offline = files.offline;
+        backup.cloud = crate::windows::config().is_some_and(|s| crate::cloud_sync::on(&s));
+        let server = FIELDS.iter().position(|f| f.path() == "cloud-sync.server").and_then(|i| self.values.get(i));
+        backup.server = server.cloned().flatten().unwrap_or_else(|| crate::cloud_sync::SERVER.to_owned());
         files.conflicts.clone_into(&mut backup.conflicts);
         if backup.review.as_ref().is_some_and(|r| !backup.conflicts.contains(&r.copy)) {
             backup.review = None;
@@ -506,7 +509,7 @@ pub fn refresh(files: &ConfigFiles) {
     show_rows(&open, false);
 }
 
-/// An update check started or ended: the Updates row follows.
+/// An update check or a cloud sync round started or ended: the Updates and Cloud Sync rows follow.
 pub fn refresh_updates() {
     if let Some(open) = current() {
         show_rows(&open, false);
@@ -867,7 +870,7 @@ fn edit_file() {
 /// The English option a row's translated choice stands for (the option consts and Cancel);
 /// any other text (a typed path, a backup's name, a box's true/false) as it is.
 fn source_of(text: &str) -> &str {
-    const OPTIONS: [&str; 20] = [
+    const OPTIONS: [&str; 29] = [
         themes::USE_NOW,
         themes::CHECK,
         themes::SOURCE_PAGE,
@@ -888,6 +891,15 @@ fn source_of(text: &str) -> &str {
         backup::OTHER_COPY,
         backup::MERGE,
         backup::CANCEL,
+        backup::START_CLOUD,
+        backup::JOIN_CLOUD,
+        backup::SYNC_NOW,
+        backup::SHOW_CODE,
+        backup::STOP_CLOUD,
+        backup::DELETE_CLOUD,
+        backup::START_AGAIN,
+        backup::COPY_CODE,
+        backup::DELETE,
     ];
     for option in OPTIONS {
         if t("", option) == text {
@@ -1054,6 +1066,10 @@ fn backup_chosen(open: &Open, row: backup::Row, text: &str) {
         Row::Sync | Row::Existing | Row::Conflict(_) | Row::Difference(_) | Row::Merge => {
             drop(shown);
             return sync_chosen(open, row, text);
+        }
+        Row::Cloud | Row::CloudJoin | Row::CloudCode | Row::CloudDelete => {
+            drop(shown);
+            return cloud_chosen(open, row, text);
         }
         Row::Templates => state.without_templates = !on,
         Row::Views => state.with_views = on,
@@ -1368,14 +1384,225 @@ fn sync_chosen(open: &Open, row: backup::Row, text: &str) {
 /// follows fills the rows).
 fn moved(open: Option<&Open>, done: &str) {
     let Some(open) = open else { return };
-    let synced = crate::windows::config().filter(ConfigStore::is_synced).map(|s| s.shared_dir());
+    let store = crate::windows::config();
+    let synced = store.as_ref().filter(|s| s.is_synced()).map(ConfigStore::shared_dir);
     let mut shown = open.shown.borrow_mut();
     (shown.backup.synced, shown.backup.found, shown.backup.review) = (synced, None, None);
+    shown.backup.cloud = store.is_some_and(|s| crate::cloud_sync::on(&s));
+    (shown.backup.joining, shown.backup.deleting) = (false, false);
+    if !shown.backup.cloud {
+        shown.backup.code = None;
+    }
     shown.backup.backups = None;
     shown.pick_rows();
     drop(shown);
     show_rows(open, false);
     say(open, done);
+}
+
+/// A Cloud Sync row's choice (spec 17 §5.4): Start Syncing, Join With a Code (then the code and
+/// Enter), Sync Now, Show Code (then Copy), Stop Syncing, Delete from Server (then Delete or
+/// Cancel), Start Syncing Again.
+fn cloud_chosen(open: &Open, row: backup::Row, text: &str) {
+    use crate::cloud_sync;
+    use backup::Row;
+    let mut shown = open.shown.borrow_mut();
+    let state = &mut shown.backup;
+    let server = state.server.clone();
+    match (row, text) {
+        (Row::Cloud, backup::START_CLOUD) => {
+            drop(shown);
+            let job = move |store: &ConfigStore| -> Result<String, String> {
+                store.flush_settings();
+                let code = cloud_sync::start(&Folders::of(store), &server, &discard)?;
+                to_cloud(store);
+                // The first round makes the box; offline, a later one does.
+                cloud_sync::run(store, false, false);
+                Ok(code)
+            };
+            work(open, &t!("Backing up, then starting Cloud Sync…"), job, |open, result| match result {
+                Ok(code) => {
+                    moved(open, &t!("Keep this code: another computer joins with it"));
+                    let Some(open) = open else { return };
+                    open.shown.borrow_mut().backup.code = Some(code);
+                    show_cloud_row(open, Row::CloudCode);
+                }
+                Err(why) => {
+                    if let Some(open) = open {
+                        say_bad(open, &why);
+                    }
+                }
+            });
+        }
+        (Row::Cloud, backup::JOIN_CLOUD) => {
+            state.joining = true;
+            drop(shown);
+            show_cloud_row(open, Row::CloudJoin);
+            say(open, &t!("Type the code from the other computer and press Enter"));
+        }
+        (Row::Cloud, backup::SYNC_NOW) => {
+            drop(shown);
+            let Some(store) = crate::windows::config() else { return };
+            say(open, &t!("Syncing…"));
+            std::thread::spawn(move || cloud_sync::run(&store, false, false));
+        }
+        (Row::Cloud, backup::SHOW_CODE) => {
+            drop(shown);
+            let job = |store: &ConfigStore| {
+                cloud_sync::State::read(store.local_dir()).map(|state| gezik_config::cloud_sync::display(&state.code))
+            };
+            work(open, &t!("Reading the code…"), job, |open, code| {
+                let Some(open) = open else { return };
+                match code {
+                    Some(code) => {
+                        open.shown.borrow_mut().backup.code = Some(code);
+                        show_cloud_row(open, Row::CloudCode);
+                        say(open, &t!("Anyone with this code can read your settings"));
+                    }
+                    None => say_bad(open, &t!("Cannot read the code: cloud-sync.toml is missing or broken")),
+                }
+            });
+        }
+        (Row::Cloud, backup::STOP_CLOUD) => {
+            drop(shown);
+            let job = |store: &ConfigStore| -> Result<(), String> {
+                store.flush_settings();
+                cloud_sync::stop(&Folders::of(store), &discard)?;
+                from_cloud(store);
+                Ok(())
+            };
+            work(open, &t!("Backing up, then copying the settings back…"), job, |open, result| match result {
+                Ok(()) => moved(open, &t!("Settings are kept on this computer again; the cloud copy is as it was")),
+                Err(why) => {
+                    if let Some(open) = open {
+                        say_bad(open, &why);
+                    }
+                }
+            });
+        }
+        (Row::Cloud, backup::DELETE_CLOUD) => {
+            state.deleting = true;
+            drop(shown);
+            show_cloud_row(open, Row::CloudDelete);
+        }
+        (Row::Cloud, backup::START_AGAIN) => {
+            drop(shown);
+            let job = |store: &ConfigStore| -> Result<(), String> {
+                cloud_sync::again(store.local_dir()).map_err(|err| gezik_platform::fs::describe(&err))?;
+                cloud_sync::run(store, false, false);
+                Ok(())
+            };
+            work(open, &t!("Starting Cloud Sync again…"), job, |open, result| {
+                let Some(open) = open else { return };
+                match result {
+                    Ok(()) => say(open, &cloud_sync::status()),
+                    Err(why) => say_bad(open, &why),
+                }
+                show_rows(open, false);
+            });
+        }
+        (Row::CloudJoin, typed) => {
+            typed.trim().clone_into(&mut state.join_code);
+            drop(shown);
+            if typed.trim().is_empty() {
+                return;
+            }
+            let typed = typed.to_owned();
+            let job = move |store: &ConfigStore| -> Result<(), String> {
+                store.flush_settings();
+                let folders = Folders::of(store);
+                cloud_sync::join(&folders, &server, &typed, &cloud_sync::system_http, &discard)
+                    .map_err(|failure| failure.text())?;
+                to_cloud(store);
+                Ok(())
+            };
+            work(open, &t!("Looking for the cloud copy…"), job, |open, result| match result {
+                Ok(()) => {
+                    if let Some(open) = open {
+                        open.shown.borrow_mut().backup.join_code.clear();
+                    }
+                    moved(open, &t!("Your previous settings were backed up. Restore Backup ▸ brings them back."));
+                }
+                Err(why) => {
+                    if let Some(open) = open {
+                        say_bad(open, &why);
+                    }
+                }
+            });
+        }
+        (Row::CloudCode, backup::COPY_CODE) => {
+            let code = state.code.clone().unwrap_or_default();
+            drop(shown);
+            match gezik_platform::clipboard::write_text(&code) {
+                Ok(()) => say(open, &t!("Copied the code")),
+                Err(_) => say_bad(open, &t!("Cannot use the clipboard")),
+            }
+        }
+        (Row::CloudDelete, backup::DELETE) => {
+            state.deleting = false;
+            drop(shown);
+            let job = |store: &ConfigStore| -> Result<(), String> {
+                store.flush_settings();
+                cloud_sync::delete(store.local_dir(), &cloud_sync::system_http).map_err(|failure| failure.text())?;
+                cloud_sync::stop(&Folders::of(store), &discard)?;
+                from_cloud(store);
+                Ok(())
+            };
+            work(open, &t!("Deleting the cloud copy…"), job, |open, result| match result {
+                Ok(()) => moved(open, &t!("The cloud copy is deleted; settings are kept on this computer")),
+                Err(why) => {
+                    if let Some(open) = open {
+                        say_bad(open, &why);
+                    }
+                }
+            });
+        }
+        (Row::CloudDelete, _) => {
+            state.deleting = false;
+            drop(shown);
+            show_cloud_row(open, Row::Cloud);
+            say(open, &t!("Nothing deleted"));
+        }
+        _ => {}
+    }
+}
+
+/// The rows again, the keyboard in Cloud Sync's row `row`.
+fn show_cloud_row(open: &Open, row: backup::Row) {
+    open.shown.borrow_mut().pick_rows();
+    show_rows(open, false);
+    let at = open.shown.borrow().backup_index(row);
+    if let Some(at) = at {
+        focus_row(open, at);
+    }
+}
+
+/// The store moves to the cloud sync's folder (Start, Join), which is watched from now on.
+fn to_cloud(store: &ConfigStore) {
+    store.set_shared(Some(store.local_dir().join(crate::cloud_sync::FOLDER)));
+    crate::cloud_sync::reset();
+    let _ = crate::watcher::follow();
+    crate::watcher::reload();
+}
+
+/// The store is back in this computer's folder (Stop, Delete from Server).
+fn from_cloud(store: &ConfigStore) {
+    store.set_shared(None);
+    crate::cloud_sync::reset();
+    let _ = crate::watcher::follow();
+    crate::watcher::reload();
+}
+
+/// `cloud-sync-show`: the Sync and Backup page with the code shown (when Cloud Sync is on).
+pub fn open_cloud_code() {
+    let Some(open) = open_at(Page::SyncAndBackup) else { return };
+    let on = open.shown.borrow().backup.cloud;
+    if on {
+        cloud_chosen(&open, backup::Row::Cloud, backup::SHOW_CODE);
+    } else {
+        show_cloud_row(&open, backup::Row::Cloud);
+        say(&open, &t!("Cloud Sync is off: Start Syncing or Join With a Code"));
+    }
 }
 
 /// Takes up sync folder `folder` (spec 14 §8.1) and moves the store there; in a cloud folder its

@@ -34,6 +34,7 @@ open = "5.3"
 # vendor/README.md).
 i-slint-core = { version = "=1.18.1", default-features = false, features = ["std", "tr", "shared-parley"] }
 notify = "8"
+toml = "1"
 
 # The macOS app menu's texts in Gezik's language (vendor patch, spec 15 §10.2).
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -51,5 +52,4 @@ embed-resource = "3"
 
 [dev-dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
-toml = "1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }

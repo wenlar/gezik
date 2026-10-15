@@ -211,6 +211,60 @@ system changes.
   is. Export and Import (above) work with a sync folder too: the shared files come from the
   folder, `views.toml` and the backups from this computer.
 
+## Cloud sync
+
+Settings ▸ **Sync and Backup** ▸ **Cloud Sync** keeps `settings.toml`, the themes and the
+templates the same on your computers through a small server, with no account. It is the sync
+folder above with the server in place of Dropbox: the same files are shared, each computer keeps
+its own `state.toml`, `views.toml`, tag store, tools, backups and `settings.local.toml` (its
+`[system]` and what you mark Only on This Computer). It cannot be on while a sync folder is used.
+
+- **Start Syncing…** makes a secret code (25 characters, `7KQ2M-X9D4R-…`) and copies this
+  computer's settings into `cloud/` in its config folder (after a backup; `location.toml` then
+  says `shared = "{local}/cloud"`). **Keep the code.** It is the only way to reach the settings
+  from another computer, and Gezik cannot recover it; anyone who has it can read them.
+  **Show Code** shows it again on a computer that syncs (also the `cloud-sync-show` action).
+- **Join With a Code…** on the other computer: type or paste the code (any case, with or
+  without dashes; a typo is caught before anything is sent). Its settings are backed up first
+  (Restore Backup brings them back), then the cloud copy is used; nothing is merged at that step.
+- **When**: when Gezik starts, 5 seconds after the last change in `cloud/`, on **Sync Now** (also
+  `cloud-sync-now`) and, when something is still waiting to go, when Gezik closes (3 seconds at
+  most). Nothing polls the server meanwhile: another computer's change arrives at the next start
+  or Sync Now. With cloud sync off, nothing of it runs.
+- **Both computers changed something**: different keys of `settings.toml` are merged key by key;
+  a key both changed keeps this computer's value and the other's whole file is put beside it as
+  `settings.cloud-conflict-<date>.toml`, which the page lists with **Review…** like a sync service's
+  conflicting copy. Themes and templates go by their contents: changed on one side, that side's;
+  changed on both, this computer's, with the other's as `<name>.cloud-conflict-<date>.<ext>`. A file
+  removed on one computer and left alone on the other goes (to the trash).
+- **The status line** says when it last synced, or why not: "Not synced — offline" (tried again at
+  the next trigger), "This code is no longer valid" (the box was deleted; syncing stops), "Too
+  large to sync (8 MB)" (large templates are the usual cause), "Another device is syncing — try
+  again".
+- **Stop Syncing** copies the settings back into this computer's config folder (after a backup)
+  and removes `cloud/`, `cloud-base` and `cloud-sync.toml`; the server is not touched, the other
+  computers go on. **Delete from Server…** (asks first) removes the cloud copy for every computer
+  that uses the code, then stops.
+- **What the server sees**: a random-looking box id, an authentication value and the encrypted
+  bundle (XChaCha20-Poly1305, its key derived from the code on your computer and never sent),
+  the bundle's size, when it is used and from which IP address. It does not see your settings,
+  file names, themes, templates or the code.
+- **Retention**: a box nobody uses for a year is deleted on the server; a computer that comes
+  back after that says "Your cloud copy was removed after a year without use" and offers **Start
+  Syncing Again** (its own settings are still there).
+- **Your own server**: the server's source is in `server/sync/` (a Cloudflare Worker); see
+  [cloud-sync-server.md](cloud-sync-server.md) for setting it up, then point every computer that
+  shares a code at it:
+
+  ```toml
+  [cloud-sync]
+  server = "https://sync.example.com"
+  ```
+
+- **Files**: in this computer's config folder `cloud/` (the shared files), `cloud-base` (the set
+  both sides had after the last sync, the base of the merge) and `cloud-sync.toml` (the server,
+  the code, the box's version, the last sync time; readable only by you on macOS and Linux).
+
 ## Portable mode
 
 Put a file named `gezik-portable` (empty; its contents do not matter) next to Gezik:
