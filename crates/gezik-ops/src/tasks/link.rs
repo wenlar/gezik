@@ -52,8 +52,12 @@ impl LinkTask {
     }
 
     /// Why these hard links cannot be made, asked once before any is (one message, not one per
-    /// item): a folder among the items, or a link on another drive.
-    fn hard_links_refused(&self) -> Option<std::borrow::Cow<'static, str>> {
+    /// item): a folder among the items, or a link on another drive. A refusal is no reason to
+    /// offer Retry.
+    pub fn refused(&self) -> Option<std::borrow::Cow<'static, str>> {
+        if self.kind != LinkKind::Hard {
+            return None;
+        }
         if self.pairs.iter().any(|(source, _)| source.is_dir()) {
             return Some(gezik_i18n::t!("Hard links work only on files"));
         }
@@ -91,9 +95,7 @@ impl Task for LinkTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
-        if self.kind == LinkKind::Hard
-            && let (Some(why), Some((source, _))) = (self.hard_links_refused(), self.pairs.first())
-        {
+        if let (Some(why), Some((source, _))) = (self.refused(), self.pairs.first()) {
             sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, why));
             return;
         }
@@ -320,6 +322,8 @@ mod tests {
         write(&dir.join("Docs/b.txt"), "b");
         let engine = engine();
         let sources = vec![dir.join("a.txt"), dir.join("Docs")];
+        assert!(LinkTask::beside(sources.clone(), LinkKind::Hard).refused().is_some(), "no Retry offered");
+        assert!(LinkTask::beside(sources.clone(), LinkKind::Symlink).refused().is_none());
         let job = engine.submit(Box::new(LinkTask::beside(sources, LinkKind::Hard)));
         let (report, _) = finish(&engine, job, defaults);
         assert_eq!(report.failures.len(), 1, "one message");
