@@ -81,6 +81,7 @@ const FORGETS: &[fn(WindowId)] = &[
     |id| crate::preview::CURRENT.with(|s| s.forget(id)),
     |id| crate::saved_searches::CURRENT.with(|s| s.forget(id)),
     |id| crate::select_tools::CURRENT.with(|s| s.forget(id)),
+    crate::set_dates::forget,
     |id| crate::sidebar::CURRENT.with(|s| s.forget(id)),
     |id| crate::size_map::CURRENT.with(|s| s.forget(id)),
     |id| crate::stack::CURRENT.with(|s| s.forget(id)),
@@ -650,6 +651,7 @@ fn open_beside_with(
         window_state::capture_into(window, &mut state);
         state.preview_open = preview::with_current(preview::Preview::is_pane_open).unwrap_or(false);
         state.preview_width = Some(window.get_preview_width().round().clamp(200.0, 600.0) as u32);
+        state.preview_height = Some(window.get_preview_height().round().clamp(120.0, 600.0) as u32);
     });
     if let Some(place) = place {
         state.window = Some(placed(state.window, place));
@@ -872,6 +874,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         .into(),
     );
     window.set_preview_width(state.preview_width.unwrap_or(280) as f32);
+    window.set_preview_height(state.preview_height.unwrap_or(220) as f32);
     window.set_column_width(state.column_width.unwrap_or(crate::COLUMN_WIDTH) as f32);
     let folder_sizes = folder_sizes::FolderSizes::new(pane_id, window.as_weak(), view.clone());
     folder_sizes.set_settings(settings.folder_sizes, settings.search.everything);
@@ -910,6 +913,7 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     path_box::PathBox::connect(&window);
     crate::command_line::CommandLine::connect(&window);
     crate::git_commands::connect(&window);
+    crate::set_dates::connect(&window);
     filter::Filter::connect(&window);
     search::Searches::connect(&window);
     let left = panes::Pane {
@@ -1039,6 +1043,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             if section == sidebar::SECTION_TAGS {
                 return crate::tags::sidebar_clicked(index, false);
             }
+            if section == sidebar::SECTION_NETWORK {
+                return crate::network_places::clicked(index, false);
+            }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().go(location);
             }
@@ -1052,6 +1059,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             }
             if section == sidebar::SECTION_TAGS {
                 return crate::tags::sidebar_clicked(index, true);
+            }
+            if section == sidebar::SECTION_NETWORK {
+                return crate::network_places::clicked(index, true);
             }
             if let Some(location) = sidebar.location_of(section, index) {
                 panes::active_nav().open_tab(location, false);

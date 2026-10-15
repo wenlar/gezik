@@ -16,6 +16,7 @@ mod rename;
 mod restore;
 mod sync;
 mod tags;
+mod times;
 mod trash;
 
 pub use attrs::{NEEDS_ADMIN, SetAttributesTask};
@@ -35,6 +36,7 @@ pub use rename::RenameTask;
 pub use restore::{RestoreTask, SwapBackTask};
 pub use sync::{Seen, SyncStep, SyncTask, sync_label};
 pub use tags::TagsTask;
+pub use times::{SetTimesTask, TakenReader};
 pub use trash::{TrashTask, trash_path};
 
 use std::io;

@@ -284,6 +284,7 @@ msgstr ""
 #: crates/gezik/src/saved_searches.rs
 #: crates/gezik/src/search.rs
 #: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/sidebar.rs
 #: crates/gezik/src/tab_sets.rs
@@ -295,6 +296,7 @@ msgstr ""
 #: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/set-dates.slint
 #: crates/gezik/ui/widgets/settings.slint
 msgid "Cancel"
 msgstr ""
@@ -887,6 +889,14 @@ msgid "{0}: expected folder, file, pictures, videos, audio, documents, archives 
 msgstr ""
 
 #: crates/gezik-config/src/pins.rs
+msgid "unknown color \"{0}\" for {1}; expected a tag color or #rrggbb"
+msgstr ""
+
+#: crates/gezik-config/src/pins.rs
+msgid "unknown icon \"{0}\" for {1}; the default icon is shown"
+msgstr ""
+
+#: crates/gezik-config/src/pins.rs
 msgid "unknown key \"{0}\" in {1}"
 msgstr ""
 
@@ -1178,6 +1188,16 @@ msgid "all"
 msgstr ""
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "right"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "bottom"
+msgstr ""
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:archives.double-click"
 msgid "browse"
 msgstr ""
@@ -1287,6 +1307,14 @@ msgstr ""
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
+msgstr ""
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
+msgstr ""
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected \"right\" or \"bottom\", got {1}"
 msgstr ""
 
 #: crates/gezik-config/src/settings.rs
@@ -2171,6 +2199,16 @@ msgstr ""
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/ui/app.slint
 msgid "Two Panes"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Stack Panes"
+msgstr ""
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Preview at Bottom"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
@@ -3273,6 +3311,7 @@ msgid "Picture"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Photo"
 msgstr ""
 
@@ -3281,11 +3320,13 @@ msgid "Media"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Music"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
 #: crates/gezik-core/src/kind.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Document"
 msgstr ""
 
@@ -3534,6 +3575,7 @@ msgid "Install Git to see repository status"
 msgstr ""
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/compress.slint
@@ -4038,6 +4080,7 @@ msgid "Archives"
 msgstr ""
 
 #: crates/gezik-core/src/search.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Code"
 msgstr ""
 
@@ -4164,10 +4207,12 @@ msgstr ""
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 msgid "Modified"
 msgstr ""
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 msgid "Created"
 msgstr ""
 
@@ -4388,6 +4433,12 @@ msgstr[0] ""
 msgstr[1] ""
 
 #: crates/gezik-ops/src/task.rs
+msgid "Set dates of {n} item"
+msgid_plural "Set dates of {n} items"
+msgstr[0] ""
+msgstr[1] ""
+
+#: crates/gezik-ops/src/task.rs
 msgid "Tags could not be carried: {}"
 msgstr ""
 
@@ -4574,6 +4625,14 @@ msgid "Verifying {}"
 msgstr ""
 
 #: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links work only on files"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links must stay on the same drive"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/link.rs
 msgid "Creating a link to {}"
 msgstr ""
 
@@ -4729,6 +4788,14 @@ msgstr ""
 
 #: crates/gezik-ops/src/tasks/tags.rs
 msgid "Kept in Gezik's tag store: {}"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/times.rs
+msgid "Setting the dates of {}"
+msgstr ""
+
+#: crates/gezik-ops/src/tasks/times.rs
+msgid "No date taken"
 msgstr ""
 
 #: crates/gezik-ops/src/tasks/trash.rs
@@ -5255,6 +5322,7 @@ msgid "the download failed (WinHTTP error {})"
 msgstr ""
 
 #: crates/gezik-platform/src/known.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Home"
 msgstr ""
 
@@ -5423,6 +5491,10 @@ msgstr ""
 
 #: crates/gezik-platform/src/network.rs
 msgid "The server gave no folder"
+msgstr ""
+
+#: crates/gezik-platform/src/network/discover.rs
+msgid "Avahi is not running"
 msgstr ""
 
 #: crates/gezik-platform/src/properties.rs
@@ -5919,6 +5991,7 @@ msgid "Type the size of a part in MB"
 msgstr ""
 
 #: crates/gezik/src/archives.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Archive"
 msgstr ""
 
@@ -7140,6 +7213,11 @@ msgid "Export list…"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/info.slint
+msgid "Set Dates…"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Tools"
 msgstr ""
@@ -7262,6 +7340,10 @@ msgid "New"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+msgid "Create hard link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 msgid "Shortcut"
 msgstr ""
 
@@ -7271,6 +7353,10 @@ msgstr ""
 
 #: crates/gezik/src/context_menu.rs
 msgid "Symbolic link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hard link"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
@@ -7467,6 +7553,78 @@ msgid "No group"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+msgid "Star"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Heart"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Work"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Video"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Cloud"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Book"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Game"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Money"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Mail"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Link"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Lock"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Flag"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Bolt"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Leaf"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Globe"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Person"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Default"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Icon"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 msgid "Move group up"
 msgstr ""
 
@@ -7540,7 +7698,15 @@ msgid "Flat view"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+msgid "Preview at bottom"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
 msgid "Two panes"
+msgstr ""
+
+#: crates/gezik/src/context_menu.rs
+msgid "Stack panes"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
@@ -7764,6 +7930,7 @@ msgid "Convert to"
 msgstr ""
 
 #: crates/gezik/src/convert.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Choose"
 msgstr ""
@@ -8464,6 +8631,10 @@ msgid "Where: several folders"
 msgstr ""
 
 #: crates/gezik/src/info.rs
+msgid "Links: {}"
+msgstr ""
+
+#: crates/gezik/src/info.rs
 msgid "Created: {}"
 msgstr ""
 
@@ -9158,6 +9329,18 @@ msgstr ""
 #: crates/gezik/src/navigation.rs
 #: crates/gezik/ui/app.slint
 msgid "{} — Gezik"
+msgstr ""
+
+#: crates/gezik/src/network_places.rs
+msgid "Searching…"
+msgstr ""
+
+#: crates/gezik/src/network_places.rs
+msgid "No computers found"
+msgstr ""
+
+#: crates/gezik/src/network_places.rs
+msgid "Open Settings"
 msgstr ""
 
 #: crates/gezik/src/op_history.rs
@@ -10187,6 +10370,35 @@ msgstr ""
 msgid "Deselect"
 msgstr ""
 
+#. the Set Dates dialog's title; {} is a file name or "3 items"
+#: crates/gezik/src/set_dates.rs
+msgid "Set Dates of {}"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "From file"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "File:"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "No such file: {}"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "Choose at least one date"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "Enter the date as YYYY-MM-DD and the time as HH:MM:SS"
+msgstr ""
+
+#: crates/gezik/src/set_dates.rs
+msgid "Choose a file first"
+msgstr ""
+
 #: crates/gezik/src/settings_backup.rs
 #: crates/gezik/src/settings_window.rs
 msgid "Cannot read {0}: {1}"
@@ -11042,6 +11254,10 @@ msgstr ""
 
 #: crates/gezik/src/sidebar.rs
 msgid "SEARCHES"
+msgstr ""
+
+#: crates/gezik/src/sidebar.rs
+msgid "NETWORK"
 msgstr ""
 
 #: crates/gezik/src/sidebar_model.rs
@@ -12687,6 +12903,42 @@ msgstr ""
 msgid "Reset to rules"
 msgstr ""
 
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Accessed"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date and time"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Now"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date taken (EXIF)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "From file…"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date (YYYY-MM-DD)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Time (HH:MM:SS)"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Local time: YYYY-MM-DD and HH:MM:SS"
+msgstr ""
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Set"
+msgstr ""
+
 #: crates/gezik/ui/widgets/settings.slint
 msgid "this computer"
 msgstr ""
@@ -12831,6 +13083,16 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:history.remember"
 msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:drag.spring-delay"
+msgid "Spring delay"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:drag.spring-delay"
+msgid "Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar) opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000."
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
@@ -13114,6 +13376,16 @@ msgid "F5/F6 ask before copying or moving to the other pane (its folder can be c
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "Stacked"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "The two panes one above the other, the splitter between them dragged up and down."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:sidebar.cloud"
 msgid "Cloud"
 msgstr ""
@@ -13151,6 +13423,16 @@ msgstr ""
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:preview.properties"
 msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "Position"
+msgstr ""
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "right | bottom: the preview pane beside the list or under it (with two panes, under both)."
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

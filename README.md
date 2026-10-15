@@ -28,7 +28,7 @@ Windows · macOS · Linux
 
 ## Features
 
-**Files.** Copy, cut and paste through the system clipboard, drag and drop to and from other programs, conflicts asked up front, undo and redo for the whole session, and a drop stack for collecting items from several folders. → [File operations](docs/features.md#file-operations)
+**Files.** Copy, cut and paste through the system clipboard, drag and drop to and from other programs (folders spring open as you rest on them), conflicts asked up front, undo and redo for the whole session, and a drop stack for collecting items from several folders. → [File operations](docs/features.md#file-operations)
 
 **Batch work.** Batch rename with rules and a live preview, archives (open them as folders and change what is inside, extract and compress zip, 7z, tar and more), and conversion of pictures, text, audio, video and PDF, plus your own commands. → [Batch rename](docs/features.md#batch-rename) · [Archives](docs/features.md#archives) · [Inside archives](docs/features.md#inside-archives) · [Convert and PDF](docs/features.md#convert-and-pdf)
 
@@ -36,13 +36,15 @@ Windows · macOS · Linux
 
 **Finding things.** A filter that narrows the folder as you type, search under any folder by name or content (Everything on Windows), flat view, saved searches, a command palette and quick open. → [Filter](docs/features.md#filter-and-selection) · [Search](docs/features.md#search)
 
-**Navigation.** Tabs that come back as you left them, tab sets, pinned folders with aliases and groups, and an address bar with Recent and Frequent folders that also runs a command typed after `>` in the folder shown (its output in a panel, no terminal needed). → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal) · [Commands in the address bar](docs/features.md#commands-in-the-address-bar)
+**Navigation.** Tabs that come back as you left them, tab sets, pinned folders with aliases, groups, colours and icons, and an address bar with Recent and Frequent folders that also runs a command typed after `>` in the folder shown (its output in a panel, no terminal needed). → [Tabs, address bar and terminal](docs/features.md#tabs-address-bar-and-terminal) · [Commands in the address bar](docs/features.md#commands-in-the-address-bar)
 
-**Layouts.** Two panes with F5/F6 copy and move and synced browsing, a folder tree in the sidebar, grouping by type, date or size, Miller columns, several windows with tabs you can tear off, and view rules that pick a folder's view by path, kind or content. → [Layouts](docs/features.md#layouts)
+**Layouts.** Two panes (side by side or stacked) with F5/F6 copy and move and synced browsing, the preview beside or under the list, a folder tree in the sidebar, grouping by type, date or size, Miller columns, several windows with tabs you can tear off, and view rules that pick a folder's view by path, kind or content. → [Layouts](docs/features.md#layouts)
 
 **Tags.** Color tags, star ratings and comments kept in the files (Finder and Dolphin read them), tag dots and columns, `tag:`/`rating:` filters and search, a TAGS sidebar section, and highlight rules that color rows. → [Tags](docs/features.md#tags)
 
 **Phones.** Android phones show in the sidebar when plugged in (the system's device event, no polling; libmtp on macOS and Linux, loaded only when a phone is opened): browse their storages, copy files off and onto them, make folders, rename and delete, with progress, cancel and undo for what Gezik put there. → [Phones](docs/features.md#phones)
+
+**Network.** A NETWORK section in the sidebar lists the computers sharing files nearby (Windows' Network folder, Bonjour, Avahi), searched only when you open it or choose Refresh, for at most 5 seconds. → [Network](docs/features.md#network)
 
 **Git.** In a repository, rows show their Git mark (modified, staged, untracked, conflict; ignored ones faint) and folders the most important one inside, with a Git column to sort and group by, `git:` filter words and the branch with ahead/behind in the status bar. Stage, unstage, commit, push, pull, fetch, switch branch, discard changes (to the trash first, one undo) and compare with HEAD from the row's menu or the status bar, with git's output in the command panel. The system's git runs only while a repository folder is shown or when you choose a command, and a repository's own settings never run a program unless git itself would (a commit's hooks). → [Git](docs/features.md#git)
 
@@ -50,7 +52,7 @@ Windows · macOS · Linux
 
 **The system.** A command line, a single instance, one Trash view for every bin, and PATH integration you can undo. → [System integration](docs/features.md#system-integration)
 
-**Tools.** Checksums and their verification, file and folder compare, a sync (two-way, left to right or mirror) that asks first and deletes only to the trash (it is stateless: a delete spreads only with mirror or a row turned to `×`), duplicates, a size map and list export; Copy To with a filter, split and join; copies that can be verified, speed-limited and reordered in the queue. → [Tools](docs/features.md#tools) · [Compare and sync](docs/features.md#tabs-address-bar-and-terminal) · [Copy options](docs/features.md#file-operations) · [Export list](docs/features.md#export-list)
+**Tools.** Checksums and their verification, file and folder compare, a sync (two-way, left to right or mirror) that asks first and deletes only to the trash (it is stateless: a delete spreads only with mirror or a row turned to `×`), duplicates, a size map, list export and Set Dates (modified, created, accessed; from a date, now, EXIF or another file); Copy To with a filter, split and join; copies that can be verified, speed-limited and reordered in the queue. → [Tools](docs/features.md#tools) · [Compare and sync](docs/features.md#tabs-address-bar-and-terminal) · [Copy options](docs/features.md#file-operations) · [Export list](docs/features.md#export-list)
 
 ## Configuration
 

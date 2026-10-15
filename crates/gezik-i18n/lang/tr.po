@@ -288,6 +288,7 @@ msgstr "Değiştir"
 #: crates/gezik/src/saved_searches.rs
 #: crates/gezik/src/search.rs
 #: crates/gezik/src/select_tools.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/sidebar.rs
 #: crates/gezik/src/tab_sets.rs
@@ -299,6 +300,7 @@ msgstr "Değiştir"
 #: crates/gezik/ui/widgets/git-commit.slint
 #: crates/gezik/ui/widgets/ops-panel.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
+#: crates/gezik/ui/widgets/set-dates.slint
 #: crates/gezik/ui/widgets/settings.slint
 msgid "Cancel"
 msgstr "İptal"
@@ -879,6 +881,14 @@ msgid "{0}: expected folder, file, pictures, videos, audio, documents, archives 
 msgstr "{0}: folder, file, pictures, videos, audio, documents, archives ya da code bekleniyordu, gelen: \"{1}\""
 
 #: crates/gezik-config/src/pins.rs
+msgid "unknown color \"{0}\" for {1}; expected a tag color or #rrggbb"
+msgstr "bilinmeyen renk \"{0}\" ({1} için); etiket rengi ya da #rrggbb bekleniyordu"
+
+#: crates/gezik-config/src/pins.rs
+msgid "unknown icon \"{0}\" for {1}; the default icon is shown"
+msgstr "bilinmeyen simge \"{0}\" ({1} için); varsayılan simge gösterilir"
+
+#: crates/gezik-config/src/pins.rs
 msgid "unknown key \"{0}\" in {1}"
 msgstr "{1} içinde bilinmeyen anahtar \"{0}\""
 
@@ -1169,6 +1179,16 @@ msgid "all"
 msgstr "tümü"
 
 #: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "right"
+msgstr "sağ"
+
+#: crates/gezik-config/src/schema/table.rs
+msgctxt "choice:preview.position"
+msgid "bottom"
+msgstr "alt"
+
+#: crates/gezik-config/src/schema/table.rs
 msgctxt "choice:archives.double-click"
 msgid "browse"
 msgstr "klasör gibi aç"
@@ -1279,6 +1299,14 @@ msgstr "{0}: \"{1}\" tam yol olmalı (yok sayılır)"
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[rename-presets]] tables, got {1}"
 msgstr "{0}: [[rename-presets]] tabloları bekleniyordu, gelen: {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected 0 (off) or a number of milliseconds, got {1}"
+msgstr "{0}: 0 (kapalı) ya da milisaniye sayısı bekleniyordu, gelen: {1}"
+
+#: crates/gezik-config/src/settings.rs
+msgid "{0}: expected \"right\" or \"bottom\", got {1}"
+msgstr "{0}: \"right\" ya da \"bottom\" bekleniyordu, gelen: {1}"
 
 #: crates/gezik-config/src/settings.rs
 msgid "{0}: expected [[filters]] tables, got {1}"
@@ -2165,6 +2193,16 @@ msgstr "Kenar çubuğu ağacında göster"
 #: crates/gezik/ui/app.slint
 msgid "Two Panes"
 msgstr "İki bölme"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Stack Panes"
+msgstr "Bölmeleri üst üste koy"
+
+#: crates/gezik-config/src/shortcuts.rs
+#: crates/gezik/ui/app.slint
+msgid "Preview at Bottom"
+msgstr "Önizleme altta"
 
 #: crates/gezik-config/src/shortcuts.rs
 msgid "Switch to the Other Pane"
@@ -3257,6 +3295,7 @@ msgid "Picture"
 msgstr "Resim"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Photo"
 msgstr "Fotoğraf"
 
@@ -3265,11 +3304,13 @@ msgid "Media"
 msgstr "Medya"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Music"
 msgstr "Müzik"
 
 #: crates/gezik-core/src/fields.rs
 #: crates/gezik-core/src/kind.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Document"
 msgstr "Belge"
 
@@ -3515,6 +3556,7 @@ msgid "Install Git to see repository status"
 msgstr "Depo durumunu görmek için Git'i kurun"
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/settings_window/shortcuts.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/compress.slint
@@ -4017,6 +4059,7 @@ msgid "Archives"
 msgstr "Arşivler"
 
 #: crates/gezik-core/src/search.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Code"
 msgstr "Kod"
 
@@ -4141,10 +4184,12 @@ msgstr "Dün {}"
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 msgid "Modified"
 msgstr "Değiştirme tarihi"
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/ui/widgets/set-dates.slint
 msgid "Created"
 msgstr "Oluşturma tarihi"
 
@@ -4343,6 +4388,11 @@ msgid_plural "Change tags of {n} items"
 msgstr[0] "{n} öğenin etiketlerini değiştir"
 
 #: crates/gezik-ops/src/task.rs
+msgid "Set dates of {n} item"
+msgid_plural "Set dates of {n} items"
+msgstr[0] "{n} öğenin tarihlerini ayarla"
+
+#: crates/gezik-ops/src/task.rs
 msgid "Tags could not be carried: {}"
 msgstr "Etiketler taşınamadı: {}"
 
@@ -4528,6 +4578,14 @@ msgid "Verifying {}"
 msgstr "Doğrulanıyor: {}"
 
 #: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links work only on files"
+msgstr "Sabit bağlantılar yalnız dosyalarda çalışır"
+
+#: crates/gezik-ops/src/tasks/link.rs
+msgid "Hard links must stay on the same drive"
+msgstr "Sabit bağlantılar aynı sürücüde kalmalı"
+
+#: crates/gezik-ops/src/tasks/link.rs
 msgid "Creating a link to {}"
 msgstr "Bağlantı oluşturuluyor: {}"
 
@@ -4682,6 +4740,14 @@ msgstr "Etiket deposu yok"
 #: crates/gezik-ops/src/tasks/tags.rs
 msgid "Kept in Gezik's tag store: {}"
 msgstr "Gezik'in etiket deposunda tutuluyor: {}"
+
+#: crates/gezik-ops/src/tasks/times.rs
+msgid "Setting the dates of {}"
+msgstr "Tarihler ayarlanıyor: {}"
+
+#: crates/gezik-ops/src/tasks/times.rs
+msgid "No date taken"
+msgstr "Çekim tarihi yok"
 
 #: crates/gezik-ops/src/tasks/trash.rs
 msgid "deleted for good instead of moved to the trash"
@@ -5207,6 +5273,7 @@ msgid "the download failed (WinHTTP error {})"
 msgstr "indirme başarısız oldu (WinHTTP hatası {})"
 
 #: crates/gezik-platform/src/known.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Home"
 msgstr "Giriş klasörü"
 
@@ -5376,6 +5443,10 @@ msgstr "Eşlenecek bir paylaşım yazın, örn. \\\\server\\share"
 #: crates/gezik-platform/src/network.rs
 msgid "The server gave no folder"
 msgstr "Sunucu klasör vermedi"
+
+#: crates/gezik-platform/src/network/discover.rs
+msgid "Avahi is not running"
+msgstr "Avahi çalışmıyor"
 
 #: crates/gezik-platform/src/properties.rs
 msgid "Windows did not open its Properties window"
@@ -5867,6 +5938,7 @@ msgid "Type the size of a part in MB"
 msgstr "Bir parçanın boyutunu MB olarak yazın"
 
 #: crates/gezik/src/archives.rs
+#: crates/gezik/src/context_menu.rs
 msgid "Archive"
 msgstr "Arşiv"
 
@@ -7058,6 +7130,11 @@ msgid "Export list…"
 msgstr "Listeyi dışa aktar…"
 
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/ui/widgets/info.slint
+msgid "Set Dates…"
+msgstr "Tarihleri ayarla…"
+
+#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Tools"
 msgstr "Araçlar"
@@ -7180,6 +7257,10 @@ msgid "New"
 msgstr "Yeni"
 
 #: crates/gezik/src/context_menu.rs
+msgid "Create hard link"
+msgstr "Sabit bağlantı oluştur"
+
+#: crates/gezik/src/context_menu.rs
 msgid "Shortcut"
 msgstr "Kısayol"
 
@@ -7190,6 +7271,10 @@ msgstr "Dizin bağlantısı"
 #: crates/gezik/src/context_menu.rs
 msgid "Symbolic link"
 msgstr "Sembolik bağlantı"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Hard link"
+msgstr "Sabit bağlantı"
 
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/navigation.rs
@@ -7385,6 +7470,78 @@ msgid "No group"
 msgstr "Grup yok"
 
 #: crates/gezik/src/context_menu.rs
+msgid "Star"
+msgstr "Yıldız"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Heart"
+msgstr "Kalp"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Work"
+msgstr "İş"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Video"
+msgstr "Video"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Cloud"
+msgstr "Bulut"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Book"
+msgstr "Kitap"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Game"
+msgstr "Oyun"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Money"
+msgstr "Para"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Mail"
+msgstr "Posta"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Link"
+msgstr "Bağlantı"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Lock"
+msgstr "Kilit"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Flag"
+msgstr "Bayrak"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Bolt"
+msgstr "Şimşek"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Leaf"
+msgstr "Yaprak"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Globe"
+msgstr "Küre"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Person"
+msgstr "Kişi"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Default"
+msgstr "Varsayılan"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Icon"
+msgstr "Simge"
+
+#: crates/gezik/src/context_menu.rs
 msgid "Move group up"
 msgstr "Grubu yukarı taşı"
 
@@ -7457,8 +7614,16 @@ msgid "Flat view"
 msgstr "Düz görünüm"
 
 #: crates/gezik/src/context_menu.rs
+msgid "Preview at bottom"
+msgstr "Önizleme altta"
+
+#: crates/gezik/src/context_menu.rs
 msgid "Two panes"
 msgstr "İki bölme"
+
+#: crates/gezik/src/context_menu.rs
+msgid "Stack panes"
+msgstr "Bölmeleri üst üste koy"
 
 #: crates/gezik/src/context_menu.rs
 msgid "Sync browsing"
@@ -7674,6 +7839,7 @@ msgid "Convert to"
 msgstr "Şuna dönüştür"
 
 #: crates/gezik/src/convert.rs
+#: crates/gezik/src/set_dates.rs
 #: crates/gezik/src/settings_window/backup.rs
 msgid "Choose"
 msgstr "Seç"
@@ -8363,6 +8529,10 @@ msgstr "Konum: {}"
 #: crates/gezik/src/info.rs
 msgid "Where: several folders"
 msgstr "Konum: birkaç klasör"
+
+#: crates/gezik/src/info.rs
+msgid "Links: {}"
+msgstr "Bağlantılar: {}"
 
 #: crates/gezik/src/info.rs
 msgid "Created: {}"
@@ -9092,6 +9262,18 @@ msgstr "{} bağlı değil"
 #: crates/gezik/ui/app.slint
 msgid "{} — Gezik"
 msgstr "{} — Gezik"
+
+#: crates/gezik/src/network_places.rs
+msgid "Searching…"
+msgstr "Aranıyor…"
+
+#: crates/gezik/src/network_places.rs
+msgid "No computers found"
+msgstr "Bilgisayar bulunamadı"
+
+#: crates/gezik/src/network_places.rs
+msgid "Open Settings"
+msgstr "Ayarları Aç"
 
 #: crates/gezik/src/op_history.rs
 #: crates/gezik/src/operations.rs
@@ -10076,6 +10258,35 @@ msgstr "Desene göre seçimi kaldır"
 msgid "Deselect"
 msgstr "Seçimi kaldır"
 
+#. the Set Dates dialog's title; {} is a file name or "3 items"
+#: crates/gezik/src/set_dates.rs
+msgid "Set Dates of {}"
+msgstr "Tarihleri ayarla: {}"
+
+#: crates/gezik/src/set_dates.rs
+msgid "From file"
+msgstr "Dosyadan"
+
+#: crates/gezik/src/set_dates.rs
+msgid "File:"
+msgstr "Dosya:"
+
+#: crates/gezik/src/set_dates.rs
+msgid "No such file: {}"
+msgstr "Böyle bir dosya yok: {}"
+
+#: crates/gezik/src/set_dates.rs
+msgid "Choose at least one date"
+msgstr "En az bir tarih seçin"
+
+#: crates/gezik/src/set_dates.rs
+msgid "Enter the date as YYYY-MM-DD and the time as HH:MM:SS"
+msgstr "Tarihi YYYY-AA-GG, saati SS:DD:ss olarak girin"
+
+#: crates/gezik/src/set_dates.rs
+msgid "Choose a file first"
+msgstr "Önce bir dosya seçin"
+
 #: crates/gezik/src/settings_backup.rs
 #: crates/gezik/src/settings_window.rs
 msgid "Cannot read {0}: {1}"
@@ -10917,6 +11128,10 @@ msgstr "SABİTLENENLER"
 #: crates/gezik/src/sidebar.rs
 msgid "SEARCHES"
 msgstr "ARAMALAR"
+
+#: crates/gezik/src/sidebar.rs
+msgid "NETWORK"
+msgstr "AĞ"
 
 #: crates/gezik/src/sidebar_model.rs
 msgid "Leads back to a folder above it"
@@ -12527,6 +12742,42 @@ msgstr "{}, yeni ad: {}"
 msgid "Reset to rules"
 msgstr "Kurallara dön"
 
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Accessed"
+msgstr "Erişim tarihi"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date and time"
+msgstr "Tarih ve saat"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Now"
+msgstr "Şimdi"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date taken (EXIF)"
+msgstr "Çekim tarihi (EXIF)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "From file…"
+msgstr "Dosyadan…"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Date (YYYY-MM-DD)"
+msgstr "Tarih (YYYY-AA-GG)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Time (HH:MM:SS)"
+msgstr "Saat (SS:DD:ss)"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Local time: YYYY-MM-DD and HH:MM:SS"
+msgstr "Yerel saat: YYYY-AA-GG ve SS:DD:ss"
+
+#: crates/gezik/ui/widgets/set-dates.slint
+msgid "Set"
+msgstr "Ayarla"
+
 #: crates/gezik/ui/widgets/settings.slint
 msgid "this computer"
 msgstr "bu bilgisayar"
@@ -12672,6 +12923,16 @@ msgstr "Hatırla"
 msgctxt "setting:history.remember"
 msgid "Remember the folders you open, for the address bar's Recent and Frequent lists, and the commands run with \">\" (kept in state.toml). false also forgets them; \"clear-history\" (no key by default) empties both."
 msgstr "Açtığınız klasörleri adres çubuğunun Son kullanılanlar ve Sık kullanılanlar listeleri için, \">\" ile çalıştırılan komutları da hatırla (state.toml'da). false bunları da unutur; \"clear-history\" (varsayılan tuşu yok) ikisini de boşaltır."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:drag.spring-delay"
+msgid "Spring delay"
+msgstr "Yaylanma gecikmesi"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:drag.spring-delay"
+msgid "Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar) opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000."
+msgstr "Sürükleme bir klasörün üstünde (listede, ağaçta ya da kenar çubuğunda) bu kadar milisaniye durunca klasör açılır; Esc ya da dışarı bırakma geri döner. 0: kapalı; değilse 200 ile 3000 arası."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:files.confirm-trash"
@@ -12954,6 +13215,16 @@ msgid "F5/F6 ask before copying or moving to the other pane (its folder can be c
 msgstr "F5/F6 diğer bölmeye kopyalamadan ya da taşımadan önce sorar (hedef klasör orada değiştirilebilir)."
 
 #: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "Stacked"
+msgstr "Üst üste"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:panes.stacked"
+msgid "The two panes one above the other, the splitter between them dragged up and down."
+msgstr "İki bölme üst üste; aralarındaki ayırıcı yukarı aşağı sürüklenir."
+
+#: crates/gezik-config/templates/settings.toml
 msgctxt "setting:sidebar.cloud"
 msgid "Cloud"
 msgstr "Bulut"
@@ -12992,6 +13263,16 @@ msgstr "Özellikler"
 msgctxt "setting:preview.properties"
 msgid "The preview pane and Quick Look show a file's properties under its facts (camera, artist, length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read."
 msgstr "Önizleme bölmesi ve Hızlı bakış, dosyanın temel bilgilerinin altında özelliklerini de gösterir (kamera, sanatçı, süre, sayfa …); Gezik bunları önizleme sırasında dosyadan okur. Kapalı: hiçbir şey okunmaz."
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "Position"
+msgstr "Konum"
+
+#: crates/gezik-config/templates/settings.toml
+msgctxt "setting:preview.position"
+msgid "right | bottom: the preview pane beside the list or under it (with two panes, under both)."
+msgstr "right | bottom: önizleme bölmesi listenin yanında ya da altında (iki bölmede ikisinin de altında)."
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:archives.double-click"

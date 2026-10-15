@@ -169,6 +169,13 @@ tree-follow = false
 [panes]
 # F5/F6 ask before copying or moving to the other pane (its folder can be changed there).
 confirm = true
+# The two panes one above the other, the splitter between them dragged up and down.
+stacked = false
+
+[drag]
+# Resting a drag this many milliseconds on a folder (in the list, the tree or the sidebar)
+# opens it; Esc or a drop outside goes back. 0: off; else 200 to 3000.
+spring-delay = 700
 
 [tags]
 # Your tags, in order: the first seven get the keys Alt+Shift+1…7 (macOS ⌃1…⌃7).
@@ -191,6 +198,8 @@ dots = "auto"
 # The preview pane and Quick Look show a file's properties under its facts (camera, artist,
 # length, pages …), read from the file by Gezik when it is previewed. Off: nothing is read.
 properties = true
+# right | bottom: the preview pane beside the list or under it (with two panes, under both).
+position = "right"
 
 [update]
 # Gezik looks for a newer published release on GitHub by itself: at most once a day, one
@@ -281,6 +290,8 @@ channel = "auto"          # auto (pre-releases while this is one) | stable | pre
 # expand-groups = ""   # Expand All Groups
 # reveal-in-tree = ""   # Show in Sidebar Tree: opens the sidebar tree down to the folder shown
 # toggle-dual-pane = "f3"   # Two Panes: opens or closes the second pane; macOS: "mod+ctrl+p"
+# stack-panes = ""   # Stack Panes: the two panes one above the other, or side by side again ([panes] stacked)
+# preview-at-bottom = ""   # Preview at Bottom: the preview pane under the list, or beside it again ([preview] position)
 # focus-other-pane = "tab"   # the other pane takes the keyboard (only with two panes, the file list focused)
 # copy-to-other-pane = "f5"  # the selection into the other pane's folder (only with two panes; F5 refreshes with one)
 # move-to-other-pane = "f6"  # the same as a move (only with two panes)

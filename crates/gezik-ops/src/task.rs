@@ -102,6 +102,8 @@ pub enum TaskKind {
     Sync,
     /// Tags, rating or comment changed (spec 12 §3.5).
     Tags,
+    /// Modified, created or last opened times set (Set Dates, 16k).
+    Times,
 }
 
 impl TaskKind {
@@ -136,6 +138,7 @@ impl TaskKind {
             TaskKind::Checksum => tn!("Compute checksums of {n} item" | "Compute checksums of {n} items", n),
             TaskKind::Sync => tn!("Synchronize {n} item" | "Synchronize {n} items", n),
             TaskKind::Tags => tn!("Change tags of {n} item" | "Change tags of {n} items", n),
+            TaskKind::Times => tn!("Set dates of {n} item" | "Set dates of {n} items", n),
         }
     }
 }
@@ -324,6 +327,11 @@ pub enum Outcome {
         path: PathBuf,
         before: gezik_core::meta::Meta,
         after: gezik_core::meta::Meta,
+    },
+    /// Times set (Set Dates): undo writes back `old`, the times of it that are there.
+    TimesChanged {
+        path: PathBuf,
+        old: gezik_core::times::Times,
     },
     /// Done by the administrator helper and seen on disk: undo runs `undo`, as administrator too.
     AsAdmin {

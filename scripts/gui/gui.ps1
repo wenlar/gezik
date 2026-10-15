@@ -99,7 +99,9 @@ switch ($Verb) {
         New-Item -ItemType Directory -Force $cfg | Out-Null
         $env:GEZIK_CONFIG_DIR = $cfg
         $argv = if ($start) { @("`"$start`"") } else { @() }
-        $p = if ($argv) { Start-Process $exe -ArgumentList $argv -PassThru } else { Start-Process $exe -PassThru }
+        # stderr next to the config: a panic's message (panic = "abort") is otherwise lost.
+        $err = Join-Path (Split-Path $cfg) 'stderr.txt'
+        $p = if ($argv) { Start-Process $exe -ArgumentList $argv -PassThru -RedirectStandardError $err } else { Start-Process $exe -PassThru -RedirectStandardError $err }
         Save $p.Id $cfg 0
         for ($i = 0; $i -lt 100 -and [GezikWin]::ForProcess([uint32]$p.Id) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 100 }
         "pid $($p.Id)"
@@ -131,6 +133,25 @@ switch ($Verb) {
         }
         Start-Sleep -Milliseconds 300; [GuiIn]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)
         if ($mod) { Up $mod }
+        Mark
+    }
+    'dragrest' {
+        # dragrest <x1> <y1> <x2> <y2> <rest ms> [esc]: drags, rests on the target, then drops
+        # (or presses Esc first, cancelling the drag) — for spring-loaded folders.
+        Guard; [GuiIn]::SetCursorPos([int]$Rest[0], [int]$Rest[1]) | Out-Null; Start-Sleep -Milliseconds 80
+        [GuiIn]::mouse_event(0x2, 0, 0, 0, [UIntPtr]::Zero)
+        for ($i = 1; $i -le 20; $i++) {
+            $x = [int]$Rest[0] + ([int]$Rest[2] - [int]$Rest[0]) * $i / 20; $y = [int]$Rest[1] + ([int]$Rest[3] - [int]$Rest[1]) * $i / 20
+            [GuiIn]::SetCursorPos($x, $y) | Out-Null; Start-Sleep -Milliseconds 30
+        }
+        # Small moves keep the drag alive while resting on the same target.
+        $until = [Environment]::TickCount + [int]$Rest[4]
+        while ([Environment]::TickCount -lt $until) {
+            [GuiIn]::SetCursorPos([int]$Rest[2] + 1, [int]$Rest[3]) | Out-Null; Start-Sleep -Milliseconds 100
+            [GuiIn]::SetCursorPos([int]$Rest[2], [int]$Rest[3]) | Out-Null; Start-Sleep -Milliseconds 100
+        }
+        if ($Rest.Count -gt 5 -and $Rest[5] -eq 'esc') { Down 0x1B; Up 0x1B; Start-Sleep -Milliseconds 150 }
+        [GuiIn]::mouse_event(0x4, 0, 0, 0, [UIntPtr]::Zero)
         Mark
     }
     'wheel' {

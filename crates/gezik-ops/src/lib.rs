@@ -29,6 +29,6 @@ pub use task::{
 pub use tasks::{
     CANCELLED, CloudPinTask, CopyTask, DeleteTask, ElevatedTask, Elevator, GroupTask, HashResults, HashRow, HashTask,
     LinkTask, MAX_CHECKSUM_FILE, MaterializeTask, MoveTask, NEEDS_ADMIN, NOT_AVAILABLE, NOT_SO, NewTask, Pick,
-    RenameTask, RestoreTask, RowState, Seen, SetAttributesTask, SharedResults, SyncStep, SyncTask, TagsTask, TrashTask,
-    UNCHECKED, Verdict, in_a_bin_folder, sync_label, trash_path,
+    RenameTask, RestoreTask, RowState, Seen, SetAttributesTask, SetTimesTask, SharedResults, SyncStep, SyncTask,
+    TagsTask, TakenReader, TrashTask, UNCHECKED, Verdict, in_a_bin_folder, sync_label, trash_path,
 };

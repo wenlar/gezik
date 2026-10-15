@@ -24,6 +24,7 @@ import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
 import { CmdLine, CommandOutput } from "widgets/command-output.slint";
 import { GitCommit } from "widgets/git-commit.slint";
+import { SetDates } from "widgets/set-dates.slint";
 import { ColumnItem } from "widgets/column-view.slint";
 import { SettingsWindow, SettingItem } from "widgets/settings.slint";
 
@@ -212,9 +213,11 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: @tr("Flat View"); shortcut: root.menu-keys ? root.bar-key("flat-view", root.keys-version) : @keys(); activated => { root.menu-command("flat-view"); } }
             MenuItem { title: @tr("Show Preview"); activated => { root.menu-command("toggle-preview"); } }
+            MenuItem { title: @tr("Preview at Bottom"); checkable: true; checked <=> root.preview-bottom; activated => { root.menu-command("preview-at-bottom"); } }
             MenuItem { title: @tr("Show Preview as Hex"); activated => { root.menu-command("preview-hex"); } }
             MenuItem { title: @tr("Play/Pause Preview"); activated => { root.menu-command("preview-play"); } }
             MenuItem { title: @tr("Two Panes"); checkable: true; checked <=> root.view-two-panes; shortcut: root.menu-keys ? root.bar-key("toggle-dual-pane", root.keys-version) : @keys(); activated => { root.menu-command("toggle-dual-pane"); } }
+            MenuItem { title: @tr("Stack Panes"); checkable: true; checked <=> root.panes-stacked; activated => { root.menu-command("stack-panes"); } }
             MenuItem { title: @tr("Sync Browsing"); checkable: true; checked <=> root.view-sync; activated => { root.menu-command("sync-browsing"); } }
             MenuItem { title: @tr("Swap Panes"); shortcut: root.menu-keys ? root.bar-key("swap-panes", root.keys-version) : @keys(); activated => { root.menu-command("swap-panes"); } }
             MenuItem { title: @tr("Same Folder in the Other Pane"); activated => { root.menu-command("other-pane-same-folder"); } }
@@ -362,11 +365,29 @@ export component AppWindow inherits Window {
     in property <bool> dual;
     in property <int> active-pane;
     in property <percent> pane-split: 50%;
-    // Where the right pane starts (the splitter is just left of it).
-    property <length> split-x;
-    // The panes' room (their row's width), copied when it changes: read in the panes' widths
+    // `[panes] stacked` (16m): the second pane under the first, `pane-split` the top one's share
+    // of the height.
+    in-out property <bool> panes-stacked;
+    // Where the right (stacked: the lower) pane starts (the splitter is just before it).
+    property <length> split-x: root.left-width + 5px;
+    property <length> split-y: root.top-height + 5px;
+    // The first pane's minimum size (copied when it changes), for the panes' box: the panes
+    // are placed by hand in it, so its minimum is worked out here.
+    property <length> pane-min-width;
+    property <length> pane-min-height;
+    // The panes' room (their row's size), copied when it changes: read in the panes' sizes
     // directly, it would loop through the row's layout.
     property <length> panes-room;
+    // The panes' box height (copied as `panes-room`), and the panes' part of it: all of it but
+    // the preview under two panes, its divider and the gap below it.
+    property <length> panes-box-height;
+    property <length> panes-room-height: root.panes-box-height - (root.dual-bottom ? root.bottom-height + 5px + Theme.inset : 0px);
+    // The preview is at the bottom under two panes, as high as dragged while the panes keep
+    // their minimum (never under 120 px: the box's minimum leaves that).
+    property <bool> dual-bottom: root.dual && root.preview-open && root.preview-bottom;
+    property <length> bottom-height: max(120px, min(root.preview-height, root.panes-box-height - 5px - Theme.inset - (root.panes-stacked ? 2 * root.pane-min-height + 5px : root.pane-min-height)));
+    // Stacked, the top pane's height, as `left-width` (each pane at least its minimum).
+    property <length> top-height: max(0px, min(max((root.panes-room-height - 5px) * (root.pane-split / 100%), root.pane-min-height), root.panes-room-height - 5px - root.pane-min-height));
     // The left pane's width: its share of the room, but each pane at least 240 px while the
     // room allows (spec 10 §4.1), so neither is pushed out of the window.
     property <length> left-width: max(0px, min(max((root.panes-room - 5px) * (root.pane-split / 100%), 240px), root.panes-room - 5px - 240px));
@@ -377,7 +398,7 @@ export component AppWindow inherits Window {
     callback pane-split-reset();
     // Two panes with the preview open came down to their narrowest: the preview closes first.
     callback panes-cramped();
-    property <bool> cramped: root.dual && root.preview-open && panes-row.width <= panes-row.min-width + 1px;
+    property <bool> cramped: root.dual && root.preview-open && !root.preview-bottom && panes-row.width <= panes-row.min-width + 1px;
     changed cramped => {
         if self.cramped { root.panes-cramped(); }
     }
@@ -411,6 +432,21 @@ export component AppWindow inherits Window {
     in-out property <string> gc-message;
     in-out property <bool> gc-all;
     callback gc-chosen(bool);
+    // Set Dates… (set-dates.slint, set_dates.rs).
+    in property <bool> sd-open;
+    property <int> sd-focus-seq;
+    in property <string> sd-title;
+    in-out property <bool> sd-modified;
+    in-out property <bool> sd-created;
+    in-out property <bool> sd-accessed;
+    in property <bool> sd-has-created;
+    in-out property <int> sd-source;
+    in-out property <string> sd-date;
+    in-out property <string> sd-time;
+    in property <string> sd-from;
+    in property <string> sd-error;
+    callback sd-choose-file();
+    callback sd-chosen(bool);
     // An update's note in the status bar (update.rs; "" none): its text, Restart Now ("" none)
     // and its link (What's new, Download). Chosen: 0 Restart Now, 1 the link, 2 closed.
     in property <string> update-text;
@@ -528,6 +564,10 @@ export component AppWindow inherits Window {
     // in state.toml on close.
     in property <bool> preview-open;
     in-out property <length> preview-width: 280px;
+    // `[preview] position = "bottom"` (16m): under the list (two panes: under both), its height
+    // dragged (120-600px) and saved in state.toml on close.
+    in-out property <bool> preview-bottom;
+    in-out property <length> preview-height: 220px;
     // One pane: the room its row leaves the preview beside the sidebar, the splitters and the
     // list at its narrowest (`sheet-min`). The preview narrows into it down to 160 px, then
     // hides, so the row never runs past the window's edge and takes the toolbar with it.
@@ -828,6 +868,7 @@ export component AppWindow inherits Window {
     callback info-change-all();
     callback info-as-admin();
     callback info-close();
+    callback info-set-dates();
 
     // The file compare (diff.rs, spec 11 §6).
     in property <bool> df-open;
@@ -945,6 +986,8 @@ export component AppWindow inherits Window {
         if root.dialog-open || root.gc-open {
         } else if root.conflicts-open {
             root.conflict-focus-seq += 1;
+        } else if root.sd-open {
+            root.sd-focus-seq += 1;
         } else if root.rb-open {
             root.rb-focus-seq += 1;
         } else if root.cp-open {
@@ -1120,23 +1163,39 @@ export component AppWindow inherits Window {
                     }
                 }
                 Rectangle {
-                    init => { root.panes-room = self.width; }
+                    init => {
+                        root.panes-room = self.width;
+                        root.panes-box-height = self.height;
+                    }
                     changed width => { root.panes-room = self.width; }
-                    panes-row := HorizontalLayout {
-                        spacing: 5px;
+                    changed height => { root.panes-box-height = self.height; }
+                    // Side by side, or stacked (the panes' Tab order is the same). Placed by hand:
+                    // a repeater in a GridLayout with changing row/col crashed Slint's cell cache.
+                    panes-row := Rectangle {
+                        min-width: !root.dual ? root.pane-min-width : root.panes-stacked ? 240px : 2 * 240px + 5px;
+                        min-height: (root.dual && root.panes-stacked ? 2 * root.pane-min-height + 5px : root.pane-min-height) + (root.dual-bottom ? 5px + 120px + Theme.inset : 0px);
                         for pane-data[i] in root.panes: pane := PaneView {
                             data: pane-data;
                             index: i;
                             dual: root.dual;
                             active: i == root.active-pane;
                             synced: root.view-sync;
-                            // The left one's share of the room (the layout fills it); one pane has all of it.
-                            preferred-width: !root.dual ? root.panes-room : i == 0 ? root.left-width : root.panes-room - 5px - root.left-width;
+                            // The left (top) one's share of the room; one pane has all of it.
+                            x: root.dual && !root.panes-stacked && i == 1 ? root.split-x : 0px;
+                            y: root.dual && root.panes-stacked && i == 1 ? root.split-y : 0px;
+                            width: !root.dual || root.panes-stacked ? root.panes-room : i == 0 ? root.left-width : root.panes-room - 5px - root.left-width;
+                            height: !root.dual || !root.panes-stacked ? root.panes-room-height : i == 0 ? root.top-height : root.panes-room-height - 5px - root.top-height;
                             init => {
-                                if i == 1 { root.split-x = self.x; }
+                                if i == 0 {
+                                    root.pane-min-width = self.min-width;
+                                    root.pane-min-height = self.min-height;
+                                }
                             }
-                            changed x => {
-                                if i == 1 { root.split-x = self.x; }
+                            changed min-width => {
+                                if i == 0 { root.pane-min-width = self.min-width; }
+                            }
+                            changed min-height => {
+                                if i == 0 { root.pane-min-height = self.min-height; }
                             }
                             list-focused: keys.has-focus && i == root.active-pane;
                             drag-active: root.drag-active;
@@ -1157,8 +1216,8 @@ export component AppWindow inherits Window {
                             col-comment <=> root.col-comment;
                             col-packed <=> root.col-packed;
                             col-git <=> root.col-git;
-                            sheet-x: sheet-place.x;
-                            sheet-y: sheet-place.y;
+                            sheet-x: sheet-column.x + sheet-place.x;
+                            sheet-y: sheet-column.y + sheet-place.y;
                             sheet-width: sheet-place.width;
                             sheet-height: sheet-place.height;
                             focus-requested => {
@@ -1226,7 +1285,7 @@ export component AppWindow inherits Window {
                             marquee(p, x, y, w, h, additive) => { root.marquee(p, x, y, w, h, additive); }
                             marquee-done(p) => { root.marquee-done(p); }
                             // Hidden for want of room: the Miller columns show their own.
-                            preview-open: root.preview-open && (root.dual || root.preview-room(self.sheet-min-width) >= 160px);
+                            preview-open: root.preview-open && (root.dual || root.preview-bottom || root.preview-room(self.sheet-min-width) >= 160px);
                             preview: root.preview;
                             mono-font: root.mono-font;
                             column-width <=> root.column-width;
@@ -1241,8 +1300,8 @@ export component AppWindow inherits Window {
                                 // The sheets' gap from the chrome: below them, and on the side away from the
                                 // sidebar (on its side the splitter is the gap). None in the classic themes.
                                 // With two panes the splitters are the gaps between them and what is beside them.
-                                padding-left: root.dual ? (i == 0 && root.sidebar-position != 0 ? Theme.inset : 0px) : root.sidebar-position == 0 ? 0px : Theme.inset;
-                                padding-right: root.dual ? (i == 1 && !root.preview-open && root.sidebar-position != 1 ? Theme.inset : 0px) : root.sidebar-position == 1 ? 0px : Theme.inset;
+                                padding-left: root.dual ? ((i == 0 || root.panes-stacked) && root.sidebar-position != 0 ? Theme.inset : 0px) : root.sidebar-position == 0 ? 0px : Theme.inset;
+                                padding-right: root.dual ? ((i == 1 || root.panes-stacked) && !(root.preview-open && !root.preview-bottom) && root.sidebar-position != 1 ? Theme.inset : 0px) : root.sidebar-position == 1 ? 0px : Theme.inset;
                                 padding-bottom: Theme.inset;
                                 if !root.dual && root.sidebar-position == 0: Sidebar {
                                     width: root.sidebar-width;
@@ -1282,14 +1341,46 @@ export component AppWindow inherits Window {
                                         changed pressed => { if !self.pressed { root.sidebar-resized(); } }
                                     }
                                 }
-                                sheet-place := Rectangle {
+                                // The sheet, and under it the preview when it is at the bottom.
+                                sheet-column := VerticalLayout {
                                     horizontal-stretch: 1;
-                                    // With two panes the pane's own minimum rules (its bars fit or are cut off).
-                                    min-width: root.dual ? 0px : pane.sheet-min-width;
-                                    min-height: pane.sheet-min-height;
+                                    sheet-place := Rectangle {
+                                        // With two panes the pane's own minimum rules (its bars fit or are cut off).
+                                        min-width: root.dual ? 0px : pane.sheet-min-width;
+                                        min-height: pane.sheet-min-height;
+                                    }
+                                    if !root.dual && root.preview-open && root.preview-bottom: Rectangle {
+                                        height: 5px;
+                                        accessible-role: none;
+                                        Rectangle {
+                                            y: (parent.height - self.height) / 2;
+                                            height: 1px;
+                                            background: bottom-splitter.has-hover || bottom-splitter.pressed ? Theme.accent : transparent;
+                                        }
+                                        bottom-splitter := TouchArea {
+                                            mouse-cursor: row-resize;
+                                            moved => { root.preview-height = clamp(root.preview-height - (self.mouse-y - self.pressed-y), 120px, 600px); }
+                                            changed pressed => { if !self.pressed { root.preview-resized(); } }
+                                        }
+                                    }
+                                    if !root.dual && root.preview-open && root.preview-bottom: PreviewPane {
+                                        // Not `height`: that would make the window's minimum follow it.
+                                        min-width: 160px;
+                                        min-height: 120px;
+                                        // A low strip cuts its content off rather than drawing past its border.
+                                        clip: true;
+                                        preferred-height: root.preview-height;
+                                        max-height: self.preferred-height;
+                                        info: root.preview;
+                                        mono-font: root.mono-font;
+                                        background: Theme.background;
+                                        border-radius: Theme.sheet-radius;
+                                        border-width: 1px;
+                                        border-color: Theme.border;
+                                    }
                                 }
                                 // Grabbable over 5px; the line shows only while hovered or dragged.
-                                if !root.dual && root.preview-open && root.preview-room(pane.sheet-min-width) >= 160px: Rectangle {
+                                if !root.dual && root.preview-open && !root.preview-bottom && root.preview-room(pane.sheet-min-width) >= 160px: Rectangle {
                                     width: 5px;
                                     accessible-role: none;
                                     Rectangle {
@@ -1303,7 +1394,7 @@ export component AppWindow inherits Window {
                                         changed pressed => { if !self.pressed { root.preview-resized(); } }
                                     }
                                 }
-                                if !root.dual && root.preview-open && root.preview-room(pane.sheet-min-width) >= 160px: PreviewPane {
+                                if !root.dual && root.preview-open && !root.preview-bottom && root.preview-room(pane.sheet-min-width) >= 160px: PreviewPane {
                                     // Not `width`: that would make the window's minimum follow its width.
                                     min-width: 160px;
                                     preferred-width: min(root.preview-width, root.preview-room(pane.sheet-min-width));
@@ -1359,24 +1450,31 @@ export component AppWindow inherits Window {
                     }
                     // Grabbable over 5px, between the panes; a double-click puts it in the middle.
                     if root.dual: Rectangle {
-                        x: root.split-x - self.width;
-                        width: 5px;
-                        height: parent.height;
+                        x: root.panes-stacked ? 0px : root.split-x - self.width;
+                        y: root.panes-stacked ? root.split-y - self.height : 0px;
+                        width: root.panes-stacked ? parent.width : 5px;
+                        height: root.panes-stacked ? 5px : root.panes-room-height;
                         accessible-role: none;
                         Rectangle {
                             x: (parent.width - self.width) / 2;
-                            width: 1px;
+                            y: (parent.height - self.height) / 2;
+                            width: root.panes-stacked ? parent.width : 1px;
+                            height: root.panes-stacked ? 1px : parent.height;
                             background: pane-splitter.has-hover || pane-splitter.pressed ? Theme.accent : transparent;
                         }
                         pane-splitter := TouchArea {
-                            mouse-cursor: col-resize;
+                            mouse-cursor: root.panes-stacked ? row-resize : col-resize;
                             // From where the pointer is, not by steps: a pane at its minimum does not let the share run on.
-                            moved => { root.pane-split-moved((parent.x + self.mouse-x - self.pressed-x) / max(1px, panes-row.width - 5px)); }
+                            moved => {
+                                root.pane-split-moved(root.panes-stacked
+                                    ? (parent.y + self.mouse-y - self.pressed-y) / max(1px, root.panes-room-height - 5px)
+                                    : (parent.x + self.mouse-x - self.pressed-x) / max(1px, panes-row.width - 5px));
+                            }
                             changed pressed => { if !self.pressed { root.pane-split-done(); } }
                             double-clicked => { root.pane-split-reset(); }
                         }
                         // Sync browsing: a link between the two address bars.
-                        if root.view-sync: Path {
+                        if root.view-sync && !root.panes-stacked: Path {
                             x: (parent.width - self.width) / 2;
                             y: Theme.tab-strip-height + (Theme.toolbar-height - self.height) / 2;
                             width: 12px;
@@ -1389,8 +1487,41 @@ export component AppWindow inherits Window {
                             stroke-line-cap: round;
                         }
                     }
+                    // Two panes with the preview at the bottom: it is under both, placed by hand
+                    // like the panes (16m).
+                    if root.dual-bottom: Rectangle {
+                        x: root.sidebar-position == 0 ? 0px : Theme.inset;
+                        y: root.panes-room-height;
+                        width: parent.width - self.x - (root.sidebar-position == 1 ? 0px : Theme.inset);
+                        height: 5px;
+                        accessible-role: none;
+                        Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            height: 1px;
+                            background: dual-bottom-splitter.has-hover || dual-bottom-splitter.pressed ? Theme.accent : transparent;
+                        }
+                        dual-bottom-splitter := TouchArea {
+                            mouse-cursor: row-resize;
+                            moved => { root.preview-height = clamp(root.preview-height - (self.mouse-y - self.pressed-y), 120px, 600px); }
+                            changed pressed => { if !self.pressed { root.preview-resized(); } }
+                        }
+                    }
+                    if root.dual-bottom: PreviewPane {
+                        x: root.sidebar-position == 0 ? 0px : Theme.inset;
+                        y: root.panes-room-height + 5px;
+                        width: parent.width - self.x - (root.sidebar-position == 1 ? 0px : Theme.inset);
+                        height: root.bottom-height;
+                        // A low strip cuts its content off rather than drawing past its border.
+                        clip: true;
+                        info: root.preview;
+                        mono-font: root.mono-font;
+                        background: Theme.background;
+                        border-radius: Theme.sheet-radius;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                    }
                 }
-                if root.dual && root.preview-open: Rectangle {
+                if root.dual && root.preview-open && !root.preview-bottom: Rectangle {
                     width: 5px;
                     accessible-role: none;
                     Rectangle {
@@ -1405,7 +1536,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 // Level with the panes' sheets.
-                if root.dual && root.preview-open: VerticalLayout {
+                if root.dual && root.preview-open && !root.preview-bottom: VerticalLayout {
                     padding-top: Theme.tab-strip-height + Theme.toolbar-height;
                     padding-right: root.sidebar-position == 1 ? 0px : Theme.inset;
                     padding-bottom: Theme.inset;
@@ -1860,6 +1991,7 @@ export component AppWindow inherits Window {
             change-all => { root.info-change-all(); }
             as-admin => { root.info-as-admin(); }
             close => { root.info-close(); }
+            set-dates => { root.info-set-dates(); }
         }
         if root.df-open: DiffLayer {
             x: 0;
@@ -1923,6 +2055,26 @@ export component AppWindow inherits Window {
             all <=> root.gc-all;
             mono-font: root.mono-font;
             chosen(commit) => { root.gc-chosen(commit); }
+        }
+        if root.sd-open: SetDates {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            title: root.sd-title;
+            dialog-open: root.dialog-open;
+            focus-request: root.sd-focus-seq;
+            modified <=> root.sd-modified;
+            created <=> root.sd-created;
+            accessed <=> root.sd-accessed;
+            has-created: root.sd-has-created;
+            source <=> root.sd-source;
+            date <=> root.sd-date;
+            time <=> root.sd-time;
+            from: root.sd-from;
+            error: root.sd-error;
+            choose-file => { root.sd-choose-file(); }
+            chosen(ok) => { root.sd-chosen(ok); }
         }
         if root.dialog-open: Dialog {
             x: 0;

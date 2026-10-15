@@ -578,6 +578,11 @@ pub const GROUP_UP: u32 = 1260;
 pub const GROUP_DOWN: u32 = 1261;
 pub const GROUP_RENAME: u32 = 1262;
 pub const UNGROUP: u32 = 1263;
+/// 1264-1271: a pin's Color ▸ (by Finder's number; 1264 None). 1272-1296: its Icon ▸ (1272
+/// Default, then `pins::ICONS` in order).
+pub const PIN_COLOR_FIRST: u32 = 1264;
+pub const PIN_ICON_FIRST: u32 = 1272;
+const PIN_ICONS_END: u32 = PIN_ICON_FIRST + 1 + gezik_config::pins::ICONS.len() as u32;
 /// 1300-1304: the View menu's options (Hide extensions, Folders first, Single-click to open,
 /// Show hidden items, Show system items); 1310-1313 Date format ▸ in `DateFormat::ALL` order;
 /// 1320-1321 Size format ▸ in `SizeFormat::ALL` order.
@@ -601,6 +606,8 @@ pub const PASTE_AS_FILE: u32 = 1403;
 pub const LINK_SHORTCUT: u32 = 1404;
 pub const LINK_JUNCTION: u32 = 1405;
 pub const LINK_SYMLINK: u32 = 1406;
+/// 16i: Create link ▸ Hard link (elsewhere "Create hard link").
+pub const LINK_HARDLINK: u32 = 1460;
 pub const TEMPLATE_FIRST: u32 = 1410;
 /// 9a's ids are 1700-1799 (spec 9 §13.3); 9a1 has these two; 9a2: Open With ▸ by place, Other…,
 /// Share… 1741, Quick Actions ▸ 1750-1779 by place; 9a3: Get Info 1742, the Info window's Group ▾ 1780-1795.
@@ -638,6 +645,8 @@ pub fn drive_items(way: Option<gezik_platform::eject::EjectWay>, native: bool) -
 
 /// Connect to Server… on This PC's empty space, then the last ten addresses (spec 13.3).
 pub const CONNECT_SERVER: u32 = 1812;
+/// Refresh on the sidebar's Network section (spec 16h).
+pub const NETWORK_REFRESH: u32 = 1813;
 pub const RECENT_SERVER_FIRST: u32 = 1820;
 pub const RECENT_SERVER_MAX: u32 = 10;
 
@@ -699,6 +708,9 @@ pub const TWO_PANES: u32 = 2030;
 pub const SYNC_BROWSING: u32 = 2031;
 pub const SWAP_PANES: u32 = 2032;
 pub const SAME_FOLDER: u32 = 2033;
+/// View ▸ Stack panes, Preview at bottom (16m).
+pub const STACK_PANES: u32 = 2034;
+pub const PREVIEW_BOTTOM: u32 = 2035;
 /// View ▸ Show in sidebar tree (spec 10 §10.3, 10c).
 pub const REVEAL_IN_TREE: u32 = 2050;
 // Step 11 (spec 11 §13.3): 2200–2399. Tools ▸ 2200–2219 in the macOS Tools menu's order: Compare
@@ -720,6 +732,8 @@ pub const TOOLS_COPY_TO: u32 = 2207;
 pub const TOOLS_MOVE_TO: u32 = 2208;
 pub const TOOLS_SPLIT: u32 = 2209;
 pub const TOOLS_JOIN: u32 = 2210;
+/// Tools ▸ Set Dates… (16k), on rows (2215: 2211–2214 left for the other 16 parts).
+pub const TOOLS_SET_DATES: u32 = 2215;
 // Step 12 (spec 12 §12.3): 2400–2599. Tags ▸ 2400–2409 (Tags… 2400, Clear tags 2401, 12d's
 // Comment… 2402; 12e: New tag… 2403, the search bar's Filters ▸ Tags… 2404 and Comment… 2405),
 // the list's tags 2410–2469, ratings 2470–2475, the sidebar's tag menu 2480–2489, colours
@@ -806,7 +820,8 @@ pub fn tag_row_items(tag: &Tag, first: bool, last: bool) -> (Vec<(u32, String, b
 /// can be compared (`compare`), Select Differences with two panes, Calculate checksums… for
 /// `rows` (a row menu's) and Verify checksums for one checksum file, Find duplicates and Size
 /// Map on one folder or a folder's empty space (`size_map`), Export list… always, then Copy
-/// to… and Move to… for `rows`, Split file… for one file and Join files for one part or `.crc`.
+/// to… and Move to… for `rows`, Split file… for one file and Join files for one part or `.crc`,
+/// and Set Dates… for `rows`.
 pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: bool) -> Submenu {
     let mut items = Vec::new();
     if compare {
@@ -829,6 +844,9 @@ pub fn tools_sub(at: usize, compare: bool, rows: &[(PathBuf, bool)], size_map: b
     }
     items.push((TOOLS_EXPORT_LIST, t!("Export list…").into_owned(), true));
     items.extend(crate::copy_to::menu_items(rows).into_iter().map(|(id, title)| (id, title, true)));
+    if !rows.is_empty() {
+        items.push((TOOLS_SET_DATES, t!("Set Dates…").into_owned(), true));
+    }
     Submenu { title: t!("Tools").into_owned(), at, items }
 }
 
@@ -1076,8 +1094,9 @@ pub fn new_sub(templates: &[Template], windows: bool, at: usize) -> Submenu {
 }
 
 /// Create link ▸ on Windows (Shortcut; Junction for local folders; Symbolic link when it can
-/// be made); elsewhere the one "Create link" (a symbolic link, spec 9.2), after Make Alias on
-/// macOS.
+/// be made; Hard link); elsewhere "Create link" (a symbolic link, spec 9.2) and "Create hard
+/// link", after Make Alias on macOS. A hard link is offered for folders too: the task refuses
+/// them with a reason.
 pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Vec<(u32, String, bool)> {
     if !windows {
         let mut out = Vec::new();
@@ -1085,6 +1104,7 @@ pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Ve
             out.push((MAKE_ALIAS, t!("Make Alias").into_owned(), true));
         }
         out.push((LINK_SYMLINK, t!("Create link").into_owned(), true));
+        out.push((LINK_HARDLINK, t!("Create hard link").into_owned(), true));
         return out;
     }
     let mut out = vec![(LINK_SHORTCUT, t!("Shortcut").into_owned(), true)];
@@ -1094,6 +1114,7 @@ pub fn link_items(windows: bool, mac: bool, junction: bool, symlink: bool) -> Ve
     if symlink {
         out.push((LINK_SYMLINK, t!("Symbolic link").into_owned(), true));
     }
+    out.push((LINK_HARDLINK, t!("Hard link").into_owned(), true));
     out
 }
 
@@ -1387,6 +1408,66 @@ pub fn group_items(groups: &[String], own: Option<&str>) -> Vec<(u32, String, bo
         out.push((GROUP_NONE, t!("No group").into_owned(), true));
     }
     out
+}
+
+/// A pin's Color ▸ and Icon ▸ (spec 16 §4), its own colour and icon marked.
+pub fn pin_style_subs(color: Option<&str>, icon: Option<&str>, at: usize) -> [Submenu; 2] {
+    let hue = color.and_then(gezik_core::highlight::Hue::parse);
+    let colors = [
+        TagColor::None,
+        TagColor::Red,
+        TagColor::Orange,
+        TagColor::Yellow,
+        TagColor::Green,
+        TagColor::Blue,
+        TagColor::Purple,
+        TagColor::Gray,
+    ]
+    .into_iter()
+    .map(|c| {
+        let own = if c == TagColor::None { color.is_none() } else { hue == Some(gezik_core::highlight::Hue::Named(c)) };
+        let title = if c == TagColor::None { t!("None") } else { t("", c.default_name()) };
+        (PIN_COLOR_FIRST + u32::from(c.number()), marked(own, &title), true)
+    })
+    .collect();
+    let own = icon.and_then(gezik_config::pins::icon_index);
+    let titles = [
+        tx!("Folder"),
+        tx!("Star"),
+        tx!("Heart"),
+        tx!("Home"),
+        tx!("Work"),
+        tx!("Code"),
+        tx!("Music"),
+        tx!("Photo"),
+        tx!("Video"),
+        tx!("Document"),
+        tx!("Download"),
+        tx!("Cloud"),
+        tx!("Archive"),
+        tx!("Book"),
+        tx!("Game"),
+        tx!("Money"),
+        tx!("Mail"),
+        tx!("Link"),
+        tx!("Lock"),
+        tx!("Flag"),
+        tx!("Bolt"),
+        tx!("Leaf"),
+        tx!("Globe"),
+        tx!("Person"),
+    ];
+    let mut icons = vec![(PIN_ICON_FIRST, marked(own.is_none(), &t!("Default")), true)];
+    icons.extend(
+        titles
+            .iter()
+            .enumerate()
+            .map(|(i, title)| (PIN_ICON_FIRST + 1 + i as u32, marked(own == Some(i), &t("", title)), true)),
+    );
+    [
+        Submenu { title: t!("Color").into_owned(), at, items: colors },
+        Submenu { title: t!("Icon").into_owned(), at, items: icons },
+    ]
 }
 
 /// A group heading's menu: move it (not past the first or the last), rename it, ungroup it.
@@ -1944,6 +2025,10 @@ impl Menus {
             *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
             return self.open_slint_entries(&[(EMPTY_TRASH, empty_title(), true)], Vec::new(), Anchor::point(x, y));
         }
+        if section == crate::sidebar::SECTION_NETWORK {
+            *self.subject.borrow_mut() = Some(Subject::Background(PathBuf::new()));
+            return self.open_slint(&[(NETWORK_REFRESH, tx!("Refresh"))], Anchor::point(x, y));
+        }
         if section == crate::sidebar::SECTION_PHONES {
             let Some(place) = self.sidebar.location_of(section, index) else { return };
             *self.subject.borrow_mut() = Some(Subject::Phone(place));
@@ -1965,6 +2050,8 @@ impl Menus {
                 items: group_items(&groups, own.as_deref()),
             });
             *self.pin_groups.borrow_mut() = groups;
+            let (color, icon) = self.sidebar.style_of(&path);
+            subs.extend(pin_style_subs(color.as_deref(), icon.as_deref(), list.len()));
         }
         if section == crate::sidebar::SECTION_DRIVES && !cfg!(windows) {
             list.extend(drive_items(crate::eject::way_at(&path), false));
@@ -2070,10 +2157,13 @@ impl Menus {
         let at_panes = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).map_or(entries.len(), |i| i + 1);
         let dual = crate::dual::is_open();
         let sync = crate::dual::is_synced();
+        let (stacked, bottom) = crate::dual::layout();
         entries.splice(
             at_panes..at_panes,
             [
+                (PREVIEW_BOTTOM, marked(bottom, &t!("Preview at bottom")), true),
                 (TWO_PANES, marked(dual, &t!("Two panes")), true),
+                (STACK_PANES, marked(stacked, &t!("Stack panes")), true),
                 (SYNC_BROWSING, marked(sync, &t!("Sync browsing")), dual),
                 (SWAP_PANES, marked(false, &t!("Swap panes")), dual),
                 (SAME_FOLDER, marked(false, &t!("Same folder in other pane")), dual),
@@ -2483,6 +2573,7 @@ impl Menus {
             (TRASH_DELETE, _) => crate::trash_view::delete_selection(&crate::panes::active_view()),
             (EMPTY_TRASH, _) => crate::trash_view::empty(),
             (CONNECT_SERVER, _) => crate::connect::open(),
+            (NETWORK_REFRESH, _) => crate::network_places::refresh(),
             (EJECT | DISCONNECT, Subject::Row(path) | Subject::SidebarEntry(path)) => crate::eject::eject_path(&path),
             (id, _) if (RECENT_SERVER_FIRST..RECENT_SERVER_FIRST + RECENT_SERVER_MAX).contains(&id) => {
                 crate::connect::open_recent((id - RECENT_SERVER_FIRST) as usize)
@@ -2637,6 +2728,10 @@ impl Menus {
                 crate::checksums::open(rows.into_iter().map(|(path, _)| path).collect());
             }
             (TOOLS_VERIFY, Subject::Row(path)) => crate::checksums::verify(path),
+            (TOOLS_SET_DATES, Subject::Row(_) | Subject::Rows(_)) => {
+                let rows = std::mem::take(&mut *self.rows.borrow_mut());
+                crate::set_dates::open(rows.into_iter().map(|(path, _)| path).collect(), None);
+            }
             (TOOLS_DUPLICATES, Subject::Row(_) | Subject::Background(_)) => {
                 crate::panes::with_active(|p| p.search.find_duplicates());
             }
@@ -2702,6 +2797,15 @@ impl Menus {
             (RENAME_PIN, Subject::SidebarEntry(path)) => self.sidebar.ask_alias(&path),
             (GROUP_NEW, Subject::SidebarEntry(path)) => self.sidebar.ask_new_group(&path),
             (GROUP_NONE, Subject::SidebarEntry(path)) => self.sidebar.set_group(&path, None),
+            (id, Subject::SidebarEntry(path)) if (PIN_COLOR_FIRST..PIN_ICON_FIRST).contains(&id) => {
+                let color = TagColor::from_number((id - PIN_COLOR_FIRST) as u8);
+                let name = color.default_name().to_lowercase();
+                self.sidebar.set_color(&path, (color != TagColor::None).then_some(name.as_str()));
+            }
+            (id, Subject::SidebarEntry(path)) if (PIN_ICON_FIRST..PIN_ICONS_END).contains(&id) => {
+                let icon = (id - PIN_ICON_FIRST).checked_sub(1).map(|i| gezik_config::pins::ICONS[i as usize]);
+                self.sidebar.set_icon(&path, icon);
+            }
             (id, Subject::SidebarEntry(path)) if (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id) => {
                 let group = self.pin_groups.borrow().get((id - GROUP_MOVE_FIRST) as usize).cloned();
                 if let Some(group) = group {
@@ -2814,6 +2918,8 @@ impl Menus {
             (PREVIEW_HEX, Subject::View) => self.preview.show_hex(),
             (PREVIEW_PLAY, Subject::View) => self.preview.play_action(),
             (TWO_PANES, Subject::View) => crate::dual::toggle(),
+            (STACK_PANES, Subject::View) => crate::dual::toggle_layout(false),
+            (PREVIEW_BOTTOM, Subject::View) => crate::dual::toggle_layout(true),
             (SYNC_BROWSING, Subject::View) => crate::dual::toggle_sync(),
             (SWAP_PANES, Subject::View) => crate::dual::swap(),
             (SAME_FOLDER, Subject::View) => crate::dual::same_folder(),
@@ -2862,10 +2968,10 @@ impl Menus {
             }
             (PASTE_AS_FILE, Subject::Background(dir)) => self.ops.paste_as_file(dir),
             (NEW_FOLDER_WITH_SELECTION, Subject::Rows(paths)) => self.ops.new_folder_with(paths),
-            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | MAKE_ALIAS, Subject::Row(path)) => {
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | LINK_HARDLINK | MAKE_ALIAS, Subject::Row(path)) => {
                 self.ops.create_links(vec![path], link_kind(id))
             }
-            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | MAKE_ALIAS, Subject::Rows(paths)) => {
+            (LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK | LINK_HARDLINK | MAKE_ALIAS, Subject::Rows(paths)) => {
                 self.ops.create_links(paths, link_kind(id))
             }
             (SHOW_PACKAGE, Subject::Row(path)) => crate::panes::active_nav().go(Location::Path(path)),
@@ -3068,6 +3174,7 @@ fn link_kind(id: u32) -> LinkKind {
         LINK_SHORTCUT => LinkKind::Shortcut,
         LINK_JUNCTION => LinkKind::Junction,
         MAKE_ALIAS => LinkKind::Alias,
+        LINK_HARDLINK => LinkKind::Hard,
         _ => LinkKind::Symlink,
     }
 }
@@ -3087,6 +3194,7 @@ fn from_submenu(id: u32) -> bool {
         || id == GROUP_BY_RATING
         || id == GROUP_BY_GIT
         || (GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX).contains(&id)
+        || (PIN_COLOR_FIRST..PIN_ICONS_END).contains(&id)
         || (WINDOW_FIRST..WINDOW_FIRST + WINDOW_MAX).contains(&id)
         || id == GROUP_NEW
         || id == TOOLS_EXPORT_LIST
@@ -3098,6 +3206,7 @@ fn from_submenu(id: u32) -> bool {
         || id == TOOLS_CHECKSUMS
         || id == TOOLS_VERIFY
         || (TOOLS_COPY_TO..=TOOLS_JOIN).contains(&id)
+        || id == TOOLS_SET_DATES
         || (TAGS_PICKER..=TAGS_RATING_LAST).contains(&id)
         || (TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX).contains(&id)
         || (OPEN_WITH_FIRST..OPEN_WITH_FIRST + OPEN_WITH_MAX).contains(&id)
@@ -3109,7 +3218,14 @@ fn from_submenu(id: u32) -> bool {
         || (TAG_COLOR_FIRST..TAG_COLOR_FIRST + 8).contains(&id)
         || matches!(
             id,
-            NEW_FOLDER | NEW_FILE | NEW_MARKDOWN | OPEN_TEMPLATES | LINK_SHORTCUT | LINK_JUNCTION | LINK_SYMLINK
+            NEW_FOLDER
+                | NEW_FILE
+                | NEW_MARKDOWN
+                | OPEN_TEMPLATES
+                | LINK_SHORTCUT
+                | LINK_JUNCTION
+                | LINK_SYMLINK
+                | LINK_HARDLINK
         )
 }
 
@@ -3301,6 +3417,8 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            STACK_PANES,
+            PREVIEW_BOTTOM,
             UNDO,
             REDO,
             PASTE,
@@ -3445,7 +3563,8 @@ mod tests {
                 TOOLS_EXPORT_LIST,
                 TOOLS_COPY_TO,
                 TOOLS_MOVE_TO,
-                TOOLS_SPLIT
+                TOOLS_SPLIT,
+                TOOLS_SET_DATES
             ],
             "the macOS Tools menu's order"
         );
@@ -3593,6 +3712,7 @@ mod tests {
             LINK_SHORTCUT,
             LINK_JUNCTION,
             LINK_SYMLINK,
+            LINK_HARDLINK,
             MAKE_ALIAS,
             SHOW_PACKAGE,
             OPEN_WITH_FIRST,
@@ -3643,6 +3763,7 @@ mod tests {
             TRASH_DELETE,
             EMPTY_TRASH,
             CONNECT_SERVER,
+            NETWORK_REFRESH,
             EJECT,
             DISCONNECT,
             COLLAPSE_GROUPS,
@@ -3656,6 +3777,8 @@ mod tests {
             SYNC_BROWSING,
             SWAP_PANES,
             SAME_FOLDER,
+            STACK_PANES,
+            PREVIEW_BOTTOM,
             TOOLS_COMPARE,
             TOOLS_SELECT_DIFFERENCES,
             TOOLS_SIZE_MAP,
@@ -3670,6 +3793,7 @@ mod tests {
             TOOLS_MOVE_TO,
             TOOLS_SPLIT,
             TOOLS_JOIN,
+            TOOLS_SET_DATES,
             TAG_DOTS,
             SORT_BY_TAGS,
             GROUP_BY_TAG,
@@ -3722,6 +3846,8 @@ mod tests {
             DATE_FORMAT_FIRST..DATE_FORMAT_FIRST + DateFormat::ALL.len() as u32,
             SIZE_FORMAT_FIRST..SIZE_FORMAT_FIRST + SizeFormat::ALL.len() as u32,
             GROUP_MOVE_FIRST..GROUP_MOVE_FIRST + GROUP_MAX,
+            PIN_COLOR_FIRST..PIN_ICON_FIRST,
+            PIN_ICON_FIRST..PIN_ICONS_END,
             TEMPLATE_FIRST..TEMPLATE_FIRST + TEMPLATE_MAX,
             SAVED_SEARCH_FIRST..SAVED_SEARCH_FIRST + SAVED_SEARCH_MAX,
             SAVED_SEARCH_DELETE_FIRST..SAVED_SEARCH_DELETE_FIRST + SAVED_SEARCH_MAX,
@@ -3903,15 +4029,26 @@ mod tests {
     #[test]
     fn link_items_follow_the_system_and_what_can_be_made() {
         let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
-        assert_eq!(ids(link_items(true, false, true, true)), [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK]);
-        assert_eq!(ids(link_items(true, false, false, false)), [LINK_SHORTCUT]);
-        assert_eq!(link_items(false, false, false, true), [(LINK_SYMLINK, "Create link".to_owned(), true)]);
+        assert_eq!(
+            ids(link_items(true, false, true, true)),
+            [LINK_SHORTCUT, LINK_JUNCTION, LINK_SYMLINK, LINK_HARDLINK]
+        );
+        assert_eq!(ids(link_items(true, false, false, false)), [LINK_SHORTCUT, LINK_HARDLINK]);
+        assert_eq!(
+            link_items(false, false, false, true),
+            [(LINK_SYMLINK, "Create link".to_owned(), true), (LINK_HARDLINK, "Create hard link".to_owned(), true)]
+        );
+        assert_eq!(link_kind(LINK_HARDLINK), LinkKind::Hard);
     }
 
     #[test]
     fn macos_rows_offer_aliases_and_package_contents() {
         let ids = |v: Vec<(u32, String, bool)>| v.into_iter().map(|(id, _, _)| id).collect::<Vec<_>>();
-        assert_eq!(ids(link_items(false, true, false, true)), [MAKE_ALIAS, LINK_SYMLINK], "macOS: Make Alias first");
+        assert_eq!(
+            ids(link_items(false, true, false, true)),
+            [MAKE_ALIAS, LINK_SYMLINK, LINK_HARDLINK],
+            "macOS: Make Alias first"
+        );
         let app = Path::new("/Applications/Safari.app");
         assert_eq!(package_item(app, true, true), Some((SHOW_PACKAGE, "Show Package Contents".to_owned())));
         assert_eq!(package_item(app, true, false), None, "not off macOS");
@@ -3999,6 +4136,21 @@ mod tests {
         assert_eq!(group_items(&many, None).len(), GROUP_MAX as usize + 1);
         assert!(from_submenu(GROUP_MOVE_FIRST + 3) && from_submenu(GROUP_NEW) && from_submenu(GROUP_NONE));
         assert!(!from_submenu(RENAME_PIN));
+    }
+
+    #[test]
+    fn a_pin_offers_its_colours_and_icons() {
+        let [colors, icons] = pin_style_subs(Some("RED"), Some("leaf"), 3);
+        assert_eq!((colors.at, colors.items.len(), icons.items.len()), (3, 8, 25));
+        assert_eq!(colors.items[0], (PIN_COLOR_FIRST, "    None".to_owned(), true));
+        assert_eq!(colors.items[1], (PIN_COLOR_FIRST + 6, "• Red".to_owned(), true), "Finder's number");
+        assert_eq!(icons.items[0].1, "    Default");
+        assert_eq!(icons.items[22], (PIN_ICON_FIRST + 22, "• Leaf".to_owned(), true));
+        assert_eq!(gezik_config::pins::ICONS[22 - 1], "leaf");
+        assert_eq!(icons.items.last().unwrap().0, PIN_ICONS_END - 1);
+        let [colors, icons] = pin_style_subs(None, Some("rocket"), 0);
+        assert!(colors.items[0].1.starts_with('•') && icons.items[0].1.starts_with('•'), "none and default");
+        assert!(from_submenu(PIN_COLOR_FIRST) && from_submenu(PIN_ICONS_END - 1) && !from_submenu(PIN_ICONS_END));
     }
 
     #[test]

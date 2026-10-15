@@ -14,6 +14,73 @@ pub const TAB_HOVER: Duration = Duration::from_millis(600);
 /// Near the list's top or bottom edge (this close), a drag scrolls it.
 pub const EDGE: f32 = 24.0;
 
+/// The `[drag] spring-delay` setting's range in ms (0 is off).
+pub const SPRING_DELAY_RANGE: std::ops::RangeInclusive<u32> = 200..=3000;
+
+/// How long a drag rests on a folder before it springs open; `None`: off (0).
+pub fn spring_delay(ms: u32) -> Option<Duration> {
+    (ms > 0).then(|| Duration::from_millis(ms.clamp(*SPRING_DELAY_RANGE.start(), *SPRING_DELAY_RANGE.end()).into()))
+}
+
+/// What the spring timer must do after the drag moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpringWait {
+    /// Still over the same target (or still over none): it goes on.
+    Keep,
+    Start(Duration),
+    Stop,
+}
+
+/// Spring-loaded folders (spec 16l): a drag resting on a folder opens it in a pane (`T`: the
+/// pane and the folder); a drag that ends without a drop takes each pane back to where it was
+/// (`L`) before its first spring.
+#[derive(Debug, Clone)]
+pub struct Spring<T, L> {
+    over: Option<T>,
+    starts: Vec<(usize, L)>,
+}
+
+impl<T, L> Default for Spring<T, L> {
+    fn default() -> Self {
+        Spring { over: None, starts: Vec::new() }
+    }
+}
+
+impl<T: PartialEq + Clone, L> Spring<T, L> {
+    /// The drag is over `target` (None: nothing that springs); `delay` from `spring_delay`.
+    pub fn over(&mut self, target: Option<T>, delay: Option<Duration>) -> SpringWait {
+        let target = target.filter(|_| delay.is_some());
+        if target == self.over {
+            return SpringWait::Keep;
+        }
+        self.over = target;
+        match (&self.over, delay) {
+            (Some(_), Some(delay)) => SpringWait::Start(delay),
+            _ => SpringWait::Stop,
+        }
+    }
+
+    /// The timer for `target` fired: whether the drag still rests on it. It stays the target, so
+    /// a folder that did not open does not spring again until the drag leaves it.
+    pub fn rested(&self, target: &T) -> bool {
+        self.over.as_ref() == Some(target)
+    }
+
+    /// Pane `pane` sprang away from `start`; only its first start is kept.
+    pub fn sprang(&mut self, pane: usize, start: L) {
+        if !self.starts.iter().any(|(p, _)| *p == pane) {
+            self.starts.push((pane, start));
+        }
+    }
+
+    /// The drag ended: where each pane goes back to (nothing after a drop).
+    pub fn end(&mut self, dropped: bool) -> Vec<(usize, L)> {
+        self.over = None;
+        let starts = std::mem::take(&mut self.starts);
+        if dropped { Vec::new() } else { starts }
+    }
+}
+
 pub fn past_threshold(dx: f32, dy: f32) -> bool {
     dx.abs() > THRESHOLD || dy.abs() > THRESHOLD
 }
@@ -443,6 +510,39 @@ pub fn edge_scroll(y_in_list: f32, visible: f32, step: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spring_waits_anew_on_each_target_and_is_off_at_zero() {
+        let delay = spring_delay(700);
+        assert_eq!(delay, Some(Duration::from_millis(700)));
+        assert_eq!(spring_delay(0), None);
+        assert_eq!(spring_delay(50), Some(Duration::from_millis(200)), "clamped");
+        assert_eq!(spring_delay(9000), Some(Duration::from_millis(3000)), "clamped");
+        let mut spring: Spring<(usize, &str), &str> = Spring::default();
+        assert_eq!(spring.over(Some((0, "a")), delay), SpringWait::Start(Duration::from_millis(700)));
+        assert_eq!(spring.over(Some((0, "a")), delay), SpringWait::Keep, "moving on the same folder");
+        assert_eq!(spring.over(Some((0, "b")), delay), SpringWait::Start(Duration::from_millis(700)), "reset");
+        assert!(!spring.rested(&(0, "a")), "the timer of the folder left behind");
+        assert!(spring.rested(&(0, "b")));
+        assert_eq!(spring.over(None, delay), SpringWait::Stop);
+        assert_eq!(spring.over(None, delay), SpringWait::Keep);
+        assert!(!spring.rested(&(0, "b")));
+        // Off: nothing ever starts.
+        assert_eq!(spring.over(Some((0, "a")), None), SpringWait::Keep);
+        assert!(!spring.rested(&(0, "a")));
+    }
+
+    #[test]
+    fn spring_goes_back_to_the_first_start_unless_dropped() {
+        let mut spring: Spring<(usize, &str), &str> = Spring::default();
+        spring.sprang(0, "/start");
+        spring.sprang(0, "/start/a");
+        spring.sprang(1, "/other");
+        assert_eq!(spring.end(false), vec![(0, "/start"), (1, "/other")], "cancelled");
+        assert_eq!(spring.end(false), vec![], "only once");
+        spring.sprang(0, "/start");
+        assert_eq!(spring.end(true), vec![], "dropped: stays");
+    }
 
     fn list(count: usize) -> ListArea {
         ListArea {

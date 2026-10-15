@@ -673,7 +673,9 @@ impl Preview {
         let Some(window) = self.0.window.upgrade() else { return 256 };
         let quick = self.0.quick_look.borrow().as_ref().map_or(0.0, |q| q.width());
         let logical = if self.0.pane_open.get() {
-            window.get_preview_width().max(quick)
+            let side =
+                if window.get_preview_bottom() { window.get_preview_height() } else { window.get_preview_width() };
+            side.max(quick)
         } else if self.column() {
             window.get_column_width().max(quick)
         } else {

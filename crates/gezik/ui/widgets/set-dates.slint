@@ -1,0 +1,161 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { TextField } from "text-field.slint";
+import { Check } from "check.slint";
+
+// Set Dates… (set_dates.rs, 16k): which times change (Created only where the system can write
+// it), and from what: a typed local date and time, now, the photo's date taken, or another
+// file's times. Enter sets, Esc cancels.
+export component SetDates inherits Rectangle {
+    in property <string> title;
+    in property <bool> dialog-open;
+    in property <int> focus-request;
+    in-out property <bool> modified;
+    in-out property <bool> created;
+    in-out property <bool> accessed;
+    in property <bool> has-created;
+    // 0 Date and time, 1 Now, 2 Date taken (EXIF), 3 From file.
+    in-out property <int> source;
+    in-out property <string> date;
+    in-out property <string> time;
+    // The file of From file… ("" none yet).
+    in property <string> from;
+    in property <string> error;
+    callback choose-file();
+    // true: Set, false: Cancel.
+    callback chosen(bool);
+
+    init => { root.take-focus(); }
+    changed focus-request => {
+        if !root.dialog-open {
+            root.take-focus();
+        }
+    }
+
+    public function take-focus() {
+        if root.source == 0 {
+            date-field.focus();
+        } else {
+            scope.focus();
+        }
+    }
+
+    background: Theme.overlay;
+    // Clicks outside the box go nowhere.
+    TouchArea { }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.chosen(false);
+                return accept;
+            }
+            if event.text == Key.Return {
+                root.chosen(true);
+                return accept;
+            }
+            return reject;
+        }
+        Rectangle {
+            width: min(max(440px, content.preferred-width), root.width - 40px);
+            height: content.preferred-height;
+            x: (root.width - self.width) / 2;
+            y: max(20px, (root.height - self.height) / 3);
+            background: Theme.surface-raised;
+            border-radius: Theme.radius * 1.5;
+            border-width: 1px;
+            border-color: Theme.border;
+            accessible-role: groupbox;
+            accessible-label: root.title;
+
+            content := VerticalLayout {
+                padding: Theme.spacing * 3;
+                spacing: Theme.spacing * 1.5;
+                Text {
+                    text: root.title;
+                    font-weight: 600;
+                    overflow: elide;
+                    color: Theme.foreground;
+                }
+                HorizontalLayout {
+                    spacing: Theme.spacing * 2;
+                    Check {
+                        text: @tr("Modified");
+                        checked: root.modified;
+                        toggled => { root.modified = !root.modified; }
+                    }
+                    if root.has-created: Check {
+                        text: @tr("Created");
+                        checked: root.created;
+                        toggled => { root.created = !root.created; }
+                    }
+                    Check {
+                        text: @tr("Accessed");
+                        checked: root.accessed;
+                        toggled => { root.accessed = !root.accessed; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    for label[i] in [@tr("Date and time"), @tr("Now"), @tr("Date taken (EXIF)"), @tr("From file…")]: TextButton {
+                        text: label;
+                        checked: i == root.source;
+                        clicked => {
+                            if i == 3 {
+                                root.choose-file();
+                            } else {
+                                root.source = i;
+                            }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                // Always there (an element inside an `if` cannot take the focus from outside).
+                HorizontalLayout {
+                    spacing: Theme.spacing;
+                    date-field := TextField {
+                        enabled: root.source == 0;
+                        text <=> root.date;
+                        accessible-label: @tr("Date (YYYY-MM-DD)");
+                        accepted => { root.chosen(true); }
+                    }
+                    TextField {
+                        enabled: root.source == 0;
+                        text <=> root.time;
+                        accessible-label: @tr("Time (HH:MM:SS)");
+                        accepted => { root.chosen(true); }
+                    }
+                }
+                Text {
+                    text: @tr("Local time: YYYY-MM-DD and HH:MM:SS");
+                    color: Theme.foreground-muted;
+                    font-size: Theme.font-size-small;
+                }
+                if root.source == 3: Text {
+                    text: root.from;
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+                if root.error != "": Text {
+                    text: root.error;
+                    wrap: word-wrap;
+                    color: Theme.danger;
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: Theme.spacing;
+                    TextButton {
+                        text: @tr("Cancel");
+                        clicked => { root.chosen(false); }
+                    }
+                    TextButton {
+                        text: @tr("Set");
+                        primary: true;
+                        clicked => { root.chosen(true); }
+                    }
+                }
+            }
+        }
+    }
+}

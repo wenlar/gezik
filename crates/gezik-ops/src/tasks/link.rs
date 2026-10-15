@@ -1,4 +1,4 @@
-//! Links (spec 9.2): a shortcut, junction or symbolic link to each item. Undo trashes the
+//! Links (spec 9.2): a shortcut, junction, symbolic or hard link to each item. Undo trashes the
 //! link itself (the trash takes the link, not what it leads to), redo brings it back.
 
 use std::io;
@@ -51,6 +51,18 @@ impl LinkTask {
         LinkTask { pairs, kind }
     }
 
+    /// Why these hard links cannot be made, asked once before any is (one message, not one per
+    /// item): a folder among the items, or a link on another drive.
+    fn hard_links_refused(&self) -> Option<std::borrow::Cow<'static, str>> {
+        if self.pairs.iter().any(|(source, _)| source.is_dir()) {
+            return Some(gezik_i18n::t!("Hard links work only on files"));
+        }
+        if self.pairs.iter().any(|(source, at)| !at.parent().is_some_and(|dir| super::same_drive(source, dir))) {
+            return Some(gezik_i18n::t!("Hard links must stay on the same drive"));
+        }
+        None
+    }
+
     fn sources(&self) -> Vec<PathBuf> {
         self.pairs.iter().map(|(source, _)| source.clone()).collect()
     }
@@ -79,6 +91,12 @@ impl Task for LinkTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
+        if self.kind == LinkKind::Hard
+            && let (Some(why), Some((source, _))) = (self.hard_links_refused(), self.pairs.first())
+        {
+            sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, why));
+            return;
+        }
         let mut planned = std::collections::HashSet::new();
         for (root, (source, at)) in self.pairs.iter().enumerate() {
             if super::refuse_root(sink, source, || gezik_i18n::t!("Cannot link to a drive")) {
@@ -273,6 +291,40 @@ mod tests {
         for name in ["Link to v1.2", "Link to v1.2 (2)"] {
             gezik_platform::fs::delete(&dir.join("links").join(name)).unwrap();
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hard_link_shares_its_file_and_undo_leaves_the_original() {
+        let dir = test_dir("link-hard");
+        write(&dir.join("a.txt"), "data");
+        let engine = engine();
+        let job = engine.submit(Box::new(LinkTask::beside(vec![dir.join("a.txt")], LinkKind::Hard)));
+        let (report, _) = finish(&engine, job, defaults);
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        let link = dir.join("Link to a.txt");
+        assert_eq!(report.results[0], link);
+        assert_eq!(read(&link), "data");
+        assert_eq!(engine.undo_label().as_deref(), Some("Create link"));
+        let (undo, _) = finish(&engine, engine.undo().unwrap(), defaults);
+        assert!(undo.failures.is_empty() && undo.no_trash.is_empty(), "{:?}", undo.failures);
+        assert!(std::fs::symlink_metadata(&link).is_err(), "the link went to the trash");
+        assert_eq!(read(&dir.join("a.txt")), "data", "the original stays");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn hard_links_to_folders_are_refused_before_any_is_made() {
+        let dir = test_dir("link-hard-folder");
+        write(&dir.join("a.txt"), "a");
+        write(&dir.join("Docs/b.txt"), "b");
+        let engine = engine();
+        let sources = vec![dir.join("a.txt"), dir.join("Docs")];
+        let job = engine.submit(Box::new(LinkTask::beside(sources, LinkKind::Hard)));
+        let (report, _) = finish(&engine, job, defaults);
+        assert_eq!(report.failures.len(), 1, "one message");
+        assert!(report.failures[0].message.contains("only on files"), "{}", report.failures[0].message);
+        assert!(!dir.join("Link to a.txt").exists(), "nothing made");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -7,7 +7,8 @@ export struct SidebarRow {
     label: string,
     // 0 folders, 1 pinned, 2 drives, 4 saved searches, 5 trash, 6 cloud, 7 a folder of the tree
     // (`index` its node), 8 a capped branch's "… n more" line (`index` the branch's node), 9 a
-    // tag of `[tags] list` (`index` its place, spec 12 §7.1); a
+    // tag of `[tags] list` (`index` its place, spec 12 §7.1), 10 a phone, 11 the Network section
+    // (spec 16h: its heading opens and closes with `arrow`; `index` < 0 a note under it); a
     // heading of the pinned part is 1 ("PINNED") or 3 (a group's, `index` its place among the
     // groups shown).
     section: int,
@@ -16,13 +17,15 @@ export struct SidebarRow {
     // Shown when the pointer rests on the row: a pinned folder's full path and its key.
     tip: string,
     // A place's glyph (sidebar.rs): 1 home, 2 folder, 3 pin, 4 pin with an alias, 5 drive,
-    // 6 saved search, 7 trash, 8 cloud; 0 on headings and "… n more".
+    // 6 saved search, 7 trash, 8 cloud, 9 phone, 10 computer; 100 + n a pin's own icon
+    // (`Glyph.pin-icons[n]`); 0 on headings and "… n more".
     icon: int,
     // The tree (spec 10 §5): how deep the row is (0: a place), and its arrow: 0 none,
     // 1 closed, 2 open, 3 its read on its way.
     depth: int,
     arrow: int,
-    // A tag's colour (section 9; transparent: a tag without one, drawn as a ring).
+    // A tag's colour (section 9; transparent: a tag without one, drawn as a ring); a pin's icon
+    // colour (transparent: the theme's).
     dot: color,
 }
 
@@ -146,7 +149,7 @@ export component Sidebar inherits Rectangle {
                 // A section's label (FOLDERS, PINNED, DRIVES) sits at the bottom of its row; a
                 // group's heading has a chevron before it.
                 if row.header: Text {
-                    x: Theme.inset + (row.section == 3 ? 18px : Theme.spacing + 4px);
+                    x: Theme.inset + (row.section == 3 || row.section == 11 ? 18px : Theme.spacing + 4px);
                     width: parent.width - self.x - Theme.inset - Theme.spacing;
                     height: row.section == 3 ? parent.height : parent.height - 3px;
                     text: row.label;
@@ -168,6 +171,40 @@ export component Sidebar inherits Rectangle {
                     stroke-width: 1.2px;
                     stroke-line-cap: round;
                     stroke-line-join: round;
+                }
+
+                // The Network heading (spec 16h): a click opens or closes it, a right-click has Refresh.
+                if row.header && row.section == 11: TouchArea {
+                    accessible-role: button;
+                    accessible-label: row.label;
+                    accessible-expandable: true;
+                    accessible-expanded: row.arrow == 2;
+                    accessible-action-default => { root.toggled(i); }
+                    accessible-action-expand => { root.toggled(i); }
+                    pointer-event(event) => {
+                        if event.kind == PointerEventKind.down {
+                            root.hide-tip();
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.left {
+                            root.toggled(i);
+                        }
+                        if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                            root.menu(row.section, row.index, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                        }
+                    }
+                    Path {
+                        x: 6px;
+                        y: parent.height - 3px - 10px;
+                        width: 8px;
+                        height: 8px;
+                        viewbox-width: 8;
+                        viewbox-height: 8;
+                        commands: row.arrow == 2 ? Glyph.chevron-down : Glyph.chevron-right;
+                        stroke: parent.has-hover ? Theme.foreground : Theme.foreground-muted;
+                        stroke-width: 1.2px;
+                        stroke-line-cap: round;
+                        stroke-line-join: round;
+                    }
                 }
 
                 // A group's heading: its menu on a right-click.
@@ -220,11 +257,12 @@ export component Sidebar inherits Rectangle {
                         height: 16px;
                         viewbox-width: 16;
                         viewbox-height: 16;
-                        commands: row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
+                        commands: row.icon >= 100 ? Glyph.pin-icons[row.icon - 100]
+                            : row.icon == 1 ? Glyph.home : row.icon == 3 ? Glyph.pin : row.icon == 4 ? Glyph.alias
                             : row.icon == 5 ? Glyph.drive : row.icon == 6 ? Glyph.search : row.icon == 7 ? Glyph.trash
-                            : row.icon == 8 ? Glyph.cloud : row.icon == 9 ? Glyph.phone
+                            : row.icon == 8 ? Glyph.cloud : row.icon == 9 ? Glyph.phone : row.icon == 10 ? Glyph.computer
                             : Glyph.folder-line;
-                        stroke: row.active ? Theme.accent : Theme.foreground-muted;
+                        stroke: row.active ? Theme.accent : row.section == 1 && row.dot != transparent ? row.dot : Theme.foreground-muted;
                         stroke-width: 1.3px;
                         stroke-line-cap: round;
                         stroke-line-join: round;
@@ -237,7 +275,7 @@ export component Sidebar inherits Rectangle {
                         text: row.label;
                         overflow: elide;
                         vertical-alignment: center;
-                        color: row.active ? Theme.selection-foreground : row.section == 8 ? Theme.foreground-muted : Theme.foreground;
+                        color: row.active ? Theme.selection-foreground : row.section == 8 || (row.section == 11 && row.index == -1) ? Theme.foreground-muted : Theme.foreground;
                     }
 
                     touch := TouchArea {

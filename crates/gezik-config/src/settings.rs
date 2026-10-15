@@ -458,6 +458,13 @@ pub struct Settings {
     pub sidebar_tree_follow: bool,
     /// `[panes] confirm`: F5/F6 ask before copying or moving to the other pane (spec 10 §4.4).
     pub panes_confirm: bool,
+    /// `[drag] spring-delay`: ms a drag rests on a folder before it opens (spec 16l); 0 is off,
+    /// else clamped to `gezik_core::drag::SPRING_DELAY_RANGE`.
+    pub spring_delay: u32,
+    /// `[panes] stacked`: the two panes one above the other (spec 16m §7).
+    pub panes_stacked: bool,
+    /// `[preview] position = "bottom"`: the preview under the list, not beside it.
+    pub preview_bottom: bool,
     /// `[preview] properties`: the preview reads and shows the file's metadata (spec 13 §7.4).
     pub preview_properties: bool,
     pub terminal: TerminalSettings,
@@ -516,6 +523,9 @@ impl Default for Settings {
             sidebar_tags: true,
             sidebar_tree_follow: false,
             panes_confirm: true,
+            spring_delay: 700,
+            panes_stacked: false,
+            preview_bottom: false,
             preview_properties: true,
             terminal: TerminalSettings::default(),
             search: SearchSettings::default(),
@@ -662,7 +672,12 @@ impl Settings {
                                 file,
                                 t!("{0}: \"{1}\" is pinned twice; the second is left out", "pinned", pin.path),
                             )),
-                            Ok(pin) => settings.pinned.push(pin),
+                            Ok(pin) => {
+                                for problem in pin.problems() {
+                                    warnings.push(Warning::new(file, format!("pinned: {problem}")));
+                                }
+                                settings.pinned.push(pin)
+                            }
                             Err(err) => warnings.push(Warning::new(file, format!("pinned: {err}"))),
                         }
                     }
@@ -863,8 +878,42 @@ impl Settings {
                             )),
                         }
                     }
+                    if let Some(value) = panes.get("stacked") {
+                        match value.as_bool() {
+                            Some(on) => settings.panes_stacked = on,
+                            None => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: expected true or false, got {1}", "panes.stacked", value),
+                            )),
+                        }
+                    }
                 }
                 None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "panes", value))),
+            },
+        }
+        match table.get("drag") {
+            None => {}
+            Some(value) => match value.as_table() {
+                Some(drag) => {
+                    if let Some(value) = drag.get("spring-delay") {
+                        match value.as_integer().and_then(|n| u32::try_from(n).ok()) {
+                            Some(0) => settings.spring_delay = 0,
+                            Some(n) => {
+                                let range = gezik_core::drag::SPRING_DELAY_RANGE;
+                                settings.spring_delay = n.clamp(*range.start(), *range.end());
+                            }
+                            None => warnings.push(Warning::new(
+                                file,
+                                t!(
+                                    "{0}: expected 0 (off) or a number of milliseconds, got {1}",
+                                    "drag.spring-delay",
+                                    value
+                                ),
+                            )),
+                        }
+                    }
+                }
+                None => warnings.push(Warning::new(file, t!("{0}: expected a table, got {1}", "drag", value))),
             },
         }
         match table.get("preview") {
@@ -877,6 +926,16 @@ impl Settings {
                             None => warnings.push(Warning::new(
                                 file,
                                 t!("{0}: expected true or false, got {1}", "preview.properties", value),
+                            )),
+                        }
+                    }
+                    if let Some(value) = preview.get("position") {
+                        match value.as_str() {
+                            Some("right") => settings.preview_bottom = false,
+                            Some("bottom") => settings.preview_bottom = true,
+                            _ => warnings.push(Warning::new(
+                                file,
+                                t!("{0}: expected \"right\" or \"bottom\", got {1}", "preview.position", value),
                             )),
                         }
                     }
@@ -2053,6 +2112,8 @@ pub struct State {
     pub preview_open: bool,
     /// Preview pane width in logical pixels (200–600).
     pub preview_width: Option<u32>,
+    /// The preview's height under the list (`[preview] position = "bottom"`), 120–600.
+    pub preview_height: Option<u32>,
     /// The preview wraps text and code (`[preview] wrap-text`, `wrap-code`; spec 13 §4.2);
     /// `None` until first changed (text wraps, code does not).
     pub preview_wrap: Option<(bool, bool)>,
@@ -2247,6 +2308,11 @@ impl State {
             .and_then(|v| v.as_integer())
             .and_then(|w| u32::try_from(w).ok())
             .filter(|w| (200..=600).contains(w));
+        let preview_height = preview
+            .and_then(|p| p.get("height"))
+            .and_then(|v| v.as_integer())
+            .and_then(|h| u32::try_from(h).ok())
+            .filter(|h| (120..=600).contains(h));
         let wrap = |key: &str| preview.and_then(|p| p.get(key)).and_then(|v| v.as_bool());
         let preview_wrap = match (wrap("wrap-text"), wrap("wrap-code")) {
             (None, None) => None,
@@ -2377,6 +2443,7 @@ impl State {
             result_columns,
             preview_open,
             preview_width,
+            preview_height,
             preview_wrap,
             preview_volume,
             operations_collapsed,
@@ -2454,6 +2521,7 @@ impl State {
         }
         if self.preview_open
             || self.preview_width.is_some()
+            || self.preview_height.is_some()
             || self.preview_wrap.is_some()
             || self.preview_volume.is_some()
         {
@@ -2461,6 +2529,9 @@ impl State {
             preview.insert("open".into(), toml::Value::Boolean(self.preview_open));
             if let Some(width) = self.preview_width {
                 preview.insert("width".into(), toml::Value::Integer(width.into()));
+            }
+            if let Some(height) = self.preview_height {
+                preview.insert("height".into(), toml::Value::Integer(height.into()));
             }
             if let Some((text, code)) = self.preview_wrap {
                 preview.insert("wrap-text".into(), toml::Value::Boolean(text));
@@ -2935,6 +3006,26 @@ reduce-motion = \"yes\"
     }
 
     #[test]
+    fn spring_delay_is_clamped_and_zero_is_off() {
+        assert_eq!(Settings::default().spring_delay, 700);
+        for (text, ms) in [("0", 0), ("50", 200), ("900", 900), ("10000", 3000)] {
+            let (settings, warnings) = parse(&format!(
+                "[drag]
+spring-delay = {text}
+"
+            ));
+            assert_eq!((settings.spring_delay, warnings.len()), (ms, 0), "{text}");
+        }
+        let (settings, warnings) = parse(
+            "[drag]
+spring-delay = -5
+",
+        );
+        assert_eq!(settings.spring_delay, 700);
+        assert!(warnings[0].message.starts_with("drag.spring-delay:"), "{}", warnings[0].message);
+    }
+
+    #[test]
     fn bad_max_fps_keeps_the_default_with_a_warning() {
         for text in ["max-fps = 5\n", "max-fps = -1\n", "max-fps = \"fast\"\n", "max-fps = 100000\n"] {
             let (settings, warnings) = parse(text);
@@ -2974,20 +3065,24 @@ pinned = [\"{documents}/Projects\", \"D:/Work\"]
     fn pins_of_both_forms_are_read_and_bad_ones_warned() {
         let (settings, warnings) = parse(
             "pinned = [\n  \"{documents}/Projects\",\n  { path = \"D:/Work/gezik\", name = \" Gezik \", group = \"Work\" },\n  \
-             { path = \"//nas/foto\", group = \"Media\" },\n  { path = \"/x\", icon = \"star\" },\n  { name = \"no path\" },\n  \
-             \"\",\n  \"{home}/../etc\",\n  3,\n  \"{documents}/Projects\",\n  { path = \"/n\", name = 5 },\n]\n",
+             { path = \"//nas/foto\", group = \"Media\" },\n  { path = \"/x\", shape = \"star\" },\n  { name = \"no path\" },\n  \
+             \"\",\n  \"{home}/../etc\",\n  3,\n  \"{documents}/Projects\",\n  { path = \"/n\", name = 5 },\n  \
+             { path = \"/c\", color = \"teal\", icon = \"star\" },\n]\n",
         );
         assert_eq!(
             settings.pinned,
             [
                 PinEntry::plain("{documents}/Projects"),
-                PinEntry { path: "D:/Work/gezik".into(), name: Some("Gezik".into()), group: Some("Work".into()) },
-                PinEntry { path: "//nas/foto".into(), name: None, group: Some("Media".into()) },
+                PinEntry { name: Some("Gezik".into()), group: Some("Work".into()), ..PinEntry::plain("D:/Work/gezik") },
+                PinEntry { group: Some("Media".into()), ..PinEntry::plain("//nas/foto") },
+                PinEntry { color: Some("teal".into()), icon: Some("star".into()), ..PinEntry::plain("/c") },
             ]
         );
         let messages: Vec<&str> = warnings.iter().map(|w| w.message.as_str()).collect();
-        assert_eq!(messages.len(), 7, "{messages:?}");
-        assert!(messages[0].starts_with("pinned: unknown key \"icon\" in "), "{messages:?}");
+        assert_eq!(messages.len(), 8, "{messages:?}");
+        assert!(messages[0].starts_with("pinned: unknown key \"shape\" in "), "{messages:?}");
+        assert_eq!(messages[7], "pinned: unknown color \"teal\" for /c; expected a tag color or #rrggbb");
+
         assert!(messages[1].starts_with("pinned: path is missing in "), "{messages:?}");
         assert_eq!(messages[2], "pinned: path is missing in \"\"");
         assert_eq!(messages[3], "pinned: \"{home}/../etc\" must not contain \"..\"");
@@ -4126,6 +4221,58 @@ properties = 1
         assert!(settings.preview_properties, "a bad value keeps the default");
         assert_eq!(warnings[0].message, "preview.properties: expected true or false, got 1");
         assert!(parse(include_str!("../templates/settings.toml")).0.preview_properties);
+    }
+
+    #[test]
+    fn stacked_panes_and_the_preview_at_the_bottom_are_off_unless_asked() {
+        let template = parse(include_str!("../templates/settings.toml")).0;
+        assert!(!template.panes_stacked && !template.preview_bottom);
+        let (settings, warnings) = parse(
+            "[panes]
+stacked = true
+
+[preview]
+position = \"bottom\"
+",
+        );
+        assert!(settings.panes_stacked && settings.preview_bottom && warnings.is_empty());
+        assert!(
+            !parse(
+                "[preview]
+position = \"right\"
+"
+            )
+            .0
+            .preview_bottom
+        );
+        let (settings, warnings) = parse(
+            "[panes]
+stacked = \"yes\"
+
+[preview]
+position = \"top\"
+",
+        );
+        assert!(!settings.panes_stacked && !settings.preview_bottom, "a bad value keeps the default");
+        assert_eq!(warnings[0].message, "panes.stacked: expected true or false, got \"yes\"");
+        assert_eq!(warnings[1].message, "preview.position: expected \"right\" or \"bottom\", got \"top\"");
+    }
+
+    #[test]
+    fn the_bottom_preview_height_round_trips() {
+        let state = State { preview_height: Some(240), ..State::default() };
+        assert!(state.to_toml().contains("height = 240"), "{}", state.to_toml());
+        assert_eq!(State::parse(&state.to_toml()), state);
+        assert_eq!(
+            State::parse(
+                "[preview]
+height = 50
+"
+            )
+            .preview_height,
+            None,
+            "out of range"
+        );
     }
 
     #[test]

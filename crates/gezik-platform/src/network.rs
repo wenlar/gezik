@@ -1,8 +1,11 @@
 //! Network shares (spec 9 §7.4): a server's address as the user types it, a Windows server's
-//! disk shares, and connecting to a share with the system's own login prompt. No discovery:
-//! every server name comes from the user. Blocking calls are for background threads only.
+//! disk shares, and connecting to a share with the system's own login prompt; computers on the
+//! local network (`discover`, spec 16h). Blocking calls are for background threads only.
 
 use std::path::{Path, PathBuf};
+
+mod discover;
+pub use discover::{DISCOVERY_TIME, Found, NO_AVAHI, discover};
 
 pub use crate::process::Ran;
 

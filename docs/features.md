@@ -24,6 +24,8 @@ Gezik copies, moves and deletes with its own engine on every OS:
   and no files, paste makes a `Pasted image ….png` or `Pasted text ….txt`.
 - **Drag and drop** files onto a folder in the list, the empty space (the folder shown), a
   folder or drive in the sidebar, a part of the address bar or a tab (rest on it to open it).
+  Resting on a folder opens it too (spring-loaded folders, `[drag] spring-delay`), so a drag
+  can go deeper; without a drop the pane goes back.
   The same drive moves, another drive copies; Shift moves, Ctrl (⌥ on macOS) copies; Alt or
   Ctrl+Shift on Windows, Ctrl+Shift on Linux and ⌘⌥ on macOS make links; the right button
   asks. Drop folders between pinned ones to pin them. Drags go out to Explorer, the desktop
@@ -41,7 +43,9 @@ Gezik copies, moves and deletes with its own engine on every OS:
   also offers a text file, a Markdown file and everything in your `templates/` folder.
   **New folder with selection** (Ctrl+Alt+N, ⌃⌘N on macOS) moves the selected items into a
   new folder.
-- **Create link**: a shortcut, junction or symbolic link on Windows, a symbolic link elsewhere.
+- **Create link**: a shortcut, junction or symbolic link on Windows, a symbolic link elsewhere;
+  a hard link to files on the same drive everywhere (no administrator needed). The Info
+  window on macOS and Linux shows **Links: N** for a file with more than one name.
 - **Copy To… / Move To…** (palette, row menu; F5/F6 with two panes ask the same): type the
   target folder, end it with a name mask to rename (`D:\Yedek\*.bak`, `*_old.*`), and with
   **Filter…** take only some files: `*.jpg *.png | thumbs\ *.tmp` (after `|`: left out; a
@@ -211,7 +215,7 @@ typing = "jump"           # jump: letters go to a name | filter: letters open th
   menu (`[[tab-sets]]`); with two panes both panes' tabs are saved (`right = [...]`).
 - The address bar (Ctrl+L) completes folder names and lists **Recent** and **Frequent**
   folders.
-- **Pinned folders** can have an alias and a group; Alt+1…9 (⌘⌥1…9 on macOS) go to the first nine.
+- **Pinned folders** can have an alias, a group, an icon colour and one of 24 icons (right-click ▸ Color, Icon); Alt+1…9 (⌘⌥1…9 on macOS) go to the first nine.
 - **Compare** (Shift+F2, ⌃⌘C on macOS, or right-click ▸ Tools ▸ Compare): two selected
   files, or one selected in each pane, side by side. Changed lines and the changed part of
   each are marked; added and removed lines are tinted; line-ending and encoding differences
@@ -324,6 +328,7 @@ shell-args = []           # before the command, for a full path
   the selection into the other pane's folder (asking first, where that folder can still be
   changed); Ctrl+U swaps the panes' tabs. **Sync Browsing** makes a step into a sub-folder or
   up in both panes. One pane is the default; the second comes back if you left it open.
+  **Stack Panes** (View menu, `[panes] stacked = true`) puts them one above the other.
 - **Folder tree**: the arrow on a folder in the sidebar (places, pinned folders, drives)
   opens it as a tree; the arrow keys move in it. **Show in Sidebar Tree** (View button menu)
   opens the tree down to the folder shown, `tree-follow = true` does it all the time. A
@@ -376,7 +381,9 @@ group = "date"
 - **Preview pane** (Alt+P) and **Quick Look** (Space): code in color with line numbers (about
   25 languages), text of any size from end to end, **Show as Hex** for any file, PDF pages
   with zoom (pdfium), pictures zoomed to their real size, video and audio with play, seek and
-  volume (ffmpeg); both tools download only when asked.
+  volume (ffmpeg); both tools download only when asked. **Preview at Bottom** (View menu,
+  `[preview] position = "bottom"`) puts the pane under the list (under both panes), its
+  height dragged.
 - **Properties** under the preview and in Get Info: picture size, the photo's date, camera,
   lens and place, length and codecs, music tags and cover, document title, author and pages,
   read by Gezik itself from a bounded part of the file (`[preview] properties = false` hides
@@ -440,6 +447,10 @@ limit and the queue (under [File operations](#file-operations)); and the
 - **Size Map** shows the selected folder (or the one shown) as tiles sized by what they
   take up. The scan runs in the background and stops when the map closes; F5 reads it again.
   A tile's right-click opens it, shows it in the pane, moves it to the trash or copies its path.
+- **Set Dates…** (Tools ▸ on files and folders; on macOS and Linux also a click on the dates in
+  the Info window) sets Modified, Created (not on Linux) and Accessed from a typed local date
+  and time, now, each photo's date taken (EXIF; files without one are skipped and counted) or
+  another file's dates. One job, one Ctrl+Z (⌘Z) for all of it.
 
 ## Export list
 
@@ -590,6 +601,22 @@ also lists as a portable device is left out (it is a drive already).
   file icons.
 - `[devices] phones = false` turns it off: Gezik then never looks for phones.
 
+## Network
+
+The sidebar's NETWORK section, at its end, lists the computers sharing files on the local
+network. It starts closed; clicking its heading opens it and starts one search on a thread of
+its own ("Searching…"), which ends within 5 seconds. Computers show as they answer. Nothing
+runs while the section is closed or open and idle: right-click the heading and choose
+**Refresh** to search again. Closing the section drops the list.
+
+- **Windows**: the computers of Explorer's Network folder. Clicking one lists its shares
+  (`\\NAME`), as typing the address would. With none found the section offers **Open
+  Settings** (Control Panel's advanced sharing settings), where network discovery is turned
+  on; Gezik never changes it.
+- **macOS**: Bonjour's `_smb._tcp` services. **Linux**: the same through Avahi
+  (`avahi-browse`, from `avahi-utils`); without it the section says "Avahi is not running".
+  Clicking a computer opens Connect to Server with `smb://host/`: add the share's name.
+
 ## System integration
 
 - **Command line**: `gezik [PATH...]` opens folders as tabs; a file opens its folder with it
@@ -611,7 +638,7 @@ also lists as a portable device is left out (it is a drive already).
 - **Get Info** (Alt+Enter, ⌘I on macOS): on Windows the system's Properties; on macOS and
   Linux Gezik's Info window with owner, group and permissions (each change is one Ctrl+Z,
   **Apply to enclosed items…** for folders). On macOS also the Hidden and Locked flags and
-  the app that opens the file (**Change All…**).
+  the app that opens the file (**Change All…**). A click on the dates opens **Set Dates…**.
 - **Updates**: Gezik looks for a newer published release once a day at most (one request to
   `api.github.com`), downloads it in the background, checks its SHA-256 and installs it when it
   closes; **Restart now** in the status bar installs it at once. **Check for Updates**

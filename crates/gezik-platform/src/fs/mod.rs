@@ -170,6 +170,54 @@ pub fn file_id(path: &Path) -> Option<(u64, u128)> {
     id
 }
 
+/// Whether a file's created time can be written here (not on Linux).
+pub const CAN_SET_CREATED: bool = cfg!(any(windows, target_os = "macos"));
+
+/// The times of `path` (links followed): what Set Dates shows and undo writes back.
+pub fn times(path: &Path) -> io::Result<gezik_core::times::Times> {
+    let meta = std::fs::metadata(path)?;
+    Ok(gezik_core::times::Times {
+        modified: meta.modified().ok(),
+        created: meta.created().ok(),
+        accessed: meta.accessed().ok(),
+    })
+}
+
+/// Writes the times of `times` that are there, file or folder; the others stay. A created
+/// time is not written where `CAN_SET_CREATED` is false.
+pub fn set_times(path: &Path, times: &gezik_core::times::Times) -> io::Result<()> {
+    let mut new = std::fs::FileTimes::new();
+    if let Some(time) = times.modified {
+        new = new.set_modified(time);
+    }
+    if let Some(time) = times.accessed {
+        new = new.set_accessed(time);
+    }
+    #[cfg(any(windows, target_os = "macos"))]
+    if let Some(time) = times.created {
+        #[cfg(target_os = "macos")]
+        use std::os::macos::fs::FileTimesExt;
+        #[cfg(windows)]
+        use std::os::windows::fs::FileTimesExt;
+        new = new.set_created(time);
+    }
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Only the right to write attributes (a read-only file too); backup semantics opens a folder.
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        std::fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?
+    };
+    // A file or a folder opens for reading; futimens needs only ownership, not write access.
+    #[cfg(unix)]
+    let file = std::fs::File::open(path)?;
+    file.set_times(new)
+}
+
 /// `path` or its nearest ancestor that exists.
 pub fn nearest_existing(path: &Path) -> Option<PathBuf> {
     path.ancestors().find(|p| std::fs::symlink_metadata(p).is_ok()).map(Path::to_path_buf)

@@ -65,6 +65,8 @@ pub enum LinkKind {
     Symlink,
     /// A Finder alias (macOS): a bookmark file that follows its original when it moves.
     Alias,
+    /// A hard link: one more name for a file's data, on the same drive.
+    Hard,
 }
 
 impl LinkKind {
@@ -80,7 +82,7 @@ impl LinkKind {
 pub fn link_name(name: &str, kind: LinkKind) -> String {
     match kind {
         LinkKind::Shortcut => format!("{name} - Shortcut.lnk"),
-        LinkKind::Junction | LinkKind::Symlink => format!("Link to {name}"),
+        LinkKind::Junction | LinkKind::Symlink | LinkKind::Hard => format!("Link to {name}"),
         LinkKind::Alias => format!("{name} alias"),
     }
 }

@@ -51,6 +51,9 @@ The top of `settings.toml` holds:
 - `max-fps` — most frames drawn per second, e.g. while scrolling (default 120; 0 = as many as
   the display refreshes). The software renderer redraws the visible text every frame, so on
   high refresh rate displays a cap saves a lot of CPU.
+- `[drag] spring-delay` — milliseconds a drag rests on a folder (in the list, the sidebar or
+  its tree) before that folder opens (default 700; 0 = off; else kept between 200 and 3000).
+  A drag that ends without a drop (Esc, or released outside Gezik) goes back to where it began.
 - `[command-line] shell` — the shell a `>` command in the address bar runs with: `""`
   (default) is cmd on Windows and `$SHELL` (else `/bin/sh`) on macOS and Linux; `"powershell"`
   or `"pwsh"`; or a full path, which gets `shell-args` (say `["-c"]`) and then the command.
@@ -69,9 +72,12 @@ The top of `settings.toml` holds:
   the libmtp to load; empty uses Homebrew's or Gezik's download on macOS
   (`/opt/homebrew/lib/libmtp.9.dylib`, `/usr/local/lib/libmtp.9.dylib`) and the system's
   `libmtp.so.9` on Linux.
-- `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group }` for an alias
-  and a group. Gezik updates this list when you pin, unpin, rename, group or reorder; the rest
-  of the file, including your comments, is kept.
+- `pinned` — folders pinned to the sidebar: a path, or `{ path, name, group, color, icon }` for
+  an alias, a group and a look: `color` is a tag colour (`red`, `orange`, `yellow`, `green`,
+  `blue`, `purple`, `gray`) or `#rrggbb`, `icon` one of `folder star heart home work code music
+  photo video document download cloud archive book game money mail link lock flag bolt leaf
+  globe person` (an unknown value warns and is ignored). Gezik updates this list when you pin,
+  unpin, rename, group, colour or reorder; the rest of the file, including your comments, is kept.
 
 ```toml
 [layout]
@@ -307,7 +313,9 @@ Folder sizes are off by default, so nothing is counted in the background. **Calc
 folder sizes** (row menu and View menu) counts the selected folders, or every folder shown,
 on any drive. The preview pane (Alt+P) shows a picture, the start of a text file, a
 thumbnail, folder item counts or file facts for the selection; Space opens a larger quick
-look.
+look. `[preview] position = "bottom"` puts it under the list (its height is kept in
+`state.toml`), `[panes] stacked = true` the two panes one above the other; both are in the
+View menu too.
 
 Themes: see [Writing a theme](themes.md). Shortcuts: see [Keyboard shortcuts](shortcuts.md).
 

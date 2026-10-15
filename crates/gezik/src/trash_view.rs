@@ -270,6 +270,8 @@ pub fn allowed(action: Action) -> bool {
         | Action::ExpandGroups
         | Action::RevealInTree
         | Action::ToggleDualPane
+        | Action::StackPanes
+        | Action::PreviewAtBottom
         | Action::FocusOtherPane
         | Action::MoveTabToOtherPane
         | Action::SyncBrowsing
