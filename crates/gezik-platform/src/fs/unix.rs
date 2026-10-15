@@ -229,6 +229,21 @@ pub fn free_space(path: &Path) -> io::Result<u64> {
     Ok(stats.f_bavail as u64 * stats.f_frsize as u64)
 }
 
+/// Whether the volume `path` is on is mounted read-only (a disk image, a locked card); `false`
+/// when that cannot be told.
+pub fn is_read_only_volume(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else { return false };
+    let mut stats: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid C string and a statvfs to fill.
+    if unsafe { libc::statvfs(path.as_ptr(), &mut stats) } != 0 {
+        return false;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    let read_only = stats.f_flag as u64 & libc::ST_RDONLY as u64 != 0;
+    read_only
+}
+
 pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     let existing = nearest_existing(path).ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))?;
     let dev = std::fs::metadata(&existing)?.dev();

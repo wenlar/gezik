@@ -1068,14 +1068,15 @@ impl Drags {
         (!drag::refuse(&d.sources, dir, effect)).then_some(effect)
     }
 
-    /// Whether files can be dropped into `dir` as far as Gezik knows without touching the
-    /// disk: not on an optical drive.
+    /// Whether files can be dropped into `dir`: not on an optical drive, nor on a volume
+    /// mounted read-only (a disk image), which would refuse each file only after the drop.
     fn writable(&self, dir: &Path) -> bool {
-        !crate::panes::active_nav()
+        let optical = crate::panes::active_nav()
             .places()
             .drives
             .iter()
-            .any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path))
+            .any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path));
+        !optical && !gezik_platform::fs::is_read_only_volume(dir)
     }
 
     /// How many items the drag under way carries.

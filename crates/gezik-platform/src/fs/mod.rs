@@ -29,16 +29,16 @@ pub(crate) use unix::home_trash;
 #[cfg(unix)]
 pub use unix::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
-    mapped_remote, move_entry, open_regular, open_sequential, open_uncached, read_dir_items, restore, set_hidden,
-    trash,
+    is_read_only_volume, mapped_remote, move_entry, open_regular, open_sequential, open_uncached, read_dir_items,
+    restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::entry_id;
 #[cfg(windows)]
 pub use windows::{
     clear_hidden, copy_file, delete, device_of, drive_facts, drive_root, free_space, is_hidden_attr, is_network,
-    mapped_remote, move_entry, open_regular, open_sequential, open_uncached, read_dir_items, restore, set_hidden,
-    trash,
+    is_read_only_volume, mapped_remote, move_entry, open_regular, open_sequential, open_uncached, read_dir_items,
+    restore, set_hidden, trash,
 };
 #[cfg(windows)]
 pub(crate) use windows::{io_error, verbatim};
@@ -489,6 +489,17 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         move_entry(&sub, &dir.join("sub2")).unwrap();
         assert!(dir.join("sub2").is_dir());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_read_only_volume_is_told_from_a_writable_one() {
+        let dir = test_dir("read-only-volume");
+        assert!(!is_read_only_volume(&dir));
+        assert!(!is_read_only_volume(&dir.join("not there")), "unknown is not read-only");
+        // The sealed system volume.
+        #[cfg(target_os = "macos")]
+        assert!(is_read_only_volume(Path::new("/System")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
