@@ -41,10 +41,11 @@ pub fn location_text(folder: &Path, known: &KnownDirs) -> String {
     )
 }
 
-/// The sync folder `local`'s `location.toml` names: one `open` when there is none.
+/// The sync folder `local`'s `location.toml` names (`{local}` is `local`): one `open` when
+/// there is none.
 pub fn read_location(local: &Path, known: &KnownDirs) -> Option<PathBuf> {
     let text = std::fs::read_to_string(local.join(LOCATION_FILE)).ok()?;
-    parse_location(&text, known)
+    parse_location(&text, &known.clone().and("local", local.to_path_buf()))
 }
 
 /// A conflicting copy's original file (`settings.toml`), and whether only a number in its name
@@ -61,7 +62,8 @@ pub struct Conflict {
 /// 2026-10-12).toml` → `settings.toml`), if its name has one of their forms: Dropbox and
 /// Nextcloud (`(… conflicted copy …)`, in Turkish `çakışan kopya`), Syncthing
 /// (`.sync-conflict-…`), ownCloud (`_conflict-…`), OneDrive (`settings-<COMPUTER>`, only for the
-/// computers in `machines`), Gezik's own (`(Gezik conflicted copy)`); numbered only: Google
+/// computers in `machines`), Gezik's own (`(Gezik conflicted copy)`, the cloud sync's
+/// `.cloud-conflict-<date>`); numbered only: Google
 /// Drive and Windows (`(1)`), iCloud (`settings 2`). The caller checks that the original is there.
 pub fn conflict_of(name: &str, machines: &[String]) -> Option<Conflict> {
     let (stem, ext) = name.rsplit_once('.')?;
@@ -71,6 +73,9 @@ pub fn conflict_of(name: &str, machines: &[String]) -> Option<Conflict> {
     let digits = |n: &str| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit());
     if let Some((base, rest)) = stem.split_once(".sync-conflict-") {
         return found(base, false).filter(|_| rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+    }
+    if let Some((base, rest)) = stem.split_once(".cloud-conflict-") {
+        return found(base, false).filter(|_| rest.chars().all(|c| c.is_ascii_digit() || c == '-'));
     }
     if let Some((base, rest)) = stem.rsplit_once("_conflict-") {
         return found(base, false).filter(|_| rest.chars().all(|c| c.is_ascii_digit() || c == '-'));
@@ -439,6 +444,11 @@ mod tests {
         assert_eq!(read_location(&dir, &known), None, "none: no sync folder");
         std::fs::write(dir.join(LOCATION_FILE), location_text(&dir.join("Sync/Gezik"), &known)).unwrap();
         assert_eq!(read_location(&dir, &known), Some(dir.join("Sync").join("Gezik")));
+        // The cloud sync's folder, in the local folder wherever that is (a portable drive's letter).
+        let text = location_text(&dir.join("cloud"), &known.clone().and("local", dir.clone()));
+        assert!(text.contains("shared = \"{local}/cloud\""), "{text}");
+        std::fs::write(dir.join(LOCATION_FILE), text).unwrap();
+        assert_eq!(read_location(&dir, &known), Some(dir.join("cloud")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -457,6 +467,9 @@ mod tests {
         assert_eq!(of("settings (Gezik conflicted copy 2).toml"), named("settings.toml"));
         // Syncthing.
         assert_eq!(of("settings.sync-conflict-20261012-101010-ABCDEFG.toml"), named("settings.toml"));
+        // Gezik's cloud sync.
+        assert_eq!(of("settings.cloud-conflict-2026-10-15.toml"), named("settings.toml"));
+        assert_eq!(of("nord.cloud-conflict-2026-10-15-2.toml"), named("nord.toml"));
         // OneDrive: this computer's and the known ones', any case, numbered too.
         assert_eq!(of("settings-DESKTOP-AB12.toml"), named("settings.toml"));
         assert_eq!(of("settings-desktop-ab12-2.toml"), named("settings.toml"));
@@ -542,6 +555,7 @@ mod tests {
         for name in [
             "settings.toml",
             "settings-old.toml",
+            "settings.cloud-conflict-x.toml",
             "settings-backup.toml",
             "settings-LAPTOP.toml",
             "settings (old).toml",

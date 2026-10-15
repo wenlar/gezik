@@ -924,6 +924,7 @@ msgstr "{0}：应为 \"set\"、\"lower\" 或 \"upper\"，实际为“{1}”"
 #: crates/gezik-config/src/settings.rs
 #: crates/gezik-config/src/sync_profiles.rs
 #: crates/gezik-config/src/tags.rs
+#: crates/gezik/src/cloud_sync.rs
 #, fuzzy
 msgid "{} is missing"
 msgstr "缺少 {}"
@@ -1006,6 +1007,11 @@ msgstr[0] "{n} 项设置更改：{}"
 #, fuzzy
 msgid "{0} settings change: {1} and {2} more"
 msgstr "{0} 项设置更改：{1} 及另外 {2} 项"
+
+#: crates/gezik-config/src/cloud_sync/code.rs
+#, fuzzy
+msgid "This code has a typo"
+msgstr "此代码有输入错误"
 
 #: crates/gezik-config/src/highlight_rules.rs
 #, fuzzy
@@ -2148,6 +2154,7 @@ msgstr "快速查看"
 #: crates/gezik/src/copy_to.rs
 #: crates/gezik/src/export.rs
 #: crates/gezik/src/integration.rs
+#: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/ui/app.slint
 #, fuzzy
 msgid "Copy"
@@ -2974,6 +2981,16 @@ msgstr "与 HEAD 比较"
 #, fuzzy
 msgid "Check for Updates"
 msgstr "检查更新"
+
+#: crates/gezik-config/src/shortcuts.rs
+#, fuzzy
+msgid "Sync Settings Now"
+msgstr "立即同步设置"
+
+#: crates/gezik-config/src/shortcuts.rs
+#, fuzzy
+msgid "Show Sync Code"
+msgstr "显示同步代码"
 
 #: crates/gezik-config/src/shortcuts.rs
 #, fuzzy
@@ -6290,6 +6307,7 @@ msgstr "服务器无响应"
 
 #: crates/gezik-platform/src/http/macos.rs
 #: crates/gezik-platform/src/http/windows.rs
+#: crates/gezik/src/cloud_sync.rs
 #, fuzzy
 msgid "the server answered {}"
 msgstr "服务器返回 {}"
@@ -6314,6 +6332,12 @@ msgstr "下载大于预期"
 #, fuzzy
 msgid "Install curl with your package manager (sudo apt install curl)"
 msgstr "请用包管理器安装 curl（sudo apt install curl）"
+
+#: crates/gezik-platform/src/http/unix.rs
+#: crates/gezik-platform/src/http/windows.rs
+#, fuzzy
+msgid "the server's answer was not understood"
+msgstr "无法理解服务器的响应"
 
 #: crates/gezik-platform/src/http/unix.rs
 #, fuzzy
@@ -6349,12 +6373,6 @@ msgstr "无法验证服务器证书"
 #, fuzzy
 msgid "the server asked for a login"
 msgstr "服务器要求登录"
-
-#: crates/gezik-platform/src/http/unix.rs
-#: crates/gezik-platform/src/http/windows.rs
-#, fuzzy
-msgid "the server's answer was not understood"
-msgstr "无法理解服务器的响应"
 
 #: crates/gezik-platform/src/http/unix.rs
 #, fuzzy
@@ -6864,6 +6882,7 @@ msgstr "跳过它们"
 #: crates/gezik/src/compare.rs
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/operations.rs
+#: crates/gezik/src/settings_window/backup.rs
 #: crates/gezik/src/trash_view.rs
 #, fuzzy
 msgid "Delete"
@@ -7639,6 +7658,117 @@ msgstr "不在云文件夹中"
 #, fuzzy
 msgid "Choose the items first"
 msgstr "请先选择项目"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Not synced — offline"
+msgstr "未同步 — 离线"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "This code is no longer valid"
+msgstr "此代码已失效"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Too large to sync (8 MB). Large templates are the usual cause."
+msgstr "太大，无法同步（8 MB）。通常是大型模板造成的。"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Another device is syncing — try again"
+msgstr "另一台设备正在同步 — 请重试"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Your cloud copy was removed after a year without use. Start Syncing again?"
+msgstr "你的云端副本因一年未使用已被删除。要重新开始同步吗？"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "No settings found for this code"
+msgstr "未找到此代码对应的设置"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Not synced: {}"
+msgstr "未同步：{}"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "the server sent no version"
+msgstr "服务器未发送版本"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Cannot remove {}"
+msgstr "无法移除 {}"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Cloud Sync is off"
+msgstr "云同步已关闭"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_backup.rs
+#, fuzzy
+msgid "Cannot remove {0}: {1}"
+msgstr "无法移除 {0}：{1}"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_backup.rs
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Cannot write {0}: {1}"
+msgstr "无法写入 {0}：{1}"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Settings synced; a key changed on both computers: Review… in Settings > Sync and Backup"
+msgstr "设置已同步；有一个键在两台电脑上都被更改：请在 设置 > 同步和备份 中审阅…"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Settings synced"
+msgstr "设置已同步"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Cloud Sync is off: Settings > Sync and Backup turns it on"
+msgstr "云同步已关闭：可在 设置 > 同步和备份 中开启"
+
+#: crates/gezik/src/cloud_sync.rs
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Syncing…"
+msgstr "正在同步…"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Not synced since Gezik started"
+msgstr "自 Gezik 启动以来尚未同步"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced just now"
+msgstr "刚刚已同步"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced {n} minute ago"
+msgid_plural "Synced {n} minutes ago"
+msgstr[0] "{n} 分钟前已同步"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced {n} hour ago"
+msgid_plural "Synced {n} hours ago"
+msgstr[0] "{n} 小时前已同步"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Synced {}"
+msgstr "已同步：{}"
 
 #: crates/gezik/src/command_line.rs
 #, fuzzy
@@ -10641,6 +10771,7 @@ msgstr "请先修复或删除 {}"
 #: crates/gezik/src/integration.rs
 #: crates/gezik/src/palette.rs
 #: crates/gezik/src/settings_window.rs
+#: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
 msgid "Off"
 msgstr "关"
@@ -12621,12 +12752,6 @@ msgid "{} is there already: give another name"
 msgstr "{} 已存在：请换个名称"
 
 #: crates/gezik/src/settings_backup.rs
-#: crates/gezik/src/settings_window.rs
-#, fuzzy
-msgid "Cannot write {0}: {1}"
-msgstr "无法写入 {0}：{1}"
-
-#: crates/gezik/src/settings_backup.rs
 #, fuzzy
 msgid "{} is larger than 300 MB: not a settings export"
 msgstr "{} 大于 300 MB：不是设置导出文件"
@@ -12696,11 +12821,6 @@ msgstr "无法放回 {}：它不在备份中"
 #, fuzzy
 msgid "Cannot put back {0}: {1}"
 msgstr "无法放回 {0}：{1}"
-
-#: crates/gezik/src/settings_backup.rs
-#, fuzzy
-msgid "Cannot remove {0}: {1}"
-msgstr "无法移除 {0}：{1}"
 
 #: crates/gezik/src/settings_backup.rs
 #, fuzzy
@@ -13019,6 +13139,81 @@ msgstr "正在合并…"
 
 #: crates/gezik/src/settings_window.rs
 #, fuzzy
+msgid "Backing up, then starting Cloud Sync…"
+msgstr "正在备份，然后启动云同步…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Keep this code: another computer joins with it"
+msgstr "请保存此代码：其他电脑用它加入"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Type the code from the other computer and press Enter"
+msgstr "输入另一台电脑上的代码并按 Enter"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Reading the code…"
+msgstr "正在读取代码…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Anyone with this code can read your settings"
+msgstr "任何拥有此代码的人都能读取你的设置"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Cannot read the code: cloud-sync.toml is missing or broken"
+msgstr "无法读取代码：cloud-sync.toml 缺失或已损坏"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Settings are kept on this computer again; the cloud copy is as it was"
+msgstr "设置已重新保存在这台电脑上；云端副本保持不变"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Starting Cloud Sync again…"
+msgstr "正在重新启动云同步…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Looking for the cloud copy…"
+msgstr "正在查找云端副本…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Your previous settings were backed up. Restore Backup ▸ brings them back."
+msgstr "你之前的设置已备份。还原备份 ▸ 可恢复它们。"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Copied the code"
+msgstr "已复制代码"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Deleting the cloud copy…"
+msgstr "正在删除云端副本…"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "The cloud copy is deleted; settings are kept on this computer"
+msgstr "云端副本已删除；设置保存在这台电脑上"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Nothing deleted"
+msgstr "未删除任何内容"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
+msgid "Cloud Sync is off: Start Syncing or Join With a Code"
+msgstr "云同步已关闭：开始同步或使用代码加入"
+
+#: crates/gezik/src/settings_window.rs
+#, fuzzy
 msgid "Not a conflicting copy"
 msgstr "不是冲突副本"
 
@@ -13107,6 +13302,41 @@ msgstr "立即检查"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
+msgid "Start Syncing…"
+msgstr "开始同步…"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Join With a Code…"
+msgstr "使用代码加入…"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Sync Now"
+msgstr "立即同步"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Show Code"
+msgstr "显示代码"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Stop Syncing"
+msgstr "停止同步"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Delete from Server…"
+msgstr "从服务器删除…"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Start Syncing Again"
+msgstr "重新开始同步"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
 msgid "A gezik-portable file next to Gezik keeps everything in this folder. It is read-only: changes are not saved. Delete that file to use this computer's settings folder again (the data stays); Export and Import move settings between the two."
 msgstr "Gezik 旁边的 gezik-portable 文件会让所有内容保存在此文件夹中。它是只读的：更改不会保存。删除该文件即可重新使用此电脑的设置文件夹（数据会保留）；“导出”和“导入”可在两者之间转移设置。"
 
@@ -13124,6 +13354,31 @@ msgstr "便携模式：设置保存在 {}"
 #, fuzzy
 msgid "Updates"
 msgstr "更新"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Sync Code"
+msgstr "同步代码"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Type or paste the code Start Syncing gave on the other computer and press Enter. This computer's settings are backed up first, then the cloud copy is used; nothing is merged."
+msgstr "输入或粘贴另一台电脑上“开始同步”给出的代码，然后按 Enter。这台电脑的设置会先备份，然后使用云端副本；不会合并任何内容。"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Keep this code. It is the only way to reach your settings from another device; Gezik cannot recover it. Anyone with this code can read your settings."
+msgstr "请保存此代码。这是从其他设备访问你的设置的唯一方式；Gezik 无法找回它。任何拥有此代码的人都能读取你的设置。"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Delete the cloud copy?"
+msgstr "删除云端副本？"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Removes the encrypted copy from the server for every computer that uses this code, then stops syncing here. This computer keeps its settings."
+msgstr "为所有使用此代码的电脑从服务器删除加密副本，然后停止此处的同步。这台电脑保留其设置。"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
@@ -13284,13 +13539,38 @@ msgstr "从 backups/{} 逐字节放回上次导入替换的文件，并移除其
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
-msgid "(say, {})"
-msgstr "（例如 {}）"
+msgid "Cloud Sync"
+msgstr "云同步"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Stop keeping settings in a folder first"
+msgstr "请先停止在文件夹中保存设置"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Keeps settings.toml, the themes and the templates the same on your computers, with no account: Start Syncing gives a secret code, Join With a Code takes it on another computer. The server ({}) keeps only an encrypted copy it cannot read."
+msgstr "无需账户即可让 settings.toml、主题和模板在你的电脑间保持一致：“开始同步”会给出一个秘密代码，“使用代码加入”在另一台电脑上使用它。服务器（{}）只保存它无法读取的加密副本。"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Settings sync when Gezik starts, a few seconds after a change and when it closes; Sync Now brings the other computers' changes in at once. This computer's own values are in settings.local.toml. Stop Syncing copies the settings back here and leaves the cloud copy; Delete from Server removes it."
+msgstr "设置会在 Gezik 启动时、更改几秒后以及关闭时同步；“立即同步”会立刻取回其他电脑的更改。这台电脑自己的值在 settings.local.toml 中。“停止同步”会把设置复制回这里并保留云端副本；“从服务器删除”会删除它。"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
 msgid "Keep Settings in a Folder"
 msgstr "将设置保存在文件夹中"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "Stop Cloud Sync first"
+msgstr "请先停止云同步"
+
+#: crates/gezik/src/settings_window/backup.rs
+#, fuzzy
+msgid "(say, {})"
+msgstr "（例如 {}）"
 
 #: crates/gezik/src/settings_window/backup.rs
 #, fuzzy
@@ -15938,6 +16218,18 @@ msgstr "渠道"
 msgctxt "setting:update.channel"
 msgid "auto (pre-releases while this is one) | stable | pre"
 msgstr "auto（当前为预发布版时包括预发布版）| stable | pre"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:cloud-sync.server"
+msgid "Server"
+msgstr "服务器"
+
+#: crates/gezik-config/templates/settings.toml
+#, fuzzy
+msgctxt "setting:cloud-sync.server"
+msgid "Where Cloud Sync (Settings > Sync and Backup) keeps the encrypted copy of these settings. Every computer that shares a sync code uses the same server; to run your own see the docs (docs/cloud-sync-server.md). It only sees encrypted bytes, never the settings or the code."
+msgstr "云同步（设置 > 同步和备份）保存这些设置加密副本的位置。共享同一同步代码的所有电脑使用同一服务器；如需自建服务器，请参阅文档（docs/cloud-sync-server.md）。它只能看到加密字节，永远看不到设置或代码。"
 
 #: crates/gezik-config/templates/settings.toml
 #, fuzzy

@@ -7,7 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::{MAX_REDIRECTS, Throttle, interrupted, too_big};
+use super::{MAX_REDIRECTS, Response, Throttle, interrupted, loopback, retry_seconds, too_big};
 use crate::ChildProcess;
 
 /// How often the file's size is looked at.
@@ -46,6 +46,132 @@ pub(super) fn tool_missing_hint() -> Option<String> {
         Some(_) => None,
         None => Some(gezik_i18n::t("", HINT).into_owned()),
     }
+}
+
+/// curl only: wget cannot be given the headers without putting the secret on its command line.
+pub(super) fn request(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Option<&[u8]>,
+    max_bytes: u64,
+) -> io::Result<Response> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let Some(curl) = find("curl", &path) else {
+        return Err(io::Error::new(io::ErrorKind::NotFound, gezik_i18n::t("", HINT).into_owned()));
+    };
+    let dir = private_dir()?;
+    let result = curl_request(&curl, &dir, method, url, headers, body, max_bytes);
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+/// A new folder only this user may enter, for a request's files: the headers carry the code's
+/// proof, which must not be on curl's command line, where other users' tools can see it.
+fn private_dir() -> io::Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "gezik-request-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    // Fails if it is there already: nobody else's folder (or link) is used.
+    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    Ok(dir)
+}
+
+/// Runs curl in `dir`, with the headers and the body in files there, and reads what it wrote.
+fn curl_request(
+    curl: &Path,
+    dir: &Path,
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Option<&[u8]>,
+    max_bytes: u64,
+) -> io::Result<Response> {
+    let lines: String = headers.iter().map(|(name, value)| format!("{name}: {value}\n")).collect();
+    std::fs::write(dir.join("headers"), lines)?;
+    if let Some(body) = body {
+        std::fs::write(dir.join("send"), body)?;
+    }
+    let mut child = ChildProcess::spawn(curl, request_arguments(method, url, body.is_some(), max_bytes), Some(dir))?;
+    let status = child.wait_or_stop(|| false)?.ok_or_else(interrupted)?;
+    if !status.success() {
+        // 63: over --max-filesize.
+        return Err(if status.code() == Some(63) {
+            too_big()
+        } else {
+            io::Error::other(curl_message(&child.stderr_text()))
+        });
+    }
+    let body = std::fs::read(dir.join("body")).unwrap_or_default();
+    if body.len() as u64 > max_bytes {
+        return Err(too_big());
+    }
+    let head = std::fs::read_to_string(dir.join("head"))?;
+    parse_head(&head, body)
+        .ok_or_else(|| io::Error::other(gezik_i18n::t!("the server's answer was not understood").into_owned()))
+}
+
+/// curl's arguments for [`request`]: no `.curlrc`, https only (http too for this computer), no
+/// redirects, the headers from the file `headers`, the body from `send`, the answer's head
+/// into `head` and its body into `body`.
+pub(super) fn request_arguments(method: &str, url: &str, send: bool, max_bytes: u64) -> Vec<String> {
+    let protocols = if loopback(url) { "=http,https" } else { "=https" };
+    let mut args: Vec<String> = [
+        "--disable",
+        "--silent",
+        "--show-error",
+        "--proto",
+        protocols,
+        "--max-filesize",
+        &max_bytes.to_string(),
+        "--connect-timeout",
+        "30",
+        // A minute with nothing arriving ends it.
+        "--speed-limit",
+        "1",
+        "--speed-time",
+        "60",
+        "--request",
+        method,
+        "--header",
+        "@headers",
+        "--dump-header",
+        "head",
+        "--output",
+        "body",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect();
+    if send {
+        args.extend(["--data-binary".to_owned(), "@send".to_owned()]);
+    }
+    args.push(url.to_owned());
+    args
+}
+
+/// The status and headers of the last answer in curl's `--dump-header` text (a `100
+/// Continue` or a proxy's `CONNECT` answer comes before it).
+pub(super) fn parse_head(head: &str, body: Vec<u8>) -> Option<Response> {
+    let last = head.replace("\r\n", "\n");
+    let last = last.split("\n\n").filter(|block| block.trim_start().starts_with("HTTP/")).last()?;
+    let mut lines = last.trim_start().lines();
+    let status = lines.next()?.split_whitespace().nth(1)?.parse().ok()?;
+    let mut response = Response { status, etag: None, retry_after: None, body };
+    for line in lines {
+        let Some((name, value)) = line.split_once(':') else { continue };
+        if name.trim().eq_ignore_ascii_case("etag") {
+            response.etag = Some(value.trim().to_owned());
+        } else if name.trim().eq_ignore_ascii_case("retry-after") {
+            response.retry_after = retry_seconds(value);
+        }
+    }
+    Some(response)
 }
 
 /// Runs `program` (a `which`) into `dest`, watching the size it reached.

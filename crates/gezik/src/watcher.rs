@@ -63,13 +63,27 @@ pub fn watch_config(
             ),
             _ => (false, false),
         };
+        // A change in the cloud sync's folder starts its round's timer (spec 17 §5.2).
+        let shared = |event: &notify::Result<notify::Event>| match event {
+            Ok(e) if !matches!(e.kind, EventKind::Access(_)) => {
+                let dir = store.shared_dir();
+                e.paths.iter().any(|path| as_given(path).starts_with(&dir))
+            }
+            _ => false,
+        };
         while let Ok(event) = rx.recv() {
+            if shared(&event) {
+                crate::cloud_sync::changed();
+            }
             let (mut config, mut templates) = touched(&event);
             if !config && !templates {
                 continue;
             }
             // Gather the rest of the burst, then reload once.
             while let Ok(event) = rx.recv_timeout(DEBOUNCE) {
+                if shared(&event) {
+                    crate::cloud_sync::changed();
+                }
                 let (c, t) = touched(&event);
                 config |= c;
                 templates |= t;
@@ -98,7 +112,10 @@ pub fn follow() -> notify::Result<()> {
     }
     if dirs.synced {
         wanted.extend(dirs.shared.parent().filter(|p| p.is_dir()).map(|p| (p.to_path_buf(), false)));
-        wanted.push((dirs.local.clone(), false));
+        // The cloud sync's folder is in the local folder: its parent is watched once.
+        if !wanted.contains(&(dirs.local.clone(), false)) {
+            wanted.push((dirs.local.clone(), false));
+        }
     }
     for (path, _) in watch.watched.iter().filter(|w| !wanted.contains(w)) {
         let _ = watch.watcher.unwatch(path);

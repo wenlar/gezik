@@ -208,6 +208,12 @@ position = "right"
 check = true
 channel = "auto"          # auto (pre-releases while this is one) | stable | pre
 
+[cloud-sync]
+# Where Cloud Sync (Settings > Sync and Backup) keeps the encrypted copy of these settings. Every
+# computer that shares a sync code uses the same server; to run your own see the docs
+# (docs/cloud-sync-server.md). It only sees encrypted bytes, never the settings or the code.
+server = "https://sync.wenlar.com"
+
 [shortcuts]
 # Change any shortcut; "mod" is Cmd on macOS and Ctrl elsewhere; "" disables.
 # F3 now opens a second pane. Search is Ctrl+Shift+F or Ctrl+E.
@@ -332,6 +338,8 @@ channel = "auto"          # auto (pre-releases while this is one) | stable | pre
 # git-compare-head = ""   # Git: Compare with HEAD, the selected file beside its committed version
 # settings = "mod+,"      # Settings…: this file in a window (macOS: ⌘,)
 # check-updates = ""      # Check for Updates: looks for a newer Gezik now, also with [update] check = false
+# cloud-sync-now = ""     # Sync Settings Now: a Cloud Sync round now (Settings > Sync and Backup)
+# cloud-sync-show = ""    # Show Sync Code: the Cloud Sync code, to join another computer
 
 # Saved rule sets for batch rename (Rename… with two or more items selected). The rename
 # layer writes them with "Presets ▾ › Save current rules as…"; they can also be written here.

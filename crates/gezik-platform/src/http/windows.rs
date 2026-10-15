@@ -13,16 +13,18 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use windows::Win32::Networking::WinHttp::{
-    ICU_REJECT_USERPWD, URL_COMPONENTS, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE,
-    WINHTTP_INTERNET_SCHEME_HTTPS, WINHTTP_OPEN_REQUEST_FLAGS, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS,
-    WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP, WINHTTP_OPTION_URL,
-    WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpCrackUrl,
-    WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpQueryOption, WinHttpReadData, WinHttpReceiveResponse,
-    WinHttpSendRequest, WinHttpSetOption, WinHttpSetTimeouts,
+    ERROR_WINHTTP_HEADER_NOT_FOUND, ICU_REJECT_USERPWD, URL_COMPONENTS, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+    WINHTTP_ADDREQ_FLAG_ADD, WINHTTP_FLAG_SECURE, WINHTTP_INTERNET_SCHEME_HTTPS, WINHTTP_OPEN_REQUEST_FLAGS,
+    WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS, WINHTTP_OPTION_REDIRECT_POLICY,
+    WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP, WINHTTP_OPTION_REDIRECT_POLICY_NEVER, WINHTTP_OPTION_URL,
+    WINHTTP_QUERY_ETAG, WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_QUERY_RETRY_AFTER, WINHTTP_QUERY_STATUS_CODE,
+    WinHttpAddRequestHeaders, WinHttpCloseHandle, WinHttpConnect, WinHttpCrackUrl, WinHttpOpen, WinHttpOpenRequest,
+    WinHttpQueryHeaders, WinHttpQueryOption, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
+    WinHttpSetOption, WinHttpSetTimeouts,
 };
 use windows::core::{PCWSTR, w};
 
-use super::{MAX_REDIRECTS, Throttle, interrupted, too_big};
+use super::{MAX_REDIRECTS, Response, Throttle, interrupted, retry_seconds, too_big};
 
 /// Name resolution, connecting and sending may take 30 s each, a pause in what arrives 60 s.
 const CONNECT_MS: i32 = 30_000;
@@ -165,6 +167,85 @@ fn transfer(call: &Call<'_>, dest: &Path, max_bytes: u64, allow_http: bool, rece
         received.store(total, Ordering::Relaxed);
     }
     file.sync_all()
+}
+
+pub(super) fn request(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Option<&[u8]>,
+    max_bytes: u64,
+) -> io::Result<Response> {
+    let wide: Vec<u16> = url.encode_utf16().collect();
+    let parts = Parts::crack(&wide)?;
+    let session = Handle::new(unsafe {
+        WinHttpOpen(w!("Gezik"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0)
+    })?;
+    unsafe { WinHttpSetTimeouts(session.0, CONNECT_MS, CONNECT_MS, CONNECT_MS, RECEIVE_MS) }.map_err(failure)?;
+    let connection = Handle::new(unsafe { WinHttpConnect(session.0, PCWSTR(parts.host.as_ptr()), parts.port, 0) })?;
+    let flags = if parts.secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) };
+    let verb: Vec<u16> = method.encode_utf16().chain([0]).collect();
+    let request = Handle::new(unsafe {
+        WinHttpOpenRequest(
+            connection.0,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(parts.object.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            std::ptr::null(),
+            flags,
+        )
+    })?;
+    request.set_u32(WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_NEVER)?;
+    for (name, value) in headers {
+        let line: Vec<u16> = format!("{name}: {value}").encode_utf16().collect();
+        unsafe { WinHttpAddRequestHeaders(request.0, &line, WINHTTP_ADDREQ_FLAG_ADD) }.map_err(failure)?;
+    }
+    let body = body.unwrap_or_default();
+    let len = u32::try_from(body.len()).map_err(|_| too_big())?;
+    let data = (!body.is_empty()).then(|| body.as_ptr().cast());
+    unsafe { WinHttpSendRequest(request.0, None, data, len, len, 0) }.map_err(failure)?;
+    unsafe { WinHttpReceiveResponse(request.0, std::ptr::null_mut()) }.map_err(failure)?;
+    let status = status(request.0)? as u16;
+    let etag = header(request.0, WINHTTP_QUERY_ETAG)?;
+    let retry_after = header(request.0, WINHTTP_QUERY_RETRY_AFTER)?.as_deref().and_then(retry_seconds);
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; CHUNK];
+    loop {
+        let mut read = 0u32;
+        unsafe { WinHttpReadData(request.0, buf.as_mut_ptr().cast(), CHUNK as u32, &mut read) }.map_err(failure)?;
+        if read == 0 {
+            break;
+        }
+        if (out.len() + read as usize) as u64 > max_bytes {
+            return Err(too_big());
+        }
+        out.extend_from_slice(&buf[..read as usize]);
+    }
+    Ok(Response { status, etag, retry_after, body: out })
+}
+
+/// A response header's value (`level`, a `WINHTTP_QUERY_*`), if it came.
+fn header(request: *mut c_void, level: u32) -> io::Result<Option<String>> {
+    let mut buf = vec![0u16; 256];
+    let mut len = (buf.len() * 2) as u32;
+    let mut index = 0u32;
+    let query = |buf: &mut Vec<u16>, len: &mut u32, index: &mut u32| unsafe {
+        WinHttpQueryHeaders(request, level, PCWSTR::null(), Some(buf.as_mut_ptr().cast()), len, index)
+    };
+    if let Err(err) = query(&mut buf, &mut len, &mut index) {
+        match (err.code().0 as u32) & 0xFFFF {
+            ERROR_WINHTTP_HEADER_NOT_FOUND => return Ok(None),
+            // ERROR_INSUFFICIENT_BUFFER: `len` is the size needed now.
+            122 => {
+                buf = vec![0u16; (len as usize).div_ceil(2)];
+                index = 0;
+                query(&mut buf, &mut len, &mut index).map_err(failure)?;
+            }
+            _ => return Err(failure(err)),
+        }
+    }
+    Ok(Some(String::from_utf16_lossy(&buf[..len as usize / 2])))
 }
 
 pub(super) fn tool_missing_hint() -> Option<String> {

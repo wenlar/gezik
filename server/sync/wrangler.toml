@@ -1,0 +1,26 @@
+name = "gezik-sync"
+main = "worker.mjs"
+compatibility_date = "2025-09-01"
+workers_dev = false
+routes = [{ pattern = "sync.wenlar.com", custom_domain = true }]
+
+[[durable_objects.bindings]]
+name = "BOX"
+class_name = "Box"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Box"]
+
+# The binding only allows a 10 or 60 second window, so the spec's
+# "120 per hour per id" becomes 30 per minute per id.
+# namespace_id is any integer unique in the account; nothing to create.
+[[ratelimits]]
+name = "RATE_ID"
+namespace_id = "1701"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "RATE_IP"
+namespace_id = "1702"
+simple = { limit = 60, period = 60 }

@@ -563,6 +563,10 @@ actions! {
     GitCompareHead,
     /// Looks for a newer Gezik now, whatever `[update] check` says (no key).
     CheckUpdates,
+    /// A cloud sync round now (spec 17 §5.2; no key).
+    CloudSyncNow,
+    /// The Sync and Backup page with the cloud sync's code shown (no key).
+    CloudSyncShow,
 }
 
 impl Action {
@@ -715,6 +719,8 @@ impl Action {
             Action::GitDiscard => "git-discard",
             Action::GitCompareHead => "git-compare-head",
             Action::CheckUpdates => "check-updates",
+            Action::CloudSyncNow => "cloud-sync-now",
+            Action::CloudSyncShow => "cloud-sync-show",
         }
     }
 
@@ -880,6 +886,8 @@ impl Action {
             Action::GitDiscard => tx!("Discard Changes…"),
             Action::GitCompareHead => tx!("Compare with HEAD"),
             Action::CheckUpdates => tx!("Check for Updates"),
+            Action::CloudSyncNow => tx!("Sync Settings Now"),
+            Action::CloudSyncShow => tx!("Show Sync Code"),
         }
     }
 
@@ -2452,13 +2460,15 @@ copy-path = \"ctrl+k\"
             "git-discard",
             "git-compare-head",
             "check-updates",
+            "cloud-sync-now",
+            "cloud-sync-show",
             "stack-panes",
             "preview-at-bottom",
         ] {
             let action = Action::from_name(name).unwrap();
             assert!(action.default_texts(Platform::Other).is_empty() && action.default_texts(Platform::Mac).is_empty());
         }
-        assert_eq!(Action::ALL.len(), 147);
+        assert_eq!(Action::ALL.len(), 149);
     }
 
     #[test]

@@ -170,6 +170,8 @@ pub fn run(action: Action, nav: &Navigator, view: &View) -> bool {
         Action::ExportSettings => crate::settings_window::open_backup(false),
         Action::ImportSettings => crate::settings_window::open_backup(true),
         Action::CheckUpdates => crate::update::check_now(),
+        Action::CloudSyncNow => crate::cloud_sync::sync_now(),
+        Action::CloudSyncShow => crate::settings_window::open_cloud_code(),
         Action::GitStage
         | Action::GitUnstage
         | Action::GitCommit
