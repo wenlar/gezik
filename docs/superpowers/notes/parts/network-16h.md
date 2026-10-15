@@ -40,3 +40,9 @@ Spec: `../../specs/2026-10-15-tamamlayicilar-design.md` §2. Dal: `feat/network-
 3. Bir bilgisayara tıkla: `\\AD` paylaşım listesi; orta tık yeni sekmede.
 4. Başlığa sağ tık ▸ Refresh: liste boşalır, yeniden arar. Başlığa yeniden tıkla: kapanır, satırlar gider.
 5. İki pencere açıkken birinde aç: ikisinde de aynı liste.
+
+## Ekran testi (Windows, 2026-10-15, birleşik dal #170)
+
+- Bölüm kapalı gelir; açınca "Searching…", ~5 s sonra "No computers found" ve Open Settings; sağ tık ▸ Refresh var. Bu ağda bilgisayar bulunmadığı için bulunan satıra tıklama denenmedi.
+- **Açık:** NETWORK başlığının oku ve metni öteki başlıklarla aynı hizada değil (ok solda, metin içeride).
+- Open Settings tıklanmadı (Denetim Masası açar).
