@@ -9,7 +9,7 @@ Numbering goes on from `../macos-test.md` (it ends at 387). Results go to `../ma
 
 ### 15d, CJK font fallback
 
-395. **Han characters.** A folder with `测试这检查对齐.txt` and `日本語のファイル.txt`, English system: the Chinese name draws in PingFang SC with no empty boxes (`这`, `对`); the Japanese name's kana in Hiragino. Then System Settings ▸ General ▸ Language & Region: add 日本語 below English, restart Gezik: the Kanji of both names take the Japanese forms (Hiragino; `这` may fall back), and nothing else changes. Remove 日本語 afterwards.
+395. **Han characters.** A folder with `测试这检查对齐.txt`, `日本語のファイル.txt` and `直骨角今令.txt`, English system: the Chinese name draws with no empty boxes (`这`, `对`; in PingFang SC, or Hiragino Sans GB where fontique does not list PingFang); the Japanese name's kana in Hiragino. Then System Settings ▸ General ▸ Language & Region: add 日本語 below English, restart Gezik: the Kanji take the Japanese forms (Hiragino Sans; `这` may fall back), and nothing else changes. Most of the first two names' characters look the same in both forms: compare `令` (Japanese: the last stroke like マ; Chinese: a dot) and `直` in the third. Remove 日本語 afterwards.
 
 ### 15b, the interface's texts
 
@@ -19,4 +19,4 @@ Numbering goes on from `../macos-test.md` (it ends at 387). Results go to `../ma
 
 ### 15c, messages
 
-393. **Messages in the pseudo language.** `language = "pseudo"`: copy a folder (the operations panel's rows, Undo's label in the Edit menu), delete to the Trash (the question names the Trash, not the Recycle Bin), cause a conflict, eject a disk, run Checksums, Compare, Sync, Size map, Export list, Split/Join, Convert, Batch rename, open System Integration (rows and questions), Get Info, a picture's and a song's preview bar, a search (status line with `… s`), Settings with a broken `settings.toml` line (the warning): every text framed, a sentence never shows two frames side by side except lists (`·`, `and`). Back to `auto`: plain English, the Filters button and the warnings too.
+393. **Messages in the pseudo language.** `language = "pseudo"`: copy a folder (the operations panel's rows, Undo's label in the empty list's right-click menu: the menu bar's Edit ▸ Undo has no job name), delete to the Trash (the question names the Trash, not the Recycle Bin), cause a conflict, eject a disk, run Checksums, Compare, Sync, Size map, Export list, Split/Join, Convert, Batch rename, open System Integration (rows and questions), Get Info, a picture's and a song's preview bar, a search (status line with `… s`): every text framed, a sentence never shows two frames side by side except lists (`·`, `and`). Back to `auto`: plain English, the Filters button and the warnings too. (A broken `settings.toml` line is no test of this: a file that does not read gives the defaults, `language` too, so its warning is in the system's language, and the TOML reader's own words stay English.)

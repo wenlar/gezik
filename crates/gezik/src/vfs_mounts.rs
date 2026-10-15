@@ -223,13 +223,17 @@ fn own_copy(file: &Path) -> std::io::Result<PathBuf> {
 /// Copies an opened file's changes to Downloads under a free name, saying where.
 fn keep_copy(opened: &Opened) {
     let Some(folder) = gezik_platform::downloads().filter(|dir| dir.is_dir()) else { return };
-    let name = opened.at.name();
-    let free = gezik_core::ops::names::next_free(&name, false, |candidate| folder.join(candidate).exists());
-    let to = folder.join(free);
+    let to = folder.join(free_name(&folder, &opened.at.name()));
     if std::fs::copy(&opened.file, &to).is_ok() {
         // TRANSLATORS: {} is where a file was copied to
         crate::panes::active_view().note(t!("Kept {}", to.display()));
     }
+}
+
+/// `name` in `folder` if nothing has it, else its first free numbered form (`notes (2).txt`).
+fn free_name(folder: &Path, name: &str) -> String {
+    let taken = |candidate: &str| folder.join(candidate).exists();
+    if taken(name) { gezik_core::ops::names::next_free(name, false, taken) } else { name.to_owned() }
 }
 
 /// Gezik quits: changes to opened files not put back are kept in Downloads (the temporary
@@ -377,5 +381,16 @@ mod tests {
         assert_eq!(std::fs::read(&copy).unwrap(), b"saved");
         assert_eq!(copy.file_name(), file.file_name());
         let _ = std::fs::remove_dir_all(copy.parent().unwrap());
+    }
+
+    #[test]
+    fn a_kept_copy_takes_its_own_name_while_it_is_free() {
+        let folder = gezik_vfs::stage::new_folder().unwrap();
+        assert_eq!(super::free_name(&folder, "notes.txt"), "notes.txt");
+        std::fs::write(folder.join("notes.txt"), b"one").unwrap();
+        assert_eq!(super::free_name(&folder, "notes.txt"), "notes (2).txt");
+        std::fs::write(folder.join("notes (2).txt"), b"two").unwrap();
+        assert_eq!(super::free_name(&folder, "notes.txt"), "notes (3).txt");
+        std::fs::remove_dir_all(&folder).unwrap();
     }
 }

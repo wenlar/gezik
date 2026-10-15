@@ -2,7 +2,8 @@
 # Builds libmtp and the libusb it uses from source as one universal (arm64 + x86_64) pair for
 # Gezik's macOS download (Tool::Libmtp, spec 16 §10.3, §19 question 4), on a Mac with the
 # Xcode Command Line Tools (clang, make, lipo, install_name_tool, codesign; curl and shasum
-# come with macOS). pkg-config is not needed: libusb's flags are passed to libmtp's configure.
+# come with macOS). pkg-config is not needed: libusb's flags are passed to libmtp's configure,
+# and a stand-in answers its version check.
 # Nothing from Homebrew is linked in.
 #
 #   bash scripts/tools/prepare-libmtp.sh <out folder>
@@ -51,6 +52,16 @@ fetch "$LIBUSB_URL"
 fetch "$LIBMTP_URL"
 tar -xjf "$work/libusb-$LIBUSB.tar.bz2" -C "$work"
 tar -xzf "$work/libmtp-$LIBMTP.tar.gz" -C "$work"
+# The tarball ships the gphoto2-endian.h its maker's configure wrote on Linux (it includes
+# <byteswap.h>). configure writes the right one into each build folder, but `#include "…"`
+# finds the shipped one beside the sources first.
+rm -f "$work/libmtp-$LIBMTP/src/gphoto2-endian.h"
+
+# libmtp's configure stops with "pkg-config not found" unless a pkg-config passes its version
+# check, although with LIBUSB_CFLAGS and LIBUSB_LIBS set it never asks one for a library. This
+# stand-in passes that check and knows no package, so nothing outside the build can be found.
+printf '#!/bin/sh\n[ "$1" = --atleast-pkgconfig-version ]\n' >"$work/pkg-config"
+chmod +x "$work/pkg-config"
 
 export MACOSX_DEPLOYMENT_TARGET="$MIN_MACOS"
 jobs="$(sysctl -n hw.ncpu)"
@@ -66,10 +77,10 @@ for arch in arm64 x86_64; do
         [ "${project%%-*}" = libmtp ] && extra="--disable-mtpz"
         (
             cd "$build"
-            # libusb is handed to libmtp's configure directly: no pkg-config needed, and none of
-            # Homebrew's libraries can be picked up by one.
+            # libusb is handed to libmtp's configure directly, and the stand-in pkg-config knows
+            # no package: none of Homebrew's libraries can be picked up.
             LIBUSB_CFLAGS="-I$prefix/include/libusb-1.0" LIBUSB_LIBS="-L$prefix/lib -lusb-1.0" \
-                PKG_CONFIG=false CC=clang CFLAGS="$flags" LDFLAGS="-arch $arch" \
+                PKG_CONFIG="$work/pkg-config" CC=clang CFLAGS="$flags" LDFLAGS="-arch $arch" \
                 "$work/$project/configure" --host="$host" --prefix="$prefix" \
                 --enable-shared --disable-static $extra >/dev/null
             make -j "$jobs" >/dev/null
@@ -99,8 +110,12 @@ codesign --force --sign - "$stage/libusb-1.0.0.dylib" "$stage/libmtp.9.dylib"
 # Checks: both architectures, nothing linked but the system and each other.
 for lib in libusb-1.0.0.dylib libmtp.9.dylib; do
     archs=" $(lipo -archs "$stage/$lib") "
-    case "$archs" in *" arm64 "*" x86_64 "* | *" x86_64 "*" arm64 "*) ;; *) echo "$lib:$archs" >&2; exit 1 ;; esac
-    if otool -L "$stage/$lib" | tail -n +2 | grep -v -e '@loader_path/' -e '/usr/lib/' -e '/System/Library/'; then
+    case "$archs" in *" arm64 "*) ;; *) echo "$lib:$archs" >&2; exit 1 ;; esac
+    case "$archs" in *" x86_64 "*) ;; *) echo "$lib:$archs" >&2; exit 1 ;; esac
+    # Only the indented lines are libraries; a universal file has an `(architecture …):` header
+    # for each architecture.
+    if otool -L "$stage/$lib" | grep '^[[:space:]]' |
+        grep -v -e '@loader_path/' -e '/usr/lib/' -e '/System/Library/'; then
         echo "$lib links something outside the package or the system" >&2
         exit 1
     fi

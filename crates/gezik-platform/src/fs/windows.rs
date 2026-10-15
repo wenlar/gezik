@@ -367,6 +367,17 @@ pub fn is_network(path: &Path) -> io::Result<bool> {
         || unsafe { GetDriveTypeW(&HSTRING::from(root.as_os_str())) } == DRIVE_REMOTE)
 }
 
+/// Whether the volume `path` is on is read-only (a write-protected card, a mounted image);
+/// `false` when that cannot be told.
+pub fn is_read_only_volume(path: &Path) -> bool {
+    const FILE_READ_ONLY_VOLUME: u32 = 0x0008_0000;
+    let Some(root) = drive_root(path) else { return false };
+    let mut flags = 0u32;
+    let read =
+        unsafe { GetVolumeInformationW(&HSTRING::from(root.as_os_str()), None, None, None, Some(&mut flags), None) };
+    read.is_ok() && flags & FILE_READ_ONLY_VOLUME != 0
+}
+
 pub fn drive_facts(path: &Path) -> io::Result<DriveFacts> {
     let root = drive_root(path).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no drive for this path"))?;
     let root_text = root.to_string_lossy().into_owned();

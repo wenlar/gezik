@@ -362,8 +362,10 @@ export component RenameBatch inherits Rectangle {
                     spacing: Theme.spacing;
                     HorizontalLayout {
                         spacing: Theme.spacing;
-                        Text { text: @tr("Preview"); horizontal-stretch: 1; color: Theme.foreground-muted; vertical-alignment: center; }
-                        Text { text: @tr("Sort by"); color: Theme.foreground-muted; vertical-alignment: center; }
+                        // The labels give way to the buttons when a language's words are long: the
+                        // row is the column's widest, and anything past the layer is cut (396).
+                        Text { text: @tr("Preview"); horizontal-stretch: 1; min-width: 0px; overflow: elide; color: Theme.foreground-muted; vertical-alignment: center; }
+                        Text { text: @tr("Sort by"); min-width: 0px; overflow: elide; color: Theme.foreground-muted; vertical-alignment: center; }
                         TextButton { text: @tr("Name"); clicked => { root.sort(0); } }
                         TextButton { text: @tr("Date"); clicked => { root.sort(1); } }
                         TextButton { text: @tr("Size"); clicked => { root.sort(2); } }

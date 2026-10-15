@@ -1731,3 +1731,411 @@ Branch `fix/macos-run3` from `master` at `838f00a`, one commit per fix, each nam
 After the fixes: **51 PASS, 1 FAIL, 1 NOT TESTED** (53 items): R1 stays FAIL until PR #114 lands (its 6 tests), R52 NOT TESTED. Of the first run's 15 FAILs, 4 were test errors (R14, R21, R27, R45), 10 were fixed, and R1 is down from 16 failing tests to 6.
 
 Clean-up after the re-test: `/tmp/gezik-rel` removed; Application Support fingerprint unchanged (folder still absent); `~/.local/bin` absent; `mdfind 'kMDItemUserTags == "*"'` 0; no `gezik*.ips`; Desktop unchanged; no disk images attached.
+
+## Run 4 (master)
+
+- Date: 2026-10-15
+- Branch: `master` at `9e95032` (fixes and results on `fix/macos-run4`)
+- Machine: MacBook Pro, Apple M2 Pro (Mac14,10)
+- macOS 26.5.1 (25F80). System languages en-TR, tr-TR. Keyboard layout Turkish-QWERTY-PC. Appearance: Dark.
+- Toolchain: rustc 1.99.0 (b940084d7 2026-09-28)
+- Exe: `target/release/gezik` 28,165,888 bytes (master); 28,182,400 bytes with the fixes
+- Run by Claude Code on the Mac, at the maintainer's request. Window driven with synthetic CGEvents and Accessibility (System Events), checked with `screencapture`, `stat`, `xattr` and the file system.
+- Run: `PATH=/usr/bin:/bin:/usr/sbin:/sbin GEZIK_CONFIG_DIR=/tmp/gezik-cfg ./target/release/gezik /tmp/gezik-run4/data`, from an empty `/tmp/gezik-cfg` (Run 3's was moved to `/tmp/gezik-cfg-run3`, keeping its ffmpeg and pdfium). Test data under `/tmp/gezik-run4/data`; screenshots in `/tmp/gezik-run4/shots/` (not committed).
+- Scope: the items of 14-macos.md that Run 3 did not run (371, 372–373 again with a zip from a second config, 375–378), then 15, 16, highlight-where, commands-more, l10n-overflow, update, network-16h, 16i–16m and 17. Rules for this run: temporary changes to system settings, `sudo` (run by the maintainer) and the real Application Support were allowed if undone when the item ended.
+- 372–373 and 17 ask for a second computer (the Windows PC). The maintainer asked for every item to be run here, so the "other computer" is a second Gezik on this Mac with its own config (`GEZIK_CONFIG_DIR=/tmp/gezik-cfg-b`), against the real `https://sync.wenlar.com`. Windows-side behaviour (paths, `%APPDATA%`) is not covered.
+- Run 2's Gezik (pid 96680, on `GEZIK_CONFIG_DIR=/private/tmp/gezik-cfg`) was still running; at the maintainer's choice it was quit with ⌘Q (no crash report) and `/tmp/gezik-cfg` emptied again.
+- Fingerprint before: `~/Library/Application Support/gezik` absent; `~/.local/bin` absent; `mdfind 'kMDItemUserTags == "*"' | wc -l` 0; Desktop `.DS_Store`, `.localized`, one screenshot of July, `Thumbs.db`; no `gezik*.ips`; disk images: four CoreSimulator images and `/tmp/hedef.sparseimage` (GezikHedef, from earlier runs).
+- HEIC made with sips (no iPhone photo at hand).
+
+### Summary
+
+| Item | Result | Note |
+|---|---|---|
+| A1 [build] | PASS | `cargo test --workspace --no-fail-fast` 3117 passed, 0 failed, 25 ignored; clippy `-D warnings` and `fmt --check` clean |
+| A2 [17] live cloud test | PASS | 4 passed with `--include-ignored` (NSURLSession path) |
+| A3 [16g] `prepare-libmtp.sh` | FAIL → fixed | four stops on a real Mac; release `libmtp-1.1.23-1` published |
+| 371 [14c] | NOT TESTED | no proxy network |
+| 372 [14d] | PASS | zip from a second config, not from Windows |
+| 373 [14d] | PASS | as 372 |
+| 375 [14e] | PASS (test error) | the app itself must be moved, not its folder |
+| 376–378 [14f] | NOT TESTED | needs iCloud/Dropbox on the Windows PC too |
+| 388 [15a] | PASS | |
+| 389 [15a] | PASS | |
+| 390 [15b] | PASS | |
+| 391 [15b] | PASS | by the accessibility tree, not by ear |
+| 392 [15b] | PASS | |
+| 393 [15c] | PASS (test error) | Undo's job name is in the right-click menu; a broken settings.toml gives the defaults |
+| 395 [15d] | PASS (test error) | the item's names look the same in both forms |
+| 396 [l10n] | FAIL → fixed | Batch rename layer cut in the pseudo language |
+| 397 [16a] | PASS | |
+| 398 [16a] | PASS | Finder window instead of the Desktop |
+| 399 [16a] | PASS | |
+| 400 [16a] | PASS | |
+| 401 [16b] | PASS | |
+| 402 [16b] | FAIL → fixed | the kept copy was always numbered |
+| 403 [16c] | PASS | |
+| 404 [16c] | PASS | `>vim` keeps running, as vim does with a pipe |
+| 405 [16d] | PASS (test error) | no-Command-Line-Tools part NOT TESTED: the item's stand-in does not work |
+| 406 [16d] | PASS | |
+| 407 [16e] | PASS | local bare remote; Keychain/ssh-agent parts NOT TESTED |
+| 408 [16e] | PASS | |
+| 409–412 [16g] | NOT TESTED | no Android phone |
+| 413 [commands] | PASS | |
+| 414 [commands] | PASS | phone part NOT TESTED |
+| 415 [commands] | PASS | |
+| 423 [highlight] | FAIL → fixed | `kind = "audio"` left out AIFF |
+| 424 [highlight] | PASS | |
+| 425 [highlight] | PASS | |
+| 426–431 [update] | PASS | six items |
+| 432 [update] | NOT TESTED | no release newer than rc.3 |
+| 433–436 [16h] | NOT TESTED | no Mac or NAS announcing SMB |
+| 443 [16i] | PASS | |
+| 444 [16i] | PASS (test error) | the trashed link still counts |
+| 445 [16i] | FAIL → fixed | the refusal named the wrong item |
+| 446 [16i] | PASS (test error) | as 444 |
+| 447 [16i] | PASS | |
+| 448 [16i] | PASS | SMB part NOT TESTED |
+| 453–458 [16j] | PASS | six items |
+| 463–470 [16k] | PASS | eight items |
+| 473–480 [16l] | PASS | eight items |
+| 481 [16l] | FAIL → fixed | a read-only disk image sprang and offered a copy |
+| 482 [16l] | PASS | |
+| 483 [16m] | PASS | |
+| 484 [16m] | PASS (test error) | no 160 px minimum |
+| 485 [16m] | PASS (test error) | Swap Panes is ⌃⌘U on macOS |
+| 486–492 [16m] | PASS | seven items |
+| 493–502 [17] | PASS | ten items, second Gezik on this Mac |
+
+**82 PASS, 6 FAIL, 13 NOT TESTED** (101 items, ranges counted per item). Eight PASS items were test errors (checklist fixed).
+
+### Main findings
+
+1. `scripts/tools/prepare-libmtp.sh` had never run on a Mac (now fixed and published): libmtp's configure wants a pkg-config, the tarball's own Linux `gphoto2-endian.h` shadowed the generated one, and both of its checks (architectures, links) misread `lipo`/`otool` output. Fixed; the package builds (289,012 B, SHA-256 `9959f5557052f66882a77a1038a07bcd273548ec2c2c6b7c2e79f20cbc372864`), is universal, links only the system and `@loader_path`, and loads (`LIBMTP_Init`). Published as `libmtp-1.1.23-1` in `wenlar/gezik-tools` and filled into `tools.rs`'s MANIFEST.
+2. Five app bugs, all fixed and re-tested: Keep a Copy in Downloads always numbered the name (402); AIFF/M4B were not sound for `kind` rules, search and icons (423); Create hard link named the first item instead of the folder it refused (445); drops onto a read-only volume were offered and sprang open (481); the Batch rename layer cut two buttons in long languages (396).
+3. Eight checklist errors (375, 393, 395, 405, 444, 446, 484, 485): fixed in the checklists.
+4. Smaller, not fixed (notes): the menu bar's Edit ▸ Undo never names the job; ⌘W does not close the Settings window; a broken settings.toml drops every setting to its default (as spec 14 says) including the language; the settings search for `import-settings` hides the "Import from …" row that the bottom line tells you to use; Go ▸ Show Trash opens System Settings ▸ Full Disk Access by itself; tests leave `gezik-16e-*` and `gezik-backup-test-*` folders in `$TMPDIR`; a stacked or bottom preview can squeeze a pane to no rows.
+
+### Items
+
+#### A1 Build and tests: PASS
+- `cargo build --release -p gezik`: 5 min 05 s, 28,165,888 bytes.
+- `cargo test --workspace --no-fail-fast`: 3117 passed, 0 failed, 25 ignored (Run 3's 6 leftover failures are gone).
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean. `cargo fmt --check`: clean.
+- The checklists of this run name no separate probe.
+
+#### A2 Live cloud sync test: PASS
+- `cargo test -p gezik cloud_sync -- --include-ignored`: 4 passed, `the_live_server_carries_a_change_across` among them (3.38 s). The macOS HTTP path is `gezik_platform::http` (NSURLSession, `http/macos.rs`).
+
+#### A3 libmtp package: FAIL → fixed (`9afaec6`), published
+- `bash scripts/tools/prepare-libmtp.sh /tmp/gezik-run4/libmtp` stopped four times: `configure: error: pkg-config not found` (with `PKG_CONFIG=false`); `'byteswap.h' file not found` (the tarball's `src/gphoto2-endian.h` was written on Linux and found before the generated one); `libusb-1.0.0.dylib: x86_64 arm64` (the architecture check wanted two spaces between the names); `links something outside the package or the system` (it read otool's `(architecture …):` header line as a library).
+- After the fix: `libmtp-1.1.23-macos-universal.tar.xz: 289012 B, sha256 9959f5557052f66882a77a1038a07bcd273548ec2c2c6b7c2e79f20cbc372864`; both dylibs `x86_64 arm64`, linked to `/usr/lib/libiconv`, `libobjc`, `libSystem`, IOKit, CoreFoundation, Security and `@loader_path`; `codesign --verify` passes; `ctypes.CDLL` + `LIBMTP_Init()` works.
+- With the maintainer's approval (after their `gh auth login`): `gh release create libmtp-1.1.23-1 --repo wenlar/gezik-tools`; the served file's SHA-256 is the same. `tools.rs`'s two entries filled; `cargo test -p gezik-core tools` (5) and `GEZIK_TOOLS_DIR=… cargo test -p gezik-batch --test tools prepared` pass. Not tried with a phone (none at hand).
+
+#### 371 [14c]: NOT TESTED
+- No network with a proxy at hand.
+
+#### 372 [14d]: PASS (second config, not Windows)
+- The "Windows" side was a second Gezik on this Mac (`/tmp/gezik-cfg-b`): theme `benim` (a copy of `nord.toml` named Benim), `pinned = ["{documents}"]`, `templates/Not.txt`; Export Settings `/tmp/gezik-run4/gezik-win.zip` (`gezik-export.toml`, `settings.toml`, `themes/benim.toml`, `templates/Not.txt`).
+- Import Settings in the main config: rows `Import settings.toml — 6 settings change: theme: light → benim, pinned: → {documents}, …`, `Import Themes — benim.toml new`, `Import Templates — Not.txt new`, `Import from gezik-win.zip — 3 files to write`. Import: the Benim theme at once, `pinned = ["{documents}"]`, `templates/Not.txt`, a new `backups/gezik-settings-2026-10-15-205137-210.zip`. Undo Import ▸ Undo: `settings.toml` the same as before (`diff`), themes and templates empty again.
+- Note: with the settings search set to `import-settings` the `Import from …` row (with the Import choice) is not listed, while the bottom line says "choose Import in the last of these rows"; on the Sync and Backup page it is there.
+
+#### 373 [14d]: PASS (second config, not Windows)
+- `[[commands]] name = "Say hi" run = ["echo", "hi"]` added on the second config, exported to `gezik-win2.zip`. Preview: red `These run programs on this computer — 1 in settings.toml — Command "Say hi": echo hi. Import only files you trust: nothing runs while importing.`, red bottom line `1 setting in it runs programs (the red row): import only files you trust`. Cancel: `Nothing imported`, `diff -r` of the config folder against a copy: no difference. Restore Backup lists the backups (4).
+
+#### 376–378 [14f]: NOT TESTED
+- They need the same iCloud Drive or Dropbox folder on the Mac and on the Windows PC. (A local sync folder was set and stopped in 501.)
+#### 375: PASS (test error, `ea00c02`)
+- Gatekeeper "Gezik Not Opened" (Move to Trash/Done) for ad-hoc + quarantine; maintainer Open Anyway. Translocated: `~/Library/Application Support/gezik` created (settings, state, themes, templates, update/ empty), state [update] checked; note "portable: Move Gezik.app out of Downloads (or open it once from Finder after moving) to use portable mode" in red at the right of the status bar (seen on the 2nd start; the 1st start's shot ~1 min later had none). AppleScript Finder move of folder: still translocated (quarantine 0081->00c1). Maintainer dragged folder in Finder: still translocated. Maintainer dragged Gezik.app itself into moved3/ (with marker): runs from moved3, quarantine 01c1, gezik-data made, no note, Application Support unchanged after quit. Cleaned: `~/Library/Application Support/gezik` removed, zip removed from Downloads, lsregister -u.
+
+#### 388: PASS
+- per-app tr (defaults write com.wenlar.gezik AppleLanguages -array tr): UI Turkish (Bilgisayar, Görünüm, 7 öğe); Settings Dil "Sistem: Türkçe"; list auto, en, de/es/fr/zh-Hans "%0 gözden geçirildi", tr, pseudo. pseudo: titles «Ŝéţţıñĝš — Ĝéžık ·····», «data — Ĝéžık ··», « » draw; auto -> Ayarlar — Gezik. Notes: Type column (system kind "Folder") and sidebar Desktop/Documents/..., tag names stay English. Removed per-app language (defaults delete).
+
+#### 389: PASS
+- lang/pl.po (pot + X-Gezik-Name + Ustawienia): "pl — Polski — %0 çevrildi" within a second; chosen: Ustawienia — Gezik, rest English. Broken quote: "lang/pl.po line 13237: expected a string in double quotes", title back to system language (Ayarlar, process had tr). Fixed: Polish. "{} % translated" -> "procent": "lang/pl.po line 9397: "{0}" missing in the translation". Note: the count warning "lang/pl.po: 3.131 metinden 3.130 tanesi eksik" stayed in Turkish while language = pl.
+
+#### 390: PASS
+- 284 menu-bar lines framed (dump /tmp/gezik-run4/menus-pseudo.txt) incl. About/Hide/Quit Gezik, Tags/Rating/Group By/Date Format/Size Format; unframed: tag names, Services submenu (system), ★ rows. No Commands menu (none set), no Open Tab Set (none saved). Right-click row, empty list, tab, sidebar, column header all framed.
+
+#### 391: PASS (by AX tree, not by ear)
+- Back «Báçk ··», tab close «Çlöšé data ··», address «Åddréšš ··», rows by file name.
+
+#### 392: PASS
+- page names, rows, descriptions, layout.sidebar choices framed; right -> sidebar = "right", row «rıĝhţ ··»; Settings search "copy pa" -> Copy Path; palette "copy pa" and framed "Çöpý Páţh" find it. Notes: ⌘W does not close the Settings window (and ⌘⇧P there types into the search); sidebar.tree-follow description names Explorer on macOS.
+
+#### 393: PASS (test error, checklist fixed)
+- copy (Edit ▸ Undo plain «Üñdö»; empty-list menu «Üñdö «Çöpý 1 ıţém»»), trash question «Mövé s1.txt ţö ţhé Ţrášh?», conflict list, eject (GezikHedef, reattached), Checksums, Compare/Split status lines, Size map, Export list, Convert, Batch rename, System Integration rows + question (cancelled, nothing written), Get Info, picture and sound preview, search «3 résülţš ıñ 0.0 š». Broken settings.toml: whole app back to defaults (theme light->dark, language pseudo->system), warning English (toml's own words) — as spec 14 says ("bozukken varsayılanlar"). Notes: ⌘I on the Turkish-QWERTY-PC key that types ı does nothing (the i key works); sound file Convert preset defaults to MP4 (H.264 + AAC).
+
+#### 395: PASS (test error, checklist fixed)
+- 测试这检查对齐 / 日本語のファイル no boxes. AppleLanguages en-TR, ja-TR, tr-TR (restored to en-TR, tr-TR after): the two names pixel-identical before/after (shared forms). Probe (temporary test, reverted): text locale ja-TR -> fallback ["Hiragino Sans W4", "Helvetica", "Hiragino Sans GB W3"]; zh-Hans -> ["Hiragino Sans GB W3", ...]; PingFang SC not found by fontique. 直骨角今令.txt: 令 Japanese form with ja, Chinese form without.
+
+#### 396: FAIL → fixed 3f74d65
+- pseudo, 900 pt window: Get Info (Owner/Group/Everyone, Read/Write/Execute/Hidden/Locked) fits; Compress (levels, Password) fits; Convert text (Line endings) fits; conflict list Action column fits; Settings ▸ Keyboard key text elides ("«Ñöñé…") before Set Key…, never under it. Batch rename: "«Öñlý çháñ…" (Only changed) and "«Réšéţ ţö rü…" (Reset to rules) cut at the layer's right edge (fit at 1200 pt). After the fix: Preview elides away, "«Šörţ …", both fit; English unchanged. Window title follows the language at once. Notes: with the rename layer open, Rust-made texts (title "Rename 3 items", rule summaries, "3 will change") stay in the old language until it is reopened; the keyboard.typing description names Ctrl+F on macOS.
+
+#### 397: PASS
+- x.zip (ditto, as Finder Compress) double-click: lists docs, nothing new next to it; docs: …/x.zip/docs; ⌘↑ twice: arch with x.zip selected; ⌘L …/x.zip/docs opens; right-click has Open as Folder, Open with System App (Archive Utility extracted "docs 2", removed). Note: a zip's own menu offers Compress to "x.zip".
+
+#### 398: PASS
+- quick-look = "system": Space in look.zip opens Gezik's window photo.jpg — Gezik; ↑ to hp.pdf — Gezik; pane shows both; ⌘C pdf, ⌘T tab on /tmp/gezik-run4/drop, ⌘V: there, ⌘Z: gone. Finder ⌘V: nothing (clipboard text = path). Drag of 2 rows to a Finder window on /tmp/gezik-run4/drop (not Desktop): both arrive.
+
+#### 399: PASS
+- s.7z made with Gezik's 7-Zip 26.03 (gezik-tools, sha256 as manifest) -mhe=on -pgizli: asks; wrong "Wrong password. Try again:"; Cancel stays; gizli opens; d1.txt opens in TextEdit without asking. nest.zip/nest/src.tar.gz: shows src. (Entry counting not caught: tiny.)
+
+#### 400: PASS
+- tab in x.zip/docs, ⌘Q, start: back (state.toml [[session.tabs]] archive + inner). x.zip to Trash with Finder, start: tab on arch, status "/tmp/gezik-run4/data/arch/x.zip/docs no longer exists". x.zip remade with ditto (Trash not readable here).
+
+#### 401: PASS
+- y.zip (3 files): 2 files dragged from Finder (fsrc) into its list: 5 entries (unzip -l), ditto -x (Archive Utility's engine) reads them; ⌘Z: 3. Rename y1 -> r1 (Return), ⌘Z back; ⌘⌫ y2: "Delete y2.txt from the archive? You can undo this." Delete, ⌘Z back; ⇧⌘N "New folder" in rename, "yeni": two undo steps (rename, then the folder). ⇧-drag y3 from the zip to a second pane on /tmp/gezik-run4/drop: moved out (zip y1, y2). Final zip via ditto -x: y1, y2. Drag into r.rar: status "This kind of archive can only be read" (cursor not in screenshots). Old zips go to the Trash: Trash leftovers.
+
+#### 402: FAIL → fixed 1686bbb
+- w.zip notes.txt opens in TextEdit; ⌘S: "notes.txt changed … from w.zip" Update in Archive / Ignore; Ignore, save again: asked again; Update: zip has "Notes v3" (ditto -x too). Changed again, Ignore, ⌘↑: "notes.txt changed but is not in w.zip" Update in Archive / Discard / Keep a Copy in Downloads; Keep: ~/Downloads/"notes (2).txt" although there was no notes.txt (next_free always numbers). Removed from Downloads.
+
+#### 403: PASS
+- cmd/ ⌘L ">ls -la": panel with the listing, folder, "Exit code 0 · 0.0 s" green; two selected, >echo "$GEZIK_FILES": both paths, one per line; >sleep 30: "Running… 4.0 s", Stop: gone 0.07 s after the click, "Stopped · 3.1 s" red; >ls nothing-here: stderr in the warning colour, "Exit code 1" red; ">ls" pasted, click on the list: nothing runs.
+
+#### 404: PASS (note)
+- >vim prints its own "Output is not to a terminal / Input is not from a terminal" and keeps running (vim does the same outside Gezik with stdout to a pipe and stdin /dev/null); Gezik answers, a new command asks "A command is still running. Stop it?" (Cancel / Stop and Run). >cat ends at once (exit 0). ">" + ↓: cat, vim, sleep 30, ls nothing-here, echo "$GEZIK_FILES", ls -la (newest first), "> echo secret" not listed; Return writes ">ls -la" into the field without running, Return runs it. In x.zip and in Trash: "Commands run in a folder on disk". Note: Go ▸ Show Trash opened System Settings ▸ Full Disk Access by itself; the Trash list is empty without it.
+
+#### 405: PASS (test error, `44e4b45`; the no-Command-Line-Tools part NOT TESTED)
+- sudo xcode-select --switch /nonexistent: "xcode-select: error: invalid developer directory '/nonexistent'" (maintainer ran it); DEVELOPER_DIR=/nonexistent /usr/bin/xcode-select -p prints it with exit 0 (git.rs:171 asks exactly that). The CLT were not removed: no-CLT part NOT TESTED.
+
+- Gezik with PATH=/usr/bin:/bin:/usr/sbin:/sbin finds /opt/homebrew/bin/git (2.55.0): repo with a changed README.md and new new.txt: orange dot, grey ?, status "⎇ main · 2 changed". Browsing nav/ and rules/: no git process (3 s sampled).
+
+#### 406: PASS
+- echo >> README.md: orange dot within 1.2 s, "⎇ main · 1 changed"; git add: green; commit: mark gone, "⎇ main" (no upstream); checkout -b other: "⎇ other". build/ in .gitignore (after git rm --cached: it had been committed by my setup): build faint. Header ▸ Show Git: Git column (Ignored, Untracked, Modified); its header sorts changes first (the ignored build folder stays on top: folders first); Group By ▸ Git: Modified (1), Untracked (1), Unchanged (2), Ignored (1); ⌘F git:changed: README.md, n2.txt "2 / 5". repo/x.zip/docs: no marks, no Git column.
+
+#### 407: PASS (local bare remote, as agreed; HTTPS/Keychain and ssh-agent parts NOT TESTED)
+- right-click README ▸ Git ▸ Stage: green, "Staged", no panel; status bar ⎇ other ▸ Commit…: "Commit to repo", faint line at column 72, Staged: README.md; ⌘↩: panel "git commit -F -" "[other fd47548] …", exit 0, status "⎇ other ↑1"; Push: "To /tmp/gezik-run4/remote.git 34754f3..fd47548 other -> other", ↑1 gone. Commit pushed from a second clone: Fetch: "↓1"; Pull: fast-forward, remote.txt appears. Switch Branch…: list "• other", "main" above the status bar; main: "⎇ main". Note: "Staged:" file name centred under a left label.
+
+#### 408: PASS
+- README changed + n2.txt new, both ▸ Git ▸ Discard Changes…: "Discard changes to 2 files? They go to the trash first, so you can undo." Discard: README as committed, n2 gone; ⌘Z: both back with the change. Compare with HEAD: "Compare HEAD - README.md ↔ README.md · 1 change". [tools] diff = "opendiff": FileMerge -left …/gezik-head-30699/HEAD - README.md -right … (quit afterwards, setting restored). pre-commit hook printing a line + exit 1: panel "hook says no: tests not run", "Exit code 1", no commit; next Commit… still has "hook test message". Trash leftovers: README.md and n2.txt copies (Discard).
+
+#### 413: PASS
+- [[commands]] Args (as in the item); ⌃⌘P second pane (F3 = fn+F3 did nothing here; the macOS key is ⌃⌘P), r1.txt selected right, l1+l2 left, right-click ▸ Commands ▸ Args: /tmp/gezik-args.txt = l1.txt, l2.txt, right/r1.txt, right (one per line). Pane closed, again from the menu and from the palette ("Args"): nothing written, status "Args — needs the second pane".
+
+#### 414: PASS (phone part NOT TESTED)
+- other pane in x.zip/docs: "Args — the other pane shows no folder on disk"; other pane showing search results (*.txt in data): the same; other pane with nothing selected: "Args — select the items in the other pane". (A folder selected in the active pane: "Args does not run on folders".) Window widened to 1400 pt for this: at 900 pt neither pane shows its search field.
+
+#### 415: PASS
+- "Resize half" menu = "Images/Resize", "Rotate it" menu = "Images" + shortcut ctrl+alt+r. Right-click ▸ Commands: Args, greyed "Images", Rotate it, greyed "Images ▸ Resize", Resize half. Menu bar Commands: "Images", "Rotate it ⌃⌥R" (only the keyed one).
+
+#### 423: FAIL → fixed 02a1619 (red part PASS)
+- rules where duration>3s red bold, then kind audio blue: long.aiff (4.2 s) and song.m4a (afconvert of it) red bold; notes.txt, sub theme colour; but short.aiff not blue: kind = "audio" alone colours song.m4a only — Kind::of has no aif/aiff (nor m4b, oga), while preview/Convert treat them as sound. 80 m4a (every other one > 3 s), scroll: new rows come in the theme's colour, then red or blue, never blue then red (frames sampled).
+
+#### 424: PASS
+- 3000 files, no where rule: CPU 0.0 % right after the list. where rule back (3000 real 4.2 s m4a): 0.3 s CPU time in all, 1.2 % then 0.0 %: only rows on screen read. (Note: my first try put the where rule after kind audio, so the rows were blue: first match wins, as documented.)
+
+#### 425: PASS
+- where = "duration>3x" green: status "settings.toml: highlight-rules[3]: where: duration>3x: "3x" is not a duration (3m, 1:30)"; the others still colour.
+
+#### Setup for 426–431
+- measure builds from fix/macos-run4 at ac692c2 (old: 0.1.0-rc.3 binary, make-app version 0.1.0-rc.2; new: workspace version bumped to 0.1.0-rc.99, not committed), /tmp/feed with releases.json; ~/Applications/Gezik.app (removed afterwards). /tmp/gezik-cfg's state.toml already had [update] checked from the release builds, so its [update] lines were removed first (as 428 says).
+
+#### 426: PASS
+- ~10 s: "Gezik 0.1.0-rc.99 is ready — installs when you close it · Restart now · What's new"; update/0.1.0-rc.99/ x/Gezik.app + ready (+ SHA256SUMS.txt). ✕, then TERM (⌘Q would install, 427) and start: no note; state.toml [update] checked, told = "0.1.0-rc.99".
+
+#### 427: PASS
+- ⌘Q: ~/Applications/Gezik.app --version 0.1.0-rc.99, Gezik.app.old 0.1.0-rc.3 (adhoc). Opened through LaunchServices (open --env): "Updated to 0.1.0-rc.99 · What's new"; .old and update/0.1.0-rc.99 gone.
+
+#### 428: PASS
+- old app back, [update] removed: Restart now: one new gezik (0.1.0-rc.99) with the same tabs (drop, data), one process. With [files] max-speed = "50 MB" and a 3 GB copy running: "1 operation is running — Quitting cancels them…" (Keep open / Cancel them and quit); Keep open, copy cancelled, no half file.
+
+#### 429: PASS
+- from a UDZO image of the old app: only "Gezik 0.1.0-rc.99 is out · Download", update/ empty. From ~/Downloads/GezikUpdTest with com.apple.quarantine: Gatekeeper "Not Opened", maintainer's Open Anyway (it started without the env, so with the real config: ~/Library/Application Support/gezik made, quit, removed), then open --env: translocated, only the "is out" note, update/ empty.
+
+#### 430: PASS (note)
+- one byte flipped: no note, update/0.1.0-rc.99 holds only SHA256SUMS.txt, stderr "gezik: update check: gezik-0.1.0-rc.99-macos-universal.app.tar.gz does not match its SHA-256". Right sum, empty gezik in the tarball: no note, "the downloaded Gezik does not start here or is not 0.1.0-rc.99". Note: the unpacked x/Gezik.app stays in update/0.1.0-rc.99 (no ready).
+
+#### 431: PASS
+- Settings search "update": Check (on), Channel (auto | stable | pre), Check for Updates key row, Updates "Gezik 0.1.0-rc.3. Not checked yet" → "Up to date … Last check: 2026-10-15 20:22". Help ▸ Check for Updates with an empty feed: "Gezik is up to date"; palette Check for Updates with the rc.99 feed: the ready note. [update] check = false: nothing at start (no update/ folder after 15 s); Help ▸ Check for Updates still fetched it.
+
+#### 443: PASS
+- a.txt ▸ Create hard link: "Link to a.txt" beside it, selected; ls -li: same inode 41605826, link count 2; a write through the link shows in a.txt.
+
+#### 444: PASS (test error, checklist fixed)
+- ⌘Z: the link goes to the Trash, a.txt keeps its content; ⌘⇧Z brings it back; ⌘Z again. But a.txt's link count stays 2 (ls -l and Get Info "Links: 2"): the trashed link is the same inode. (A first ⌘Z said "Nothing to undo": that link had been made by the Gezik before a restart.)
+
+#### 445: FAIL → fixed
+- a.txt + folder ▸ Create hard link: nothing made, the operations panel "1 item failed", Details "dir: Hard links work only on files" (one message, before any link). With Folders First off (a.txt first): "a.txt: Hard links work only on files" — the refusal named the first selected item, not the folder.
+
+#### 446: PASS
+- Get Info on a.txt with the link: "Links: 2" after Where; a folder: no Links line. (After the undo it still says 2, see 444.)
+
+#### 447: PASS
+- twice: "Link to a.txt", "Link to a (2).txt".
+
+#### 448: PASS (SMB NOT TESTED)
+- HFS+ GezikHedef: link made (inode 36, count 2); exFAT image: "e.txt: Operation not supported" with Retry. Images removed.
+
+#### 453: PASS
+- data/cmd pinned (right-click ▸ Pin to sidebar); pin ▸ Color ▸ Red: red pin icon, settings.toml { path = "…/cmd", color = "red" }; selected: accent colour; deselected: red.
+
+#### 454: PASS
+- Icon ▸ Star: star, icon = "star". Icon ▸ Default + Color ▸ None: back to plain "…/cmd".
+
+#### 455: PASS
+- 24 pins, one per icon, dark and light, 2×: all centred, none clipped, same stroke as the sidebar's own icons (screenshots ic-dark*.png, ic-light*.png).
+
+#### 456: PASS
+- "alias" here is the pin's name (Rename…), not a Finder alias: name = "Tarihler" shows the alias icon (folder with arrow) in the pin's colour; Icon ▸ Home replaces it; Default brings the alias icon back.
+
+#### 457: PASS
+- color = "teal", icon = "rocket": status "settings.toml: pinned: unknown color "teal" for …/cmd; expected a tag color or #rrggbb (+1 more)", default pin icon in the theme colour; after Move up on another pin both values still in the file; color = "#2e7d32" draws green.
+
+#### 458: PASS
+- Color ▸ "• None" / "• Red", Icon ▸ "• Default" (also for the invalid "rocket"); a custom #rrggbb marks none; submenus open with ↓ and →, Return chooses, Esc closes.
+
+#### 463: PASS
+- right-click ▸ Tools ▸ Set Dates…: "Set Dates of f1.txt", Modified on, Created, Accessed, Date and time / Now / Date taken (EXIF) / From file…, the file's own 2026-10-15 12:57:17; Esc: stat unchanged.
+
+#### 464: PASS
+- f1–f3 + d1, Created ticked, 2020-01-02 03:04:05, Set: stat B and M 2020-01-02 03:04:05 for all four (mdls kMDItemFSCreationDate 2020-01-02 00:04:05 +0000 = 03:04:05 TRT); 2020-02-30 keeps the dialog with "Enter the date as YYYY-MM-DD and the time as HH:MM:SS".
+
+#### 465: PASS
+- the empty list's menu said "Undo Set dates of 4 items" (the menu bar's Edit ▸ Undo shows only "Undo", see 393); ⌘Z: all four as before (B, M, A, diff of stat).
+
+#### 466: PASS
+- Now with only Accessed: A = 19:33:51 (the click), M unchanged.
+
+#### 467: PASS
+- photo.jpg + p.heic (EXIF 2024:07:01 09:30:00, sips HEIC; no real iPhone photo) + note.txt, Date taken, Modified + Created: photos B/M 2024-07-01 09:30:00 local; panel "Done · 1 item skipped", Details "Skipped: note.txt: No date taken".
+
+#### 468: PASS
+- From file… "nope.txt": red "No such file: nope.txt"; "ref.txt" (relative): shows /tmp/gezik-run4/data/exif/ref.txt under the buttons; with M, C, A ticked: p2.txt takes ref's 2015-05-06 07:08:09 for all three. (With only Modified ticked, Created moved too: macOS pulls the birth time back when the modified time goes before it.)
+
+#### 469: PASS
+- Get Info on p2.txt, click on the Modified line: Set Dates of p2.txt with its date; 2021-03-04, Set: Get Info shows Modified 2021-03-04 at once; ⌘Z, Get Info again: 2015-05-06.
+
+#### 470: PASS
+- ok.txt, locked.txt (chflags uchg), root.txt (made by the maintainer with sudo): ok.txt changed; "2 items failed", Details "locked.txt: Access denied", "root.txt: Access denied". Lock removed; root.txt removed by the maintainer.
+
+#### 473: PASS
+- move.txt dragged and rested on "one": opens after ~0.7 s, "Move to one"; dropped on empty space: moved into one, the pane stays there.
+
+#### 474: PASS
+- two springs (two, then inner), Esc before release: back to sp in one step; the release after Esc did nothing (files unchanged).
+
+#### 475: PASS
+- moving across rows never resting 0.7 s: none opened; wiggling inside one row (5 moves of 20 px in 0.5 s, then rest): it opened (measured from entering).
+
+#### 476: PASS
+- pinned folder (three) opens; a tree folder (Home ▸ Work) opens; a tag row (Red) does not ("Tag 1 item Red").
+
+#### 477: PASS
+- columns view (⌃⌘3): two.txt from the second column rested on "one" in the first: opens; grid (⌘⇧2): the "three" cell opens.
+
+#### 478: PASS (Finder window on /tmp/gezik-run4/drop instead of the Desktop)
+- spring into one, drag out to Finder, drop: copied there (moved: same volume), the Gezik pane back in sp. Again, back into the window without releasing, drop on a folder: the pane stays where it sprang, the file in three.
+
+#### 479: PASS
+- fromfinder.txt from a Finder window rested on "one": opens; drop: moved there (same volume), pane stays. Again, spring, back to Finder, release: the pane went back to sp, the file stayed in Finder.
+
+#### 480: PASS
+- measured from the pointer coming to rest on "one" (window title polled): 700 → 0.74 s, 2000 → 2.05 s, 1500 → 1.48 s, 9000 → 2.99 s (3000), 50 → 0.16 s after the glide's end (the timer starts as the pointer enters the row ~0.08 s before: ≈ 200 ms); 0: no folder opens in 3.3 s, a tab (cmd) still opens on rest; -1: status "settings.toml: drag.spring-delay: expected 0 (off) or a number of milliseconds, got -1", opens at 0.73 s (700). Settings ▸ General ▸ Spring delay row not used (the file was).
+
+#### 481: FAIL → fixed b0b2f42
+- a folder rested on itself does not open. A folder in a mounted UDRO image (GZRO4) in the second pane: opened, label "Copy to inside" (a drop would fail). After the fix: no spring, no label there; one still springs.
+
+#### 482: PASS
+- three (3,002 entries) with aaa and zzsub: resting at the row where zzsub lands, three opened, then zzsub opened without moving the mouse.
+
+#### 483: PASS
+- View ▸ Stack Panes: second pane under the first, full width, ✓ (AX mark), stacked = true; again: side by side, false, no mark.
+
+#### 484: PASS (test error, checklist fixed)
+- splitter at the line between: up-down arrow (screenshot with cursor), drag moves it; it stops where the lower pane keeps only its tabs, address bar and header (~108 px at 632 pt: the share is clamped to 20–80 % and each pane's own minimum), not 160 px; double-click: middle. Dragged to 0.358, unstacked: left pane ≈ 245 / 690 px; restart: state.toml [panes] split = 0.358 kept.
+
+#### 485: PASS (test error, checklist fixed)
+- stacked, Tab moves between the panes; F5 "Copy "docs" to /tmp/gezik-run4/drop?", F6 "Move …"; ⌘U does nothing — Swap Panes is ⌃⌘U on macOS (menu AX modifiers 4; template "mod+ctrl+u"); ⌃⌘U swaps.
+
+#### 486: PASS
+- window at its minimum 638 pt, stacked: second pane opens; side by side: status "The window is too narrow for two panes".
+
+#### 487: PASS (note)
+- Show Preview + Preview at Bottom: preview under the list, sidebar full height, ✓, position = "bottom"; the line above it drags (hover found at y=580), height kept after quit (state.toml [preview] height = 300). Note: dragged up far the preview takes all the room and no list row is left (the list has no minimum height).
+
+#### 488: PASS (note)
+- side by side and stacked: preview under both panes, full width; at 690 pt (two panes' minimum) the preview stays. Note: stacked with a 300 px preview the top pane shows no rows.
+
+#### 489: PASS
+- Preview at Bottom again: right, width 280.
+
+#### 490: PASS
+- Settings search "stacked" ▸ Stacked ticked: panes stacked at once, menu ✓; "preview.position" ▸ bottom: bottom at once, menu ✓.
+
+#### 491: PASS
+- palette "Stack Panes" and "Preview at Bottom" (Action, no key shown) toggle like the menu.
+
+#### 492: PASS
+- ⌘N second window with two panes; Stack Panes in one: both windows stacked.
+
+#### 409–412 [16g]: NOT TESTED
+- No Android phone. The libmtp package itself was built and loaded (A3).
+
+#### 432 [update]: NOT TESTED
+- No release newer than `v0.1.0-rc.3` is published.
+
+#### 433–436 [16h]: NOT TESTED
+- No other Mac or NAS announcing SMB over Bonjour on this network.
+
+#### 493 [17]: PASS
+- Settings ▸ Cloud Sync `Off` with Start Syncing… / Join With a Code…. Start Syncing…: `Synced just now`, the code row `Y09KY-…-DZCC9` with Sync Code ▸ Copy (the clipboard held the code). `/tmp/gezik-cfg` got `cloud/settings.toml`, `cloud-base`, `cloud-sync.toml`, and `location.toml` says `shared = "{local}/cloud"`.
+
+#### 494 [17]: PASS
+- `cloud-sync.toml` is `-rw-------`.
+
+#### 495 [17]: PASS (second Gezik on this Mac)
+- The second Gezik (`/tmp/gezik-cfg-b`): Join With a Code…, the code lower case without dashes: its theme became the first one's (`light`), bottom line `Your previous settings were backed up. Restore Backup ▸ brings them back.`, `backups/gezik-settings-2026-10-15-204432-348.zip`. One wrong character: `Not synced: This code has a typo`. The second step (another valid code) is covered by 502's "No settings found for this code".
+- Note: right after joining the Cloud Sync row said `Not synced since Gezik started`.
+
+#### 496 [17]: PASS
+- Theme changed on the first, about 9 s later the second had it; density changed on the second, Sync Settings Now on the first (palette, `Settings synced`): it had `compact`. Neither change lost.
+
+#### 497 [17]: PASS
+- Theme `light` on the first, `auto` on the second, Sync Now on both: the second kept `auto` and got `cloud/settings.cloud-conflict-2026-10-15.toml`; Sync and Backup: `Conflicting copy: settings.cloud-conflict-2026-10-15.toml — Not reviewed` ▸ Review…: a `theme` row (This copy: auto — other copy: light); Other copy, Merge: `theme = "light"`, the copy gone.
+
+#### 498 [17]: PASS (server made unreachable instead of Wi-Fi off)
+- Wi-Fi was left on (the run needs the network); `cloud-sync.toml`'s `server` was set to `https://sync.invalid`. Sync Now: `Not synced — offline`, Gezik works on; started like that, its window was up in 0.30 s. Server put back, Sync Now: synced.
+
+#### 499 [17]: PASS
+- Density changed and ⌘Q at once: quitting took 0.72 s; Sync Now on the second: it had the change.
+
+#### 500 [17]: PASS
+- Palette "Sync Settings Now": `Settings synced`; "Show Sync Code": Sync and Backup with the code row. Neither has a key.
+
+#### 501 [17]: PASS
+- While syncing: `Keep Settings in a Folder — Off — Stop Cloud Sync first`. After Stop Syncing, a folder (`/tmp/gezik-run4/syncdir`) set: `Cloud Sync — Off — Stop keeping settings in a folder first`.
+
+#### 502 [17]: PASS
+- Stop Syncing on the second: `cloud/`, `cloud-base`, `cloud-sync.toml`, `location.toml` gone, `settings.toml` back (`Settings are kept on this computer again; the cloud copy is as it was`). Delete from Server… ▸ Delete on the first: `The cloud copy is deleted; settings are kept on this computer`. On the second, Join With a Code… with the old code: `No settings found for this code`.
+- Note: the first kept a `settings.local.toml` (this computer's own values) after Delete.
+
+### Fixes on `fix/macos-run4` and re-test (2026-10-15)
+
+Branch `fix/macos-run4` from `master` at `9e95032`, one commit per fix, each naming its item. Re-tested with a release build of the branch at `b0b2f42`, the same way as above.
+
+| Item | Before | After | Commit / note |
+|---|---|---|---|
+| A3 | FAIL | PASS | `9afaec6`. A pkg-config stand-in that only passes the version check; the tarball's Linux `gphoto2-endian.h` removed before building; the architecture and link checks read `lipo -archs` and `otool -L` correctly. Re-test: the package above, universal, signed, loads; published as `libmtp-1.1.23-1`, MANIFEST filled. |
+| 396 | FAIL | PASS | `3f74d65`. The rename preview's "Preview" and "Sort by" labels elide, so "Only changed" and "Reset to rules" stay inside the layer. Re-test: pseudo at 900 pt, both whole; English unchanged. |
+| 402 | FAIL | PASS | `1686bbb`. Keep a Copy in Downloads takes the plain name while it is free (new test `a_kept_copy_takes_its_own_name_while_it_is_free`). Re-test: `~/Downloads/notes.txt` ("Notes v5"); removed afterwards. |
+| 423 | FAIL | PASS | `02a1619`. `aif`, `aiff`, `oga`, `m4b` are sound (`Kind::Audio`). Re-test: `short.aiff` and `long.aiff` blue with `kind = "audio"`. |
+| 445 | FAIL | PASS | `ac692c2`. The refusal names the folder (or the item on another drive). Re-test with a.txt first: `zdir: Hard links work only on files`. |
+| 481 | FAIL | PASS | `b0b2f42`. A drop target on a volume mounted read-only (statvfs `ST_RDONLY`, Windows' read-only volume flag) is refused, so it does not spring. Re-test: the UDRO image's folder neither springs nor offers a copy; a writable folder still springs. |
+| 375 | PASS | PASS (test error) | `ea00c02`. Checklist: move `Gezik.app` itself in Finder. |
+| 393 | PASS | PASS (test error) | `9cdac27`. Checklist: the job name is in the right-click Undo; a broken settings.toml is no test of the pseudo language. |
+| 395 | PASS | PASS (test error) | `cf79585`. Checklist: compare `令`/`直`; Hiragino Sans GB stands in for PingFang SC. |
+| 405 | PASS | PASS (test error) | `44e4b45`. Checklist: neither `xcode-select --switch /nonexistent` nor `DEVELOPER_DIR` stands in for a Mac without the Command Line Tools. |
+| 444, 446, 484, 485 | PASS | PASS (test error) | `e9431d1`. Checklists: a trashed hard link still counts; the stacked splitter keeps a fifth of the room; Swap Panes is ⌃⌘U. |
+
+After the fixes: **88 PASS, 0 FAIL, 13 NOT TESTED** (101 items).
+
+On the branch: `cargo test --workspace --no-fail-fast` 3119 passed, 0 failed, 25 ignored (the two new tests); clippy `-D warnings` and `fmt --check` clean.
+
+### Clean-up
+
+- Every Gezik of the run quit with ⌘Q or TERM; no `gezik*.ips` in `~/Library/Logs/DiagnosticReports`.
+- Removed: `/tmp/gezik-run4/data` and the other test folders under `/tmp/gezik-run4` (logs, screenshots and the libmtp package stay there), `/tmp/gezik-cfg-b`, `/tmp/old`, `/tmp/new`, `/tmp/feed`, `~/Applications/Gezik.app`(`.old`), `~/Downloads/GezikPortable*`, `~/Downloads/GezikUpdTest`, the disk images (GZEXFAT4, GZRO4, GezikRC2), `big.bin` on GezikHedef, `/tmp/gezik-args.txt`, `~/.viminfo` (made by 404's `vim`). LaunchServices entries of the test apps removed with `lsregister -u`. `/tmp/gezik-cfg` is kept (downloaded tools: none this run; Run 3's are in `/tmp/gezik-cfg-run3`).
+- Undone: per-app language (`defaults delete com.wenlar.gezik AppleLanguages`), `AppleLanguages` back to `en-TR, tr-TR`, the locked file unlocked, `root.txt` removed by the maintainer; `xcode-select -p` is `/Applications/Xcode.app/Contents/Developer` as before.
+- Fingerprint after: `~/Library/Application Support/gezik` absent (it was made twice by Gatekeeper's Open Anyway starting a test app without `GEZIK_CONFIG_DIR`, and removed each time); `~/.local/bin` absent; `mdfind 'kMDItemUserTags == "*"' | wc -l` 0; Desktop the same; disk images the same as before (four simulators and GezikHedef); the home folder has the same entries.
+- Left in the Trash (this Mac gives no access to it from the shell): `x.zip` (400), the old copies of `y.zip` and `w.zip` (401, 402), `README.md` and `n2.txt` (408), `Link to a.txt` (444) and the files the Get Info / Discard tests put there.

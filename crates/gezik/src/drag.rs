@@ -206,6 +206,25 @@ fn menu_effects(allowed: Allowed, writable: bool, sources: &[PathBuf], dir: &Pat
     (can(Effect::Copy, allowed.copy), can(Effect::Move, allowed.move_), can(Effect::Link, allowed.link))
 }
 
+thread_local! {
+    static READ_ONLY: RefCell<Option<(PathBuf, bool)>> = const { RefCell::new(None) };
+}
+
+/// Whether `dir`'s volume is mounted read-only, asked once per folder the pointer is over: a
+/// drag asks on every move, and a network drive can be slow to answer.
+// shortcut: the last folder's answer is kept across drags; a volume remounted read-only under
+// the same folder is seen only after the pointer leaves it. Clear it at drag start if that bites.
+fn read_only_volume(dir: &Path) -> bool {
+    READ_ONLY.with_borrow_mut(|last| match last {
+        Some((at, read_only)) if at == dir => *read_only,
+        _ => {
+            let read_only = gezik_platform::fs::is_read_only_volume(dir);
+            *last = Some((dir.to_path_buf(), read_only));
+            read_only
+        }
+    })
+}
+
 /// How a sidebar row takes a drop: headings take nothing (those of the pinned part pin there),
 /// pinned rows have their pin lines, a capped branch's "… n more" line takes nothing either, the
 /// rest (tree folders too) are folders.
@@ -1068,14 +1087,15 @@ impl Drags {
         (!drag::refuse(&d.sources, dir, effect)).then_some(effect)
     }
 
-    /// Whether files can be dropped into `dir` as far as Gezik knows without touching the
-    /// disk: not on an optical drive.
+    /// Whether files can be dropped into `dir`: not on an optical drive, nor on a volume
+    /// mounted read-only (a disk image), which would refuse each file only after the drop.
     fn writable(&self, dir: &Path) -> bool {
-        !crate::panes::active_nav()
+        let optical = crate::panes::active_nav()
             .places()
             .drives
             .iter()
-            .any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path))
+            .any(|drive| drive.kind == DriveKind::Optical && is_within(dir, &drive.path));
+        !optical && !read_only_volume(dir)
     }
 
     /// How many items the drag under way carries.

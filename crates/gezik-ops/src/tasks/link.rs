@@ -55,14 +55,22 @@ impl LinkTask {
     /// item): a folder among the items, or a link on another drive. A refusal is no reason to
     /// offer Retry.
     pub fn refused(&self) -> Option<std::borrow::Cow<'static, str>> {
+        self.refusal().map(|(_, why)| why)
+    }
+
+    /// [`refused`](Self::refused) with the item it is about: the folder, or the item whose link
+    /// would be on another drive (the message names it).
+    fn refusal(&self) -> Option<(&Path, std::borrow::Cow<'static, str>)> {
         if self.kind != LinkKind::Hard {
             return None;
         }
-        if self.pairs.iter().any(|(source, _)| source.is_dir()) {
-            return Some(gezik_i18n::t!("Hard links work only on files"));
+        if let Some((source, _)) = self.pairs.iter().find(|(source, _)| source.is_dir()) {
+            return Some((source, gezik_i18n::t!("Hard links work only on files")));
         }
-        if self.pairs.iter().any(|(source, at)| !at.parent().is_some_and(|dir| super::same_drive(source, dir))) {
-            return Some(gezik_i18n::t!("Hard links must stay on the same drive"));
+        let elsewhere =
+            |(source, at): &&(PathBuf, PathBuf)| !at.parent().is_some_and(|dir| super::same_drive(source, dir));
+        if let Some((source, _)) = self.pairs.iter().find(elsewhere) {
+            return Some((source, gezik_i18n::t!("Hard links must stay on the same drive")));
         }
         None
     }
@@ -95,7 +103,7 @@ impl Task for LinkTask {
     }
 
     fn plan(&self, sink: &mut dyn ScanSink) {
-        if let (Some(why), Some((source, _))) = (self.refused(), self.pairs.first()) {
+        if let Some((source, why)) = self.refusal() {
             sink.failed(source, io::Error::new(io::ErrorKind::InvalidInput, why));
             return;
         }
@@ -328,6 +336,8 @@ mod tests {
         let (report, _) = finish(&engine, job, defaults);
         assert_eq!(report.failures.len(), 1, "one message");
         assert!(report.failures[0].message.contains("only on files"), "{}", report.failures[0].message);
+        // It names the folder, not the file selected first.
+        assert_eq!(report.failures[0].path, dir.join("Docs"));
         assert!(!dir.join("Link to a.txt").exists(), "nothing made");
         let _ = std::fs::remove_dir_all(&dir);
     }
