@@ -867,4 +867,26 @@ mod tests {
         assert!(!a.join(FOLDER).exists() && !a.join(STATE).exists() && !a.join(BASE).exists());
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    /// Spec 17 §7's smoke test against the real server and the system's HTTP client:
+    /// `cargo test -p gezik cloud_sync -- --ignored`.
+    #[test]
+    #[ignore = "needs the network and sync.wenlar.com"]
+    fn the_live_server_carries_a_change_across() {
+        let root = scratch("live");
+        let (a, b) = (root.join("a"), root.join("b"));
+        put_file(&a, "settings.toml", "theme = \"nord\"\n");
+        put_file(&b, "settings.toml", "theme = \"light\"\n");
+        let code = start(&Folders::one(&a), SERVER, &remove).unwrap();
+        assert_eq!(round(&a, &system_http, &remove), Ok(Vec::new()));
+        join(&Folders::one(&b), SERVER, &code, &system_http, &remove).unwrap();
+        assert_eq!(settings(&b), "theme = \"nord\"\n");
+        put_file(&b.join(FOLDER), "settings.toml", "theme = \"nord\"\nfont-size = 15\n");
+        assert_eq!(round(&b, &system_http, &remove), Ok(Vec::new()));
+        assert_eq!(round(&a, &system_http, &remove), Ok(Vec::new()));
+        assert!(settings(&a).contains("font-size = 15"));
+        delete(&a, &system_http).unwrap();
+        assert_eq!(round(&b, &system_http, &remove), Err(Failure::Removed));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
