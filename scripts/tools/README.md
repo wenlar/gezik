@@ -263,9 +263,10 @@ linked. The release `libmtp-1.1.23-1` holds one file for both Mac platforms
 `libusb-1.0.0.dylib`, `COPYING` (the LGPL 2.1, both libraries' licence) and `SOURCE.txt` (the
 source archives, their SHA-256 and the configure options).
 
-**State: not published yet.** `MANIFEST`'s two libmtp entries carry `sha256: PENDING` (empty)
-and `size: 0`; `build_for` leaves them out, so Gezik offers no download and its box asks for
-Homebrew's (`brew install libmtp`) instead. To publish:
+**State: published** (2026-10-15, 289,012 bytes, SHA-256
+`9959f5557052f66882a77a1038a07bcd273548ec2c2c6b7c2e79f20cbc372864`; `MANIFEST` has it). An
+entry with `sha256: PENDING` (empty) and `size: 0` is left out by `build_for`, so Gezik offers
+no download and its box asks for Homebrew's (`brew install libmtp`) instead. To publish a build:
 
 1. On a Mac with the Xcode Command Line Tools (macOS 11 or newer; no Homebrew or pkg-config
    needed: the script passes libusb's flags to libmtp's configure itself):

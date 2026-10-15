@@ -1754,7 +1754,7 @@ Clean-up after the re-test: `/tmp/gezik-rel` removed; Application Support finger
 |---|---|---|
 | A1 [build] | PASS | `cargo test --workspace --no-fail-fast` 3117 passed, 0 failed, 25 ignored; clippy `-D warnings` and `fmt --check` clean |
 | A2 [17] live cloud test | PASS | 4 passed with `--include-ignored` (NSURLSession path) |
-| A3 [16g] `prepare-libmtp.sh` | FAIL → fixed | four stops on a real Mac; release not published (no `gh` login here) |
+| A3 [16g] `prepare-libmtp.sh` | FAIL → fixed | four stops on a real Mac; release `libmtp-1.1.23-1` published |
 | 371 [14c] | NOT TESTED | no proxy network |
 | 372 [14d] | PASS | zip from a second config, not from Windows |
 | 373 [14d] | PASS | as 372 |
@@ -1811,7 +1811,7 @@ Clean-up after the re-test: `/tmp/gezik-rel` removed; Application Support finger
 
 ### Main findings
 
-1. `scripts/tools/prepare-libmtp.sh` had never run on a Mac: libmtp's configure wants a pkg-config, the tarball's own Linux `gphoto2-endian.h` shadowed the generated one, and both of its checks (architectures, links) misread `lipo`/`otool` output. Fixed; the package builds (289,012 B, SHA-256 `9959f5557052f66882a77a1038a07bcd273548ec2c2c6b7c2e79f20cbc372864`), is universal, links only the system and `@loader_path`, and loads (`LIBMTP_Init`). The `libmtp-1.1.23-1` release and `tools.rs`'s PENDING entry wait for the maintainer (no `gh` login on this Mac).
+1. `scripts/tools/prepare-libmtp.sh` had never run on a Mac (now fixed and published): libmtp's configure wants a pkg-config, the tarball's own Linux `gphoto2-endian.h` shadowed the generated one, and both of its checks (architectures, links) misread `lipo`/`otool` output. Fixed; the package builds (289,012 B, SHA-256 `9959f5557052f66882a77a1038a07bcd273548ec2c2c6b7c2e79f20cbc372864`), is universal, links only the system and `@loader_path`, and loads (`LIBMTP_Init`). Published as `libmtp-1.1.23-1` in `wenlar/gezik-tools` and filled into `tools.rs`'s MANIFEST.
 2. Five app bugs, all fixed and re-tested: Keep a Copy in Downloads always numbered the name (402); AIFF/M4B were not sound for `kind` rules, search and icons (423); Create hard link named the first item instead of the folder it refused (445); drops onto a read-only volume were offered and sprang open (481); the Batch rename layer cut two buttons in long languages (396).
 3. Eight checklist errors (375, 393, 395, 405, 444, 446, 484, 485): fixed in the checklists.
 4. Smaller, not fixed (notes): the menu bar's Edit ▸ Undo never names the job; ⌘W does not close the Settings window; a broken settings.toml drops every setting to its default (as spec 14 says) including the language; the settings search for `import-settings` hides the "Import from …" row that the bottom line tells you to use; Go ▸ Show Trash opens System Settings ▸ Full Disk Access by itself; tests leave `gezik-16e-*` and `gezik-backup-test-*` folders in `$TMPDIR`; a stacked or bottom preview can squeeze a pane to no rows.
@@ -1827,10 +1827,10 @@ Clean-up after the re-test: `/tmp/gezik-rel` removed; Application Support finger
 #### A2 Live cloud sync test: PASS
 - `cargo test -p gezik cloud_sync -- --include-ignored`: 4 passed, `the_live_server_carries_a_change_across` among them (3.38 s). The macOS HTTP path is `gezik_platform::http` (NSURLSession, `http/macos.rs`).
 
-#### A3 libmtp package: FAIL → fixed (`9afaec6`), release not published
+#### A3 libmtp package: FAIL → fixed (`9afaec6`), published
 - `bash scripts/tools/prepare-libmtp.sh /tmp/gezik-run4/libmtp` stopped four times: `configure: error: pkg-config not found` (with `PKG_CONFIG=false`); `'byteswap.h' file not found` (the tarball's `src/gphoto2-endian.h` was written on Linux and found before the generated one); `libusb-1.0.0.dylib: x86_64 arm64` (the architecture check wanted two spaces between the names); `links something outside the package or the system` (it read otool's `(architecture …):` header line as a library).
 - After the fix: `libmtp-1.1.23-macos-universal.tar.xz: 289012 B, sha256 9959f5557052f66882a77a1038a07bcd273548ec2c2c6b7c2e79f20cbc372864`; both dylibs `x86_64 arm64`, linked to `/usr/lib/libiconv`, `libobjc`, `libSystem`, IOKit, CoreFoundation, Security and `@loader_path`; `codesign --verify` passes; `ctypes.CDLL` + `LIBMTP_Init()` works.
-- The maintainer agreed to publish, but `gh` has no login on this Mac (and no GitHub token in the Keychain), so the release and the `tools.rs` entry are left for the maintainer.
+- With the maintainer's approval (after their `gh auth login`): `gh release create libmtp-1.1.23-1 --repo wenlar/gezik-tools`; the served file's SHA-256 is the same. `tools.rs`'s two entries filled; `cargo test -p gezik-core tools` (5) and `GEZIK_TOOLS_DIR=… cargo test -p gezik-batch --test tools prepared` pass. Not tried with a phone (none at hand).
 
 #### 371 [14c]: NOT TESTED
 - No network with a proxy at hand.
@@ -2116,7 +2116,7 @@ Branch `fix/macos-run4` from `master` at `9e95032`, one commit per fix, each nam
 
 | Item | Before | After | Commit / note |
 |---|---|---|---|
-| A3 | FAIL | PASS (build); release not published | `9afaec6`. A pkg-config stand-in that only passes the version check; the tarball's Linux `gphoto2-endian.h` removed before building; the architecture and link checks read `lipo -archs` and `otool -L` correctly. Re-test: the package above, universal, signed, loads. Publishing `libmtp-1.1.23-1` and filling `tools.rs` need a `gh` login. |
+| A3 | FAIL | PASS | `9afaec6`. A pkg-config stand-in that only passes the version check; the tarball's Linux `gphoto2-endian.h` removed before building; the architecture and link checks read `lipo -archs` and `otool -L` correctly. Re-test: the package above, universal, signed, loads; published as `libmtp-1.1.23-1`, MANIFEST filled. |
 | 396 | FAIL | PASS | `3f74d65`. The rename preview's "Preview" and "Sort by" labels elide, so "Only changed" and "Reset to rules" stay inside the layer. Re-test: pseudo at 900 pt, both whole; English unchanged. |
 | 402 | FAIL | PASS | `1686bbb`. Keep a Copy in Downloads takes the plain name while it is free (new test `a_kept_copy_takes_its_own_name_while_it_is_free`). Re-test: `~/Downloads/notes.txt` ("Notes v5"); removed afterwards. |
 | 423 | FAIL | PASS | `02a1619`. `aif`, `aiff`, `oga`, `m4b` are sound (`Kind::Audio`). Re-test: `short.aiff` and `long.aiff` blue with `kind = "audio"`. |
@@ -2128,7 +2128,7 @@ Branch `fix/macos-run4` from `master` at `9e95032`, one commit per fix, each nam
 | 405 | PASS | PASS (test error) | `44e4b45`. Checklist: neither `xcode-select --switch /nonexistent` nor `DEVELOPER_DIR` stands in for a Mac without the Command Line Tools. |
 | 444, 446, 484, 485 | PASS | PASS (test error) | `e9431d1`. Checklists: a trashed hard link still counts; the stacked splitter keeps a fifth of the room; Swap Panes is ⌃⌘U. |
 
-After the fixes: **88 PASS, 0 FAIL, 13 NOT TESTED** (101 items); the libmtp release itself is still to be published.
+After the fixes: **88 PASS, 0 FAIL, 13 NOT TESTED** (101 items).
 
 On the branch: `cargo test --workspace --no-fail-fast` 3119 passed, 0 failed, 25 ignored (the two new tests); clippy `-D warnings` and `fmt --check` clean.
 
