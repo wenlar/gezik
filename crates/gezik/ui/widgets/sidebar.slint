@@ -147,10 +147,10 @@ export component Sidebar inherits Rectangle {
                 property <length> indent: row.depth * root.step;
 
                 // A section's label (FOLDERS, PINNED, DRIVES) sits at the bottom of its row; a
-                // group's heading has a chevron before it.
+                // group's heading has a chevron before it, NETWORK's at the row's end.
                 if row.header: Text {
-                    x: Theme.inset + (row.section == 3 || row.section == 11 ? 18px : Theme.spacing + 4px);
-                    width: parent.width - self.x - Theme.inset - Theme.spacing;
+                    x: Theme.inset + (row.section == 3 ? 18px : Theme.spacing + 4px);
+                    width: parent.width - self.x - Theme.inset - Theme.spacing - (row.section == 11 ? 14px : 0px);
                     height: row.section == 3 ? parent.height : parent.height - 3px;
                     text: row.label;
                     overflow: elide;
@@ -193,7 +193,7 @@ export component Sidebar inherits Rectangle {
                         }
                     }
                     Path {
-                        x: 6px;
+                        x: parent.width - Theme.inset - Theme.spacing - 8px;
                         y: parent.height - 3px - 10px;
                         width: 8px;
                         height: 8px;

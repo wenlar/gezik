@@ -1710,8 +1710,10 @@ impl Operations {
         if paths.is_empty() {
             return;
         }
+        let task = LinkTask::beside(paths.clone(), kind);
+        let refused = task.refused().is_some();
         let retry: Retry = Rc::new(move || -> Box<dyn Task> { Box::new(LinkTask::beside(paths.clone(), kind)) });
-        self.submit(retry(), Some(retry), After::Select);
+        self.submit(Box::new(task), (!refused).then_some(retry), After::Select);
     }
 
     pub fn new_file(&self, dir: Option<PathBuf>) {
