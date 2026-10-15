@@ -1167,6 +1167,10 @@ export component AppWindow inherits Window {
                         // Side by side, or stacked (the panes' Tab order is the same). Placed by hand:
                         // a repeater in a GridLayout with changing row/col crashed Slint's cell cache.
                         panes-row := Rectangle {
+                            // Not a layout: without these it would not take the room left beside the
+                            // bottom preview (a plain element's stretch is 0).
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
                             min-width: !root.dual ? root.pane-min-width : root.panes-stacked ? 240px : 2 * 240px + 5px;
                             min-height: root.dual && root.panes-stacked ? 2 * root.pane-min-height + 5px : root.pane-min-height;
                             for pane-data[i] in root.panes: pane := PaneView {
