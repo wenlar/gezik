@@ -2130,7 +2130,7 @@ Branch `fix/macos-run4` from `master` at `9e95032`, one commit per fix, each nam
 
 After the fixes: **88 PASS, 0 FAIL, 13 NOT TESTED** (101 items); the libmtp release itself is still to be published.
 
-`cargo test --workspace --no-fail-fast`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --check` on the branch: see the PR.
+On the branch: `cargo test --workspace --no-fail-fast` 3119 passed, 0 failed, 25 ignored (the two new tests); clippy `-D warnings` and `fmt --check` clean.
 
 ### Clean-up
 
