@@ -369,14 +369,18 @@ export component AppWindow inherits Window {
     // of the height.
     in-out property <bool> panes-stacked;
     // Where the right (stacked: the lower) pane starts (the splitter is just before it).
-    property <length> split-x;
-    property <length> split-y;
+    property <length> split-x: root.left-width + 5px;
+    property <length> split-y: root.top-height + 5px;
+    // The first pane's minimum size (copied when it changes), for the panes' box: the panes
+    // are placed by hand in it, so its minimum is worked out here.
+    property <length> pane-min-width;
+    property <length> pane-min-height;
     // The panes' room (their row's size), copied when it changes: read in the panes' sizes
     // directly, it would loop through the row's layout.
     property <length> panes-room;
     property <length> panes-room-height;
-    // Stacked, the top pane's height, as `left-width`.
-    property <length> top-height: max(0px, min(max((root.panes-room-height - 5px) * (root.pane-split / 100%), 160px), root.panes-room-height - 5px - 160px));
+    // Stacked, the top pane's height, as `left-width` (each pane at least its minimum).
+    property <length> top-height: max(0px, min(max((root.panes-room-height - 5px) * (root.pane-split / 100%), root.pane-min-height), root.panes-room-height - 5px - root.pane-min-height));
     // The left pane's width: its share of the room, but each pane at least 240 px while the
     // room allows (spec 10 §4.1), so neither is pushed out of the window.
     property <length> left-width: max(0px, min(max((root.panes-room - 5px) * (root.pane-split / 100%), 240px), root.panes-room - 5px - 240px));
@@ -1160,31 +1164,33 @@ export component AppWindow inherits Window {
                         }
                         changed width => { root.panes-room = self.width; }
                         changed height => { root.panes-room-height = self.height; }
-                        // Side by side, or stacked: one column (the panes' Tab order is the same).
-                        panes-row := GridLayout {
-                            spacing: 5px;
+                        // Side by side, or stacked (the panes' Tab order is the same). Placed by hand:
+                        // a repeater in a GridLayout with changing row/col crashed Slint's cell cache.
+                        panes-row := Rectangle {
+                            min-width: !root.dual ? root.pane-min-width : root.panes-stacked ? 240px : 2 * 240px + 5px;
+                            min-height: root.dual && root.panes-stacked ? 2 * root.pane-min-height + 5px : root.pane-min-height;
                             for pane-data[i] in root.panes: pane := PaneView {
-                                row: root.panes-stacked ? i : 0;
-                                col: root.panes-stacked ? 0 : i;
                                 data: pane-data;
                                 index: i;
                                 dual: root.dual;
                                 active: i == root.active-pane;
                                 synced: root.view-sync;
-                                // The left (top) one's share of the room (the layout fills it); one pane has all of it.
-                                preferred-width: !root.dual || root.panes-stacked ? root.panes-room : i == 0 ? root.left-width : root.panes-room - 5px - root.left-width;
-                                preferred-height: !root.dual || !root.panes-stacked ? root.panes-room-height : i == 0 ? root.top-height : root.panes-room-height - 5px - root.top-height;
+                                // The left (top) one's share of the room; one pane has all of it.
+                                x: root.dual && !root.panes-stacked && i == 1 ? root.split-x : 0px;
+                                y: root.dual && root.panes-stacked && i == 1 ? root.split-y : 0px;
+                                width: !root.dual || root.panes-stacked ? root.panes-room : i == 0 ? root.left-width : root.panes-room - 5px - root.left-width;
+                                height: !root.dual || !root.panes-stacked ? root.panes-room-height : i == 0 ? root.top-height : root.panes-room-height - 5px - root.top-height;
                                 init => {
-                                    if i == 1 {
-                                        root.split-x = self.x;
-                                        root.split-y = self.y;
+                                    if i == 0 {
+                                        root.pane-min-width = self.min-width;
+                                        root.pane-min-height = self.min-height;
                                     }
                                 }
-                                changed x => {
-                                    if i == 1 { root.split-x = self.x; }
+                                changed min-width => {
+                                    if i == 0 { root.pane-min-width = self.min-width; }
                                 }
-                                changed y => {
-                                    if i == 1 { root.split-y = self.y; }
+                                changed min-height => {
+                                    if i == 0 { root.pane-min-height = self.min-height; }
                                 }
                                 list-focused: keys.has-focus && i == root.active-pane;
                                 drag-active: root.drag-active;
