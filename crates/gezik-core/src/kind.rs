@@ -37,7 +37,8 @@ impl Kind {
             b"png" | b"jpg" | b"jpeg" | b"gif" | b"bmp" | b"webp" | b"tif" | b"tiff" | b"svg" | b"ico" | b"heic"
             | b"heif" | b"avif" | b"raw" | b"cr2" | b"nef" | b"psd" => Kind::Image,
             b"mp4" | b"mkv" | b"mov" | b"avi" | b"wmv" | b"webm" | b"m4v" | b"flv" | b"mpg" | b"mpeg" => Kind::Video,
-            b"mp3" | b"wav" | b"flac" | b"ogg" | b"m4a" | b"aac" | b"wma" | b"opus" => Kind::Audio,
+            b"mp3" | b"wav" | b"flac" | b"ogg" | b"oga" | b"m4a" | b"m4b" | b"aac" | b"wma" | b"opus" | b"aif"
+            | b"aiff" => Kind::Audio,
             b"zip" | b"rar" | b"7z" | b"tar" | b"gz" | b"bz2" | b"xz" | b"zst" | b"tgz" | b"txz" | b"tbz" | b"tbz2"
             | b"tzst" | b"cab" | b"cpio" | b"wim" | b"swm" | b"esd" | b"lzh" | b"lha" | b"arj" | b"xar" | b"z01" => {
                 Kind::Archive
@@ -224,6 +225,10 @@ mod tests {
     fn kinds_come_from_the_extension_ignoring_case() {
         assert_eq!(Kind::of("Tatil.JPG", false), Kind::Image);
         assert_eq!(Kind::of("film.mkv", false), Kind::Video);
+        // What macOS records (say, QuickTime) and the books it plays: sound too.
+        assert_eq!(Kind::of("ses.aiff", false), Kind::Audio);
+        assert_eq!(Kind::of("ses.AIF", false), Kind::Audio);
+        assert_eq!(Kind::of("kitap.m4b", false), Kind::Audio);
         assert_eq!(Kind::of("a.tar.gz", false), Kind::Archive);
         assert_eq!(Kind::of("main.rs", false), Kind::Code);
         assert_eq!(Kind::of("rapor.pdf", false), Kind::Pdf);
