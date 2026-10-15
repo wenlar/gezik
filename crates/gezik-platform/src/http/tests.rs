@@ -1,10 +1,10 @@
-//! Downloads from a small HTTP server on the loopback address (plain http: `allow_http`).
+//! Downloads and requests to a small HTTP server on the loopback address (plain http: `allow_http`).
 
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -20,6 +20,7 @@ fn dir(name: &str) -> PathBuf {
 struct Reply {
     status: &'static str,
     location: Option<String>,
+    headers: Vec<(&'static str, &'static str)>,
     body: Vec<u8>,
     chunk: usize,
     pause: Duration,
@@ -35,7 +36,15 @@ enum Stall {
 
 impl Reply {
     fn ok(body: Vec<u8>) -> Reply {
-        Reply { status: "200 OK", location: None, body, chunk: 64 * 1024, pause: Duration::ZERO, stall: None }
+        Reply {
+            status: "200 OK",
+            location: None,
+            headers: Vec::new(),
+            body,
+            chunk: 64 * 1024,
+            pause: Duration::ZERO,
+            stall: None,
+        }
     }
 
     fn slow(mut self, chunk: usize, pause: Duration) -> Reply {
@@ -50,10 +59,12 @@ impl Reply {
     }
 }
 
-/// What the server saw: requests, and whether a whole body went out.
+/// What the server saw: requests, the last one's head and body, and whether a whole body
+/// went out.
 #[derive(Default)]
 struct Seen {
     requests: AtomicUsize,
+    last: Mutex<Option<(String, Vec<u8>)>>,
     sent: AtomicBool,
 }
 
@@ -91,7 +102,20 @@ fn respond(mut stream: TcpStream, base: &str, seen: &Seen, answer: &Answer) -> i
         request.push(byte[0]);
     }
     seen.requests.fetch_add(1, Ordering::SeqCst);
-    let text = String::from_utf8_lossy(&request);
+    let text = String::from_utf8_lossy(&request).into_owned();
+    let lower = text.to_ascii_lowercase();
+    let length = lower
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|n| n.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    // curl asks first before sending a large body.
+    if lower.contains("expect: 100-continue") {
+        stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+    }
+    let mut sent = vec![0u8; length];
+    stream.read_exact(&mut sent)?;
+    *seen.last.lock().unwrap() = Some((text.clone(), sent));
     let path = text.split_whitespace().nth(1).unwrap_or("/").to_owned();
     let reply = answer(base, &path);
     let mut head = format!(
@@ -101,6 +125,9 @@ fn respond(mut stream: TcpStream, base: &str, seen: &Seen, answer: &Answer) -> i
     );
     if let Some(location) = &reply.location {
         head.push_str(&format!("Location: {location}\r\n"));
+    }
+    for (name, value) in &reply.headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
     }
     head.push_str("\r\n");
     let stall = |when: Stall| {
@@ -271,6 +298,67 @@ fn redirects_are_followed_up_to_five() {
 }
 
 #[test]
+fn requests_send_their_headers_and_body_and_give_any_status() {
+    let (base, seen) = serve(|_, path| match path {
+        "/v1/box" => Reply { headers: vec![("ETag", "\"7\"")], ..Reply::ok(b"stored".to_vec()) },
+        "/v1/race" => Reply { status: "412 Precondition Failed", ..Reply::ok(Vec::new()) },
+        "/v1/busy" => {
+            Reply { status: "429 Too Many Requests", headers: vec![("Retry-After", "30")], ..Reply::ok(Vec::new()) }
+        }
+        "/v1/gone" => Reply { status: "204 No Content", ..Reply::ok(Vec::new()) },
+        _ => Reply { status: "404 Not Found", ..Reply::ok(Vec::new()) },
+    });
+    let last = || seen.last.lock().unwrap().take().unwrap();
+    let sent = body(300 * 1024);
+    let headers = [("Authorization", "Bearer abc"), ("If-Match", "\"6\"")];
+    let answer = request("PUT", &format!("{base}/v1/box"), &headers, Some(&sent), 1024).unwrap();
+    let stored = Response { status: 200, etag: Some("\"7\"".to_owned()), retry_after: None, body: b"stored".to_vec() };
+    assert_eq!(answer, stored);
+    let (head, got) = last();
+    assert!(head.starts_with("PUT /v1/box "), "{head}");
+    let head = head.to_ascii_lowercase();
+    assert!(head.contains("authorization: bearer abc\r\n"), "{head}");
+    assert!(head.contains("if-match: \"6\"\r\n"), "{head}");
+    assert!(got == sent, "the body came through changed");
+
+    let answer = request("PUT", &format!("{base}/v1/race"), &[("If-Match", "\"1\"")], Some(b"x"), 1024).unwrap();
+    assert_eq!((answer.status, answer.etag), (412, None));
+    let answer = request("GET", &format!("{base}/v1/missing"), &[], None, 1024).unwrap();
+    assert_eq!(answer.status, 404);
+    assert!(last().0.starts_with("GET /v1/missing "));
+    let answer = request("GET", &format!("{base}/v1/busy"), &[], None, 1024).unwrap();
+    assert_eq!((answer.status, answer.retry_after), (429, Some(30)));
+    let answer = request("DELETE", &format!("{base}/v1/gone"), &[], None, 1024).unwrap();
+    assert_eq!((answer.status, answer.body.len()), (204, 0));
+    assert!(last().0.starts_with("DELETE /v1/gone "));
+    let err = request("GET", &format!("{base}/v1/box"), &[], None, 3).unwrap_err();
+    assert_eq!(err.to_string(), too_big().to_string());
+}
+
+#[test]
+fn requests_follow_no_redirect() {
+    let (base, seen) = serve(hops);
+    let answer = request("GET", &format!("{base}/hop/1"), &[], None, 1024).unwrap();
+    assert_eq!(answer.status, 302);
+    assert_eq!(seen.requests.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn requests_go_over_plain_http_only_to_this_computer() {
+    for url in
+        ["http://example.com/v1", "http://127.0.0.1.example.com/v1", "http://x@127.0.0.1/v1", "ftp://127.0.0.1/a"]
+    {
+        let err = request("GET", url, &[], None, 1024).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{url}");
+    }
+    for url in ["http://127.0.0.1:8787/v1/x", "HTTP://localhost/v1", "http://LOCALHOST:1"] {
+        assert!(loopback(url), "{url}");
+    }
+    let err = request("GET", "https://example.com/", &[("X-A", "b\r\nEvil: 1")], None, 1).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+}
+
+#[test]
 fn the_hint_is_only_for_systems_without_a_downloader() {
     #[cfg(any(windows, target_os = "macos"))]
     assert_eq!(tool_missing_hint(), None);
@@ -382,6 +470,28 @@ mod unix {
   Content-Length: 3
 "
         ));
+    }
+
+    #[test]
+    fn curls_request_arguments_and_answer() {
+        let args = imp::request_arguments("PUT", "https://sync.example/v1/a", true, 100);
+        assert!(!args.iter().any(|arg| arg == "--location" || arg.contains("Bearer")), "{args:?}");
+        assert_eq!(args[..5], ["--disable", "--silent", "--show-error", "--proto", "=https"]);
+        assert!(args.ends_with(&[
+            "--data-binary".to_owned(),
+            "@send".to_owned(),
+            "https://sync.example/v1/a".to_owned()
+        ]));
+        let get = imp::request_arguments("GET", "http://127.0.0.1:1/v1/a", false, 100);
+        assert_eq!(get[4], "=http,https");
+        assert!(!get.iter().any(|arg| arg == "--data-binary"));
+        let head =
+            "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 412 Precondition Failed\r\netag: \"3\"\r\nRetry-After: 5\r\n\r\n";
+        let answer = imp::parse_head(head, b"x".to_vec()).unwrap();
+        let expected =
+            Response { status: 412, etag: Some("\"3\"".to_owned()), retry_after: Some(5), body: b"x".to_vec() };
+        assert_eq!(answer, expected);
+        assert_eq!(imp::parse_head("", Vec::new()), None);
     }
 
     #[test]

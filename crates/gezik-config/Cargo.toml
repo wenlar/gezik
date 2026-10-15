@@ -11,3 +11,9 @@ toml = { version = "1", features = ["preserve_order"] }
 toml_edit = "0.25"
 gezik-i18n.workspace = true
 dirs = "7"
+# Cloud sync (spec 17 §5.1): the code's keys and the sealed bundle. RustCrypto, pure Rust;
+# sha2 is linked already (gezik-ops), getrandom too.
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc"] }
+hkdf = "0.13"
+sha2 = { version = "0.11", default-features = false }
+getrandom = "0.4"
