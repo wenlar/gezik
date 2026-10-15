@@ -767,6 +767,7 @@ msgstr "{0}: \"set\", \"lower\" ya da \"upper\" bekleniyordu, gelen: \"{1}\""
 #: crates/gezik-config/src/settings.rs
 #: crates/gezik-config/src/sync_profiles.rs
 #: crates/gezik-config/src/tags.rs
+#: crates/gezik/src/cloud_sync.rs
 msgid "{} is missing"
 msgstr "{} eksik"
 
@@ -6307,6 +6308,10 @@ msgstr "Eşitlenmedi: {}"
 #: crates/gezik/src/cloud_sync.rs
 msgid "the server sent no version"
 msgstr "sunucu sürüm göndermedi"
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Cannot remove {}"
+msgstr "{} kaldırılamıyor"
 
 #: crates/gezik/src/cloud_sync.rs
 msgid "Cloud Sync is off"

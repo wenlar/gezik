@@ -774,6 +774,7 @@ msgstr ""
 #: crates/gezik-config/src/settings.rs
 #: crates/gezik-config/src/sync_profiles.rs
 #: crates/gezik-config/src/tags.rs
+#: crates/gezik/src/cloud_sync.rs
 msgid "{} is missing"
 msgstr ""
 
@@ -6375,6 +6376,10 @@ msgstr ""
 
 #: crates/gezik/src/cloud_sync.rs
 msgid "the server sent no version"
+msgstr ""
+
+#: crates/gezik/src/cloud_sync.rs
+msgid "Cannot remove {}"
 msgstr ""
 
 #: crates/gezik/src/cloud_sync.rs

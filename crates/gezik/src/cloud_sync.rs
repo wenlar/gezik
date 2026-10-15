@@ -299,7 +299,12 @@ fn apply(folder: &Path, plan: &core::Plan, here: &Files, discard: &dyn Fn(&Path)
             .map_err(|err| other(&err))?;
     }
     for name in &plan.delete {
-        discard(&path_of(folder, name));
+        let path = path_of(folder, name);
+        discard(&path);
+        // Still there: the next round would send it back to every device.
+        if path.exists() {
+            return Err(Failure::Other(t!("Cannot remove {}", path.display())));
+        }
     }
     Ok(true)
 }
@@ -321,6 +326,10 @@ pub fn round(local: &Path, http: Http, discard: &dyn Fn(&Path)) -> Result<Vec<St
     let keys = Keys::derive(&state.code);
     let folder = local.join(FOLDER);
     let base = read_base(local);
+    // Gone as a whole (a cleanup tool, a restore): not every file deleted on purpose.
+    if !folder.is_dir() && !base.is_empty() {
+        return Err(Failure::Other(t!("{} is missing", folder.display())));
+    }
     for _ in 0..TRIES {
         let (remote, version) = match get(http, &state, &keys)? {
             Some((files, version)) => (files, Some(version)),
@@ -372,6 +381,7 @@ fn forget(local: &Path) {
 /// it. The caller moves the store there and runs the first round, which makes the box. The code
 /// as shown.
 pub fn start(folders: &Folders, server: &str, discard: &dyn Fn(&Path)) -> Result<String, String> {
+    let _turn = lock(&ROUND);
     let shown = core::new_code().map_err(|err| gezik_platform::fs::describe(&err))?;
     let code = core::parse_code(&shown).map_err(|typo| gezik_i18n::t("", typo).into_owned())?;
     let local = &folders.local;
@@ -396,6 +406,7 @@ pub fn join(
     http: Http,
     discard: &dyn Fn(&Path),
 ) -> Result<PathBuf, Failure> {
+    let _turn = lock(&ROUND);
     let code = core::parse_code(typed).map_err(|typo| Failure::Other(gezik_i18n::t("", typo).into_owned()))?;
     let mut state = State { server: server.to_owned(), code, ..State::default() };
     let keys = Keys::derive(&state.code);
@@ -418,6 +429,7 @@ pub fn join(
 /// Stop Syncing: the shared files are copied back into this computer's folder (after a backup)
 /// and the cloud sync's own files go; the server is not touched. The backup's path.
 pub fn stop(folders: &Folders, discard: &dyn Fn(&Path)) -> Result<PathBuf, String> {
+    let _turn = lock(&ROUND);
     let backup = crate::settings_backup::stop_sync(folders, discard)?;
     forget(&folders.local);
     Ok(backup)
@@ -425,6 +437,7 @@ pub fn stop(folders: &Folders, discard: &dyn Fn(&Path)) -> Result<PathBuf, Strin
 
 /// Delete from Server: the box goes, for every device that uses the code.
 pub fn delete(local: &Path, http: Http) -> Result<(), Failure> {
+    let _turn = lock(&ROUND);
     let state = State::read(local).ok_or_else(|| Failure::Other(t!("Cloud Sync is off").into_owned()))?;
     let keys = Keys::derive(&state.code);
     match call(http, "DELETE", &state.url(&keys), &keys, None, None)?.status {
@@ -435,6 +448,7 @@ pub fn delete(local: &Path, http: Http) -> Result<(), Failure> {
 
 /// Start Syncing Again after the box went: the next round makes it anew with these settings.
 pub fn again(local: &Path) -> io::Result<()> {
+    let _turn = lock(&ROUND);
     let mut state = State::read(local).ok_or_else(|| io::Error::other("no state"))?;
     state.version = None;
     let _ = std::fs::remove_file(local.join(BASE));
@@ -499,7 +513,9 @@ pub fn run(store: &ConfigStore, only_pending: bool, tell: bool) {
     lock(&RUN).running = true;
     refresh();
     let result = round(local, &system_http, &|path| {
-        let _ = gezik_platform::fs::trash(path);
+        if gezik_platform::fs::trash(path).is_err() {
+            let _ = std::fs::remove_file(path);
+        }
     });
     let said = match &result {
         Ok(conflicts) if !conflicts.is_empty() => {
@@ -860,6 +876,21 @@ mod tests {
         assert_eq!(round(&a, &http, &remove), Err(Failure::Removed));
         again(&a).unwrap();
         assert!(round(&a, &http, &remove).is_ok(), "made anew");
+
+        // `cloud/` gone as a whole is not sent as every file deleted.
+        let aside = a.join("cloud-aside");
+        std::fs::rename(a.join(FOLDER), &aside).unwrap();
+        assert!(matches!(round(&a, &http, &remove), Err(Failure::Other(_))));
+        std::fs::rename(&aside, a.join(FOLDER)).unwrap();
+        // A file the other side removed that will not go here stops the round before the base.
+        put_file(&b.join(FOLDER), "themes/stuck.toml", "[colors]\n");
+        round(&b, &http, &remove).unwrap();
+        round(&a, &http, &remove).unwrap();
+        std::fs::remove_file(b.join(FOLDER).join("themes/stuck.toml")).unwrap();
+        round(&b, &http, &remove).unwrap();
+        assert!(matches!(round(&a, &http, &|_: &Path| {}), Err(Failure::Other(_))));
+        round(&a, &http, &remove).unwrap();
+        assert!(!a.join(FOLDER).join("themes/stuck.toml").exists());
 
         // Stop: the files come back to A's own folder, the cloud's go.
         stop(&Folders { shared: a.join(FOLDER), local: a.clone() }, &remove).unwrap();

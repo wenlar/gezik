@@ -924,6 +924,7 @@ msgstr "{0}：应为 \"set\"、\"lower\" 或 \"upper\"，实际为“{1}”"
 #: crates/gezik-config/src/settings.rs
 #: crates/gezik-config/src/sync_profiles.rs
 #: crates/gezik-config/src/tags.rs
+#: crates/gezik/src/cloud_sync.rs
 #, fuzzy
 msgid "{} is missing"
 msgstr "缺少 {}"
@@ -7697,6 +7698,11 @@ msgstr "未同步：{}"
 #, fuzzy
 msgid "the server sent no version"
 msgstr "服务器未发送版本"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Cannot remove {}"
+msgstr "无法移除 {}"
 
 #: crates/gezik/src/cloud_sync.rs
 #, fuzzy

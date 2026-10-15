@@ -935,6 +935,7 @@ msgstr "{0} : \"set\", \"lower\" ou \"upper\" attendu, reçu \"{1}\""
 #: crates/gezik-config/src/settings.rs
 #: crates/gezik-config/src/sync_profiles.rs
 #: crates/gezik-config/src/tags.rs
+#: crates/gezik/src/cloud_sync.rs
 #, fuzzy
 msgid "{} is missing"
 msgstr "{} est manquant"
@@ -7774,6 +7775,11 @@ msgstr "Non synchronisé : {}"
 #, fuzzy
 msgid "the server sent no version"
 msgstr "le serveur n'a envoyé aucune version"
+
+#: crates/gezik/src/cloud_sync.rs
+#, fuzzy
+msgid "Cannot remove {}"
+msgstr "Impossible de supprimer {}"
 
 #: crates/gezik/src/cloud_sync.rs
 #, fuzzy
