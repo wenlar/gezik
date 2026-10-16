@@ -1,0 +1,506 @@
+import { Theme } from "../theme.slint";
+import { Glyph } from "../glyphs.slint";
+import { MenuEntry, MenuPlace } from "popup-menu.slint";
+
+// A line of the toolbar's popups (view_popups.rs builds them). `kind`: 0 an item (✓ when `on`),
+// 1 a heading, 2 a divider, 3 a line that opens a menu (`keys`: what it is set to now); an
+// item's `keys` are its shortcut.
+export struct ViewLine {
+    id: int,
+    title: string,
+    kind: int,
+    on: bool,
+    keys: string,
+    enabled: bool,
+}
+
+// A toolbar control right of the address bar: a glyph, then a label and ▾ if it has them.
+// `framed`: a bordered button (Layout, Sort), else a bare square (the toggles, ⋯). `on`: its
+// popup is open, or the panel it toggles is shown.
+export component BarButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> text;
+    // What screen readers say.
+    in property <string> label;
+    in property <bool> chevron;
+    in property <bool> framed;
+    in property <bool> on;
+    in property <length> stroke: 1.5px;
+    callback clicked();
+    // A right-click, at a window position.
+    callback menu(length, length);
+
+    height: Theme.control-height;
+    min-width: self.framed ? 14px + (root.chevron ? 14px : 0px) + 16px : self.height;
+    preferred-width: self.framed ? row.preferred-width : self.height;
+    horizontal-stretch: 0;
+    border-radius: Theme.radius;
+    border-width: scope.has-focus ? Theme.focus-width : root.framed ? 1px : 0px;
+    border-color: scope.has-focus ? Theme.focus-ring : root.on ? Theme.accent : Theme.control-border;
+    background: root.on ? Theme.selection : touch.has-hover ? Theme.hover : transparent;
+    forward-focus: scope;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checked: root.on;
+    accessible-action-default => { root.clicked(); }
+
+    row := HorizontalLayout {
+        padding-left: root.framed ? 8px : (root.height - 14px) / 2;
+        padding-right: root.framed ? 8px : (root.height - 14px) / 2;
+        spacing: 6px;
+        alignment: center;
+        Path {
+            width: 14px;
+            height: 14px;
+            viewbox-width: 16;
+            viewbox-height: 16;
+            commands: root.icon;
+            stroke: root.on || root.framed ? Theme.foreground : Theme.foreground-muted;
+            stroke-width: root.stroke;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+        // The first thing to go when the toolbar is short of room.
+        if root.text != "": Text {
+            text: root.text;
+            min-width: 0px;
+            vertical-alignment: center;
+            overflow: elide;
+            color: Theme.foreground;
+        }
+        if root.chevron: Path {
+            width: 8px;
+            height: 8px;
+            viewbox-width: 8;
+            viewbox-height: 8;
+            commands: Glyph.chevron-down;
+            stroke: Theme.foreground-muted;
+            stroke-width: 1.2px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+    }
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Return || event.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.up && event.button == PointerEventButton.right {
+                root.menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+}
+
+// One of `items` chosen (`on`), side by side. `icons`: a 16×16 glyph for each ("" none).
+// `strong`: the chosen one in the selection's colour (the sort's direction), else raised.
+component Segments inherits Rectangle {
+    in property <[ViewLine]> items;
+    in property <[string]> icons;
+    in property <bool> strong;
+    // The keyboard's place among `items` (-1: none of them).
+    in property <int> current: -1;
+    // The place of the one chosen.
+    callback chosen(int);
+
+    height: 28px + 4px;
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: Theme.radius;
+    background: root.strong ? transparent : Theme.background;
+    HorizontalLayout {
+        padding: 2px;
+        spacing: 2px;
+        for item[i] in root.items: Rectangle {
+            border-radius: Theme.radius - 2px;
+            border-width: item.on && !root.strong ? 1px : 0px;
+            border-color: Theme.border;
+            background: item.on ? (root.strong ? Theme.selection : Theme.surface-raised) : touch.has-hover || i == root.current ? Theme.hover : transparent;
+            accessible-role: button;
+            accessible-label: item.title;
+            accessible-checked: item.on;
+            accessible-enabled: item.enabled;
+            accessible-action-default => { root.chosen(i); }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 6px;
+                padding-left: 4px;
+                padding-right: 4px;
+                if root.icons[i] != "": Path {
+                    width: 14px;
+                    height: 14px;
+                    viewbox-width: 16;
+                    viewbox-height: 16;
+                    commands: root.icons[i];
+                    stroke: item.on ? Theme.foreground : Theme.foreground-muted;
+                    stroke-width: 1.5px;
+                    stroke-line-cap: round;
+                    stroke-line-join: round;
+                }
+                Text {
+                    text: item.title;
+                    min-width: 0px;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    color: !item.enabled ? Theme.foreground-muted : item.on && root.strong ? Theme.selection-foreground : item.on ? Theme.foreground : Theme.foreground-muted;
+                }
+            }
+            touch := TouchArea {
+                enabled: item.enabled;
+                mouse-cursor: pointer;
+                clicked => { root.chosen(i); }
+            }
+        }
+    }
+}
+
+// On or off, drawn as a switch.
+component Switch inherits Rectangle {
+    in property <bool> on;
+    width: 30px;
+    height: 16px;
+    border-radius: 8px;
+    border-width: root.on ? 0px : 1px;
+    border-color: Theme.border-strong;
+    background: root.on ? Theme.accent : transparent;
+    Rectangle {
+        x: root.on ? parent.width - 13px : 3px;
+        y: 3px;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        background: root.on ? Theme.accent-foreground : Theme.foreground-muted;
+    }
+}
+
+component Line inherits Rectangle {
+    in property <ViewLine> line;
+    in property <bool> current;
+    callback hovered();
+    callback activate();
+
+    height: root.line.kind == 2 ? 9px : root.line.kind == 1 ? 24px : 30px;
+    border-radius: Theme.radius;
+    background: root.current && root.line.enabled && (root.line.kind == 0 || root.line.kind == 3) ? Theme.hover : transparent;
+
+    if root.line.kind == 2: Rectangle {
+        y: 4px;
+        height: 1px;
+        background: Theme.border;
+    }
+    if root.line.kind == 1: Text {
+        x: 10px;
+        text: root.line.title;
+        font-size: Theme.font-size-small;
+        font-weight: 600;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    if root.line.kind == 0 || root.line.kind == 3: HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 10px;
+        spacing: 8px;
+        Rectangle {
+            width: 12px;
+            if root.line.on: Path {
+                width: 12px;
+                height: 12px;
+                viewbox-width: 8;
+                viewbox-height: 8;
+                commands: Glyph.check;
+                stroke: Theme.accent;
+                stroke-width: 1.2px;
+                stroke-line-cap: round;
+                stroke-line-join: round;
+            }
+        }
+        Text {
+            text: root.line.title;
+            horizontal-stretch: 1;
+            overflow: elide;
+            vertical-alignment: center;
+            color: root.line.enabled ? Theme.foreground : Theme.foreground-muted;
+        }
+        if root.line.keys != "": Text {
+            text: root.line.keys;
+            font-size: Theme.font-size-small;
+            vertical-alignment: center;
+            color: Theme.foreground-muted;
+        }
+        if root.line.kind == 3: Rectangle {
+            width: 8px;
+            Path {
+                width: 8px;
+                height: 8px;
+                viewbox-width: 8;
+                viewbox-height: 8;
+                commands: Glyph.chevron-right;
+                stroke: Theme.foreground-muted;
+                stroke-width: 1.2px;
+            }
+        }
+    }
+    if root.line.kind == 0 || root.line.kind == 3: TouchArea {
+        accessible-role: list-item;
+        accessible-label: root.line.title;
+        accessible-enabled: root.line.enabled;
+        accessible-checked: root.line.on;
+        accessible-action-default => { root.activate(); }
+        enabled: root.line.enabled;
+        changed has-hover => {
+            if self.has-hover {
+                root.hovered();
+            }
+        }
+        clicked => { root.activate(); }
+    }
+}
+
+// The toolbar's popups, drawn in the window over everything (as PopupMenu, placed by
+// popup.rs): `kind` 0 the Layout popup (`lines` the layouts, `segments` the icon sizes,
+// `after` Flat view), 1 a menu (Sort: `lines` the keys, `segments` the directions, `after`
+// Group by and Folders first; ⋯: `lines` only). Up/Down/Enter go through `keys`, which is
+// `lines`, `segments` and `after` in that order; Esc or a press outside closes it.
+export component ViewPopup inherits Rectangle {
+    in property <int> kind;
+    in property <[ViewLine]> lines;
+    in property <[ViewLine]> segments;
+    in property <[ViewLine]> after;
+    in property <[MenuEntry]> keys;
+    in property <string> hint;
+    out property <bool> is-open: root.open;
+    pure callback place(length, length, length, length, length, length, length, length) -> MenuPlace;
+    pure callback step([MenuEntry], int, bool) -> int;
+    // A line chosen: a menu closes first, the Layout popup stays open (Rust fills it again).
+    callback activated(int);
+    // A line that opens a menu, with its box (left, bottom, right, top); this one closes.
+    callback sub(int, length, length, length, length);
+    callback closed();
+
+    property <bool> open;
+    property <length> at-x;
+    property <length> at-y;
+    property <length> flip-x;
+    property <length> flip-y;
+    property <int> current: -1;
+    property <MenuPlace> placed: root.place(
+        root.at-x, root.at-y, root.flip-x, root.flip-y,
+        frame.wanted-width, frame.wanted-height, root.width, root.height);
+
+    public function show(x: length, y: length, flip-x: length, flip-y: length) {
+        root.at-x = x;
+        root.at-y = y;
+        root.flip-x = flip-x;
+        root.flip-y = flip-y;
+        root.current = -1;
+        root.open = true;
+        scope.focus();
+    }
+
+    public function hide() {
+        if root.open {
+            root.open = false;
+            root.closed();
+        }
+    }
+
+    // Line `index` of `keys`; `top`, `bottom` and `left`, `right`: its box, for a menu it opens.
+    function choose(index: int, left: length, bottom: length, right: length, top: length) {
+        if index < 0 || index >= root.keys.length || !root.keys[index].enabled {
+            return;
+        }
+        let id = root.keys[index].id;
+        if root.kind == 0 {
+            root.current = index;
+            root.activated(id);
+            return;
+        }
+        root.hide();
+        if index < root.lines.length && root.lines[index].kind == 3 {
+            root.sub(id, left, bottom, right, top);
+        } else if index >= root.lines.length + root.segments.length && root.after[index - root.lines.length - root.segments.length].kind == 3 {
+            root.sub(id, left, bottom, right, top);
+        } else {
+            root.activated(id);
+        }
+    }
+
+    visible: root.open;
+
+    TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                root.hide();
+            }
+        }
+        scroll-event(event) => {
+            return accept;
+        }
+    }
+
+    scope := FocusScope {
+        x: 0;
+        y: 0;
+        width: 0;
+        height: 0;
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                root.hide();
+            } else if event.text == Key.UpArrow || event.text == Key.DownArrow {
+                root.current = root.step(root.keys, root.current, event.text == Key.DownArrow);
+            } else if event.text == Key.Return || event.text == " " {
+                // From the keyboard a menu it opens goes beside the popup.
+                root.choose(root.current, root.placed.x, root.placed.y + root.placed.height, root.placed.x + root.placed.width, root.placed.y);
+            }
+            return accept;
+        }
+    }
+
+    frame := Rectangle {
+        out property <length> wanted-width: root.kind == 0 ? 300px : 232px;
+        out property <length> wanted-height: root.kind == 0 ? layout.preferred-height : menu.preferred-height;
+        x: root.placed.x;
+        y: root.placed.y;
+        width: root.placed.width;
+        height: root.placed.height;
+        opacity: root.open ? 1 : 0;
+        animate opacity { duration: Theme.motion-popup; }
+        background: Theme.surface-raised;
+        border-width: 1px;
+        border-color: Theme.border;
+        border-radius: Theme.radius + 2px;
+        drop-shadow-blur: 12px;
+        drop-shadow-offset-y: 4px;
+        drop-shadow-color: Theme.shadow;
+        clip: true;
+        accessible-role: list;
+        // A press between the lines stays in the popup.
+        TouchArea { }
+
+        layout := Rectangle {
+            visible: root.kind == 0;
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                Text {
+                    text: @tr("Layout");
+                    font-size: Theme.font-size-small;
+                    font-weight: 600;
+                    color: Theme.foreground-muted;
+                }
+                Segments {
+                    items: root.lines;
+                    icons: [Glyph.view, Glyph.grid, Glyph.columns];
+                    current: root.current;
+                    chosen(i) => { root.choose(i, 0, 0, 0, 0); }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        width: 72px;
+                        text: @tr("Icon size");
+                        vertical-alignment: center;
+                        overflow: elide;
+                        color: Theme.foreground-muted;
+                    }
+                    Segments {
+                        items: root.segments;
+                        current: root.current - root.lines.length;
+                        chosen(i) => { root.choose(root.lines.length + i, 0, 0, 0, 0); }
+                    }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border;
+                }
+                for line[i] in root.after: Rectangle {
+                    height: 26px;
+                    border-radius: Theme.radius;
+                    background: root.current == root.lines.length + root.segments.length + i ? Theme.hover : transparent;
+                    accessible-role: switch;
+                    accessible-label: line.title;
+                    accessible-checked: line.on;
+                    accessible-enabled: line.enabled;
+                    accessible-action-default => { root.choose(root.lines.length + root.segments.length + i, 0, 0, 0, 0); }
+                    opacity: line.enabled ? 1 : 0.5;
+                    HorizontalLayout {
+                        padding-left: 2px;
+                        padding-right: 2px;
+                        Text {
+                            text: line.title;
+                            horizontal-stretch: 1;
+                            vertical-alignment: center;
+                            color: Theme.foreground;
+                        }
+                        Switch {
+                            on: line.on;
+                        }
+                    }
+                    TouchArea {
+                        enabled: line.enabled;
+                        mouse-cursor: pointer;
+                        clicked => { root.choose(root.lines.length + root.segments.length + i, 0, 0, 0, 0); }
+                    }
+                }
+                if root.hint != "": Text {
+                    text: root.hint;
+                    font-size: Theme.font-size-small;
+                    overflow: elide;
+                    color: Theme.foreground-muted;
+                }
+            }
+        }
+
+        menu := Rectangle {
+            visible: root.kind == 1;
+            VerticalLayout {
+                padding: 4px;
+                for line[i] in root.lines: Line {
+                    line: line;
+                    current: i == root.current;
+                    hovered => { root.current = i; }
+                    activate => { root.choose(i, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
+                }
+                if root.segments.length > 0: Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        y: 4px;
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                }
+                if root.segments.length > 0: Segments {
+                    items: root.segments;
+                    icons: [Glyph.up, Glyph.down];
+                    strong: true;
+                    current: root.current - root.lines.length;
+                    chosen(i) => { root.choose(root.lines.length + i, 0, 0, 0, 0); }
+                }
+                if root.segments.length > 0 && root.after.length > 0: Rectangle {
+                    height: 9px;
+                    Rectangle {
+                        y: 4px;
+                        height: 1px;
+                        background: Theme.border;
+                    }
+                }
+                for line[i] in root.after: Line {
+                    line: line;
+                    current: root.lines.length + root.segments.length + i == root.current;
+                    hovered => { root.current = root.lines.length + root.segments.length + i; }
+                    activate => { root.choose(root.lines.length + root.segments.length + i, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y); }
+                }
+            }
+        }
+    }
+}

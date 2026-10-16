@@ -92,10 +92,10 @@ starting.
 
 ## Settings window
 
-**Settings…** (Ctrl+, on Windows and Linux, ⌘, on macOS; also in the View menu, at the end of
+**Settings…** (Ctrl+, on Windows and Linux, ⌘, on macOS; also in the toolbar's ⋯ menu, at the end of
 a folder's right-click menu and in the command palette) shows `settings.toml` in a window. An
 app with a system-wide Ctrl+, (1Password, for one) takes the key before Gezik sees it: then use
-the View menu or the palette, or give `settings` another key in `[shortcuts]`. On
+the ⋯ menu or the palette, or give `settings` another key in `[shortcuts]`. On
 the left are the pages (General, Appearance, Files and Tools, Layouts, Tags, Keyboard, System,
 Advanced, Sync and Backup), then Open settings.toml and Open Config Folder; the search box above the rows looks
 through every page by title, key and description. Each row has the comment the file has for it; a setting the file does not set
@@ -357,19 +357,20 @@ show-system = false       # Windows only: protected system items (desktop.ini, $
 
 `icons = "system"` uses the operating system's icons and type names where Gezik can read
 them; `"gezik"` uses Gezik's own icons, colored by the theme's `icon-*` colors.
-A folder you change in the View menu (mode, sort, grouping, size) keeps its own view in
-`views.toml`. "Apply to all folders" writes the current view into `[view]` (your comments
+A folder you change with the toolbar's Layout and Sort buttons (mode, sort, grouping, size) keeps its own view in
+`views.toml`. "Use this view everywhere" (the ⋯ menu) writes the current view into `[view]` (your comments
 are kept); "Reset this folder" returns a folder to the default. [View rules](features.md#layouts)
 pick a view by path, kind or content for folders you have not changed. The options from
-`hide-extensions` down are the same in every folder, and the View menu changes them here too.
+`hide-extensions` down are the same in every folder, and the ⋯ menu changes the hidden items, system items and extensions here too (the date
+and size formats, single-click and tag dots are in Settings).
 
 Folder sizes are off by default, so nothing is counted in the background. **Calculate
-folder sizes** (row menu and View menu) counts the selected folders, or every folder shown,
+folder sizes** (row menu and the ⋯ menu) counts the selected folders, or every folder shown,
 on any drive. The preview pane (Alt+P) shows a picture, the start of a text file, a
 thumbnail, folder item counts or file facts for the selection; Space opens a larger quick
 look. `[preview] position = "bottom"` puts it under the list (its height is kept in
-`state.toml`), `[panes] stacked = true` the two panes one above the other; both are in the
-View menu too.
+`state.toml`), `[panes] stacked = true` the two panes one above the other; the toolbar's Preview pane
+and Two panes buttons set them on a right-click too.
 
 Themes: see [Writing a theme](themes.md). Shortcuts: see [Keyboard shortcuts](shortcuts.md).
 

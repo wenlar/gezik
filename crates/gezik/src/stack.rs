@@ -204,10 +204,6 @@ impl Stack {
         stack
     }
 
-    pub fn is_open(&self) -> bool {
-        self.0.open.get()
-    }
-
     /// Adds `items` (path, is a folder as far as known); the strip opens. Says so when the
     /// stack is full.
     pub fn add(&self, items: Vec<(PathBuf, bool)>) {

@@ -328,15 +328,18 @@ shell-args = []           # before the command, for a full path
   the selection into the other pane's folder (asking first, where that folder can still be
   changed); Ctrl+U swaps the panes' tabs. **Sync Browsing** makes a step into a sub-folder or
   up in both panes. One pane is the default; the second comes back if you left it open.
-  **Stack Panes** (View menu, `[panes] stacked = true`) puts them one above the other.
+  **Stacked** (right-click the toolbar's Two panes button, `[panes] stacked = true`) puts them
+  one above the other. With two panes side by side, the link between the address bars turns
+  Sync Browsing on and off; the ⋯ menu has Sync browsing, Swap panes and Same folder in other
+  pane.
 - **Folder tree**: the arrow on a folder in the sidebar (places, pinned folders, drives)
-  opens it as a tree; the arrow keys move in it. **Show in Sidebar Tree** (View button menu)
+  opens it as a tree; the arrow keys move in it. **Show in Sidebar Tree** (the toolbar's ⋯ menu)
   opens the tree down to the folder shown, `tree-follow = true` does it all the time. A
   branch is read only when you open it.
-- **Grouping** (View ▸ Group by): by type, date (Today, Yesterday, Earlier this week …) or
+- **Grouping** (the toolbar's Sort menu ▸ Group by): by type, date (Today, Yesterday, Earlier this week …) or
   size, in the list and the grid, with headers that fold; **Collapse / Expand All Groups**.
   A folder keeps its grouping like its sort.
-- **Columns view** (Ctrl+Shift+3, ⌃⌘3 on macOS, or View ▸ Columns) shows folders side by side
+- **Columns view** (Ctrl+Shift+3, ⌃⌘3 on macOS, or the toolbar's Layout popup) shows folders side by side
   as Miller columns: ↑↓ move in a column, → goes into the selected folder, ← goes back. The
   focused column's folder is the tab's location; moving between columns adds no Back step. A
   selected file is previewed in a last column (unless the preview pane is open). Drag files
@@ -352,8 +355,8 @@ shell-args = []           # before the command, for a full path
 - **Property columns**: the column header's right-click menu ▸ **More Columns…** (also the
   palette and View on the macOS menu bar) lists the file properties (Artist, Album, Duration,
   Date Taken, Camera, Dimensions, Pages…); up to 8 show after Size. Only the rows on screen are
-  read, only for the columns shown, in the background. A click on the header sorts by it, View ▸
-  **Sort by property…** and **Group by ▸ Artist** (or another text property, or Date Taken by
+  read, only for the columns shown, in the background. A click on the header sorts by it, the Sort menu's
+  **Property…** and **Group by ▸ Artist** (or another text property, or Date Taken by
   year) read the folder once. A property row of the preview has **Show Column**. View rules
   name them too: `columns = ["artist", "album", "track", "duration"]`, `sort = "track"`,
   `group = "album"`.
@@ -381,7 +384,7 @@ group = "date"
 - **Preview pane** (Alt+P) and **Quick Look** (Space): code in color with line numbers (about
   25 languages), text of any size from end to end, **Show as Hex** for any file, PDF pages
   with zoom (pdfium), pictures zoomed to their real size, video and audio with play, seek and
-  volume (ffmpeg); both tools download only when asked. **Preview at Bottom** (View menu,
+  volume (ffmpeg); both tools download only when asked. **Bottom** (right-click the toolbar's Preview pane button,
   `[preview] position = "bottom"`) puts the pane under the list (under both panes), its
   height dragged.
 - **Quick Look** gives the file the whole window: one bar under it with the name and a
@@ -634,7 +637,7 @@ runs while the section is closed or open and idle: right-click the heading and c
 - **Trash view**: the Recycle Bin / Trash row in the sidebar shows every bin in one list,
   with original location and date deleted. **Put Back**, **Delete Permanently** and **Empty
   Trash**. On macOS, Gezik needs Full Disk Access to show the Trash.
-- **System Integration…** (View menu, or the command palette) adds `gezik` to PATH so it runs
+- **System Integration…** (the toolbar's ⋯ menu, or the command palette) adds `gezik` to PATH so it runs
   from a terminal (Windows: a small `gezik.cmd` and App Paths, under your user only;
   macOS/Linux: a `~/.local/bin/gezik` link). Every change is written to
   `system-changes.toml` first; **Undo all**, or `gezik --unregister`, takes them back.

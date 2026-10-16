@@ -946,6 +946,7 @@ msgstr "Düzenler"
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/search.rs
 #: crates/gezik/src/tags.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Tags"
 msgstr "Etiketler"
@@ -2119,7 +2120,7 @@ msgid "Empty Trash…"
 msgstr "Çöp Sepeti'ni boşalt…"
 
 #: crates/gezik-config/src/shortcuts.rs
-#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/settings.slint
 msgid "System Integration…"
@@ -2359,13 +2360,11 @@ msgid "Clean Up Tag Store…"
 msgstr "Etiket deposunu temizle…"
 
 #: crates/gezik-config/src/shortcuts.rs
-#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Show Preview as Hex"
 msgstr "Önizlemeyi onaltılık göster"
 
 #: crates/gezik-config/src/shortcuts.rs
-#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Play/Pause Preview"
 msgstr "Önizlemeyi oynat/duraklat"
@@ -2378,6 +2377,7 @@ msgstr "Diğer sütunlar…"
 
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Settings…"
 msgstr "Ayarlar…"
@@ -3583,6 +3583,7 @@ msgstr "Hiçbiri"
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Type"
 msgstr "Tür"
@@ -3596,6 +3597,7 @@ msgstr "Tarih"
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/preview/mod.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Size"
@@ -3610,6 +3612,7 @@ msgstr "Etiket"
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/tags.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Rating"
 msgstr "Puan"
@@ -3618,6 +3621,7 @@ msgstr "Puan"
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Git"
 msgstr "Git"
@@ -3687,15 +3691,18 @@ msgid "Huge"
 msgstr "Çok büyük"
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/convert.slint
 msgid "Large"
 msgstr "Büyük"
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/view_popups.rs
 msgid "Medium"
 msgstr "Orta"
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/convert.slint
 msgid "Small"
 msgstr "Küçük"
@@ -3742,6 +3749,7 @@ msgstr "{} arşivi"
 #: crates/gezik-core/src/kind.rs
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/compress.slint
 msgid "Folder"
 msgstr "Klasör"
@@ -3953,7 +3961,6 @@ msgstr "Komut"
 
 #: crates/gezik-core/src/palette.rs
 #: crates/gezik/ui/app.slint
-#: crates/gezik/ui/widgets/pane.slint
 msgid "View"
 msgstr "Görünüm"
 
@@ -3999,6 +4006,7 @@ msgid "With forward slashes"
 msgstr "Eğik çizgiyle"
 
 #: crates/gezik-core/src/path_text.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/conflict-list.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
@@ -7419,141 +7427,7 @@ msgid "Open terminal as administrator"
 msgstr "Yönetici olarak terminal aç"
 
 #: crates/gezik/src/context_menu.rs
-msgid "List"
-msgstr "Liste"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Grid"
-msgstr "Izgara"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Columns"
-msgstr "Sütunlar"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Small icons"
-msgstr "Küçük simgeler"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Medium icons"
-msgstr "Orta simgeler"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Large icons"
-msgstr "Büyük simgeler"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by name"
-msgstr "Ada göre sırala"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by date modified"
-msgstr "Değiştirme tarihine göre sırala"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by date created"
-msgstr "Oluşturma tarihine göre sırala"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by type"
-msgstr "Türe göre sırala"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by size"
-msgstr "Boyuta göre sırala"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by tags"
-msgstr "Etiketlere göre sırala"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by rating"
-msgstr "Puana göre sırala"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by {}…"
-msgstr "Sırala: {}…"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by property…"
-msgstr "Özelliğe göre sırala…"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Ascending"
-msgstr "Artan"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Descending"
-msgstr "Azalan"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Preview pane"
-msgstr "Önizleme bölmesi"
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/drag.rs
-#: crates/gezik/ui/widgets/drop-stack.slint
-msgid "Drop stack"
-msgstr "Bırakma yığını"
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/ui/widgets/ops-panel.slint
-msgid "Operation history"
-msgstr "İşlem geçmişi"
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Hide extensions"
-msgstr "Uzantıları gizle"
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Folders first"
-msgstr "Önce klasörler"
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Single-click to open"
-msgstr "Tek tıklamayla aç"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Show hidden items"
-msgstr "Gizli öğeleri göster"
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Show system items"
-msgstr "Sistem öğelerini göster"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Apply to all folders"
-msgstr "Tüm klasörlere uygula"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Reset this folder"
-msgstr "Bu klasörü sıfırla"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Show in sidebar tree"
-msgstr "Kenar çubuğu ağacında göster"
-
-#: crates/gezik/src/context_menu.rs
-msgid "View rule {} applies"
-msgstr "Görünüm kuralı geçerli: {}"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Reset to rule {}"
-msgstr "Kurala sıfırla: {}"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Date format"
-msgstr "Tarih biçimi"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Size format"
-msgstr "Boyut biçimi"
-
-#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 msgid "Group by"
 msgstr "Grupla"
 
@@ -7688,6 +7562,7 @@ msgid "Search in \"{}\"…"
 msgstr "\"{}\" içinde ara…"
 
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 msgid "Calculate folder sizes"
 msgstr "Klasör boyutlarını hesapla"
 
@@ -7722,36 +7597,20 @@ msgid "Open tab set"
 msgstr "Sekme setini aç"
 
 #: crates/gezik/src/context_menu.rs
-msgid "Flat view"
-msgstr "Düz görünüm"
+msgid "Right"
+msgstr "Sağda"
 
 #: crates/gezik/src/context_menu.rs
-msgid "Preview at bottom"
-msgstr "Önizleme altta"
+msgid "Bottom"
+msgstr "Altta"
 
 #: crates/gezik/src/context_menu.rs
-msgid "Two panes"
-msgstr "İki bölme"
+msgid "Side by side"
+msgstr "Yan yana"
 
 #: crates/gezik/src/context_menu.rs
-msgid "Stack panes"
-msgstr "Bölmeleri üst üste koy"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sync browsing"
-msgstr "Gezinmeyi eşitle"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Swap panes"
-msgstr "Bölmeleri değiştir"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Same folder in other pane"
-msgstr "Diğer bölmede aynı klasör"
-
-#: crates/gezik/src/context_menu.rs
-msgid "Tag dots"
-msgstr "Etiket noktaları"
+msgid "Stacked"
+msgstr "Üst üste"
 
 #: crates/gezik/src/context_menu.rs
 msgid "Cannot show the menu: {}"
@@ -8241,6 +8100,12 @@ msgstr "Karşılaştır  {}  ↔  {}  ·  {}"
 #: crates/gezik/src/diff.rs
 msgid "Cannot copy: {}"
 msgstr "Kopyalanamıyor: {}"
+
+#: crates/gezik/src/drag.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Drop stack"
+msgstr "Bırakma yığını"
 
 #: crates/gezik/src/drag.rs
 msgid "Use Copy To… for large selections"
@@ -9722,6 +9587,24 @@ msgstr "Eşleşen yok"
 #: crates/gezik/src/palette.rs
 msgid "Toggle Tag: {}"
 msgstr "Etiketi aç/kapat: {}"
+
+#: crates/gezik/src/palette.rs
+msgid "Hide extensions"
+msgstr "Uzantıları gizle"
+
+#: crates/gezik/src/palette.rs
+#: crates/gezik/src/view_popups.rs
+msgid "Folders first"
+msgstr "Önce klasörler"
+
+#: crates/gezik/src/palette.rs
+msgid "Single-click to open"
+msgstr "Tek tıklamayla aç"
+
+#: crates/gezik/src/palette.rs
+#: crates/gezik/src/view_popups.rs
+msgid "Show system items"
+msgstr "Sistem öğelerini göster"
 
 #: crates/gezik/src/palette.rs
 msgid "Date format: {}"
@@ -12187,6 +12070,93 @@ msgstr[0] "{0} · {n} seçili"
 msgid "Drive"
 msgstr "Sürücü"
 
+#: crates/gezik/src/view_popups.rs
+msgid "Date modified"
+msgstr "Değiştirme tarihi"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Date created"
+msgstr "Oluşturma tarihi"
+
+#: crates/gezik/src/view_popups.rs
+msgid "List"
+msgstr "Liste"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Grid"
+msgstr "Izgara"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Columns"
+msgstr "Sütunlar"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Flat view"
+msgstr "Düz görünüm"
+
+#: crates/gezik/src/view_popups.rs
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Sort by"
+msgstr "Sıralama ölçütü"
+
+#: crates/gezik/src/view_popups.rs
+#: crates/gezik/ui/app.slint
+msgid "Property…"
+msgstr "Özellik…"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Ascending"
+msgstr "Artan"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Descending"
+msgstr "Azalan"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Show hidden items"
+msgstr "Gizli öğeleri göster"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Show file extensions"
+msgstr "Dosya uzantılarını göster"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Use this view everywhere"
+msgstr "Bu görünümü her yerde kullan"
+
+#: crates/gezik/src/view_popups.rs
+msgid "View rule {} applies"
+msgstr "Görünüm kuralı geçerli: {}"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Reset this folder"
+msgstr "Bu klasörü sıfırla"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Reset to rule {}"
+msgstr "Kurala sıfırla: {}"
+
+#: crates/gezik/src/view_popups.rs
+#: crates/gezik/ui/app.slint
+msgid "Sync browsing"
+msgstr "Gezinmeyi eşitle"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Swap panes"
+msgstr "Bölmeleri değiştir"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Same folder in other pane"
+msgstr "Diğer bölmede aynı klasör"
+
+#: crates/gezik/src/view_popups.rs
+msgid "Show in sidebar tree"
+msgstr "Kenar çubuğu ağacında göster"
+
+#: crates/gezik/src/view_popups.rs
+msgid "{} switch layout"
+msgstr "{} düzeni değiştirir"
+
 #: crates/gezik/ui/app.slint
 msgid "Edit"
 msgstr "Düzenle"
@@ -12206,10 +12176,6 @@ msgstr "Sütunlar olarak"
 #: crates/gezik/ui/app.slint
 msgid "Group By"
 msgstr "Grupla"
-
-#: crates/gezik/ui/app.slint
-msgid "Property…"
-msgstr "Özellik…"
 
 #: crates/gezik/ui/app.slint
 msgid "Sort by Property…"
@@ -12781,6 +12747,10 @@ msgid "Operations"
 msgstr "İşlemler"
 
 #: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Operation history"
+msgstr "İşlem geçmişi"
+
+#: crates/gezik/ui/widgets/ops-panel.slint
 msgid "Details"
 msgstr "Ayrıntılar"
 
@@ -12788,6 +12758,27 @@ msgstr "Ayrıntılar"
 #: crates/gezik/ui/widgets/size-map.slint
 msgid "Up"
 msgstr "Yukarı"
+
+#: crates/gezik/ui/widgets/pane.slint
+#: crates/gezik/ui/widgets/view-popups.slint
+msgid "Layout"
+msgstr "Düzen"
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Sort by {}"
+msgstr "Sıralama ölçütü: {}"
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Preview pane"
+msgstr "Önizleme bölmesi"
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Two panes"
+msgstr "İki bölme"
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "More view options"
+msgstr "Diğer görünüm seçenekleri"
 
 #: crates/gezik/ui/widgets/pane.slint
 msgid "Left pane, {}"
@@ -12975,10 +12966,6 @@ msgid "Preview"
 msgstr "Önizleme"
 
 #: crates/gezik/ui/widgets/rename-batch.slint
-msgid "Sort by"
-msgstr "Sıralama ölçütü"
-
-#: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Only changed"
 msgstr "Yalnız değişenler"
 
@@ -13129,6 +13116,10 @@ msgstr "Yeni sekme"
 #: crates/gezik/ui/widgets/tool-table.slint
 msgid "Status"
 msgstr "Durum"
+
+#: crates/gezik/ui/widgets/view-popups.slint
+msgid "Icon size"
+msgstr "Simge boyutu"
 
 #: crates/gezik-config/templates/settings.toml
 msgctxt "setting:language"
@@ -13895,6 +13886,42 @@ msgctxt "setting:commands"
 msgid "Commands"
 msgstr "Komutlar"
 
+#~ msgid "Small icons"
+#~ msgstr "Küçük simgeler"
+#~ msgid "Medium icons"
+#~ msgstr "Orta simgeler"
+#~ msgid "Large icons"
+#~ msgstr "Büyük simgeler"
+#~ msgid "Sort by name"
+#~ msgstr "Ada göre sırala"
+#~ msgid "Sort by date modified"
+#~ msgstr "Değiştirme tarihine göre sırala"
+#~ msgid "Sort by date created"
+#~ msgstr "Oluşturma tarihine göre sırala"
+#~ msgid "Sort by type"
+#~ msgstr "Türe göre sırala"
+#~ msgid "Sort by size"
+#~ msgstr "Boyuta göre sırala"
+#~ msgid "Sort by tags"
+#~ msgstr "Etiketlere göre sırala"
+#~ msgid "Sort by rating"
+#~ msgstr "Puana göre sırala"
+#~ msgid "Sort by {}…"
+#~ msgstr "Sırala: {}…"
+#~ msgid "Sort by property…"
+#~ msgstr "Özelliğe göre sırala…"
+#~ msgid "Apply to all folders"
+#~ msgstr "Tüm klasörlere uygula"
+#~ msgid "Date format"
+#~ msgstr "Tarih biçimi"
+#~ msgid "Size format"
+#~ msgstr "Boyut biçimi"
+#~ msgid "Preview at bottom"
+#~ msgstr "Önizleme altta"
+#~ msgid "Stack panes"
+#~ msgstr "Bölmeleri üst üste koy"
+#~ msgid "Tag dots"
+#~ msgstr "Etiket noktaları"
 #~ msgid "{0} (+{n} more)"
 #~ msgid_plural "{0} (+{n} more)"
 #~ msgstr[0] "{0} (+{n} daha)"

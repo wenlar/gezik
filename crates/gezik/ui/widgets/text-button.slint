@@ -8,8 +8,6 @@ export component TextButton inherits Rectangle {
     // a menu arrow or a symbol the UI font may not have (the software renderer has no font
     // fallback).
     in property <string> icon;
-    // SVG path commands in a 16×16 box, drawn before the label (View ▾'s three lines).
-    in property <string> lead-icon;
     // What screen readers say; the text unless set (an icon-only button needs it).
     in property <string> label: root.text;
     in property <bool> primary;
@@ -20,10 +18,9 @@ export component TextButton inherits Rectangle {
     // Whether it has the keyboard (a layer that keeps Tab inside it follows it).
     out property <bool> has-focus: scope.has-focus;
 
-    // The lead glyph, the label and the icon, centered together.
+    // The label and the icon, centered together.
     property <length> gap: root.text != "" && root.icon != "" ? Theme.spacing : 0px;
-    property <length> lead: root.lead-icon != "" ? 16px + Theme.spacing : 0px;
-    out property <length> content-width: root.lead + caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
+    out property <length> content-width: caption.preferred-width + (root.icon != "" ? root.gap + 8px : 0px);
 
     height: Theme.row-height + 4px;
     min-width: root.compact ? root.content-width + Theme.spacing * 2 : max(72px, root.content-width + Theme.spacing * 4);
@@ -41,23 +38,9 @@ export component TextButton inherits Rectangle {
     accessible-checked: root.checked;
     accessible-action-default => { root.clicked(); }
 
-    if root.lead-icon != "": Path {
-        x: (parent.width - root.content-width) / 2;
-        y: (parent.height - 16px) / 2;
-        width: 16px;
-        height: 16px;
-        viewbox-width: 16;
-        viewbox-height: 16;
-        commands: root.lead-icon;
-        stroke: root.primary ? Theme.accent-foreground : Theme.foreground;
-        stroke-width: 1.5px;
-        stroke-line-cap: round;
-        stroke-line-join: round;
-    }
-
-    // Centered, moved to make room for the lead glyph and the icon.
+    // Centered, moved to make room for the icon.
     caption := Text {
-        x: root.lead + (caption.preferred-width - root.content-width) / 2;
+        x: (caption.preferred-width - root.content-width) / 2;
         width: parent.width;
         height: parent.height;
         text: root.text;
@@ -67,7 +50,7 @@ export component TextButton inherits Rectangle {
     }
 
     if root.icon != "": Path {
-        x: (parent.width - root.content-width) / 2 + root.lead + caption.preferred-width + root.gap;
+        x: (parent.width - root.content-width) / 2 + caption.preferred-width + root.gap;
         y: (parent.height - 8px) / 2;
         width: 8px;
         height: 8px;

@@ -1,7 +1,7 @@
 import { Theme } from "../theme.slint";
 import { Glyph } from "../glyphs.slint";
 import { ToolButton } from "button.slint";
-import { TextButton } from "text-button.slint";
+import { BarButton } from "view-popups.slint";
 import { Breadcrumb, CrumbItem } from "breadcrumb.slint";
 import { TabBar, TabItem } from "tab-bar.slint";
 import { FileView, ItemRow, FieldColumn } from "file-view.slint";
@@ -38,6 +38,8 @@ export struct PaneData {
     // The sort column (0 Name, 1-4 Modified, Created, Type, Size, 5 Folder, 6 Match) and direction.
     sort-column: int,
     sort-desc: bool,
+    // The sort's name on the Sort button ("Name", "Date modified", a property's).
+    sort-label: string,
     // The field columns' headers (view/mod.rs `set_field_columns`), their widths' sum and count.
     field-columns: [FieldColumn],
     field-width: length,
@@ -158,7 +160,7 @@ export struct PaneFocus {
 }
 
 // One pane (spec 10 §3.1): the tab strip, the toolbar (Back, Forward, Up, Refresh, the
-// address, View), the search and filter bars and the file view. Its children are the row
+// address, the view's controls), the search and filter bars and the file view. Its children are the row
 // under the toolbar (the window's sidebar and preview); the bars and the sheet are laid
 // over that row where `sheet-*` say.
 export component PaneView inherits Rectangle {
@@ -201,6 +203,10 @@ export component PaneView inherits Rectangle {
     // The window's preview (shown as the last Miller column while its own pane is closed), and
     // the Miller columns' width (every pane's).
     in property <bool> preview-open;
+    // The preview pane is on (the toolbar's toggle; `preview-open` is whether it shows here).
+    in property <bool> preview-on;
+    // Which of this pane's toolbar popups is open (0 Layout, 1 Sort, 2 ⋯; -1 none).
+    in property <int> popup-open: -1;
     in property <PreviewInfo> preview;
     in property <string> mono-font;
     in-out property <length> column-width;
@@ -229,7 +235,11 @@ export component PaneView inherits Rectangle {
     callback tab-move(int, int, int);
     callback tab-menu(int, int, length, length);
     callback tab-out(int, int, length, length, bool) -> bool;
-    callback view-menu(int, length, length, length, length);
+    // A toolbar popup (0 Layout, 1 Sort, 2 ⋯) under its button's box (left, bottom, right,
+    // top), as for every menu that opens under a button.
+    callback view-popup(int, int, length, length, length, length);
+    // A panel toggle (0 preview, 1 two panes) clicked, or right-clicked (true) at a window position.
+    callback panel-toggle(int, int, bool, length, length);
     callback filter-edited(int, string);
     callback filter-menu(int, length, length, length, length);
     callback filter-search(int);
@@ -308,6 +318,7 @@ export component PaneView inherits Rectangle {
     property <bool> trash-shown;
     property <int> sort-column;
     property <bool> sort-desc;
+    property <string> sort-label;
     property <int> groups-version;
     property <int> renaming-index: -1;
     property <int> rename-select;
@@ -416,6 +427,7 @@ export component PaneView inherits Rectangle {
         root.trash-shown = root.data.trash-shown;
         root.sort-column = root.data.sort-column;
         root.sort-desc = root.data.sort-desc;
+        root.sort-label = root.data.sort-label;
         root.groups-version = root.data.groups-version;
         root.rename-select = root.data.rename-select;
         root.rename-error = root.data.rename-error;
@@ -614,17 +626,61 @@ export component PaneView inherits Rectangle {
                         root.navigate(root.index, path);
                     }
                 }
-                // In a narrow pane its glyph only, leaving the address room for the folder's name.
-                TextButton {
-                    text: root.narrow ? "" : @tr("View");
-                    label: @tr("View");
-                    lead-icon: Glyph.view;
-                    icon: root.narrow ? "" : Glyph.chevron-down;
-                    compact: root.narrow;
-                    height: Theme.control-height;
+                // How the folder looks; the panels; the rest (design 3a, split toolbar).
+                BarButton {
+                    framed: true;
+                    chevron: true;
+                    icon: root.view-mode == 1 ? Glyph.grid : root.view-mode == 2 ? Glyph.columns : Glyph.view;
+                    label: @tr("Layout");
+                    on: root.popup-open == 0;
                     clicked => {
                         root.end-path-editing();
-                        root.view-menu(root.index, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
+                        root.view-popup(root.index, 0, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
+                    }
+                }
+                // In a narrow pane its glyph only, leaving the address room for the folder's name.
+                BarButton {
+                    framed: true;
+                    chevron: true;
+                    icon: Glyph.sort;
+                    text: root.narrow ? "" : root.sort-label;
+                    label: @tr("Sort by {}", root.sort-label);
+                    on: root.popup-open == 1;
+                    clicked => {
+                        root.end-path-editing();
+                        root.view-popup(root.index, 1, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
+                    }
+                }
+                if !root.narrow: Rectangle {
+                    width: 1px;
+                    Rectangle {
+                        y: (parent.height - self.height) / 2;
+                        height: 18px;
+                        background: Theme.border;
+                    }
+                }
+                BarButton {
+                    icon: Glyph.preview-pane;
+                    label: @tr("Preview pane");
+                    on: root.preview-on;
+                    clicked => { root.panel-toggle(root.index, 0, false, 0, 0); }
+                    menu(x, y) => { root.panel-toggle(root.index, 0, true, x, y); }
+                }
+                BarButton {
+                    icon: Glyph.two-panes;
+                    label: @tr("Two panes");
+                    on: root.dual;
+                    clicked => { root.panel-toggle(root.index, 1, false, 0, 0); }
+                    menu(x, y) => { root.panel-toggle(root.index, 1, true, x, y); }
+                }
+                BarButton {
+                    icon: Glyph.more;
+                    stroke: 2.2px;
+                    label: @tr("More view options");
+                    on: root.popup-open == 2;
+                    clicked => {
+                        root.end-path-editing();
+                        root.view-popup(root.index, 2, self.absolute-position.x, self.absolute-position.y + self.height, self.absolute-position.x + self.width, self.absolute-position.y);
                     }
                 }
             }
