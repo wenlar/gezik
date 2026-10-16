@@ -1323,12 +1323,12 @@ impl Drags {
         let Some((p, list)) = list_under(&layout, x, y) else { return self.0.scroll_timer.stop() };
         let row_height = list.geometry.row_height();
         let step = drag::edge_scroll(y - list.rect.y, list.rect.height, row_height / 2.0);
-        let lines = if list.groups.is_empty() {
-            list.geometry.row_count(list.count)
+        let content = if list.groups.is_empty() {
+            list.geometry.row_count(list.count) as f32 * row_height
         } else {
-            gezik_core::layout::Lines { spans: &list.groups, per_row: list.geometry.per_row() }.count()
+            let lines = gezik_core::layout::Lines { spans: &list.groups, per_row: list.geometry.per_row() };
+            lines.top(lines.count(), list.geometry.header_height(), row_height)
         };
-        let content = lines as f32 * row_height;
         let lowest = (list.rect.height - content).min(0.0);
         if let Some(pane) = crate::panes::at(index(p)) {
             pane.view.set_list_scroll((list.scroll + step).clamp(lowest, 0.0));

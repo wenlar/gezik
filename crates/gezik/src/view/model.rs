@@ -73,12 +73,152 @@ pub struct ItemsModel {
     data: Rc<RefCell<ViewData>>,
     /// Entries per line: 1 in the list.
     per_row: Cell<usize>,
+    /// The file view's model has only the lines near the screen as rows, each with its place
+    /// (group headers are shorter than a grid's lines, which a ListView cannot place); `None`
+    /// for the columns' ListView, which takes every line.
+    window: Option<Window>,
     pub notify: ModelNotify,
+}
+
+/// Where the file view is scrolled and how high its lines are; the lines that are rows.
+#[derive(Default)]
+struct Window {
+    view: Cell<Viewport>,
+    lines: Cell<(usize, usize)>,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Viewport {
+    /// The offset (content-y, zero or negative) and the visible list's height.
+    pub scroll: f32,
+    pub height: f32,
+    /// A group header line's height and a line of entries'.
+    pub header: f32,
+    pub row: f32,
 }
 
 impl ItemsModel {
     pub fn new(data: Rc<RefCell<ViewData>>) -> ItemsModel {
-        ItemsModel { data, per_row: Cell::new(1), notify: ModelNotify::default() }
+        ItemsModel { data, per_row: Cell::new(1), window: None, notify: ModelNotify::default() }
+    }
+
+    /// The file view's model: only the lines near the screen are rows (`set_viewport`).
+    pub fn windowed(data: Rc<RefCell<ViewData>>) -> ItemsModel {
+        ItemsModel { window: Some(Window::default()), ..ItemsModel::new(data) }
+    }
+
+    /// The list was scrolled or resized, or its lines changed height: the rows follow, those
+    /// still on screen kept.
+    pub fn set_viewport(&self, view: Viewport) {
+        let Some(w) = &self.window else { return };
+        let old = w.view.replace(view);
+        if (old.header, old.row) != (view.header, view.row) {
+            return self.notify.reset();
+        }
+        if old != view {
+            self.follow();
+        }
+    }
+
+    /// Lines were added at the end (search results coming in).
+    pub fn lines_added(&self, from: usize, count: usize) {
+        if self.window.is_none() {
+            return self.notify.row_added(from, count);
+        }
+        self.follow();
+        // The first row carries the height of all of them.
+        if self.row_count() > 0 {
+            self.notify.row_changed(0);
+        }
+    }
+
+    /// Makes the rows the lines near the screen, told as rows added and removed at the edges.
+    fn follow(&self) {
+        let Some(w) = &self.window else { return };
+        let (a, b) = w.lines.get();
+        let new = self.wanted();
+        let (c, d) = (new.start, new.end);
+        if (a, b) == (c, d) {
+            return;
+        }
+        w.lines.set((c, d));
+        if c >= b || d <= a {
+            return self.notify.reset();
+        }
+        // Rows `c..b` stay at the front, then the end moves.
+        if c < a {
+            self.notify.row_added(0, a - c);
+        } else if c > a {
+            self.notify.row_removed(0, c - a);
+        }
+        if d > b {
+            self.notify.row_added(b - c, d - b);
+        } else if d < b {
+            self.notify.row_removed(d - c, b - d);
+        }
+    }
+
+    /// The lines near the screen: half a screen more each way, so a scroll step shows no gap
+    /// before the rows follow it.
+    fn wanted(&self) -> Range<usize> {
+        let Some(w) = &self.window else { return 0..self.line_count() };
+        let v = w.view.get();
+        self.lines_between(-v.scroll - v.height / 2.0, -v.scroll + v.height * 1.5)
+    }
+
+    /// Every line of the view, rows or not.
+    pub fn line_count(&self) -> usize {
+        let data = self.data.borrow();
+        let per_row = self.per_row.get();
+        if data.groups.is_empty() {
+            return data.listing.len().div_ceil(per_row);
+        }
+        Lines { spans: &data.groups, per_row }.count()
+    }
+
+    /// The lines any part of which is between content `y0` and `y1`.
+    pub fn lines_between(&self, y0: f32, y1: f32) -> Range<usize> {
+        let v = self.viewport();
+        let data = self.data.borrow();
+        if data.groups.is_empty() {
+            let count = data.listing.len().div_ceil(self.per_row.get());
+            let lines = super::visible_lines(-y0, y1 - y0, v.row);
+            return lines.start.min(count)..lines.end.min(count);
+        }
+        let lines = Lines { spans: &data.groups, per_row: self.per_row.get() };
+        let Some(first) = lines.at(y0.max(0.0), v.header, v.row) else { return 0..0 };
+        let last = lines.at(y1, v.header, v.row).map_or(lines.count(), |l| l + 1);
+        first..last.max(first)
+    }
+
+    /// Line `line`'s top in content coordinates; the line count gives the bottom of the last.
+    pub fn line_top(&self, line: usize) -> f32 {
+        let v = self.viewport();
+        let data = self.data.borrow();
+        if data.groups.is_empty() {
+            return line as f32 * v.row;
+        }
+        Lines { spans: &data.groups, per_row: self.per_row.get() }.top(line, v.header, v.row)
+    }
+
+    fn viewport(&self) -> Viewport {
+        self.window.as_ref().map(|w| w.view.get()).unwrap_or_default()
+    }
+
+    /// The first line that is a row.
+    fn first_line(&self) -> usize {
+        self.window.as_ref().map_or(0, |w| w.lines.get().0)
+    }
+
+    /// Line `line`'s row, if it is one.
+    fn row_of_line(&self, line: usize) -> Option<usize> {
+        match &self.window {
+            None => Some(line),
+            Some(w) => {
+                let (a, b) = w.lines.get();
+                (a..b).contains(&line).then(|| line - a)
+            }
+        }
     }
 
     pub fn per_row(&self) -> usize {
@@ -100,18 +240,22 @@ impl ItemsModel {
                 true
             }
             Plan::Lines(lines) => {
-                lines.into_iter().for_each(|line| self.notify.row_changed(line));
+                lines
+                    .into_iter()
+                    .filter_map(|line| self.row_of_line(line))
+                    .for_each(|row| self.notify.row_changed(row));
                 false
             }
         }
     }
 
-    /// Redraws `lines` (model rows), those past the end left out; never a reset. Returns how
+    /// Redraws `lines`, those past the end or not rows left out; never a reset. Returns how
     /// many were redrawn.
     pub fn lines_changed(&self, lines: Range<usize>) -> usize {
-        let lines = lines.start..lines.end.min(self.row_count());
-        lines.clone().for_each(|line| self.notify.row_changed(line));
-        lines.len()
+        let count = self.window.as_ref().map_or_else(|| self.line_count(), |w| w.lines.get().1 - w.lines.get().0);
+        let rows: Vec<usize> = lines.filter_map(|line| self.row_of_line(line)).filter(|&r| r < count).collect();
+        rows.iter().for_each(|&row| self.notify.row_changed(row));
+        rows.len()
     }
 
     /// The line entry `index` is on and its column; `None` in a closed group or past the end.
@@ -131,15 +275,41 @@ impl Model for ItemsModel {
     type Data = ItemRow;
 
     fn row_count(&self) -> usize {
-        let data = self.data.borrow();
-        let per_row = self.per_row.get();
-        if data.groups.is_empty() {
-            return data.listing.len().div_ceil(per_row);
-        }
-        Lines { spans: &data.groups, per_row }.count()
+        let Some(w) = &self.window else { return self.line_count() };
+        // After a reset the lines may be others: the rows are the lines near the screen now.
+        let lines = self.wanted();
+        w.lines.set((lines.start, lines.end));
+        lines.len()
     }
 
-    fn row_data(&self, line: usize) -> Option<ItemRow> {
+    fn row_data(&self, row: usize) -> Option<ItemRow> {
+        let line = self.first_line() + row;
+        if self.window.as_ref().is_some_and(|w| line >= w.lines.get().1) {
+            return None;
+        }
+        let place = self.window.as_ref().map(|_| {
+            let (top, bottom) = (self.line_top(line), self.line_top(line + 1));
+            (top, bottom - top, self.line_top(self.line_count()))
+        });
+        let mut item = self.line_data(line)?;
+        if let Some((y, height, total)) = place {
+            (item.y, item.height, item.total) = (y, height, total);
+        }
+        Some(item)
+    }
+
+    fn model_tracker(&self) -> &dyn ModelTracker {
+        &self.notify
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl ItemsModel {
+    /// Line `line` as a row, not yet placed.
+    fn line_data(&self, line: usize) -> Option<ItemRow> {
         let data = self.data.borrow();
         let per_row = self.per_row.get();
         let len = data.listing.len();
@@ -157,20 +327,7 @@ impl Model for ItemsModel {
         }
         let first = i32::try_from(cells.start).unwrap_or(i32::MAX);
         let cells: Vec<FileRow> = cells.map(|i| file_row(&data, i)).collect();
-        Some(ItemRow {
-            first,
-            cells: ModelRc::new(VecModel::from(cells)),
-            header: Default::default(),
-            collapsed: false,
-        })
-    }
-
-    fn model_tracker(&self) -> &dyn ModelTracker {
-        &self.notify
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+        Some(ItemRow { first, cells: ModelRc::new(VecModel::from(cells)), ..Default::default() })
     }
 }
 
@@ -179,9 +336,9 @@ fn header_row(data: &ViewData, g: usize) -> Option<ItemRow> {
     let (span, key) = (data.groups.get(g)?, data.group_keys.get(g)?);
     (span.start < data.listing.len()).then(|| ItemRow {
         first: i32::try_from(span.start).unwrap_or(i32::MAX),
-        cells: ModelRc::default(),
         header: key.header(span.len).into(),
         collapsed: span.collapsed,
+        ..Default::default()
     })
 }
 
@@ -832,6 +989,28 @@ mod tests {
         assert_eq!(model.row_count(), 3);
         assert_eq!(model.place_of(1), Some((1, 1)));
         assert_eq!(model.place_of(3), None, "closed");
+    }
+
+    #[test]
+    fn a_windowed_model_has_the_lines_near_the_screen_at_their_places() {
+        let names: Vec<String> = (0..100).map(|i| format!("f{i}")).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        // A header 20 high, 50 lines 26 high, a closed header: 1340 in all.
+        let data = grouped(&names, &[(0, 50, false), (50, 50, true)], &["A", "B"]);
+        let model = ItemsModel::windowed(Rc::new(RefCell::new(data)));
+        let view = Viewport { scroll: -260.0, height: 100.0, header: 20.0, row: 26.0 };
+        model.set_viewport(view);
+        // Lines 10-14 show (y 260-360); with half a screen more each way, lines 8-16.
+        assert_eq!(model.row_count(), 9);
+        let first = model.row_data(0).unwrap();
+        assert_eq!((first.first, first.y, first.height, first.total), (7, 202.0, 26.0, 1340.0));
+        assert!(model.row_data(9).is_none());
+        model.set_viewport(Viewport { scroll: -1300.0, ..view });
+        assert_eq!(model.row_count(), 4, "lines 48-51");
+        let last = model.row_data(3).unwrap();
+        assert_eq!((last.header.as_str(), last.y, last.height), ("B (50)", 1320.0, 20.0));
+        assert_eq!(model.line_top(52), 1340.0);
+        assert_eq!(model.lines_changed(0..60), 4, "only the lines that are rows");
     }
 
     #[test]

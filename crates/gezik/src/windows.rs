@@ -1212,6 +1212,9 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
     window.on_list_line_of(|pane, i| {
         panes::with_row(pane, |p| p.view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).0).unwrap_or(0)
     });
+    window.on_list_line_top(|pane, line| {
+        panes::with_row(pane, |p| p.view.line_top(usize::try_from(line).unwrap_or(0))).unwrap_or(0.0)
+    });
     window.on_list_column_of(|pane, i| {
         panes::with_row(pane, |p| p.view.place_of(usize::try_from(i).unwrap_or(usize::MAX)).1).unwrap_or(0)
     });
@@ -1279,7 +1282,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         panes::with_row(pane, |p| p.view.grid_columns_changed(usize::try_from(columns).unwrap_or(1)));
     });
     // What the pane keeps and only tells (spec 10 §3.2): Rust's mirror of it.
-    window.on_scrolled(|pane, y| panes::mirror_at(pane).scroll.set(y));
+    window.on_scrolled(|pane, y| {
+        panes::mirror_at(pane).scroll.set(y);
+        panes::with_row(pane, |p| p.view.viewport_changed());
+    });
     window.on_pane_focus(|pane, focus| {
         // A field of the pane took the keyboard: an action in that pane.
         if focus.filter || focus.search || focus.rename {
@@ -1291,7 +1297,10 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
         let columns = usize::try_from(geometry.grid_columns).unwrap_or(1);
         *panes::mirror_at(pane).geometry.borrow_mut() = geometry;
         // A pane made after the first layout never sees its grid's columns change.
-        panes::with_row(pane, |p| p.view.grid_columns_changed(columns));
+        panes::with_row(pane, |p| {
+            p.view.grid_columns_changed(columns);
+            p.view.viewport_changed();
+        });
     });
     window.on_revealed(|pane, index, target| {
         panes::with_row(pane, |p| p.view.revealed(index, target));

@@ -9,12 +9,14 @@ pub enum Geometry {
     List {
         row_height: f32,
     },
-    /// `left`: where the first column starts, in the list's coordinates (the grid is inset).
+    /// `left`: where the first column starts, in the list's coordinates (the grid is inset);
+    /// `header`: a group header line's height (a list row's, not a cell's).
     Grid {
         cell_width: f32,
         cell_height: f32,
         columns: usize,
         left: f32,
+        header: f32,
     },
 }
 
@@ -54,7 +56,7 @@ impl Geometry {
     /// A grid as wide as `width`: as many whole cells per row as fit, at least one.
     pub fn grid(width: f32, cell_width: f32, cell_height: f32) -> Geometry {
         let columns = if cell_width > 0.0 { (width / cell_width).floor().max(1.0) as usize } else { 1 };
-        Geometry::Grid { cell_width, cell_height, columns, left: 0.0 }
+        Geometry::Grid { cell_width, cell_height, columns, left: 0.0, header: cell_height }
     }
 
     /// Entries per row: 1 in the list.
@@ -69,6 +71,14 @@ impl Geometry {
         match self {
             Geometry::List { row_height } => *row_height,
             Geometry::Grid { cell_height, .. } => *cell_height,
+        }
+    }
+
+    /// A group header line's height: a row's in the list.
+    pub fn header_height(&self) -> f32 {
+        match self {
+            Geometry::List { row_height } => *row_height,
+            Geometry::Grid { header, .. } => *header,
         }
     }
 
@@ -173,8 +183,8 @@ pub enum Line {
 }
 
 /// The lines of a grouped view: per group a header line, then its entries `per_row` a line
-/// (none while closed). Every line is as high as the others (spec 10 §6.2: in the grid a
-/// header takes a cell line). shortcut: each call walks the groups (a rubber band or the lines
+/// (none while closed). A header line is as high as a list row, in the grid too (`top`, `at`).
+/// shortcut: each call walks the groups (a rubber band or the lines
 /// on screen walk them once); keep the first line of each if a folder with thousands of types
 /// scrolls slowly.
 #[derive(Debug, Clone, Copy)]
@@ -246,16 +256,13 @@ impl Lines<'_> {
     /// The entries `rect` touches (content coordinates), as `Geometry::items_in_rect` does
     /// without groups; header lines have none.
     pub fn items_in_rect(&self, geometry: &Geometry, rect: Rect) -> Vec<Range<usize>> {
-        let h = geometry.row_height();
-        let (bottom, count) = (rect.y + rect.height, self.count());
-        if count == 0 || h <= 0.0 || bottom <= 0.0 {
+        let (header, h) = (geometry.header_height(), geometry.row_height());
+        let bottom = rect.y + rect.height;
+        if h <= 0.0 || bottom <= 0.0 {
             return Vec::new();
         }
-        let first = (rect.y.max(0.0) / h).floor() as usize;
-        let last = ((bottom / h).ceil() as usize).saturating_sub(1).min(count - 1);
-        if first > last {
-            return Vec::new();
-        }
+        let Some(first) = self.at(rect.y.max(0.0), header, h) else { return Vec::new() };
+        let mut y = self.top(first, header, h);
         let columns = match *geometry {
             Geometry::List { .. } => None,
             Geometry::Grid { cell_width, left, .. } => {
@@ -269,7 +276,11 @@ impl Lines<'_> {
             }
         };
         self.lines_from(first)
-            .take(last - first + 1)
+            .take_while(|line| {
+                let top = y;
+                y += if matches!(line, Line::Header(_)) { header } else { h };
+                top < bottom
+            })
             .filter_map(|line| match line {
                 Line::Header(_) => None,
                 Line::Cells(r) => match columns {
@@ -281,6 +292,43 @@ impl Lines<'_> {
                 },
             })
             .collect()
+    }
+
+    /// Line `n`'s top in content coordinates, with header lines `header` high and lines of
+    /// entries `row` high; `count()` (or past it) gives the bottom of the last line.
+    pub fn top(&self, n: usize, header: f32, row: f32) -> f32 {
+        let (mut first, mut y) = (0, 0.0);
+        for g in 0..self.spans.len() {
+            let rows = self.rows_in(g);
+            // Group `g` has its header on line `first`, its entries on the `rows` lines after.
+            if n <= first + rows {
+                return y + if n == first { 0.0 } else { header + (n - first - 1) as f32 * row };
+            }
+            first += 1 + rows;
+            y += header + rows as f32 * row;
+        }
+        y
+    }
+
+    /// The line at content `y`, as `top` places them; `None` above the first or past the last.
+    pub fn at(&self, y: f32, header: f32, row: f32) -> Option<usize> {
+        if y < 0.0 {
+            return None;
+        }
+        let (mut first, mut top) = (0, 0.0);
+        for g in 0..self.spans.len() {
+            let rows = self.rows_in(g);
+            if y < top + header {
+                return Some(first);
+            }
+            let below = y - top - header;
+            if below < rows as f32 * row {
+                return Some(first + 1 + ((below / row) as usize).min(rows - 1));
+            }
+            first += 1 + rows;
+            top += header + rows as f32 * row;
+        }
+        None
     }
 
     /// Entries `r`'th line in group `g`.
@@ -373,7 +421,7 @@ mod tests {
     const LIST: Geometry = Geometry::List { row_height: 26.0 };
 
     fn grid(columns: usize) -> Geometry {
-        Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns, left: 0.0 }
+        Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns, left: 0.0, header: 120.0 }
     }
 
     #[test]
@@ -396,7 +444,7 @@ mod tests {
 
     #[test]
     fn an_inset_grid_starts_at_its_left_edge() {
-        let g = Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 4, left: 6.0 };
+        let g = Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 4, left: 6.0, header: 26.0 };
         // In the gap left of the first column: nothing.
         assert_eq!(g.items_in_rect(Rect::from_points(0.0, 10.0, 5.0, 20.0), 100), []);
         // Just inside the first column, and across into the second (it starts at 106).
@@ -489,6 +537,35 @@ mod tests {
         assert_eq!(lines.line(4), Some(Line::Cells(3..5)));
         assert_eq!(lines.line_of(4), Some((4, 1)));
         assert_eq!(lines.line_of(6), Some((5, 1)));
+    }
+
+    #[test]
+    fn grid_headers_are_short_lines() {
+        // 0..3 open, 3..5 closed, 5..9 open; two a line: header, 2 lines, header, header, 2 lines.
+        let s = spans(&[(0, 3, false), (3, 2, true), (5, 4, false)]);
+        let lines = Lines { spans: &s, per_row: 2 };
+        let top = |n| lines.top(n, 26.0, 120.0);
+        assert_eq!(
+            [top(0), top(1), top(2), top(3), top(4), top(5), top(6)],
+            [0.0, 26.0, 146.0, 266.0, 292.0, 318.0, 438.0]
+        );
+        assert_eq!(top(7), 558.0, "the bottom");
+        assert_eq!(top(99), 558.0);
+        let at = |y| lines.at(y, 26.0, 120.0);
+        assert_eq!([at(0.0), at(25.9), at(26.0), at(145.9), at(146.0)], [Some(0), Some(0), Some(1), Some(1), Some(2)]);
+        assert_eq!(
+            [at(266.0), at(291.0), at(292.0), at(318.0), at(557.9)],
+            [Some(3), Some(3), Some(4), Some(5), Some(6)]
+        );
+        assert_eq!([at(558.0), at(-1.0)], [None, None]);
+        for n in 0..7 {
+            assert_eq!(at(top(n)), Some(n), "line {n}");
+        }
+        // A band over the closed header and the next one down into the first line of entries.
+        let g = Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 2, left: 0.0, header: 26.0 };
+        assert_eq!(lines.items_in_rect(&g, Rect::from_points(0.0, 270.0, 199.0, 320.0)), [5..7]);
+        assert_eq!(lines.items_in_rect(&g, Rect::from_points(0.0, 270.0, 199.0, 317.0)), []);
+        assert_eq!(lines.items_in_rect(&g, Rect::from_points(150.0, 140.0, 160.0, 150.0)), [1..2]);
     }
 
     #[test]

@@ -252,6 +252,7 @@ export component PaneView inherits Rectangle {
     callback zoom(int, bool);
     pure callback list-line-of(int, int) -> int;
     pure callback list-column-of(int, int) -> int;
+    pure callback list-line-top(int, int) -> length;
     callback list-group-toggled(int, int);
     callback list-group-menu(int, length, length);
     callback header-clicked(int, int);
@@ -388,7 +389,7 @@ export component PaneView inherits Rectangle {
     // The lowest offset the lines allow. The list does not always come back within it by
     // itself when its lines change height (a switch to the grid deep in a folder left it
     // past the end until the next scroll): kept within it here.
-    property <length> scroll-floor: min(0px, file-view.list-height - root.items.length * file-view.item-height);
+    property <length> scroll-floor: min(0px, file-view.list-height - file-view.content-height);
     changed scroll-floor => {
         if root.list-scroll < self.scroll-floor {
             root.list-scroll = self.scroll-floor;
@@ -780,6 +781,7 @@ export component PaneView inherits Rectangle {
                             zoom(bigger) => { root.zoom(root.index, bigger); }
                             groups-version: root.groups-version;
                             line-of(i) => { return root.list-line-of(root.index, i); }
+                            line-top(n) => { return root.list-line-top(root.index, n); }
                             column-of(i) => { return root.list-column-of(root.index, i); }
                             group-toggled(first) => { root.list-group-toggled(root.index, first); }
                             group-menu(first, x, y) => {

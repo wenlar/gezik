@@ -352,7 +352,7 @@ impl View {
             thumbnails: defaults.thumbnails,
             ..ViewData::default()
         }));
-        let model = Rc::new(ItemsModel::new(data.clone()));
+        let model = Rc::new(ItemsModel::windowed(data.clone()));
         let field_model = Rc::new(slint::VecModel::default());
         crate::panes::edit(id, |d| {
             d.items = ModelRc::from(model.clone());
@@ -1310,8 +1310,26 @@ impl View {
         if self.0.window.upgrade().is_none() {
             return 0..0;
         }
-        let height = crate::panes::mirror(self.0.id).geometry.borrow().list_height;
-        visible_lines(self.list_scroll(), height, self.line_height())
+        let (scroll, height) = (self.list_scroll(), crate::panes::mirror(self.0.id).geometry.borrow().list_height);
+        self.0.model.lines_between(-scroll, -scroll + height)
+    }
+
+    /// The list scrolled or its size or line heights changed: the model's rows follow.
+    pub fn viewport_changed(&self) {
+        let Some(window) = self.0.window.upgrade() else { return };
+        let mirror = crate::panes::mirror(self.0.id);
+        let g = mirror.geometry.borrow();
+        self.0.model.set_viewport(model::Viewport {
+            scroll: mirror.scroll.get(),
+            height: g.list_height,
+            header: window.global::<crate::Theme>().get_row_height(),
+            row: g.item_height,
+        });
+    }
+
+    /// Line `line`'s top in the list (content coordinates); past the last, its bottom.
+    pub fn line_top(&self, line: usize) -> f32 {
+        self.0.model.line_top(line)
     }
 
     /// The entries on the lines on screen.
@@ -1488,10 +1506,11 @@ impl View {
             return;
         }
         let (before, scroll) = (self.focus(), self.list_scroll());
-        let old_line = before.and_then(|i| self.0.model.place_of(i)).map(|(line, _)| line);
+        let old_top = before.and_then(|i| self.0.model.place_of(i)).map(|(line, _)| self.0.model.line_top(line));
         self.resort(false);
-        let (Some(old), Some(new)) = (old_line, self.focus().and_then(|i| self.0.model.place_of(i))) else { return };
-        let target = keep_on_screen(scroll, old, new.0, self.line_height());
+        let new_top = self.focus().and_then(|i| self.0.model.place_of(i)).map(|(line, _)| self.0.model.line_top(line));
+        let (Some(old), Some(new)) = (old_top, new_top) else { return };
+        let target = keep_on_screen(scroll, old, new);
         // `resort` asked for the old offset after its reset: this one replaces that ask.
         self.0.revealed.set(self.0.revealed.get() + 1);
         self.set_list_scroll(target);
@@ -2077,7 +2096,7 @@ impl View {
         }
         if after > before || grouped {
             if self.0.model.per_row() == 1 && !grouped {
-                self.0.model.notify.row_added(before, after - before);
+                self.0.model.lines_added(before, after - before);
             } else {
                 let scroll = self.list_scroll();
                 self.0.model.notify.reset();
@@ -3011,6 +3030,7 @@ impl View {
                 cell_height: g.cell_height,
                 columns: self.0.model.per_row(),
                 left: g.grid_left,
+                header: self.0.window.upgrade().map_or(g.item_height, |w| w.global::<crate::Theme>().get_row_height()),
             }
         } else {
             Geometry::List { row_height: g.item_height }
@@ -3350,10 +3370,10 @@ pub fn selection_size(listing: &Listing, selected: impl Iterator<Item = usize>) 
     (size, more)
 }
 
-/// The list offset that keeps a line where it was on screen after it moved from `old_line` to
-/// `new_line` (`scroll` is zero or negative).
-pub fn keep_on_screen(scroll: f32, old_line: usize, new_line: usize, line_height: f32) -> f32 {
-    (scroll - (new_line as f32 - old_line as f32) * line_height).min(0.0)
+/// The list offset that keeps a line where it was on screen after its top moved from `old_top`
+/// to `new_top` (`scroll` is zero or negative).
+pub fn keep_on_screen(scroll: f32, old_top: f32, new_top: f32) -> f32 {
+    (scroll - (new_top - old_top)).min(0.0)
 }
 
 /// Whether sizes worked out for `folder` belong to the folder `shown` now.
@@ -3466,9 +3486,9 @@ mod tests {
 
     #[test]
     fn the_focused_row_keeps_its_place_on_screen() {
-        assert_eq!(keep_on_screen(-260.0, 12, 30, 26.0), -728.0, "moved 18 lines down: the list follows");
-        assert_eq!(keep_on_screen(-260.0, 30, 12, 26.0), 0.0, "never above the top");
-        assert_eq!(keep_on_screen(-260.0, 12, 12, 26.0), -260.0);
+        assert_eq!(keep_on_screen(-260.0, 312.0, 780.0), -728.0, "moved 18 lines down: the list follows");
+        assert_eq!(keep_on_screen(-260.0, 780.0, 312.0), 0.0, "never above the top");
+        assert_eq!(keep_on_screen(-260.0, 312.0, 312.0), -260.0);
     }
 
     #[test]
