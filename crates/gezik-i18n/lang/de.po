@@ -4079,6 +4079,7 @@ msgid "Height"
 msgstr "Höhe"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 #, fuzzy
 msgid "Dimensions"
 msgstr "Abmessungen"
@@ -4121,6 +4122,7 @@ msgid "Focal Length"
 msgstr "Brennweite"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 #, fuzzy
 msgid "Location"
 msgstr "Ort"
@@ -4392,6 +4394,7 @@ msgstr "Datum"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #, fuzzy
@@ -5135,12 +5138,14 @@ msgstr "Gestern {}"
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Modified"
 msgstr "Geändert"
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Created"
@@ -8517,6 +8522,7 @@ msgstr "In neuem Tab öffnen"
 #: crates/gezik/src/finder_menu.rs
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/size_map.rs
+#: crates/gezik/ui/widgets/quick-look.slint
 #, fuzzy
 msgid "Open"
 msgstr "Öffnen"
@@ -12204,15 +12210,20 @@ msgstr "Wird geöffnet…"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
-msgid "{n} item selected"
-msgid_plural "{n} items selected"
-msgstr[0] "{n} Element ausgewählt"
-msgstr[1] "{n} Elemente ausgewählt"
+msgid "Total size"
+msgstr "Gesamtgröße"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
 msgid "Total size: {}"
 msgstr "Gesamtgröße: {}"
+
+#: crates/gezik/src/preview/mod.rs
+#, fuzzy
+msgid "{n} item selected"
+msgid_plural "{n} items selected"
+msgstr[0] "{n} Element ausgewählt"
+msgstr[1] "{n} Elemente ausgewählt"
 
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/search.rs
@@ -12229,6 +12240,11 @@ msgid "{} folder"
 msgid_plural "{} folders"
 msgstr[0] "{} Ordner"
 msgstr[1] "{} Ordner"
+
+#: crates/gezik/src/preview/mod.rs
+#, fuzzy
+msgid "Contents"
+msgstr "Inhalt"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
@@ -12256,6 +12272,11 @@ msgid "{}+ item"
 msgid_plural "{}+ items"
 msgstr[0] "{}+ Element"
 msgstr[1] "{}+ Elemente"
+
+#: crates/gezik/src/preview/mod.rs
+#, fuzzy
+msgid "Items"
+msgstr "Elemente"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
@@ -15962,6 +15983,21 @@ msgstr "Stumm, aus"
 #, fuzzy
 msgid "Volume"
 msgstr "Lautstärke"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+#, fuzzy
+msgid "Previous item"
+msgstr "Vorheriges Element"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+#, fuzzy
+msgid "Next item"
+msgstr "Nächstes Element"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+#, fuzzy
+msgid "Info"
+msgstr "Info"
 
 #: crates/gezik/ui/widgets/rename-batch.slint
 #, fuzzy

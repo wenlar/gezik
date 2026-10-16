@@ -13,14 +13,19 @@ pub struct QuickLook {
 }
 
 impl QuickLook {
-    /// Opens centered over `main`, showing `info`. `on_key` gets every key press (text and
-    /// Ctrl, Alt, Shift, Meta) and returns whether it used it; `on_close` runs when the
-    /// window's close button is pressed.
+    /// Opens centered over `main`, showing `info` (its facts column if `info_open`). `on_key`
+    /// gets every key press (text and Ctrl, Alt, Shift, Meta) and returns whether it used it;
+    /// `on_open` is its Open button, `on_step` previous (-1) and next (1); `on_close` runs when
+    /// the window's close button is pressed.
+    #[allow(clippy::too_many_arguments, reason = "what it shows, and what its keys and buttons do")]
     pub fn open(
         main: &AppWindow,
         info: PreviewInfo,
         mono_font: slint::SharedString,
+        info_open: bool,
         on_key: impl Fn(&str, bool, bool, bool, bool) -> bool + 'static,
+        on_open: impl Fn() + 'static,
+        on_step: impl Fn(i32) + 'static,
         on_close: impl Fn() + 'static,
     ) -> Result<QuickLook, slint::PlatformError> {
         let window = QuickLookWindow::new()?;
@@ -29,6 +34,9 @@ impl QuickLook {
         }
         window.set_info(info);
         window.set_mono_font(mono_font);
+        window.set_info_open(info_open);
+        window.on_open(on_open);
+        window.on_step(on_step);
         window.on_key(move |event| {
             let m = event.modifiers;
             on_key(&event.text, m.control, m.alt, m.shift, m.meta)
@@ -58,6 +66,11 @@ impl QuickLook {
 
     pub fn set_info(&self, info: PreviewInfo) {
         self.window.set_info(info);
+    }
+
+    /// Whether its facts column is open (the next quick look opens the same way).
+    pub fn info_open(&self) -> bool {
+        self.window.get_info_open()
     }
 
     pub fn retheme(&self, theme: &ResolvedTheme) {

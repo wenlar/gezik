@@ -3339,6 +3339,7 @@ msgid "Height"
 msgstr "Yükseklik"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 msgid "Dimensions"
 msgstr "Boyutlar"
 
@@ -3373,6 +3374,7 @@ msgid "Focal Length"
 msgstr "Odak uzaklığı"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 msgid "Location"
 msgstr "Konum"
 
@@ -3593,6 +3595,7 @@ msgstr "Tarih"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Size"
@@ -4198,11 +4201,13 @@ msgstr "Dün {}"
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 msgid "Modified"
 msgstr "Değiştirme tarihi"
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 msgid "Created"
 msgstr "Oluşturma tarihi"
@@ -6900,6 +6905,7 @@ msgstr "Yeni sekmede aç"
 #: crates/gezik/src/finder_menu.rs
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/size_map.rs
+#: crates/gezik/ui/widgets/quick-look.slint
 msgid "Open"
 msgstr "Aç"
 
@@ -9855,13 +9861,17 @@ msgid "Opening…"
 msgstr "Açılıyor…"
 
 #: crates/gezik/src/preview/mod.rs
-msgid "{n} item selected"
-msgid_plural "{n} items selected"
-msgstr[0] "{n} öğe seçili"
+msgid "Total size"
+msgstr "Toplam boyut"
 
 #: crates/gezik/src/preview/mod.rs
 msgid "Total size: {}"
 msgstr "Toplam boyut: {}"
+
+#: crates/gezik/src/preview/mod.rs
+msgid "{n} item selected"
+msgid_plural "{n} items selected"
+msgstr[0] "{n} öğe seçili"
 
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/search.rs
@@ -9874,6 +9884,10 @@ msgstr[0] "{} dosya"
 msgid "{} folder"
 msgid_plural "{} folders"
 msgstr[0] "{} klasör"
+
+#: crates/gezik/src/preview/mod.rs
+msgid "Contents"
+msgstr "İçerik"
 
 #: crates/gezik/src/preview/mod.rs
 msgid "Some folders could not be read"
@@ -9895,6 +9909,10 @@ msgstr "{} × {} piksel"
 msgid "{}+ item"
 msgid_plural "{}+ items"
 msgstr[0] "{}+ öğe"
+
+#: crates/gezik/src/preview/mod.rs
+msgid "Items"
+msgstr "Öğeler"
 
 #: crates/gezik/src/preview/mod.rs
 msgid "The system Quick Look panel did not open; Gezik's own is shown"
@@ -12835,6 +12853,18 @@ msgstr "Sessiz, kapalı"
 #: crates/gezik/ui/widgets/preview-pane.slint
 msgid "Volume"
 msgstr "Ses düzeyi"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+msgid "Previous item"
+msgstr "Önceki öğe"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+msgid "Next item"
+msgstr "Sonraki öğe"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+msgid "Info"
+msgstr "Bilgi"
 
 #: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Presets"

@@ -384,6 +384,10 @@ group = "date"
   volume (ffmpeg); both tools download only when asked. **Preview at Bottom** (View menu,
   `[preview] position = "bottom"`) puts the pane under the list (under both panes), its
   height dragged.
+- **Quick Look** gives the file the whole window: one bar under it with the name and a
+  summary, the zoom, Hex, **Info** (a column with the facts and properties) and **Open**;
+  previous / next and the place in the folder (12 / 56) show over it while the mouse moves.
+  Pictures smaller than the window show at 100%.
 - **Properties** under the preview and in Get Info: picture size, the photo's date, camera,
   lens and place, length and codecs, music tags and cover, document title, author and pages,
   read by Gezik itself from a bounded part of the file (`[preview] properties = false` hides

@@ -32,14 +32,30 @@ pub struct ZoomView {
     view: (f32, f32),
     /// The view's top-left in the scaled content (negative while it is smaller: centered).
     offset: (f32, f32),
+    /// Fit stops at 100% (a picture smaller than the view is not blown up; a page is).
+    fit_at_most_100: bool,
 }
 
 impl ZoomView {
     pub fn new(content: (f32, f32), unit: f32, view: (f32, f32)) -> ZoomView {
-        let mut zoom = ZoomView { content: (1.0, 1.0), unit: unit.max(0.01), fit: Fit::Page, view, offset: (0.0, 0.0) };
+        let mut zoom = ZoomView {
+            content: (1.0, 1.0),
+            unit: unit.max(0.01),
+            fit: Fit::Page,
+            view,
+            offset: (0.0, 0.0),
+            fit_at_most_100: false,
+        };
         zoom.set_content(content);
         zoom.set_view(view);
         zoom
+    }
+
+    /// Fit stops at 100% (a picture's zoom).
+    pub fn at_most_100(mut self) -> ZoomView {
+        self.fit_at_most_100 = true;
+        self.clamp();
+        self
     }
 
     /// Physical pixels per content unit now.
@@ -47,6 +63,7 @@ impl ZoomView {
         let (cw, ch) = self.content;
         let (vw, vh) = self.view;
         match self.fit {
+            Fit::Page if self.fit_at_most_100 => (vw / cw).min(vh / ch).min(self.unit),
             Fit::Page => (vw / cw).min(vh / ch),
             Fit::Width => vw / cw,
             Fit::Zoom(z) => z * self.unit,
@@ -273,6 +290,16 @@ mod tests {
         assert_eq!(z.percent(), 100);
         z.set_content((f32::NAN, 0.0));
         assert!(z.scale().is_finite());
+    }
+
+    #[test]
+    fn a_small_picture_fits_at_100_and_a_large_one_shrinks() {
+        let small = ZoomView::new((400.0, 300.0), 1.0, (800.0, 600.0)).at_most_100();
+        assert_eq!(small.percent(), 100);
+        let (px, py, ..) = small.place(small.scale(), small.visible());
+        assert!(px > 0.0 && py > 0.0, "centered: ({px}, {py})");
+        assert_eq!(ZoomView::new((400.0, 300.0), 1.0, (800.0, 600.0)).percent(), 200, "a page is blown up");
+        assert_eq!(ZoomView::new((1600.0, 1200.0), 1.0, (800.0, 600.0)).at_most_100().percent(), 50);
     }
 
     #[test]

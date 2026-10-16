@@ -89,6 +89,19 @@ export struct PreviewInfo {
     playing: bool,
     // The file's metadata (13d; `[preview] properties`).
     properties: [PropRow],
+    // Quick look (design 2b): the type under the name, a one-line summary for its bar
+    // ("PNG image · 19.4 KB · 399 × 366") and `details` as label and value rows.
+    subtitle: string,
+    summary: string,
+    facts: [PropRow],
+    // A picture's own size in pixels (0: not known): a smaller one is not blown up.
+    own-width: int,
+    own-height: int,
+    // Quick look: the focused item's place in the folder ("12 / 56", "" none), and whether
+    // there is one before and after it.
+    position: string,
+    can-back: bool,
+    can-next: bool,
 }
 
 // The viewer's events, for Rust (one connection per window, not one per pane).
@@ -202,13 +215,348 @@ export component PropRows inherits VerticalLayout {
     }
 }
 
-export component PreviewPane inherits Rectangle {
+// What the preview shows of the file: the viewer, the picture (zoomed or not), the icon, the
+// player's ▶ (the pane and quick look).
+export component PreviewStage inherits Rectangle {
     in property <PreviewInfo> info;
     // A fixed-width font for text files.
     in property <string> mono-font;
     property <bool> viewer: root.info.bar == 1 || root.info.bar == 2;
     // A playing video's frame over its poster.
     property <bool> frame-shown: root.info.bar == 6 && PreviewActions.frame.width > 0;
+    // The picture's own size: a smaller one is shown at 100%, not blown up.
+    property <length> own-width: root.info.own-width * 1phx;
+    property <length> own-height: root.info.own-height * 1phx;
+    property <float> shrink: root.info.own-width > 0 && root.info.own-height > 0 ? min(1, root.width / root.own-width, root.height / root.own-height) : 0;
+    accessible-role: none;
+
+    // The viewer's keyboard (spec 13 §3.2): a click gives it, on a file's icon too (H).
+    scope := FocusScope {
+        key-pressed(event) => {
+            if PreviewActions.key(event) {
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    if root.viewer: viewer := Rectangle {
+        // One character's width and a row's height in the fixed-width font.
+        property <length> cw: max(1px, probe.preferred-width / 10);
+        property <length> lh: max(1px, probe.preferred-height);
+        property <length> gutter-width: root.info.gutter > 0 ? root.info.gutter * self.cw + 12px : 0px;
+        property <length> text-width: self.width - self.gutter-width - 10px;
+        // Sideways scroll of unwrapped lines.
+        property <length> hx: 0px;
+        property <int> cols: max(1, floor(self.text-width / self.cw));
+        property <int> lines: max(1, floor(self.height / self.lh));
+        property <int> ask: PreviewActions.ask;
+
+        clip: true;
+        init => {
+            PreviewActions.resized(self.cols, self.lines);
+        }
+        changed cols => {
+            PreviewActions.resized(self.cols, self.lines);
+        }
+        changed lines => {
+            PreviewActions.resized(self.cols, self.lines);
+        }
+        changed ask => {
+            PreviewActions.resized(self.cols, self.lines);
+        }
+
+        probe := Text {
+            text: "MMMMMMMMMM";
+            font-family: root.mono-font;
+            visible: false;
+        }
+
+        TouchArea {
+            clicked => {
+                scope.focus();
+            }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                    scope.focus();
+                    PreviewActions.context-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                }
+            }
+            scroll-event(event) => {
+                if event.delta-x != 0 || event.modifiers.shift {
+                    viewer.hx = root.info.wrap ? 0px : clamp(viewer.hx - (event.delta-x != 0 ? event.delta-x : event.delta-y), 0px, max(0px, root.info.max-cols * viewer.cw - viewer.text-width));
+                } else if event.delta-y > 0 {
+                    PreviewActions.scrolled(-max(1, round(event.delta-y / viewer.lh)));
+                } else if event.delta-y < 0 {
+                    PreviewActions.scrolled(max(1, round(-event.delta-y / viewer.lh)));
+                }
+                accept
+            }
+        }
+
+        for row[i] in root.info.rows: Rectangle {
+            y: i * viewer.lh;
+            height: viewer.lh;
+            if root.info.gutter > 0: Text {
+                x: 0;
+                width: viewer.gutter-width - 8px;
+                text: row.number;
+                horizontal-alignment: right;
+                font-family: root.mono-font;
+                color: Theme.foreground-muted;
+                accessible-role: none;
+            }
+            Rectangle {
+                x: viewer.gutter-width;
+                width: viewer.text-width;
+                clip: true;
+                for part in row.parts: Text {
+                    x: part.col * viewer.cw - viewer.hx;
+                    text: part.text;
+                    font-family: part.wide ? Theme.font-family : root.mono-font;
+                    color: part.class == 1 ? Theme.syntax-keyword
+                        : part.class == 2 ? Theme.syntax-type
+                        : part.class == 3 ? Theme.syntax-string
+                        : part.class == 4 ? Theme.syntax-number
+                        : part.class == 5 ? (root.info.bar == 2 ? Theme.foreground-muted : Theme.syntax-comment)
+                        : part.class == 6 ? Theme.syntax-tag
+                        : Theme.foreground;
+                    accessible-role: text;
+                }
+            }
+        }
+
+        // The scroll bar: a press or a drag goes to that place.
+        TouchArea {
+            property <length> thumb: min(self.height, max(24px, self.height * root.info.scroll-size));
+            x: parent.width - self.width;
+            width: 10px;
+            visible: root.info.scroll-size < 1;
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    PreviewActions.jumped(clamp((self.mouse-y - self.thumb / 2) / max(1px, self.height - self.thumb), 0, 1));
+                }
+            }
+            moved => {
+                if self.pressed {
+                    PreviewActions.jumped(clamp((self.mouse-y - self.thumb / 2) / max(1px, self.height - self.thumb), 0, 1));
+                }
+            }
+            Rectangle {
+                x: 2px;
+                y: (parent.height - parent.thumb) * root.info.scroll-pos;
+                width: 6px;
+                height: parent.thumb;
+                border-radius: 3px;
+                background: parent.has-hover || parent.pressed ? Theme.scrollbar-hover : Theme.scrollbar;
+            }
+        }
+
+    }
+
+    // The picture fitted, or (zoomed, 13b) placed where Rust says and cut by the area.
+    if !root.viewer && (root.info.has-picture || root.frame-shown): Rectangle {
+        clip: true;
+        Image {
+            width: root.info.zoomed ? root.info.pic-w : root.shrink > 0 ? root.own-width * root.shrink : parent.width;
+            height: root.info.zoomed ? root.info.pic-h : root.shrink > 0 ? root.own-height * root.shrink : parent.height;
+            x: root.info.zoomed ? root.info.pic-x : (parent.width - self.width) / 2;
+            y: root.info.zoomed ? root.info.pic-y : (parent.height - self.height) / 2;
+            source: root.frame-shown ? PreviewActions.frame : root.info.picture;
+            image-fit: root.info.zoomed ? fill : contain;
+            accessible-role: image;
+            accessible-label: root.info.pages > 0 ? @tr("Page {} of {}", root.info.page, root.info.pages) : root.info.title;
+        }
+    }
+
+    if !root.viewer && root.info.kind != 0 && !root.info.has-picture && !root.frame-shown: FileIcon {
+        width: min(parent.width, parent.height, 96px);
+        height: self.width;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        kind: root.info.kind == 4 ? 0 : root.info.item-kind;
+    }
+
+    // A PDF or a picture: drag, wheel, Ctrl+wheel and double click (spec 13 §5); a video
+    // or sound: a click plays or pauses (spec 13 §6).
+    if root.info.bar >= 4: surface := TouchArea {
+        property <length> sx;
+        property <length> sy;
+        property <int> ask: PreviewActions.ask;
+        mouse-cursor: root.info.zoomed ? (self.pressed ? MouseCursor.grabbing : MouseCursor.grab) : MouseCursor.default;
+        init => {
+            PreviewActions.surface(0, self.width, self.height, 0, 0);
+        }
+        changed width => {
+            PreviewActions.surface(0, self.width, self.height, 0, 0);
+        }
+        changed height => {
+            PreviewActions.surface(0, self.width, self.height, 0, 0);
+        }
+        changed ask => {
+            PreviewActions.surface(0, self.width, self.height, 0, 0);
+        }
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down {
+                scope.focus();
+                self.sx = self.mouse-x;
+                self.sy = self.mouse-y;
+                if event.button == PointerEventButton.right {
+                    PreviewActions.context-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                }
+            }
+        }
+        moved => {
+            if self.pressed && root.info.zoomed {
+                PreviewActions.surface(6, 0, 0, self.mouse-x - self.sx, self.mouse-y - self.sy);
+                self.sx = self.mouse-x;
+                self.sy = self.mouse-y;
+            }
+        }
+        clicked => {
+            if root.info.bar == 6 {
+                PreviewActions.surface(10, -1px, -1px, 0, 0);
+            }
+        }
+        double-clicked => {
+            PreviewActions.surface(5, self.mouse-x, self.mouse-y, 0, 0);
+        }
+        scroll-event(event) => {
+            PreviewActions.surface(event.modifiers.control || event.modifiers.meta ? 8 : 7, self.mouse-x, self.mouse-y, event.delta-x, event.delta-y);
+            accept
+        }
+    }
+
+    if root.info.bar == 6 && !root.info.playing: Rectangle {
+        width: 56px;
+        height: 56px;
+        border-radius: 28px;
+        background: #000000a0;
+        Text {
+            width: parent.width;
+            height: parent.height;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            text: "▶";
+            font-size: 26px;
+            color: #ffffff;
+            accessible-role: none;
+        }
+    }
+
+    if root.info.kind == 0: Text {
+        width: parent.width;
+        height: parent.height;
+        text: @tr("Select a file to preview");
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+
+    if scope.has-focus && root.info.bar != 0: Rectangle {
+        border-width: Theme.focus-width;
+        border-color: Theme.focus-ring;
+        border-radius: Theme.radius-small;
+    }
+}
+
+// The viewer's bar: Text │ Hex, Wrap, a note and where it is; a PDF's pages and a zoom; the
+// player's Play, position, time and volume. In a narrow pane what does not fit gives way (the
+// right-click menu has it all).
+export component PreviewBar inherits HorizontalLayout {
+    in property <PreviewInfo> info;
+    spacing: Theme.spacing;
+    if root.info.bar == 1 || root.info.bar == 2: TextButton {
+        compact: true;
+        text: @tr("Text");
+        checked: root.info.bar == 1;
+        clicked => {
+            if root.info.bar == 2 {
+                PreviewActions.toggle-hex();
+            }
+        }
+    }
+    if root.info.bar < 4: TextButton {
+        compact: true;
+        text: @tr("Hex");
+        checked: root.info.bar == 2;
+        clicked => {
+            if root.info.bar != 2 {
+                PreviewActions.toggle-hex();
+            }
+        }
+    }
+    // A PDF's or picture's buttons (Hex, ‹ page ›, − 125% +, Fit): one repeated button
+    // costs far less than one each.
+    for tool in root.info.tools: TextButton {
+        compact: true;
+        text: tool.text;
+        // The player's Pause: two bars (the UI font has no ❚❚).
+        icon: tool.what == 10 && tool.step == 1 ? "M2.5 1 L2.5 7 M5.5 1 L5.5 7" : "";
+        label: tool.label;
+        clicked => {
+            if tool.what < 0 {
+                PreviewActions.toggle-hex();
+            } else {
+                PreviewActions.surface(tool.what, -1px, -1px, tool.step * 1px, 0);
+            }
+        }
+    }
+    if root.info.bar == 1: TextButton {
+        compact: true;
+        text: @tr("Wrap");
+        label: root.info.wrap ? @tr("Wrap lines, on") : @tr("Wrap lines, off");
+        checked: root.info.wrap;
+        clicked => {
+            PreviewActions.toggle-wrap();
+        }
+    }
+    if root.info.bar == 6 && root.info.seek >= 0: Track {
+        horizontal-stretch: 1;
+        value: root.info.seek;
+        label: @tr("Position");
+        moved-to(at, done) => {
+            PreviewActions.surface(done ? 11 : 12, at * 1px, 0, 0, 0);
+        }
+    }
+    Text {
+        text: root.info.bar-note;
+        accessible-role: text;
+        accessible-label: root.info.bar-note;
+        horizontal-stretch: root.info.bar == 6 && root.info.seek >= 0 ? 0 : 1;
+        overflow: elide;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    Text {
+        text: root.info.bar-text;
+        overflow: elide;
+        vertical-alignment: center;
+        color: Theme.foreground-muted;
+    }
+    if root.info.bar == 6: TextButton {
+        compact: true;
+        text: @tr("Mute");
+        label: root.info.muted ? @tr("Mute, on") : @tr("Mute, off");
+        checked: root.info.muted;
+        clicked => {
+            PreviewActions.surface(13, 0, 0, 0, 0);
+        }
+    }
+    if root.info.bar == 6 && root.info.volume >= 0: Track {
+        width: 56px;
+        value: root.info.muted ? 0 : root.info.volume;
+        label: @tr("Volume");
+        moved-to(at, done) => {
+            PreviewActions.surface(14, at * 1px, 0, done ? 1px : 0, 0);
+        }
+    }
+}
+
+export component PreviewPane inherits Rectangle {
+    in property <PreviewInfo> info;
+    // A fixed-width font for text files.
+    in property <string> mono-font;
 
     background: Theme.surface;
     accessible-role: none;
@@ -217,329 +565,15 @@ export component PreviewPane inherits Rectangle {
         padding: Theme.spacing * 2;
         spacing: Theme.spacing * 2;
 
-        Rectangle {
+        PreviewStage {
             vertical-stretch: 1;
             min-height: 80px;
-
-            // The viewer's keyboard (spec 13 §3.2): a click gives it, on a file's icon too (H).
-            scope := FocusScope {
-                key-pressed(event) => {
-                    if PreviewActions.key(event) {
-                        return accept;
-                    }
-                    return reject;
-                }
-            }
-
-            if root.viewer: viewer := Rectangle {
-                // One character's width and a row's height in the fixed-width font.
-                property <length> cw: max(1px, probe.preferred-width / 10);
-                property <length> lh: max(1px, probe.preferred-height);
-                property <length> gutter-width: root.info.gutter > 0 ? root.info.gutter * self.cw + 12px : 0px;
-                property <length> text-width: self.width - self.gutter-width - 10px;
-                // Sideways scroll of unwrapped lines.
-                property <length> hx: 0px;
-                property <int> cols: max(1, floor(self.text-width / self.cw));
-                property <int> lines: max(1, floor(self.height / self.lh));
-                property <int> ask: PreviewActions.ask;
-
-                clip: true;
-                init => {
-                    PreviewActions.resized(self.cols, self.lines);
-                }
-                changed cols => {
-                    PreviewActions.resized(self.cols, self.lines);
-                }
-                changed lines => {
-                    PreviewActions.resized(self.cols, self.lines);
-                }
-                changed ask => {
-                    PreviewActions.resized(self.cols, self.lines);
-                }
-
-                probe := Text {
-                    text: "MMMMMMMMMM";
-                    font-family: root.mono-font;
-                    visible: false;
-                }
-
-                TouchArea {
-                    clicked => {
-                        scope.focus();
-                    }
-                    pointer-event(event) => {
-                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
-                            scope.focus();
-                            PreviewActions.context-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                        }
-                    }
-                    scroll-event(event) => {
-                        if event.delta-x != 0 || event.modifiers.shift {
-                            viewer.hx = root.info.wrap ? 0px : clamp(viewer.hx - (event.delta-x != 0 ? event.delta-x : event.delta-y), 0px, max(0px, root.info.max-cols * viewer.cw - viewer.text-width));
-                        } else if event.delta-y > 0 {
-                            PreviewActions.scrolled(-max(1, round(event.delta-y / viewer.lh)));
-                        } else if event.delta-y < 0 {
-                            PreviewActions.scrolled(max(1, round(-event.delta-y / viewer.lh)));
-                        }
-                        accept
-                    }
-                }
-
-                for row[i] in root.info.rows: Rectangle {
-                    y: i * viewer.lh;
-                    height: viewer.lh;
-                    if root.info.gutter > 0: Text {
-                        x: 0;
-                        width: viewer.gutter-width - 8px;
-                        text: row.number;
-                        horizontal-alignment: right;
-                        font-family: root.mono-font;
-                        color: Theme.foreground-muted;
-                        accessible-role: none;
-                    }
-                    Rectangle {
-                        x: viewer.gutter-width;
-                        width: viewer.text-width;
-                        clip: true;
-                        for part in row.parts: Text {
-                            x: part.col * viewer.cw - viewer.hx;
-                            text: part.text;
-                            font-family: part.wide ? Theme.font-family : root.mono-font;
-                            color: part.class == 1 ? Theme.syntax-keyword
-                                : part.class == 2 ? Theme.syntax-type
-                                : part.class == 3 ? Theme.syntax-string
-                                : part.class == 4 ? Theme.syntax-number
-                                : part.class == 5 ? (root.info.bar == 2 ? Theme.foreground-muted : Theme.syntax-comment)
-                                : part.class == 6 ? Theme.syntax-tag
-                                : Theme.foreground;
-                            accessible-role: text;
-                        }
-                    }
-                }
-
-                // The scroll bar: a press or a drag goes to that place.
-                TouchArea {
-                    property <length> thumb: min(self.height, max(24px, self.height * root.info.scroll-size));
-                    x: parent.width - self.width;
-                    width: 10px;
-                    visible: root.info.scroll-size < 1;
-                    pointer-event(event) => {
-                        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
-                            PreviewActions.jumped(clamp((self.mouse-y - self.thumb / 2) / max(1px, self.height - self.thumb), 0, 1));
-                        }
-                    }
-                    moved => {
-                        if self.pressed {
-                            PreviewActions.jumped(clamp((self.mouse-y - self.thumb / 2) / max(1px, self.height - self.thumb), 0, 1));
-                        }
-                    }
-                    Rectangle {
-                        x: 2px;
-                        y: (parent.height - parent.thumb) * root.info.scroll-pos;
-                        width: 6px;
-                        height: parent.thumb;
-                        border-radius: 3px;
-                        background: parent.has-hover || parent.pressed ? Theme.scrollbar-hover : Theme.scrollbar;
-                    }
-                }
-
-            }
-
-            // The picture fitted, or (zoomed, 13b) placed where Rust says and cut by the area.
-            if !root.viewer && (root.info.has-picture || root.frame-shown): Rectangle {
-                clip: true;
-                Image {
-                    x: root.info.zoomed ? root.info.pic-x : 0;
-                    y: root.info.zoomed ? root.info.pic-y : 0;
-                    width: root.info.zoomed ? root.info.pic-w : parent.width;
-                    height: root.info.zoomed ? root.info.pic-h : parent.height;
-                    source: root.frame-shown ? PreviewActions.frame : root.info.picture;
-                    image-fit: root.info.zoomed ? fill : contain;
-                    accessible-role: image;
-                    accessible-label: root.info.pages > 0 ? @tr("Page {} of {}", root.info.page, root.info.pages) : root.info.title;
-                }
-            }
-
-            if !root.viewer && root.info.kind != 0 && !root.info.has-picture && !root.frame-shown: FileIcon {
-                width: min(parent.width, parent.height, 96px);
-                height: self.width;
-                x: (parent.width - self.width) / 2;
-                y: (parent.height - self.height) / 2;
-                kind: root.info.kind == 4 ? 0 : root.info.item-kind;
-            }
-
-            // A PDF or a picture: drag, wheel, Ctrl+wheel and double click (spec 13 §5); a video
-            // or sound: a click plays or pauses (spec 13 §6).
-            if root.info.bar >= 4: surface := TouchArea {
-                property <length> sx;
-                property <length> sy;
-                property <int> ask: PreviewActions.ask;
-                mouse-cursor: root.info.zoomed ? (self.pressed ? MouseCursor.grabbing : MouseCursor.grab) : MouseCursor.default;
-                init => {
-                    PreviewActions.surface(0, self.width, self.height, 0, 0);
-                }
-                changed width => {
-                    PreviewActions.surface(0, self.width, self.height, 0, 0);
-                }
-                changed height => {
-                    PreviewActions.surface(0, self.width, self.height, 0, 0);
-                }
-                changed ask => {
-                    PreviewActions.surface(0, self.width, self.height, 0, 0);
-                }
-                pointer-event(event) => {
-                    if event.kind == PointerEventKind.down {
-                        scope.focus();
-                        self.sx = self.mouse-x;
-                        self.sy = self.mouse-y;
-                        if event.button == PointerEventButton.right {
-                            PreviewActions.context-menu(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
-                        }
-                    }
-                }
-                moved => {
-                    if self.pressed && root.info.zoomed {
-                        PreviewActions.surface(6, 0, 0, self.mouse-x - self.sx, self.mouse-y - self.sy);
-                        self.sx = self.mouse-x;
-                        self.sy = self.mouse-y;
-                    }
-                }
-                clicked => {
-                    if root.info.bar == 6 {
-                        PreviewActions.surface(10, -1px, -1px, 0, 0);
-                    }
-                }
-                double-clicked => {
-                    PreviewActions.surface(5, self.mouse-x, self.mouse-y, 0, 0);
-                }
-                scroll-event(event) => {
-                    PreviewActions.surface(event.modifiers.control || event.modifiers.meta ? 8 : 7, self.mouse-x, self.mouse-y, event.delta-x, event.delta-y);
-                    accept
-                }
-            }
-
-            if root.info.bar == 6 && !root.info.playing: Rectangle {
-                width: 56px;
-                height: 56px;
-                border-radius: 28px;
-                background: #000000a0;
-                Text {
-                    width: parent.width;
-                    height: parent.height;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                    text: "▶";
-                    font-size: 26px;
-                    color: #ffffff;
-                    accessible-role: none;
-                }
-            }
-
-            if root.info.kind == 0: Text {
-                width: parent.width;
-                height: parent.height;
-                text: @tr("Select a file to preview");
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                color: Theme.foreground-muted;
-            }
-
-            if scope.has-focus && root.info.bar != 0: Rectangle {
-                border-width: Theme.focus-width;
-                border-color: Theme.focus-ring;
-                border-radius: Theme.radius-small;
-            }
+            info: root.info;
+            mono-font: root.mono-font;
         }
 
-        // The viewer's bar: Text │ Hex, Wrap, a note and where it is; a PDF's pages and a
-        // zoom; the player's Play, position, time and volume. In a narrow pane what does not fit gives way (the right-click menu has it all).
-        if root.info.bar != 0: HorizontalLayout {
-            spacing: Theme.spacing;
-            if root.info.bar == 1 || root.info.bar == 2: TextButton {
-                compact: true;
-                text: @tr("Text");
-                checked: root.info.bar == 1;
-                clicked => {
-                    if root.info.bar == 2 {
-                        PreviewActions.toggle-hex();
-                    }
-                }
-            }
-            if root.info.bar < 4: TextButton {
-                compact: true;
-                text: @tr("Hex");
-                checked: root.info.bar == 2;
-                clicked => {
-                    if root.info.bar != 2 {
-                        PreviewActions.toggle-hex();
-                    }
-                }
-            }
-            // A PDF's or picture's buttons (Hex, ‹ page ›, − 125% +, Fit): one repeated button
-            // costs far less than one each.
-            for tool in root.info.tools: TextButton {
-                compact: true;
-                text: tool.text;
-                // The player's Pause: two bars (the UI font has no ❚❚).
-                icon: tool.what == 10 && tool.step == 1 ? "M2.5 1 L2.5 7 M5.5 1 L5.5 7" : "";
-                label: tool.label;
-                clicked => {
-                    if tool.what < 0 {
-                        PreviewActions.toggle-hex();
-                    } else {
-                        PreviewActions.surface(tool.what, -1px, -1px, tool.step * 1px, 0);
-                    }
-                }
-            }
-            if root.info.bar == 1: TextButton {
-                compact: true;
-                text: @tr("Wrap");
-                label: root.info.wrap ? @tr("Wrap lines, on") : @tr("Wrap lines, off");
-                checked: root.info.wrap;
-                clicked => {
-                    PreviewActions.toggle-wrap();
-                }
-            }
-            if root.info.bar == 6 && root.info.seek >= 0: Track {
-                horizontal-stretch: 1;
-                value: root.info.seek;
-                label: @tr("Position");
-                moved-to(at, done) => {
-                    PreviewActions.surface(done ? 11 : 12, at * 1px, 0, 0, 0);
-                }
-            }
-            Text {
-                text: root.info.bar-note;
-                accessible-role: text;
-                accessible-label: root.info.bar-note;
-                horizontal-stretch: root.info.bar == 6 && root.info.seek >= 0 ? 0 : 1;
-                overflow: elide;
-                vertical-alignment: center;
-                color: Theme.foreground-muted;
-            }
-            Text {
-                text: root.info.bar-text;
-                overflow: elide;
-                vertical-alignment: center;
-                color: Theme.foreground-muted;
-            }
-            if root.info.bar == 6: TextButton {
-                compact: true;
-                text: @tr("Mute");
-                label: root.info.muted ? @tr("Mute, on") : @tr("Mute, off");
-                checked: root.info.muted;
-                clicked => {
-                    PreviewActions.surface(13, 0, 0, 0, 0);
-                }
-            }
-            if root.info.bar == 6 && root.info.volume >= 0: Track {
-                width: 56px;
-                value: root.info.muted ? 0 : root.info.volume;
-                label: @tr("Volume");
-                moved-to(at, done) => {
-                    PreviewActions.surface(14, at * 1px, 0, done ? 1px : 0, 0);
-                }
-            }
+        if root.info.bar != 0: PreviewBar {
+            info: root.info;
         }
 
         // The facts and properties: as tall as they are, scrolling (and cut at the pane's edge)

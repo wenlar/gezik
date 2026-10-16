@@ -4055,6 +4055,7 @@ msgid "Height"
 msgstr "高度"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 #, fuzzy
 msgid "Dimensions"
 msgstr "尺寸"
@@ -4097,6 +4098,7 @@ msgid "Focal Length"
 msgstr "焦距"
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 #, fuzzy
 msgid "Location"
 msgstr "位置"
@@ -4365,6 +4367,7 @@ msgstr "日期"
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 #, fuzzy
@@ -5104,12 +5107,14 @@ msgstr "昨天 {}"
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Modified"
 msgstr "修改日期"
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 #, fuzzy
 msgid "Created"
@@ -8422,6 +8427,7 @@ msgstr "在新标签页中打开"
 #: crates/gezik/src/finder_menu.rs
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/size_map.rs
+#: crates/gezik/ui/widgets/quick-look.slint
 #, fuzzy
 msgid "Open"
 msgstr "打开"
@@ -12055,14 +12061,19 @@ msgstr "正在打开…"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
-msgid "{n} item selected"
-msgid_plural "{n} items selected"
-msgstr[0] "已选择 {n} 个项目"
+msgid "Total size"
+msgstr "总大小"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
 msgid "Total size: {}"
 msgstr "总大小：{}"
+
+#: crates/gezik/src/preview/mod.rs
+#, fuzzy
+msgid "{n} item selected"
+msgid_plural "{n} items selected"
+msgstr[0] "已选择 {n} 个项目"
 
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/search.rs
@@ -12077,6 +12088,11 @@ msgstr[0] "{} 个文件"
 msgid "{} folder"
 msgid_plural "{} folders"
 msgstr[0] "{} 个文件夹"
+
+#: crates/gezik/src/preview/mod.rs
+#, fuzzy
+msgid "Contents"
+msgstr "内容"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
@@ -12103,6 +12119,11 @@ msgstr "{} × {} 像素"
 msgid "{}+ item"
 msgid_plural "{}+ items"
 msgstr[0] "{}+ 个项目"
+
+#: crates/gezik/src/preview/mod.rs
+#, fuzzy
+msgid "Items"
+msgstr "项目"
 
 #: crates/gezik/src/preview/mod.rs
 #, fuzzy
@@ -15745,6 +15766,21 @@ msgstr "静音，关"
 #, fuzzy
 msgid "Volume"
 msgstr "音量"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+#, fuzzy
+msgid "Previous item"
+msgstr "上一项"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+#, fuzzy
+msgid "Next item"
+msgstr "下一项"
+
+#: crates/gezik/ui/widgets/quick-look.slint
+#, fuzzy
+msgid "Info"
+msgstr "信息"
 
 #: crates/gezik/ui/widgets/rename-batch.slint
 #, fuzzy
