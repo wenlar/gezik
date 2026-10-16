@@ -73,7 +73,8 @@ rm -rf "$stage/run" && mkdir -p "$stage/run/cfg" "$stage/run/home"
 tar -C "$stage/run" -xzf "$OUT/$NAME.tar.gz"
 Xvfb :97 -screen 0 1280x800x24 >/dev/null 2>&1 &
 xvfb=$!
-sleep 1
+# Its socket, not a fixed wait: a slow runner once had no X server after 1 s (rc.5).
+for _ in $(seq 1 40); do [ -S /tmp/.X11-unix/X97 ] && break; sleep 0.25; done
 DISPLAY=:97 GEZIK_CONFIG_DIR="$stage/run/cfg" "$stage/run/$NAME/gezik" "$stage/run/home" >"$stage/run/log" 2>&1 &
 gezik=$!
 win=
