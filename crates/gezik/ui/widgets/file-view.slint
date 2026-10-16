@@ -1,4 +1,4 @@
-import { ListView } from "scrollbar.slint";
+import { ScrollView } from "scrollbar.slint";
 import { Theme } from "../theme.slint";
 import { FileIcon } from "file-icon.slint";
 import { RenameField } from "rename-field.slint";
@@ -124,6 +124,10 @@ export struct ItemRow {
     header: string,
     // The header's group is closed.
     collapsed: bool,
+    // Where the line is in the list (content coordinates), how high, and how high all lines are.
+    y: length,
+    height: length,
+    total: length,
 }
 
 // A column title: click sorts, right-click opens the header menu, the left edge drags to
@@ -265,8 +269,8 @@ export component FileView inherits Rectangle {
     // it only counts while its row is on screen.
     out property <bool> rename-focused: root.rename-has-focus && root.renaming-index >= 0 && root.rename-shown;
     // The renamed entry's line is on screen.
-    property <bool> rename-shown: (root.rename-line + 1) * root.item-height > -root.scroll
-        && root.rename-line * root.item-height < -root.scroll + list.visible-height;
+    property <bool> rename-shown: root.rename-line >= 0 && root.item-height > 0 && root.line-top(root.rename-line + 1) > -root.scroll
+        && root.line-top(root.rename-line) < -root.scroll + list.visible-height;
     // The renamed entry's line; reading `groups-version` (never negative) makes it update.
     property <int> rename-line: root.groups-version < 0 ? -1 : root.line-of(root.renaming-index);
     out property <length> cell-width: max(root.picture-size + 24px, 96px);
@@ -325,6 +329,11 @@ export component FileView inherits Rectangle {
     // with groups an entry's line is not `index / per-row`. -1: in a closed group.
     pure callback line-of(int) -> int;
     pure callback column-of(int) -> int;
+    // A line's top in the list (content coordinates); past the last line, its bottom. Group
+    // headers are shorter than the grid's lines.
+    pure callback line-top(int) -> length;
+    // How high all lines are (the first row carries it).
+    out property <length> content-height: root.items.length > 0 ? root.items[0].total : 0px;
     // Bumped by Rust whenever the groups change: bindings that call `line-of` read it to update.
     in property <int> groups-version;
     // A click on a group's header (its first entry), and its right-click (window position).
@@ -442,10 +451,12 @@ export component FileView inherits Rectangle {
         if line < 0 {
             return;
         }
-        if line * root.item-height < -root.scroll {
-            root.scroll = -line * root.item-height;
-        } else if (line + 1) * root.item-height > -root.scroll + list.visible-height {
-            root.scroll = -((line + 1) * root.item-height - list.visible-height);
+        let top = root.line-top(line);
+        let bottom = root.line-top(line + 1);
+        if top < -root.scroll {
+            root.scroll = -top;
+        } else if bottom > -root.scroll + list.visible-height {
+            root.scroll = -(bottom - list.visible-height);
         }
     }
 
@@ -465,7 +476,7 @@ export component FileView inherits Rectangle {
         if index < 0 {
             return list.absolute-position.y + Theme.spacing * 2;
         }
-        return list.absolute-position.y + root.scroll + (root.line-of(index) + 1) * root.item-height;
+        return list.absolute-position.y + root.scroll + root.line-top(root.line-of(index) + 1);
     }
 
     // The column header, in the list only.
@@ -681,15 +692,19 @@ export component FileView inherits Rectangle {
         }
     }
 
-    // ListView only instantiates the lines on screen, so huge folders stay cheap.
-    list := ListView {
+    // Only the lines near the screen are rows (view/model.rs), each at its place, so huge
+    // folders stay cheap.
+    list := ScrollView {
         x: 0;
         y: root.header-height + root.list-pad;
         width: root.width;
         height: root.height - root.header-height - 2 * root.list-pad;
+        content-height: root.content-height;
         content-y <=> root.scroll;
         for item in root.items: line := Rectangle {
-            height: root.item-height;
+            y: item.y;
+            width: list.visible-width;
+            height: item.height;
 
             // The list: one entry with its columns.
             if root.mode != 1 && item.header == "": entry := Rectangle {
@@ -1087,9 +1102,8 @@ export component FileView inherits Rectangle {
                 }
             }
 
-            // A group's header (spec 10 §6.2): its name and count, at the bottom of the line (in
-            // the grid the line is as high as a cell line). A click opens or closes the group;
-            // it never takes the keyboard.
+            // A group's header (spec 10 §6.2): its name and count, a line as high as a list row
+            // (in the grid too). A click opens or closes the group; it never takes the keyboard.
             if item.header != "": Rectangle {
                 x: Theme.inset;
                 width: parent.width - 2 * Theme.inset;
@@ -1177,7 +1191,7 @@ export component FileView inherits Rectangle {
     if root.rename-error != "" && root.renaming-index >= 0: Rectangle {
         property <int> line: root.rename-line;
         x: list.x + (root.mode != 1 ? Theme.inset + root.side + Theme.icon-size + root.gap : root.grid-left + root.column-of(root.renaming-index) * root.cell-width + 8px);
-        y: list.y + root.scroll + (self.line + 1) * root.item-height;
+        y: list.y + root.scroll + root.line-top(self.line + 1);
         width: error-text.preferred-width + Theme.spacing * 2;
         height: error-text.preferred-height + Theme.spacing;
         background: Theme.danger;

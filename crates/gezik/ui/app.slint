@@ -634,6 +634,7 @@ export component AppWindow inherits Window {
     // Grouped lists (spec 10 §6): where an entry's line is, and its group header's presses.
     pure callback list-line-of(int, int) -> int;
     pure callback list-column-of(int, int) -> int;
+    pure callback list-line-top(int, int) -> length;
     callback list-group-toggled(int, int);
     callback list-group-menu(int, length, length);
     // A column edge was released: Rust reads the widths.
@@ -1297,6 +1298,7 @@ export component AppWindow inherits Window {
                             grid-columns-changed(p, n) => { root.grid-columns-changed(p, n); }
                             zoom(p, bigger) => { root.zoom(p, bigger); }
                             list-line-of(p, e) => { return root.list-line-of(p, e); }
+                            list-line-top(p, n) => { return root.list-line-top(p, n); }
                             list-column-of(p, e) => { return root.list-column-of(p, e); }
                             list-group-toggled(p, first) => { root.list-group-toggled(p, first); }
                             list-group-menu(p, x, y) => { root.list-group-menu(p, x, y); }

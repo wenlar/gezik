@@ -323,23 +323,25 @@ const CELL_INSET: f32 = 4.0;
 
 fn list_hit(list: &ListArea, pane: usize, x: f32, y: f32) -> Hit {
     let content_y = y - list.rect.y - list.scroll;
-    let Some(line) = index_at(content_y, list.geometry.row_height()) else { return Hit::Background(pane) };
-    let per_row = list.geometry.per_row();
-    // The entries on the line: `per_row` of them, or a group's line (a header has none).
-    let cells = if list.groups.is_empty() {
-        line * per_row..((line + 1) * per_row).min(list.count)
+    let (per_row, header, row) = (list.geometry.per_row(), list.geometry.header_height(), list.geometry.row_height());
+    // The line's top and its entries: `per_row` of them, or a group's line (a header has none).
+    let (top, cells) = if list.groups.is_empty() {
+        let Some(line) = index_at(content_y, row) else { return Hit::Background(pane) };
+        (line as f32 * row, line * per_row..((line + 1) * per_row).min(list.count))
     } else {
-        match (Lines { spans: &list.groups, per_row }).line(line) {
-            Some(Line::Cells(cells)) => cells,
+        let lines = Lines { spans: &list.groups, per_row };
+        let Some(line) = lines.at(content_y, header, row) else { return Hit::Background(pane) };
+        match lines.line(line) {
+            Some(Line::Cells(cells)) => (lines.top(line, header, row), cells),
             _ => return Hit::Background(pane),
         }
     };
     let index = match list.geometry {
         Geometry::List { .. } => Some(cells.start),
-        Geometry::Grid { cell_width, cell_height, columns, left } => {
+        Geometry::Grid { cell_width, cell_height, columns, left, .. } => {
             let local_x = x - list.rect.x - left;
             index_at(local_x, cell_width).filter(|&column| column < columns.max(1)).and_then(|column| {
-                let (in_x, in_y) = (local_x - column as f32 * cell_width, content_y - line as f32 * cell_height);
+                let (in_x, in_y) = (local_x - column as f32 * cell_width, content_y - top);
                 let inside = in_x >= CELL_INSET
                     && in_x < cell_width - CELL_INSET
                     && in_y >= CELL_INSET
@@ -649,7 +651,7 @@ mod tests {
     #[test]
     fn grid_gaps_and_empty_cells_are_the_background() {
         let a = ListArea {
-            geometry: Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 5, left: 0.0 },
+            geometry: Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 5, left: 0.0, header: 120.0 },
             ..list(7)
         };
         let l = layout(a);
@@ -663,7 +665,7 @@ mod tests {
     #[test]
     fn an_inset_grid_hits_from_its_left_edge() {
         let a = ListArea {
-            geometry: Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 5, left: 6.0 },
+            geometry: Geometry::Grid { cell_width: 100.0, cell_height: 120.0, columns: 5, left: 6.0, header: 120.0 },
             ..list(7)
         };
         let l = layout(a);
