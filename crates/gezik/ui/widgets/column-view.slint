@@ -218,9 +218,10 @@ export component ColumnView inherits Rectangle {
             }
         }
 
+        // The preview takes the room left right of the columns, out to the pane's edge.
         if root.preview-shown: PreviewPane {
             x: root.columns.length * root.stride;
-            width: root.column-width;
+            width: max(root.column-width, root.width - self.x);
             height: root.height;
             info: root.preview;
             mono-font: root.mono-font;
