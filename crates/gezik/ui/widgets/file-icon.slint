@@ -47,7 +47,7 @@ export component FileIcon inherits Rectangle {
     // Bottom left, one element only where a mark is: rows elsewhere cost nothing.
     // A symbol needs room to read: 11 px at the list's 16 px icons; a dot stays small.
     if root.git > 1: Rectangle {
-        width: root.git-symbol ? max(11px, root.width * 0.7) : max(8px, root.width * 0.5);
+        width: min(root.git-symbol ? 16px : 12px, root.git-symbol ? max(11px, root.width * 0.7) : max(8px, root.width * 0.5));
         height: self.width;
         x: -self.width * 0.25;
         y: root.height - self.height * 0.8;
@@ -82,7 +82,8 @@ export component FileIcon inherits Rectangle {
 
     // One element only where a badge is drawn: rows elsewhere cost nothing.
     if root.cloud != 0: Rectangle {
-        width: max(9px, root.width * 0.45);
+        // Capped: on a grid's large thumbnails a share of the icon would cover the picture.
+        width: min(16px, max(9px, root.width * 0.45));
         height: self.width;
         x: root.width - self.width * 0.8;
         y: root.height - self.height * 0.8;
