@@ -1,0 +1,256 @@
+import { Theme } from "../theme.slint";
+import { TextButton } from "text-button.slint";
+import { PreviewInfo, PreviewStage, PreviewBar, PreviewActions, PropRows } from "preview-pane.slint";
+
+// A round or square icon button of quick look: previous / next over the stage, Info in the bar.
+component LookButton inherits Rectangle {
+    // SVG path commands in a 16×16 box.
+    in property <string> icon;
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> checked;
+    // Over the stage: round, on a raised ground of its own.
+    in property <bool> floating;
+    out property <bool> hovered: touch.has-hover;
+    callback clicked();
+
+    width: root.floating ? 36px : Theme.row-height + 2px;
+    height: self.width;
+    border-radius: root.floating ? self.width / 2 : Theme.radius;
+    border-width: root.floating ? 1px : 0px;
+    border-color: Theme.border;
+    background: root.checked ? Theme.selection
+        : touch.has-hover && root.enabled ? Theme.hover
+        : root.floating ? Theme.surface-raised.with-alpha(0.92) : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-checked: root.checked;
+    accessible-action-default => { root.clicked(); }
+
+    Path {
+        width: 16px;
+        height: 16px;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        commands: root.icon;
+        fill: transparent;
+        stroke: root.checked ? Theme.accent : Theme.foreground;
+        stroke-width: 1.5px;
+        stroke-line-cap: round;
+        stroke-line-join: round;
+        opacity: root.enabled ? 1 : 0.38;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Quick look (design 2b, "stage first"): the file gets the window. One bar under it holds the
+// name with a summary, the viewer's controls, Info and Open; Info opens the facts in a column
+// on the right. Previous / next and the place in the folder float over the stage while the
+// pointer moves there.
+export component QuickLookView inherits Rectangle {
+    in property <PreviewInfo> info;
+    in property <string> mono-font;
+    // The facts column (Info).
+    in-out property <bool> info-open;
+    callback open();
+    // To the item before (-1) or after (1) in the folder.
+    callback step(int);
+
+    // Dark themes set the file on the window's chrome color, light ones on the surface.
+    property <bool> dark: Theme.background.to-hsv().value < 0.5;
+    // The floating buttons show while the pointer moves, and go 2 s after it rests.
+    property <bool> nav-shown;
+    property <bool> over-nav;
+
+    background: Theme.background;
+    accessible-role: none;
+
+    function moved() {
+        root.nav-shown = true;
+        idle.running = true;
+        idle.restart();
+    }
+
+    // Runs only after the pointer moved: nothing ticks while it rests.
+    idle := Timer {
+        interval: 2s;
+        running: false;
+        triggered => {
+            if !root.over-nav {
+                root.nav-shown = false;
+                self.running = false;
+            }
+        }
+    }
+
+    VerticalLayout {
+        HorizontalLayout {
+            vertical-stretch: 1;
+
+            // Hover and the pointer's place reach this before the stage's own areas.
+            stage := TouchArea {
+                horizontal-stretch: 1;
+                changed mouse-x => { root.moved(); }
+                changed mouse-y => { root.moved(); }
+
+                Rectangle {
+                    background: root.dark ? Theme.chrome : Theme.surface;
+                }
+
+                PreviewStage {
+                    x: Theme.spacing * 2;
+                    y: Theme.spacing * 2;
+                    width: parent.width - Theme.spacing * 4;
+                    height: parent.height - Theme.spacing * 4;
+                    info: root.info;
+                    mono-font: root.mono-font;
+                }
+
+                if root.nav-shown && stage.has-hover && root.info.position != "": Rectangle {
+                    back := LookButton {
+                        x: 12px;
+                        y: (parent.height - self.height) / 2;
+                        floating: true;
+                        icon: "M10 3.5 5.5 8l4.5 4.5";
+                        label: @tr("Previous item");
+                        enabled: root.info.can-back;
+                        changed hovered => { root.over-nav = self.hovered || next.hovered; }
+                        clicked => { root.step(-1); }
+                    }
+                    next := LookButton {
+                        x: parent.width - self.width - 12px;
+                        y: (parent.height - self.height) / 2;
+                        floating: true;
+                        icon: "M6 3.5 10.5 8 6 12.5";
+                        label: @tr("Next item");
+                        enabled: root.info.can-next;
+                        changed hovered => { root.over-nav = self.hovered || back.hovered; }
+                        clicked => { root.step(1); }
+                    }
+                    Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: 10px;
+                        width: place.preferred-width + 20px;
+                        height: 24px;
+                        border-radius: 12px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: Theme.surface-raised.with-alpha(0.92);
+                        place := Text {
+                            text: root.info.position;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            font-size: Theme.font-size-small;
+                            color: Theme.foreground-muted;
+                            accessible-role: text;
+                        }
+                    }
+                }
+            }
+
+            // The facts (Info): the name, its type, then label and value rows.
+            if root.info-open: Rectangle {
+                width: 248px;
+                background: Theme.background;
+                Rectangle {
+                    x: 0;
+                    width: 1px;
+                    background: Theme.border;
+                }
+                facts := Flickable {
+                    x: 1px;
+                    width: parent.width - 1px;
+                    content-height: column.preferred-height;
+                    column := VerticalLayout {
+                        width: facts.width;
+                        padding: 16px;
+                        spacing: 16px;
+                        VerticalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: root.info.title;
+                                font-size: Theme.font-size-heading;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                                color: Theme.foreground;
+                            }
+                            if root.info.subtitle != "": Text {
+                                text: root.info.subtitle;
+                                wrap: word-wrap;
+                                color: Theme.foreground-muted;
+                            }
+                        }
+                        PropRows {
+                            rows: root.info.facts;
+                        }
+                        PropRows {
+                            rows: root.info.properties;
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            height: 44px;
+            Rectangle {
+                y: 0;
+                height: 1px;
+                background: Theme.border;
+            }
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 8px;
+                spacing: 12px;
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    spacing: 10px;
+                    Text {
+                        text: root.info.title;
+                        font-weight: 600;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        color: Theme.foreground;
+                    }
+                    Text {
+                        text: root.info.summary;
+                        overflow: elide;
+                        vertical-alignment: center;
+                        color: Theme.foreground-muted;
+                    }
+                }
+                if root.info.bar != 0: PreviewBar {
+                    alignment: center;
+                    info: root.info;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 6px;
+                    VerticalLayout {
+                        alignment: center;
+                        LookButton {
+                            icon: "M8 7.25v4M8 4.75h.01M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0Z";
+                            label: @tr("Info");
+                            checked: root.info-open;
+                            clicked => { root.info-open = !root.info-open; }
+                        }
+                    }
+                    if root.info.kind != 0: VerticalLayout {
+                        alignment: center;
+                        TextButton {
+                            compact: true;
+                            primary: true;
+                            text: @tr("Open");
+                            clicked => { root.open(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

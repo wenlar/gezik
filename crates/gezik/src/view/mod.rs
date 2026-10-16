@@ -1678,6 +1678,19 @@ impl View {
         true
     }
 
+    /// The item after the focused one (`forward`) or before it, as the list or the grid shows
+    /// them (quick look's previous and next); whether there was one.
+    pub fn step(&self, forward: bool) -> bool {
+        let grid = matches!(self.geometry(), Geometry::Grid { .. });
+        let mv = match (grid, forward) {
+            (true, true) => Move::Right,
+            (true, false) => Move::Left,
+            (false, true) => Move::Down,
+            (false, false) => Move::Up,
+        };
+        self.key_move(mv, false, false, 1)
+    }
+
     /// A rubber-band drag over `rect` (content coordinates): selects what it touches, added
     /// to the selection at the drag's start if `additive` (Ctrl).
     pub fn marquee(&self, rect: Rect, additive: bool) {

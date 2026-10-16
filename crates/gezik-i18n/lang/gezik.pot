@@ -3355,6 +3355,7 @@ msgid "Height"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 msgid "Dimensions"
 msgstr ""
 
@@ -3389,6 +3390,7 @@ msgid "Focal Length"
 msgstr ""
 
 #: crates/gezik-core/src/fields.rs
+#: crates/gezik/src/preview/mod.rs
 msgid "Location"
 msgstr ""
 
@@ -3612,6 +3614,7 @@ msgstr ""
 
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Size"
@@ -4221,11 +4224,13 @@ msgstr ""
 
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 msgid "Modified"
 msgstr ""
 
 #: crates/gezik-core/src/view.rs
+#: crates/gezik/src/preview/mod.rs
 #: crates/gezik/ui/widgets/set-dates.slint
 msgid "Created"
 msgstr ""
@@ -6984,6 +6989,7 @@ msgstr ""
 #: crates/gezik/src/finder_menu.rs
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/size_map.rs
+#: crates/gezik/ui/widgets/quick-look.slint
 msgid "Open"
 msgstr ""
 
@@ -9950,14 +9956,18 @@ msgid "Opening…"
 msgstr ""
 
 #: crates/gezik/src/preview/mod.rs
-msgid "{n} item selected"
-msgid_plural "{n} items selected"
-msgstr[0] ""
-msgstr[1] ""
+msgid "Total size"
+msgstr ""
 
 #: crates/gezik/src/preview/mod.rs
 msgid "Total size: {}"
 msgstr ""
+
+#: crates/gezik/src/preview/mod.rs
+msgid "{n} item selected"
+msgid_plural "{n} items selected"
+msgstr[0] ""
+msgstr[1] ""
 
 #: crates/gezik/src/preview/mod.rs
 #: crates/gezik/src/search.rs
@@ -9972,6 +9982,10 @@ msgid "{} folder"
 msgid_plural "{} folders"
 msgstr[0] ""
 msgstr[1] ""
+
+#: crates/gezik/src/preview/mod.rs
+msgid "Contents"
+msgstr ""
 
 #: crates/gezik/src/preview/mod.rs
 msgid "Some folders could not be read"
@@ -9994,6 +10008,10 @@ msgid "{}+ item"
 msgid_plural "{}+ items"
 msgstr[0] ""
 msgstr[1] ""
+
+#: crates/gezik/src/preview/mod.rs
+msgid "Items"
+msgstr ""
 
 #: crates/gezik/src/preview/mod.rs
 msgid "The system Quick Look panel did not open; Gezik's own is shown"
@@ -12997,6 +13015,18 @@ msgstr ""
 
 #: crates/gezik/ui/widgets/preview-pane.slint
 msgid "Volume"
+msgstr ""
+
+#: crates/gezik/ui/widgets/quick-look.slint
+msgid "Previous item"
+msgstr ""
+
+#: crates/gezik/ui/widgets/quick-look.slint
+msgid "Next item"
+msgstr ""
+
+#: crates/gezik/ui/widgets/quick-look.slint
+msgid "Info"
 msgstr ""
 
 #: crates/gezik/ui/widgets/rename-batch.slint

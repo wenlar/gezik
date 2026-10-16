@@ -43,7 +43,7 @@ pub struct PictureView {
 impl PictureView {
     pub fn new(size: (u32, u32), scale_factor: f32, view: (f32, f32)) -> PictureView {
         PictureView {
-            zoom: ZoomView::new((size.0 as f32, size.1 as f32), 1.0, view),
+            zoom: ZoomView::new((size.0 as f32, size.1 as f32), 1.0, view).at_most_100(),
             full: None,
             too_large: too_large(size),
             scale_factor,
@@ -68,8 +68,8 @@ pub fn too_large((w, h): (u32, u32)) -> Option<String> {
 /// A PDF's or picture's bar buttons for `info` (bar 4 or 5): Hex, ‹ the page ›, − the zoom
 /// +, Fit; with a link (locked) only the link and Hex; a player's (bar 6): Hex, Play or Pause
 /// after its link. A `narrow` bar drops Hex and the zoom's figure (the right-click menu has
-/// them all).
-pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
+/// them all); with `hex_last` Hex comes at the end (quick look).
+pub fn bar_tools(info: &PreviewInfo, narrow: bool, hex_last: bool) -> ModelRc<PreviewTool> {
     if info.bar < 4 {
         return ModelRc::default();
     }
@@ -85,19 +85,26 @@ pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
     if link {
         tools.push(tool(info.bar_link.to_string(), info.bar_link.to_string(), 9, 0));
     }
-    if !narrow {
-        tools.push(tool(t!("Hex").into_owned(), t!("Hex").into_owned(), -1, 0));
+    let hex = (!narrow).then(|| tool(t!("Hex").into_owned(), t!("Hex").into_owned(), -1, 0));
+    if !hex_last {
+        tools.extend(hex.clone());
     }
+    let done = |mut tools: Vec<PreviewTool>| {
+        if hex_last {
+            tools.extend(hex.clone());
+        }
+        ModelRc::new(VecModel::from(tools))
+    };
     if info.bar == 6 {
         // Pause is drawn (step 1): the UI font has no ❚❚.
         let (text, label, step) = if info.playing { ("", t!("Pause"), 1) } else { ("▶", t!("Play"), 0) };
         tools.push(tool(text.into(), label.into_owned(), 10, step));
-        return ModelRc::new(VecModel::from(tools));
+        return done(tools);
     }
     // Locked (a password, no pdfium): pages cannot turn and the zoom shows nothing new, so
     // only the link, and the note gets the room.
     if link {
-        return ModelRc::new(VecModel::from(tools));
+        return done(tools);
     }
     if info.bar == 4 {
         let (page, pages) = (info.page, info.pages);
@@ -120,7 +127,7 @@ pub fn bar_tools(info: &PreviewInfo, narrow: bool) -> ModelRc<PreviewTool> {
     tools.push(tool("+".into(), t!("Zoom in, {}", info.zoom_text), 3, 1));
     let fit = if info.bar == 4 { t!("Fit the page or its width") } else { t!("Fit the picture") };
     tools.push(tool(t!("Fit").into_owned(), fit.into_owned(), 4, 0));
-    ModelRc::new(VecModel::from(tools))
+    done(tools)
 }
 
 /// A bar's note or link (marked with `tx!`) in the language in use; none stays none.

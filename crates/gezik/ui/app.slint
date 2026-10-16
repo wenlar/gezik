@@ -4,6 +4,7 @@ import { Glyph } from "glyphs.slint";
 import { CrumbItem } from "widgets/breadcrumb.slint";
 import { TabItem } from "widgets/tab-bar.slint";
 import { Sidebar, SidebarRow } from "widgets/sidebar.slint";
+import { QuickLookView } from "widgets/quick-look.slint";
 import { PreviewPane, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow } from "widgets/preview-pane.slint";
 import { FileRow, ItemRow, FieldColumn } from "widgets/file-view.slint";
 import { OpsPanel, OpRow } from "widgets/ops-panel.slint";
@@ -2219,8 +2220,11 @@ export component QuickLookWindow inherits Window {
     background: Theme.background;
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-size;
+    in-out property <bool> info-open;
     // Every key press; returns whether it was used.
     callback key(KeyEvent) -> bool;
+    callback open();
+    callback step(int);
 
     init => { scope.focus(); }
 
@@ -2231,9 +2235,12 @@ export component QuickLookWindow inherits Window {
             }
             return reject;
         }
-        PreviewPane {
+        QuickLookView {
             info: root.info;
             mono-font: root.mono-font;
+            info-open <=> root.info-open;
+            open => { root.open(); }
+            step(by) => { root.step(by); }
         }
     }
 }

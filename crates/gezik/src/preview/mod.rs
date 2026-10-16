@@ -341,37 +341,62 @@ pub fn with_commas(n: usize) -> String {
     gezik_core::group_digits(n as u64)
 }
 
+/// A picture's side in pixels for Slint.
+fn clamped(side: u32) -> i32 {
+    i32::try_from(side).unwrap_or(i32::MAX)
+}
+
 /// What the pane shows for `target`; `body` is `None` while it loads.
 pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
     match target {
         Target::Nothing => PreviewInfo::default(),
-        Target::Several { count, size, more } => PreviewInfo {
-            kind: 5,
-            title: tn!("{n} item selected" | "{n} items selected", *count).into(),
-            details: size
-                .map(|s| {
-                    let size = format!("{}{}", crate::view_options::size_text(s), if *more { "+" } else { "" });
-                    t!("Total size: {}", size)
+        Target::Several { count, size, more } => {
+            let size = size.map(|s| format!("{}{}", crate::view_options::size_text(s), if *more { "+" } else { "" }));
+            let facts: Vec<PropRow> = size
+                .iter()
+                .map(|size| PropRow {
+                    label: t!("Total size").as_ref().into(),
+                    value: size.as_str().into(),
+                    ..PropRow::default()
                 })
-                .unwrap_or_default()
-                .into(),
-            item_kind: 1,
-            ..PreviewInfo::default()
-        },
-        Target::Entry { name, type_name, size, partial, counts, modified, created, kind, is_dir, .. } => {
+                .collect();
+            let details = size.map(|size| t!("Total size: {}", size)).unwrap_or_default();
+            PreviewInfo {
+                kind: 5,
+                title: tn!("{n} item selected" | "{n} items selected", *count).into(),
+                summary: details.as_str().into(),
+                details: details.into(),
+                facts: slint::ModelRc::new(slint::VecModel::from(facts)),
+                item_kind: 1,
+                ..PreviewInfo::default()
+            }
+        }
+        Target::Entry { path, inside, name, type_name, size, partial, counts, modified, created, kind, is_dir } => {
             let mut lines = vec![type_name.clone()];
+            // The same facts as label and value rows (quick look's Info), and its bar's summary.
+            let mut facts = Vec::new();
+            let mut fact = |label: &str, value: String| {
+                facts.push(PropRow { label: label.into(), value: value.into(), ..PropRow::default() });
+            };
+            let mut summary = vec![type_name.clone()];
             if let Some(size) = size {
                 let prefix = if *partial { "≥ " } else { "" };
-                lines.push(format!("{prefix}{}", crate::view_options::size_text(*size)));
+                let text = format!("{prefix}{}", crate::view_options::size_text(*size));
+                fact(&t!("Size"), text.clone());
+                summary.push(text.clone());
+                lines.push(text);
             }
             if let Some((files, folders)) = counts {
                 let n = |v: u64| with_commas(usize::try_from(v).unwrap_or(usize::MAX));
                 let files = tn!("{} file" | "{} files", *files, n(*files));
                 let folders = tn!("{} folder" | "{} folders", *folders, n(*folders));
+                fact(&t!("Contents"), format!("{files}, {folders}"));
                 lines.push(format!("{files}, {folders}"));
             }
             if *partial {
-                lines.push(t!("Some folders could not be read").into_owned());
+                let text = t!("Some folders could not be read").into_owned();
+                fact("", text.clone());
+                lines.push(text);
             }
             if let Some(time) = modified {
                 lines.push(t!("Modified {}", crate::view_options::date_text(*time)));
@@ -382,17 +407,23 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
             let mut info = PreviewInfo {
                 kind: if *is_dir { 4 } else { 3 },
                 title: name.as_str().into(),
+                subtitle: type_name.as_str().into(),
                 item_kind: *kind,
                 loading: body.is_none(),
                 // A PDF offers its pages (spec 13 §5).
                 page: i32::from(pdf_path(target).is_some()),
                 ..PreviewInfo::default()
             };
+            // After the dates in the pane's lines, before them in the rows (as the design has it).
+            let mut dimensions = None;
             match body {
                 None | Some(Body::None) => {}
                 Some(Body::Picture(picture, size)) => {
                     if let Some((w, h)) = size {
                         lines.push(t!("{} × {} pixels", w, h));
+                        dimensions = Some(format!("{w} × {h}"));
+                        summary.push(format!("{w} × {h}"));
+                        (info.own_width, info.own_height) = (clamped(w), clamped(h));
                         info.kind = 1;
                     }
                     info.picture = Image::from_rgba8(picture);
@@ -400,12 +431,36 @@ pub fn describe(target: &Target, body: Option<Body>) -> PreviewInfo {
                 }
                 // The viewer shows it (`Preview::loaded`).
                 Some(Body::Text(_)) => info.kind = 2,
-                Some(Body::Folder { count, more }) => lines.push(match (count, more) {
-                    (_, true) => tn!("{}+ item" | "{}+ items", MAX_COUNTED, with_commas(MAX_COUNTED)),
-                    (n, false) => crate::stack::count_text(n),
-                }),
+                Some(Body::Folder { count, more }) => {
+                    let text = match (count, more) {
+                        (_, true) => tn!("{}+ item" | "{}+ items", MAX_COUNTED, with_commas(MAX_COUNTED)),
+                        (n, false) => crate::stack::count_text(n),
+                    };
+                    fact(&t!("Items"), text.clone());
+                    summary.push(text.clone());
+                    lines.push(text);
+                }
+            }
+            if let Some(text) = dimensions {
+                fact(&t!("Dimensions"), text);
+            }
+            if let Some(time) = modified {
+                fact(&t!("Modified"), crate::view_options::date_text(*time));
+            }
+            if let Some(time) = created {
+                fact(&t!("Created"), crate::view_options::date_text(*time));
+            }
+            // Inside an archive the file was taken out to a temporary folder: the archive is where it is.
+            let place = match inside {
+                Some(at) => at.disk().map(Path::to_path_buf),
+                None => path.parent().map(Path::to_path_buf),
+            };
+            if let Some(place) = place.filter(|p| !p.as_os_str().is_empty()) {
+                fact(&t!("Location"), place.display().to_string());
             }
             info.details = lines.join("\n").into();
+            info.summary = summary.join(" · ").into();
+            info.facts = slint::ModelRc::new(slint::VecModel::from(facts));
             info
         }
     }
@@ -457,6 +512,8 @@ struct Inner {
     /// What is shown now (the quick look window opens with it).
     info: RefCell<PreviewInfo>,
     quick_look: RefCell<Option<crate::quick_look::QuickLook>>,
+    /// Quick look's facts column was open when it closed (for this run of Gezik).
+    quick_info: Cell<bool>,
     /// The shown file's viewer, and the target it is for (spec 13 §3.1).
     viewer: RefCell<Viewer>,
     viewer_target: RefCell<Target>,
@@ -508,6 +565,7 @@ impl Preview {
             timer: slint::Timer::default(),
             info: RefCell::new(PreviewInfo::default()),
             quick_look: RefCell::new(None),
+            quick_info: Cell::new(false),
             viewer: RefCell::default(),
             viewer_target: RefCell::new(Target::Nothing),
             room: Cell::new((80, 40)),
@@ -708,15 +766,16 @@ impl Preview {
         let quick = self.quick_look_open();
         let narrow = |cell: &Cell<(f32, f32)>| cell.get().0 < NARROW;
         // A narrow bar drops some buttons and the volume bar (the right-click menu has them).
-        let tools = |info: &mut PreviewInfo, cell| {
-            info.tools = viewer::bar_tools(info, narrow(cell));
+        // Quick look's Hex (`hex_last`) comes after the zoom, as a switch of what is shown.
+        let tools = |info: &mut PreviewInfo, cell, hex_last| {
+            info.tools = viewer::bar_tools(info, narrow(cell), hex_last);
             if narrow(cell) {
                 info.volume = -1.0;
             }
         };
         self.0.viewer.borrow().fill(&mut shown, self.room(), true);
         length(&mut shown);
-        tools(&mut shown, if quick { &self.0.surface_quick } else { &self.0.surface });
+        tools(&mut shown, if quick { &self.0.surface_quick } else { &self.0.surface }, quick);
         // A picture over Gezik's limits says so before any zoom.
         if shown.bar == 5
             && shown.bar_note.is_empty()
@@ -731,13 +790,19 @@ impl Preview {
                 let mut pane = info.clone();
                 self.0.viewer.borrow().fill(&mut pane, self.room(), false);
                 length(&mut pane);
-                tools(&mut pane, &self.0.surface);
+                tools(&mut pane, &self.0.surface, false);
                 window.set_preview(pane);
             } else {
                 window.set_preview(shown.clone());
             }
         }
         if let Some(quick_look) = self.0.quick_look.borrow().as_ref() {
+            let view = crate::panes::active_view();
+            if let Some(focus) = view.focus() {
+                let len = view.len();
+                shown.position = format!("{} / {}", with_commas(focus + 1), with_commas(len)).into();
+                (shown.can_back, shown.can_next) = (focus > 0, focus + 1 < len);
+            }
             quick_look.set_info(shown);
         }
         *self.0.info.borrow_mut() = info;
@@ -830,10 +895,21 @@ impl Preview {
             &window,
             info,
             window.get_mono_font(),
+            self.0.quick_info.get(),
             move |text, ctrl, alt, shift, meta| {
                 crate::windows::with_window(id, |_| with_current(|p| p.quick_look_key(text, ctrl, alt, shift, meta)))
                     .flatten()
                     .unwrap_or(false)
+            },
+            // Open closes it: the file's app (or the folder) is what comes next.
+            move || {
+                crate::windows::with_window(id, |_| {
+                    crate::panes::with_active(|p| p.nav.open_selected());
+                    Preview::close_later();
+                });
+            },
+            move |by| {
+                crate::windows::with_window(id, |_| crate::panes::active_view().step(by > 0));
             },
             move || {
                 crate::windows::with_window(id, |_| Preview::close_later());
@@ -877,6 +953,7 @@ impl Preview {
         // Taken out first: no borrow is held while the window is hidden.
         let quick_look = self.0.quick_look.borrow_mut().take();
         if let Some(quick_look) = quick_look {
+            self.0.quick_info.set(quick_look.info_open());
             quick_look.close();
         }
         if let Some((target, place)) = self.0.pane_place.take()
@@ -2431,17 +2508,20 @@ Some folders could not be read"
         {
             use slint::Model;
             let texts =
-                |narrow| viewer::bar_tools(&info, narrow).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+                |narrow| viewer::bar_tools(&info, narrow, false).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
             assert_eq!(texts(false), ["Hex", "‹", "1", "›", "−", "+", "Fit"], "Fit once");
             assert_eq!(texts(true), ["‹", "1", "›", "−", "+", "Fit"], "narrow: no Hex, no figure");
+            let quick = viewer::bar_tools(&info, false, true).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+            assert_eq!(quick, ["‹", "1", "›", "−", "+", "Fit", "Hex"], "quick look: Hex last");
             let mut zoomed = info.clone();
             zoomed.zoom_text = "125%".into();
-            assert_eq!(viewer::bar_tools(&zoomed, true).row_count(), 6);
-            assert_eq!(viewer::bar_tools(&zoomed, false).row_data(5).unwrap().text.as_str(), "125%");
+            assert_eq!(viewer::bar_tools(&zoomed, true, false).row_count(), 6);
+            assert_eq!(viewer::bar_tools(&zoomed, false, false).row_data(5).unwrap().text.as_str(), "125%");
             let mut locked = info.clone();
             locked.bar_link = "Enter Password…".into();
-            let locked =
-                |narrow| viewer::bar_tools(&locked, narrow).iter().map(|t| t.text.to_string()).collect::<Vec<_>>();
+            let locked = |narrow| {
+                viewer::bar_tools(&locked, narrow, false).iter().map(|t| t.text.to_string()).collect::<Vec<_>>()
+            };
             assert_eq!(locked(true), ["Enter Password…"], "locked: the note gets the room");
             assert_eq!(locked(false), ["Enter Password…", "Hex"]);
         }
@@ -2472,5 +2552,27 @@ Some folders could not be read"
             Some("Too large to zoom (8200 × 6200, over 8192 px a side)"),
             "Gezik does not decode it at all"
         );
+    }
+
+    #[test]
+    fn quick_look_gets_the_facts_as_rows_and_a_summary() {
+        use slint::Model;
+        let photo = entry(PathBuf::from("/x/p.jpg"), false);
+        let info = describe(&photo, Some(Body::Picture(SharedPixelBuffer::new(64, 48), Some((4000, 3000)))));
+        assert_eq!(info.summary.as_str(), "Thing · 2.0 KB · 4000 × 3000");
+        assert_eq!(info.subtitle.as_str(), "Thing");
+        assert_eq!((info.own_width, info.own_height), (4000, 3000));
+        let rows: Vec<(String, String)> =
+            info.facts.iter().map(|r| (r.label.to_string(), r.value.to_string())).collect();
+        let location = Path::new("/x").display().to_string();
+        assert_eq!(
+            rows,
+            [
+                ("Size".into(), "2.0 KB".into()),
+                ("Dimensions".into(), "4000 × 3000".into()),
+                ("Location".into(), location)
+            ]
+        );
+        assert_eq!(info.details.as_str(), "Thing\n2.0 KB\n4000 × 3000 pixels", "the pane's lines as before");
     }
 }
