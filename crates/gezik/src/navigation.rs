@@ -319,6 +319,17 @@ fn apply_failure(cleared: &mut bool, mode: &Mode, location: &Location) -> Option
 /// The path typed into the address bar. A relative path is taken from `base` (the folder
 /// on screen) if there is one, else from the working folder; on Windows `..` parts are
 /// resolved too, so the address bar parts stay right.
+/// The program and its arguments in an address typed, if it may be one (Explorer runs it):
+/// its first word holds no separator, drive colon or wildcard and is not `.` or `..`.
+/// shortcut: arguments split at spaces, no quoting; `>` runs a full command line.
+fn typed_program(text: &str) -> Option<(&str, Vec<&str>)> {
+    let mut words = text.split_whitespace();
+    let program = words.next()?;
+    let plain =
+        !program.contains(['\\', '/', ':', '*', '?', '"', '<', '>', '|']) && !program.trim_matches('.').is_empty();
+    plain.then(|| (program, words.collect()))
+}
+
 pub(crate) fn resolve_typed(text: &str, base: Option<&Path>) -> PathBuf {
     // `std::path::absolute` mangles a bare `\server`; it lists its shares as typed.
     if cfg!(windows) && gezik_core::path_text::server_only(text).is_some() {
@@ -1307,10 +1318,37 @@ impl Navigator {
         if let Some((name, inner)) = gezik_core::vfs::split_device(Path::new(&text)) {
             return self.go(crate::phones::place_of(&name, inner).unwrap_or(Location::Path(text.into())));
         }
-        let path = match self.active_location().folder() {
-            Some(base) => resolve_typed(&text, Some(base)),
-            None => resolve_typed(&text, None),
-        };
+        let base = self.active_location().folder().map(Path::to_path_buf);
+        let path = resolve_typed(&text, base.as_deref());
+        // As Explorer: a name that is no item here but a program on PATH starts in this folder.
+        if cfg!(windows)
+            && let Some(dir) = base
+            && let Some((program, args)) = typed_program(&text)
+        {
+            let (id, window_id, program_shown) = (self.id(), crate::windows::current(), program.to_owned());
+            let (program, args) = (program.to_owned(), args.into_iter().map(Into::into).collect());
+            let go = move || _ = crate::panes::with_id(id, |p| p.nav.go(Location::Path(path)));
+            // On a thread: the folder may be on the network, PATH is looked through.
+            let started = std::thread::Builder::new().name("gezik-typed-program".into()).spawn(move || {
+                if std::fs::symlink_metadata(dir.join(&text)).is_ok() {
+                    return crate::windows::post(window_id, go);
+                }
+                match gezik_platform::terminal::start_program(&program, args, &dir) {
+                    Ok(()) | Err(gezik_platform::terminal::TerminalError::Cancelled) => {}
+                    Err(gezik_platform::terminal::TerminalError::NotFound) => crate::windows::post(window_id, go),
+                    Err(err) => {
+                        let text = t!("Cannot open {}: {}", program, err);
+                        crate::windows::post(window_id, move || {
+                            crate::panes::with_id(id, |p| p.view.note(text));
+                        });
+                    }
+                }
+            });
+            if let Err(err) = started {
+                self.status(t!("Cannot open {}: {}", program_shown, gezik_platform::fs::describe(&err)));
+            }
+            return;
+        }
         self.go(Location::Path(path));
     }
 
@@ -1845,6 +1883,18 @@ pub fn sync_model<T: Clone + PartialEq + 'static>(model: &VecModel<T>, items: im
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bare_name_typed_may_be_a_program() {
+        assert_eq!(typed_program("cmd"), Some(("cmd", vec![])));
+        assert_eq!(typed_program("code ."), Some(("code", vec!["."])));
+        assert_eq!(typed_program(r"C:\Users"), None);
+        assert_eq!(typed_program("a/b"), None);
+        assert_eq!(typed_program("D:"), None);
+        assert_eq!(typed_program(".."), None);
+        assert_eq!(typed_program("*.txt"), None);
+        assert_eq!(typed_program("   "), None);
+    }
 
     #[test]
     fn an_archive_written_anew_is_not_taken_for_gone() {
