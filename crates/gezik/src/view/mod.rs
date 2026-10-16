@@ -2705,6 +2705,7 @@ impl View {
         crate::panes::edit(self.0.id, |d| {
             d.sort_column = column;
             d.sort_desc = spec.dir == SortDir::Desc;
+            d.sort_label = crate::view_popups::sort_name(spec.key).into();
         });
     }
 

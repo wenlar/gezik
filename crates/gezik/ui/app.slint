@@ -20,6 +20,7 @@ import { InfoLayer, InfoView } from "widgets/info.slint";
 import { DiffLayer, DiffRow, DiffView } from "widgets/diff.slint";
 import { ToolTable, ToolRow, ToolToggle } from "widgets/tool-table.slint";
 import { PopupMenu, MenuEntry, MenuPlace, MenuSub } from "widgets/popup-menu.slint";
+import { ViewPopup, ViewLine } from "widgets/view-popups.slint";
 import { Picker, PickRow } from "widgets/picker.slint";
 import { PathSuggestions, PathRow } from "widgets/path-suggestions.slint";
 import { PaneView, PaneData, PaneGeometry, PaneFocus } from "widgets/pane.slint";
@@ -58,7 +59,7 @@ export component CommandOutputProbe inherits Window {
     }
 }
 
-export { Theme, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, FieldColumn, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, PickRow, PathRow, PaneData, CmdLine, PaneGeometry, PaneFocus, ColumnItem, SettingsWindow, SettingItem }
+export { Theme, PreviewInfo, PreviewRow, PreviewPart, PreviewTool, PreviewActions, PropRow, CrumbItem, TabItem, SidebarRow, FileRow, ItemRow, FieldColumn, OpRow, StackRow, ConflictRow, RuleRow, RenamePreviewRow, RuleOptions, ConvertView, InfoView, DiffRow, DiffView, MapRect, ToolRow, ToolToggle, MenuEntry, MenuPlace, MenuSub, ViewLine, PickRow, PathRow, PaneData, CmdLine, PaneGeometry, PaneFocus, ColumnItem, SettingsWindow, SettingItem }
 
 // Where the window's drop targets are, in window coordinates (drag.rs reads it while files
 // are dragged; every field is computed when read). The pane's are in its `PaneGeometry`.
@@ -416,9 +417,27 @@ export component AppWindow inherits Window {
     callback rename-tab(int, string, bool);
     callback rename-edited(int, string);
     callback rename-blurred(int, string, int);
-    // The View button, with its box for its menu: (left, bottom, right, top), as for every
-    // menu that opens under a button (the menu flips above it or to its right edge).
-    callback view-menu(int, length, length, length, length);
+    // A pane's toolbar popup (0 Layout, 1 Sort, 2 ⋯), with its button's box: (left, bottom,
+    // right, top), as for every menu that opens under a button (it flips above it or to its
+    // right edge). Rust fills the `vp-*` and calls `show-view-popup`.
+    callback view-popup(int, int, length, length, length, length);
+    // The pane and the popup asked for last (its button looks pressed while it is open).
+    property <int> vp-pane: -1;
+    property <int> vp-which: -1;
+    // What the popup shows (view-popups.slint `ViewPopup`).
+    in property <int> vp-kind;
+    in property <[ViewLine]> vp-lines;
+    in property <[ViewLine]> vp-segments;
+    in property <[ViewLine]> vp-after;
+    in property <[MenuEntry]> vp-keys;
+    in property <string> vp-hint;
+    // A line chosen (its id, as context_menu.rs's), or one that opens a menu, with its box.
+    callback view-popup-chosen(int);
+    callback view-popup-sub(int, length, length, length, length);
+    // A toggle clicked, or right-clicked (true) at a window position, in pane `int`: 0 the
+    // preview, 1 two panes (the toolbar's), 2 sync browsing (between the panes), 3 the drop
+    // stack (the status bar's).
+    callback panel-toggle(int, int, bool, length, length);
     in property <string> status;
     // The Git part (spec 16 §8.4): `⎇ main ↑2 · 5 changed` in a repository, else empty.
     in property <string> git-status;
@@ -1019,6 +1038,16 @@ export component AppWindow inherits Window {
         }
     }
 
+    // Gezik's own menu (`menu-lines`) even where Slint shows system ones: what opens from a
+    // toolbar popup looks like it.
+    public function show-own-menu(x: length, y: length, flip-x: length, flip-y: length) {
+        popup-menu.show(x, y, flip-x, flip-y);
+    }
+
+    public function show-view-popup(x: length, y: length, flip-x: length, flip-y: length) {
+        view-popup.show(x, y, flip-x, flip-y);
+    }
+
     // Covers the whole window, but only opens when Rust calls `show-menu`: right-clicks
     // themselves are handled by rows, tabs and the sidebar (`enabled` only blocks input).
     menu-area := ContextMenuArea {
@@ -1249,7 +1278,14 @@ export component AppWindow inherits Window {
                             tab-move(p, from, to) => { root.tab-move(p, from, to); }
                             tab-menu(p, t, x, y) => { root.tab-menu(p, t, x, y); }
                             tab-out(p, t, x, y, r) => { return root.tab-out(p, t, x, y, r); }
-                            view-menu(p, x, y, r, t) => { root.view-menu(p, x, y, r, t); }
+                            preview-on: root.preview-open;
+                            popup-open: view-popup.is-open && root.vp-pane == i ? root.vp-which : -1;
+                            view-popup(p, which, x, y, r, t) => {
+                                root.vp-pane = p;
+                                root.vp-which = which;
+                                root.view-popup(p, which, x, y, r, t);
+                            }
+                            panel-toggle(p, which, menu, x, y) => { root.panel-toggle(p, which, menu, x, y); }
                             filter-edited(p, t) => { root.filter-edited(p, t); }
                             filter-menu(p, x, y, r, t) => { root.filter-menu(p, x, y, r, t); }
                             filter-search(p) => { root.filter-search(p); }
@@ -1474,18 +1510,33 @@ export component AppWindow inherits Window {
                             changed pressed => { if !self.pressed { root.pane-split-done(); } }
                             double-clicked => { root.pane-split-reset(); }
                         }
-                        // Sync browsing: a link between the two address bars.
-                        if root.view-sync && !root.panes-stacked: Path {
-                            x: (parent.width - self.width) / 2;
-                            y: Theme.tab-strip-height + (Theme.toolbar-height - self.height) / 2;
+                    }
+                    // Sync browsing: a link between the two address bars, lit while it is on; a
+                    // click turns it on or off. Over the splitter, inside the toolbars' padding.
+                    if root.dual && !root.panes-stacked: Rectangle {
+                        x: root.split-x - 5px / 2 - self.width / 2;
+                        y: Theme.tab-strip-height + (Theme.toolbar-height - self.height) / 2;
+                        width: 20px;
+                        height: 20px;
+                        border-radius: Theme.radius;
+                        background: sync-touch.has-hover ? Theme.hover : transparent;
+                        accessible-role: button;
+                        accessible-label: @tr("Sync browsing");
+                        accessible-checked: root.view-sync;
+                        accessible-action-default => { root.panel-toggle(root.active-pane, 2, false, 0, 0); }
+                        Path {
                             width: 12px;
                             height: 12px;
                             viewbox-width: 16;
                             viewbox-height: 16;
                             commands: Glyph.link;
-                            stroke: Theme.accent;
+                            stroke: root.view-sync ? Theme.accent : Theme.foreground-muted;
                             stroke-width: 1.5px;
                             stroke-line-cap: round;
+                        }
+                        sync-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.panel-toggle(root.active-pane, 2, false, 0, 0); }
                         }
                     }
                     // Two panes with the preview at the bottom: it is under both, placed by hand
@@ -1685,6 +1736,42 @@ export component AppWindow inherits Window {
                         history-touch := TouchArea {
                             mouse-cursor: pointer;
                             clicked => { root.history-toggle(); }
+                        }
+                    }
+                    // The drop stack, shown or hidden; lit while it is shown.
+                    Rectangle {
+                        width: stack-text.preferred-width + 26px;
+                        border-radius: Theme.radius;
+                        background: stack-touch.has-hover || root.stack-open ? Theme.hover : transparent;
+                        animate background { duration: Theme.motion-hover; }
+                        accessible-role: button;
+                        accessible-label: @tr("Drop stack");
+                        accessible-checked: root.stack-open;
+                        accessible-action-default => { root.panel-toggle(root.active-pane, 3, false, 0, 0); }
+                        Path {
+                            x: 4px;
+                            y: (parent.height - 12px) / 2;
+                            width: 12px;
+                            height: 12px;
+                            viewbox-width: 16;
+                            viewbox-height: 16;
+                            commands: Glyph.stack;
+                            stroke: root.stack-open ? Theme.accent : Theme.foreground-muted;
+                            stroke-width: 1.5px;
+                            stroke-line-cap: round;
+                            stroke-line-join: round;
+                        }
+                        stack-text := Text {
+                            x: 22px;
+                            height: parent.height;
+                            text: @tr("Drop stack");
+                            font-size: Theme.font-size-small;
+                            vertical-alignment: center;
+                            color: Theme.foreground-muted;
+                        }
+                        stack-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.panel-toggle(root.active-pane, 3, false, 0, 0); }
                         }
                     }
                     if root.tool-chip != "": Rectangle {
@@ -2186,6 +2273,29 @@ export component AppWindow inherits Window {
                 y: 4px;
                 text: root.sidebar-tip;
                 color: Theme.foreground;
+            }
+        }
+    }
+
+    // The toolbar's popups, under Gezik's own menu (Group by ▸ opens over the Sort menu).
+    view-popup := ViewPopup {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        kind: root.vp-kind;
+        lines: root.vp-lines;
+        segments: root.vp-segments;
+        after: root.vp-after;
+        keys: root.vp-keys;
+        hint: root.vp-hint;
+        place(x, y, fx, fy, w, h, aw, ah) => { return root.place-menu(x, y, fx, fy, w, h, aw, ah); }
+        step(lines, from, down) => { return root.menu-step(lines, from, down); }
+        activated(id) => { root.view-popup-chosen(id); }
+        sub(id, l, b, r, t) => { root.view-popup-sub(id, l, b, r, t); }
+        closed => {
+            if !root.dialog-open {
+                root.menu-gives-keyboard-back();
             }
         }
     }

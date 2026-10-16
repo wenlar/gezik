@@ -1248,11 +1248,30 @@ fn build(id: WindowId, window: &AppWindow, opening: Opening, process: &Process) 
             }
         }
     });
-    window.on_view_menu({
+    window.on_view_popup({
         let menus = menus.clone();
-        move |pane, left, bottom, right, top| {
+        move |pane, which, left, bottom, right, top| {
             if crate::pick(pane).is_some() {
-                menus.view_menu(popup::Anchor::below(left, top, right, bottom));
+                menus.view_popup(which, popup::Anchor::below(left, top, right, bottom));
+            }
+        }
+    });
+    window.on_view_popup_chosen({
+        let menus = menus.clone();
+        move |id| menus.view_popup_chosen(id)
+    });
+    // Group by ▸ beside its line in the Sort menu (else to its left).
+    window.on_view_popup_sub({
+        let menus = menus.clone();
+        move |_, left, bottom, right, top| {
+            menus.group_menu(popup::Anchor { x: right, y: top, flip_x: left, flip_y: bottom });
+        }
+    });
+    window.on_panel_toggle({
+        let menus = menus.clone();
+        move |pane, which, menu, x, y| {
+            if crate::pick(pane).is_some() {
+                menus.panel_toggle(which, menu, x, y);
             }
         }
     });

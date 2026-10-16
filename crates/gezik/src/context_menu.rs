@@ -17,7 +17,6 @@ use gezik_core::search::{DateRange, Scope, SearchSpec};
 use gezik_core::templates::{LinkKind, PasteKind, Template};
 use gezik_core::view::{
     ColumnKey, ColumnState, DateFormat, GridSize, SizeFormat, SortDir, SortKey, SortSpec, ViewMode, ViewOptions,
-    ViewSettings,
 };
 use gezik_platform::MenuTarget;
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -1205,105 +1204,6 @@ fn owned(items: Vec<(u32, &'static str)>) -> Vec<(u32, String)> {
     items.into_iter().map(|(id, title)| (id, t("", title).into_owned())).collect()
 }
 
-/// The View menu; the current choices are marked with a bullet. `options`: `[view]`'s options
-/// (spec 7.2), "Show system items" only on Windows; Date format ▸ and Size format ▸ go before
-/// "Apply to all folders" (`format_subs`).
-pub fn view_items(
-    view: ViewSettings,
-    preview_open: bool,
-    stack_open: bool,
-    options: ViewOptions,
-    windows: bool,
-) -> Vec<(u32, String)> {
-    let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
-    let grid = view.mode == ViewMode::Grid;
-    let mut out = vec![
-        (VIEW_LIST, mark(view.mode == ViewMode::List, &t!("List"))),
-        (VIEW_GRID, mark(grid, &t!("Grid"))),
-        (VIEW_COLUMNS, mark(view.mode == ViewMode::Columns, &t!("Columns"))),
-    ];
-    if grid {
-        out.push((GRID_SMALL, mark(view.grid_size == GridSize::Small, &t!("Small icons"))));
-        out.push((GRID_MEDIUM, mark(view.grid_size == GridSize::Medium, &t!("Medium icons"))));
-        out.push((GRID_LARGE, mark(view.grid_size == GridSize::Large, &t!("Large icons"))));
-    }
-    let sorts = [
-        (SORT_BY_NAME, SortKey::Name, tx!("Sort by name")),
-        (SORT_BY_MODIFIED, SortKey::Modified, tx!("Sort by date modified")),
-        (SORT_BY_CREATED, SortKey::Created, tx!("Sort by date created")),
-        (SORT_BY_TYPE, SortKey::Type, tx!("Sort by type")),
-        (SORT_BY_SIZE, SortKey::Size, tx!("Sort by size")),
-        (SORT_BY_TAGS, SortKey::Tags, tx!("Sort by tags")),
-        (SORT_BY_RATING, SortKey::Rating, tx!("Sort by rating")),
-    ];
-    for (id, key, title) in sorts {
-        out.push((id, mark(view.sort.key == key, &t("", title))));
-    }
-    let by_field = match view.sort.key {
-        // English lower-cases the label mid-sentence; a translation is shown as written (no
-        // case change applied to translated text: Turkish i/İ).
-        SortKey::Field(id) => match gezik_i18n::current() {
-            None => t!("Sort by {}…", id.def().label.to_lowercase()),
-            Some(_) => t!("Sort by {}…", t("", id.def().label)),
-        },
-        _ => t!("Sort by property…").into_owned(),
-    };
-    out.push((SORT_BY_MORE, mark(matches!(view.sort.key, SortKey::Field(_)), &by_field)));
-    out.push((SORT_ASC, mark(view.sort.dir == SortDir::Asc, &t!("Ascending"))));
-    out.push((SORT_DESC, mark(view.sort.dir == SortDir::Desc, &t!("Descending"))));
-    out.push((PREVIEW_PANE, mark(preview_open, &t!("Preview pane"))));
-    out.push((PREVIEW_HEX, mark(false, &t!("Show Preview as Hex"))));
-    out.push((PREVIEW_PLAY, mark(false, &t!("Play/Pause Preview"))));
-    out.push((TOGGLE_STACK, mark(stack_open, &t!("Drop stack"))));
-    out.push((SHOW_HISTORY, mark(false, &t!("Operation history"))));
-    out.push((HIDE_EXTENSIONS, mark(options.hide_extensions, &t!("Hide extensions"))));
-    out.push((FOLDERS_FIRST, mark(options.folders_first, &t!("Folders first"))));
-    out.push((SINGLE_CLICK_OPEN, mark(options.single_click_open, &t!("Single-click to open"))));
-    out.push((SHOW_HIDDEN, mark(options.show_hidden, &t!("Show hidden items"))));
-    if windows {
-        out.push((SHOW_SYSTEM, mark(options.show_system, &t!("Show system items"))));
-    }
-    out.push((APPLY_TO_ALL, t!("Apply to all folders").into_owned()));
-    out.push((RESET_FOLDER, t!("Reset this folder").into_owned()));
-    out.push((SYSTEM_INTEGRATION, mark(false, &t!("System Integration…"))));
-    out.push((SETTINGS, mark(false, &t!("Settings…"))));
-    out.push((REVEAL_IN_TREE, mark(false, &t!("Show in sidebar tree"))));
-    out
-}
-
-/// The View menu with a view rule (spec 10 §8.2, plan deviation 10): `rule` is its number and
-/// whether it sets this folder's view. It does: "View rule N applies", greyed, before "Reset this
-/// folder". The folder has its own view and rule N would apply without it: "Reset to rule N"
-/// instead.
-fn rule_items(entries: &mut Vec<(u32, String, bool)>, rule: Option<(usize, bool)>) {
-    let Some((number, applies)) = rule else { return };
-    let Some(at) = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER) else { return };
-    if applies {
-        entries.insert(at, (VIEW_RULE_APPLIES, format!("    {}", t!("View rule {} applies", number)), false));
-    } else {
-        entries[at] = (RESET_TO_RULE, t!("Reset to rule {}", number), true);
-    }
-}
-
-/// Date format ▸ and Size format ▸ of the View menu, at place `at`, the current one marked.
-pub fn format_subs(options: ViewOptions, at: usize) -> Vec<Submenu> {
-    let mark = |on: bool, title: &str| format!("{}{title}", if on { "• " } else { "    " });
-    let dates = DateFormat::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (DATE_FORMAT_FIRST + i as u32, mark(*f == options.date_format, &t("", f.label())), true))
-        .collect();
-    let sizes = SizeFormat::ALL
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (SIZE_FORMAT_FIRST + i as u32, mark(*f == options.size_format, &t("", f.label())), true))
-        .collect();
-    vec![
-        Submenu { title: t!("Date format").into_owned(), at, items: dates },
-        Submenu { title: t!("Size format").into_owned(), at, items: sizes },
-    ]
-}
-
 /// Group by ▸ (spec 10 §6.2): None, Type, Date, Size, Tag, Rating, the current one marked; at
 /// place `at`.
 pub fn group_by_sub(current: GroupBy, at: usize) -> Submenu {
@@ -2133,63 +2033,74 @@ impl Menus {
         );
     }
 
-    /// The View button's menu, under it.
-    pub fn view_menu(&self, at: Anchor) {
-        *self.subject.borrow_mut() = Some(Subject::View);
-        let options = crate::view_options::current();
-        let mut stack_open = false;
-        crate::stack::with_current(|stack| stack_open = stack.is_open());
-        let items = view_items(
-            crate::panes::active_view().view_settings(),
-            self.preview.is_pane_open(),
-            stack_open,
-            options,
-            cfg!(windows),
-        );
-        let place = items.iter().position(|(id, _)| *id == APPLY_TO_ALL).unwrap_or(items.len());
-        let mut entries: Vec<(u32, String, bool)> = items.into_iter().map(|(id, title)| (id, title, true)).collect();
-        // Flat view (spec 5): marked in it, off in This PC.
-        let location = crate::panes::active_nav().active_location();
-        let flat = matches!(location, Location::Flat(_));
-        let at_flat = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).unwrap_or(entries.len());
-        entries.insert(at_flat, (FLAT_VIEW, marked(flat, &t!("Flat view")), location.folder().is_some()));
-        // Two panes (spec 10 §10.3), right after the preview pane.
-        let at_panes = entries.iter().position(|(id, _, _)| *id == PREVIEW_PANE).map_or(entries.len(), |i| i + 1);
-        let dual = crate::dual::is_open();
-        let sync = crate::dual::is_synced();
-        let (stacked, bottom) = crate::dual::layout();
-        entries.splice(
-            at_panes..at_panes,
-            [
-                (PREVIEW_BOTTOM, marked(bottom, &t!("Preview at bottom")), true),
-                (TWO_PANES, marked(dual, &t!("Two panes")), true),
-                (STACK_PANES, marked(stacked, &t!("Stack panes")), true),
-                (SYNC_BROWSING, marked(sync, &t!("Sync browsing")), dual),
-                (SWAP_PANES, marked(false, &t!("Swap panes")), dual),
-                (SAME_FOLDER, marked(false, &t!("Same folder in other pane")), dual),
-            ],
-        );
-        // After "Apply to all folders" (the formats' place stays): only in a folder.
-        if matches!(location, Location::Path(_)) {
-            let at_calc = entries.iter().position(|(id, _, _)| *id == RESET_FOLDER).unwrap_or(entries.len());
-            entries.insert(at_calc, (CALC_FOLDER_SIZES, marked(false, &t!("Calculate folder sizes")), true));
+    /// A toolbar popup of the active pane (view_popups.rs fills it), under its button.
+    pub fn view_popup(&self, which: i32, at: Anchor) {
+        let Some(window) = self.window.upgrade() else { return };
+        window.set_menu_from_sidebar(false);
+        crate::view_popups::fill(&window, which);
+        crate::drag::with_current(|drags| drags.menu_shown());
+        window.invoke_show_view_popup(at.x, at.y, at.flip_x, at.flip_y);
+    }
+
+    /// A line of it chosen: as the View menu's item was. The Layout popup stays open, showing
+    /// the change.
+    pub fn view_popup_chosen(&self, id: i32) {
+        let Ok(id) = u32::try_from(id) else { return };
+        self.run(id, Subject::View);
+        if let Some(window) = self.window.upgrade()
+            && window.get_vp_kind() == 0
+        {
+            crate::view_popups::fill(&window, crate::view_popups::LAYOUT);
         }
-        // Group by ▸ right after the sort's direction; a grouped view's Collapse/Expand All after it.
-        let at_group = entries.iter().position(|(id, _, _)| *id == SORT_DESC).map_or(entries.len(), |i| i + 1);
-        let shift = if crate::panes::active_view().grouped() {
-            let all = owned(group_header_items()).into_iter().map(|(id, title)| (id, marked(false, &title), true));
-            entries.splice(at_group..at_group, all);
-            group_header_items().len()
-        } else {
-            0
+    }
+
+    /// The Sort menu's Group by ▸, beside its line (`at`), with Collapse/Expand All Groups
+    /// in a grouped view.
+    pub fn group_menu(&self, at: Anchor) {
+        *self.subject.borrow_mut() = Some(Subject::View);
+        let view = crate::panes::active_view();
+        let mut items = group_by_sub(view.view_settings().group, 0).items;
+        if view.grouped() {
+            items.extend(owned(group_header_items()).into_iter().map(|(id, title)| (id, marked(false, &title), true)));
+        }
+        self.open_own_entries(&items, at);
+    }
+
+    /// A panel toggle (0 the preview, 1 two panes, 2 sync browsing, 3 the drop stack) clicked,
+    /// or right-clicked (`menu`) at `x`, `y`: where the preview or the panes go.
+    pub fn panel_toggle(&self, which: i32, menu: bool, x: f32, y: f32) {
+        let toggles = [PREVIEW_PANE, TWO_PANES, SYNC_BROWSING, TOGGLE_STACK];
+        let Some(&id) = usize::try_from(which).ok().and_then(|i| toggles.get(i)) else { return };
+        if !menu {
+            return self.run(id, Subject::View);
+        }
+        let (stacked, bottom) = crate::dual::layout();
+        let items = match which {
+            0 => crate::view_popups::layout_choices(PREVIEW_BOTTOM, bottom, &t!("Right"), &t!("Bottom")),
+            1 => crate::view_popups::layout_choices(STACK_PANES, stacked, &t!("Side by side"), &t!("Stacked")),
+            _ => return,
         };
-        rule_items(&mut entries, crate::panes::active_view().rule_state());
-        // Last, so the submenus' places above stay (spec 12 §5.4; plan 12b sapma 8).
-        let dots = crate::tags::dots_on();
-        entries.push((TAG_DOTS, marked(dots, &t!("Tag dots")), true));
-        let mut subs = format_subs(options, place + 2 + shift);
-        subs.push(group_by_sub(crate::panes::active_view().view_settings().group, at_group));
-        self.open_slint_entries(&entries, subs, at);
+        *self.subject.borrow_mut() = Some(Subject::View);
+        self.open_own_entries(&items, Anchor::point(x, y));
+    }
+
+    /// Like `open_slint_entries` without submenus, but always Gezik's own menu: it opens from
+    /// the toolbar's popups, and looks like them.
+    fn open_own_entries(&self, items: &[(u32, String, bool)], anchor: Anchor) {
+        let Some(window) = self.window.upgrade() else { return };
+        window.set_menu_from_sidebar(false);
+        let lines: Vec<MenuEntry> = items
+            .iter()
+            .map(|(id, title, enabled)| MenuEntry {
+                id: i32::try_from(*id).unwrap_or(0),
+                title: title.as_str().into(),
+                enabled: *enabled,
+            })
+            .collect();
+        window.set_menu_subs(ModelRc::new(VecModel::from(Vec::<MenuSub>::new())));
+        window.set_menu_lines(ModelRc::new(VecModel::from(lines)));
+        crate::drag::with_current(|drags| drags.menu_shown());
+        window.invoke_show_own_menu(anchor.x, anchor.y, anchor.flip_x, anchor.flip_y);
     }
 
     /// `subs`: submenus among `items`. `at`: where the Windows menu opens (window position),
@@ -4264,167 +4175,6 @@ mod tests {
         assert!(tab_set_items(&[]).is_empty());
         let many: Vec<String> = (0..TAB_SET_MAX + 3).map(|i| format!("S{i}")).collect();
         assert_eq!(tab_set_items(&many).len(), 3 * TAB_SET_MAX as usize);
-    }
-
-    #[test]
-    fn the_view_menu_says_which_rule_applies_or_offers_it_back() {
-        let base = || -> Vec<(u32, String, bool)> {
-            view_items(ViewSettings::default(), false, false, ViewOptions::default(), true)
-                .into_iter()
-                .map(|(id, title)| (id, title, true))
-                .collect()
-        };
-        let mut plain = base();
-        rule_items(&mut plain, None);
-        assert_eq!(plain, base(), "no rule: the menu as it was");
-        let mut applies = base();
-        rule_items(&mut applies, Some((2, true)));
-        let at = applies.iter().position(|(id, _, _)| *id == VIEW_RULE_APPLIES).unwrap();
-        assert_eq!(applies[at], (VIEW_RULE_APPLIES, "    View rule 2 applies".to_owned(), false), "greyed");
-        assert_eq!(applies[at + 1].0, RESET_FOLDER);
-        let mut own = base();
-        rule_items(&mut own, Some((3, false)));
-        assert!(!own.iter().any(|(id, _, _)| *id == RESET_FOLDER || *id == VIEW_RULE_APPLIES));
-        assert!(own.contains(&(RESET_TO_RULE, "Reset to rule 3".to_owned(), true)));
-        assert_eq!(own.len(), base().len());
-    }
-
-    #[test]
-    fn view_menu_marks_the_current_choices() {
-        use gezik_core::view::{GridSize, SortDir, SortKey, SortSpec, ViewMode, ViewOptions, ViewSettings};
-        let list = view_items(ViewSettings::default(), false, false, ViewOptions::default(), false);
-        let ids: Vec<u32> = list.iter().map(|(id, _)| *id).collect();
-        assert_eq!(
-            ids,
-            [
-                VIEW_LIST,
-                VIEW_GRID,
-                VIEW_COLUMNS,
-                SORT_BY_NAME,
-                SORT_BY_MODIFIED,
-                SORT_BY_CREATED,
-                SORT_BY_TYPE,
-                SORT_BY_SIZE,
-                SORT_BY_TAGS,
-                SORT_BY_RATING,
-                SORT_BY_MORE,
-                SORT_ASC,
-                SORT_DESC,
-                PREVIEW_PANE,
-                PREVIEW_HEX,
-                PREVIEW_PLAY,
-                TOGGLE_STACK,
-                SHOW_HISTORY,
-                HIDE_EXTENSIONS,
-                FOLDERS_FIRST,
-                SINGLE_CLICK_OPEN,
-                SHOW_HIDDEN,
-                APPLY_TO_ALL,
-                RESET_FOLDER,
-                SYSTEM_INTEGRATION,
-                SETTINGS,
-                REVEAL_IN_TREE
-            ]
-        );
-        assert!(list[0].1.starts_with("• ") && !list[1].1.starts_with("• ") && !list[2].1.starts_with("• "));
-        let columns = ViewSettings { mode: ViewMode::Columns, ..ViewSettings::default() };
-        let columns = view_items(columns, false, false, ViewOptions::default(), false);
-        assert_eq!(
-            columns[..3].iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>(),
-            ["    List", "    Grid", "• Columns"]
-        );
-        assert_eq!(VIEW_COLUMNS, 2040, "spec 10 §10.3");
-        assert_eq!(list.last().map(|(id, _)| *id), Some(REVEAL_IN_TREE));
-        let by_duration = ViewSettings {
-            sort: SortSpec { key: SortKey::Field(gezik_core::fields::DURATION), dir: SortDir::Asc },
-            ..ViewSettings::default()
-        };
-        let items = view_items(by_duration, false, false, ViewOptions::default(), false);
-        assert!(items.contains(&(SORT_BY_MORE, "• Sort by duration…".to_owned())));
-        let grid = ViewSettings {
-            mode: ViewMode::Grid,
-            sort: SortSpec { key: SortKey::Size, dir: SortDir::Desc },
-            grid_size: GridSize::Large,
-            ..ViewSettings::default()
-        };
-        let items = view_items(grid, false, false, ViewOptions::default(), false);
-        let marked: Vec<&str> =
-            items.iter().filter(|(_, t)| t.starts_with("• ")).map(|(_, t)| t.trim_start_matches("• ")).collect();
-        let mut expected = vec!["Grid", "Large icons", "Sort by size", "Descending", "Folders first"];
-        if !cfg!(target_os = "macos") {
-            expected.push("Show hidden items");
-        }
-        assert_eq!(marked, expected);
-        assert!(
-            view_items(ViewSettings::default(), true, false, ViewOptions::default(), false)
-                .iter()
-                .any(|(id, t)| *id == PREVIEW_PANE && t.starts_with("• "))
-        );
-    }
-
-    #[test]
-    fn the_view_menu_ends_with_show_in_sidebar_tree() {
-        use gezik_core::view::{ViewOptions, ViewSettings};
-        let items = view_items(ViewSettings::default(), false, false, ViewOptions::default(), true);
-        assert_eq!(
-            items.last().map(|(id, title)| (*id, title.as_str())),
-            Some((REVEAL_IN_TREE, "    Show in sidebar tree"))
-        );
-        assert_eq!(REVEAL_IN_TREE, 2050, "spec 10 §10.3");
-    }
-
-    #[test]
-    fn the_view_menu_shows_and_hides_the_drop_stack() {
-        use gezik_core::view::{ViewOptions, ViewSettings};
-        let shown = view_items(ViewSettings::default(), false, true, ViewOptions::default(), false);
-        assert!(shown.contains(&(TOGGLE_STACK, "• Drop stack".to_owned())));
-        let hidden = view_items(ViewSettings::default(), false, false, ViewOptions::default(), false);
-        assert!(hidden.contains(&(TOGGLE_STACK, "    Drop stack".to_owned())));
-    }
-
-    #[test]
-    fn view_menu_lists_the_options_and_their_marks() {
-        use gezik_core::view::{DateFormat, ViewOptions};
-        let options = ViewOptions { hide_extensions: true, ..ViewOptions::default() };
-        let items = view_items(ViewSettings::default(), false, false, options, true);
-        let ids: Vec<u32> = items.iter().map(|(id, _)| *id).collect();
-        // Found by id, so a View item added above or below leaves this test alone.
-        let at = ids.iter().position(|id| *id == HIDE_EXTENSIONS).unwrap();
-        assert_eq!(
-            &ids[at..at + 10],
-            [
-                HIDE_EXTENSIONS,
-                FOLDERS_FIRST,
-                SINGLE_CLICK_OPEN,
-                SHOW_HIDDEN,
-                SHOW_SYSTEM,
-                APPLY_TO_ALL,
-                RESET_FOLDER,
-                SYSTEM_INTEGRATION,
-                SETTINGS,
-                REVEAL_IN_TREE
-            ]
-        );
-        assert!(items[at].1.starts_with("• ") && items[at + 1].1.starts_with("• "), "extensions hidden, folders first");
-        assert!(!items[at + 2].1.starts_with("• "));
-        assert_eq!(items[at + 3].1.starts_with("• "), options.show_hidden);
-        let elsewhere: Vec<u32> =
-            view_items(ViewSettings::default(), false, false, options, false).iter().map(|(id, _)| *id).collect();
-        assert!(!elsewhere.contains(&SHOW_SYSTEM), "Show system items: Windows only");
-        let subs = format_subs(ViewOptions { date_format: DateFormat::Iso, ..options }, 17);
-        let places: Vec<(&str, usize)> = subs.iter().map(|s| (s.title.as_str(), s.at)).collect();
-        assert_eq!(places, [("Date format", 17), ("Size format", 17)]);
-        let dates: Vec<(u32, &str)> = subs[0].items.iter().map(|(id, t, _)| (*id, t.as_str())).collect();
-        assert_eq!(
-            dates,
-            [
-                (DATE_FORMAT_FIRST, "    Relative"),
-                (DATE_FORMAT_FIRST + 1, "    Short"),
-                (DATE_FORMAT_FIRST + 2, "• ISO"),
-                (DATE_FORMAT_FIRST + 3, "    System")
-            ]
-        );
-        assert_eq!(subs[1].items.len(), 2);
     }
 
     #[test]

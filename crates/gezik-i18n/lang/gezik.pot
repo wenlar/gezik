@@ -955,6 +955,7 @@ msgstr ""
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/search.rs
 #: crates/gezik/src/tags.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Tags"
 msgstr ""
@@ -2126,7 +2127,7 @@ msgid "Empty Trash…"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
-#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/settings.slint
 msgid "System Integration…"
@@ -2366,13 +2367,11 @@ msgid "Clean Up Tag Store…"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
-#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Show Preview as Hex"
 msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
-#: crates/gezik/src/context_menu.rs
 #: crates/gezik/ui/app.slint
 msgid "Play/Pause Preview"
 msgstr ""
@@ -2385,6 +2384,7 @@ msgstr ""
 
 #: crates/gezik-config/src/shortcuts.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Settings…"
 msgstr ""
@@ -3602,6 +3602,7 @@ msgstr ""
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Type"
 msgstr ""
@@ -3615,6 +3616,7 @@ msgstr ""
 #: crates/gezik-core/src/group.rs
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/preview/mod.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Size"
@@ -3629,6 +3631,7 @@ msgstr ""
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/tags.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Rating"
 msgstr ""
@@ -3637,6 +3640,7 @@ msgstr ""
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
 #: crates/gezik/src/git_commands.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/app.slint
 msgid "Git"
 msgstr ""
@@ -3706,15 +3710,18 @@ msgid "Huge"
 msgstr ""
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/convert.slint
 msgid "Large"
 msgstr ""
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/view_popups.rs
 msgid "Medium"
 msgstr ""
 
 #: crates/gezik-core/src/group.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/convert.slint
 msgid "Small"
 msgstr ""
@@ -3762,6 +3769,7 @@ msgstr ""
 #: crates/gezik-core/src/kind.rs
 #: crates/gezik-core/src/view.rs
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/compress.slint
 msgid "Folder"
 msgstr ""
@@ -3973,7 +3981,6 @@ msgstr ""
 
 #: crates/gezik-core/src/palette.rs
 #: crates/gezik/ui/app.slint
-#: crates/gezik/ui/widgets/pane.slint
 msgid "View"
 msgstr ""
 
@@ -4019,6 +4026,7 @@ msgid "With forward slashes"
 msgstr ""
 
 #: crates/gezik-core/src/path_text.rs
+#: crates/gezik/src/view_popups.rs
 #: crates/gezik/ui/widgets/compress.slint
 #: crates/gezik/ui/widgets/conflict-list.slint
 #: crates/gezik/ui/widgets/rename-batch.slint
@@ -7504,141 +7512,7 @@ msgid "Open terminal as administrator"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
-msgid "List"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Grid"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Columns"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Small icons"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Medium icons"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Large icons"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by name"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by date modified"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by date created"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by type"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by size"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by tags"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by rating"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by {}…"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sort by property…"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Ascending"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Descending"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Preview pane"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/drag.rs
-#: crates/gezik/ui/widgets/drop-stack.slint
-msgid "Drop stack"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/ui/widgets/ops-panel.slint
-msgid "Operation history"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Hide extensions"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Folders first"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Single-click to open"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Show hidden items"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-#: crates/gezik/src/palette.rs
-msgid "Show system items"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Apply to all folders"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Reset this folder"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Show in sidebar tree"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "View rule {} applies"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Reset to rule {}"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Date format"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Size format"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 msgid "Group by"
 msgstr ""
 
@@ -7774,6 +7648,7 @@ msgid "Search in \"{}\"…"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
+#: crates/gezik/src/view_popups.rs
 msgid "Calculate folder sizes"
 msgstr ""
 
@@ -7808,35 +7683,19 @@ msgid "Open tab set"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
-msgid "Flat view"
+msgid "Right"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
-msgid "Preview at bottom"
+msgid "Bottom"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
-msgid "Two panes"
+msgid "Side by side"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
-msgid "Stack panes"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Sync browsing"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Swap panes"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Same folder in other pane"
-msgstr ""
-
-#: crates/gezik/src/context_menu.rs
-msgid "Tag dots"
+msgid "Stacked"
 msgstr ""
 
 #: crates/gezik/src/context_menu.rs
@@ -8332,6 +8191,12 @@ msgstr ""
 
 #: crates/gezik/src/diff.rs
 msgid "Cannot copy: {}"
+msgstr ""
+
+#: crates/gezik/src/drag.rs
+#: crates/gezik/ui/app.slint
+#: crates/gezik/ui/widgets/drop-stack.slint
+msgid "Drop stack"
 msgstr ""
 
 #: crates/gezik/src/drag.rs
@@ -9807,6 +9672,24 @@ msgstr ""
 
 #: crates/gezik/src/palette.rs
 msgid "Toggle Tag: {}"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Hide extensions"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+#: crates/gezik/src/view_popups.rs
+msgid "Folders first"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+msgid "Single-click to open"
+msgstr ""
+
+#: crates/gezik/src/palette.rs
+#: crates/gezik/src/view_popups.rs
+msgid "Show system items"
 msgstr ""
 
 #: crates/gezik/src/palette.rs
@@ -12349,6 +12232,93 @@ msgstr[1] ""
 msgid "Drive"
 msgstr ""
 
+#: crates/gezik/src/view_popups.rs
+msgid "Date modified"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Date created"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "List"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Grid"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Columns"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Flat view"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+#: crates/gezik/ui/widgets/rename-batch.slint
+msgid "Sort by"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+#: crates/gezik/ui/app.slint
+msgid "Property…"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Ascending"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Descending"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Show hidden items"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Show file extensions"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Use this view everywhere"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "View rule {} applies"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Reset this folder"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Reset to rule {}"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+#: crates/gezik/ui/app.slint
+msgid "Sync browsing"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Swap panes"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Same folder in other pane"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "Show in sidebar tree"
+msgstr ""
+
+#: crates/gezik/src/view_popups.rs
+msgid "{} switch layout"
+msgstr ""
+
 #: crates/gezik/ui/app.slint
 msgid "Edit"
 msgstr ""
@@ -12367,10 +12337,6 @@ msgstr ""
 
 #: crates/gezik/ui/app.slint
 msgid "Group By"
-msgstr ""
-
-#: crates/gezik/ui/app.slint
-msgid "Property…"
 msgstr ""
 
 #: crates/gezik/ui/app.slint
@@ -12943,12 +12909,37 @@ msgid "Operations"
 msgstr ""
 
 #: crates/gezik/ui/widgets/ops-panel.slint
+msgid "Operation history"
+msgstr ""
+
+#: crates/gezik/ui/widgets/ops-panel.slint
 msgid "Details"
 msgstr ""
 
 #: crates/gezik/ui/widgets/pane.slint
 #: crates/gezik/ui/widgets/size-map.slint
 msgid "Up"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+#: crates/gezik/ui/widgets/view-popups.slint
+msgid "Layout"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Sort by {}"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Preview pane"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "Two panes"
+msgstr ""
+
+#: crates/gezik/ui/widgets/pane.slint
+msgid "More view options"
 msgstr ""
 
 #: crates/gezik/ui/widgets/pane.slint
@@ -13138,10 +13129,6 @@ msgid "Preview"
 msgstr ""
 
 #: crates/gezik/ui/widgets/rename-batch.slint
-msgid "Sort by"
-msgstr ""
-
-#: crates/gezik/ui/widgets/rename-batch.slint
 msgid "Only changed"
 msgstr ""
 
@@ -13291,6 +13278,10 @@ msgstr ""
 
 #: crates/gezik/ui/widgets/tool-table.slint
 msgid "Status"
+msgstr ""
+
+#: crates/gezik/ui/widgets/view-popups.slint
+msgid "Icon size"
 msgstr ""
 
 #: crates/gezik-config/templates/settings.toml

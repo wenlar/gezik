@@ -80,6 +80,7 @@ mod update;
 mod vfs_mounts;
 mod view;
 mod view_options;
+mod view_popups;
 mod watcher;
 mod window_state;
 mod windows;

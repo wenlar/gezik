@@ -1,0 +1,10 @@
+# The split View toolbar (design 3a) on Linux: manual checks
+
+Numbering goes on after `17-linux.md` (385). Results go to `../linux-test-results.md`. Notes: `../parts/view-menu-3a.md`.
+
+386. **The toolbar.** Right of the address bar: Layout (the list's three lines + ▾), Sort ("Name" + ▾), a short divider, Preview pane, Two panes, ⋯. Nothing is cut off in a 900 px window; in light and dark themes the buttons and popups take the theme's colours.
+387. **Layout popup.** Click Layout: a popup under it with "Layout", List | Grid | Columns, Icon size (greyed in the list), Flat view switch, and "Ctrl+Shift+1 / Ctrl+Shift+2 / Ctrl+Shift+3 switch layout". Choose Grid: the folder turns to a grid, the popup stays open; Large makes the icons bigger. The button's icon follows the layout. Flat view on and off works. Esc or a click outside closes it.
+388. **Sort menu.** The button looks pressed while the menu is open. The eight keys with ✓ on the current one, ↑ Ascending | ↓ Descending, Group by with its value and ›, Folders first ✓. Choose Size: the list sorts by size and the button says "Size"; Property… opens the property picker.
+389. **Group by and ⋯.** Group by › opens Gezik's menu beside the Sort menu; Type groups the list, and Collapse/Expand All Groups are at its end then. ⋯ has Show hidden items (Ctrl+H), Show file extensions, Calculate folder sizes (in a folder), Use this view everywhere, Reset this folder, Show in sidebar tree, Settings… (Ctrl+,), System Integration…; each does what the old View menu item did.
+390. **Panels.** Preview pane and Two panes toggle and are lit while on; right-click gives Right / Bottom and Side by side / Stacked. With two panes side by side, the link between the address bars turns sync browsing on and off, and ⋯ adds Sync browsing, Swap panes and Same folder in other pane.
+391. **Status bar and keyboard.** "Drop stack" beside History shows and hides the stack. Tab to Layout, Space opens it, ↓/↑ and Return work in all three popups; closing gives the keyboard back to the list.
