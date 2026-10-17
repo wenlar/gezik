@@ -20,7 +20,7 @@ unless noted). Memory is Task Manager's "Memory" column (private working set):
 
 | Check | Result | Target |
 |---|---|---|
-| Startup to window | 32-41 ms | <= ~60 ms |
+| Startup to window | 32-37 ms | <= ~60 ms |
 | Idle memory, 900×600 | 5.8 MB | <= 7 MB |
 | Idle memory, 1280×800 | 6.4-6.5 MB | |
 | 100,000-file folder, after load | 13.1 MB | <= ~18 MB |

@@ -16,7 +16,7 @@ Windows · macOS · Linux
 
 | Startup to window | Idle memory | 100,000-file folder | 20 tabs vs 1 |
 | :---: | :---: | :---: | :---: |
-| **32–41 ms** | **5.8 MB** | **13.1 MB** | **+0.4 MB** |
+| **32–37 ms** | **5.8 MB** | **13.1 MB** | **+0.4 MB** |
 
 <sub>Release build, Windows 11, default 900×600 window; startup and memory measured with 0.1.0-rc.7, the folder and tabs numbers before steps 12–17. Method and full results in [Performance](docs/performance.md).</sub>
 
