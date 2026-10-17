@@ -125,18 +125,15 @@ cargo test
 
 ## License
 
-> [!NOTE]
-> Gezik is source-available and free for non-commercial use.
-
-Gezik is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
-You may use, modify and share it for any non-commercial purpose, including personal
-use, research, education and use by non-profit organizations. Commercial use is not
-permitted. When you share Gezik or a modified version, keep the license and the
-`Required Notice` line from `LICENSE.md`.
+Gezik is free software: you can redistribute it and/or modify it under the terms of the
+[GNU General Public License version 3](LICENSE) as published by the Free Software Foundation.
+It comes with no warranty. As an additional permission under section 7 of the licence,
+Gezik may be built with the UnRAR source code (see [THIRD-PARTY.md](THIRD-PARTY.md#unrar)).
 
 Copyright Wenlar LLC.
 
-Gezik's user interface is built with Slint, used under the
-[Slint Royalty-free License](https://github.com/slint-ui/slint/blob/master/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md).
+Gezik's user interface is built with Slint. Gezik's own builds use it under the
+[Slint Royalty-free License](https://github.com/slint-ui/slint/blob/master/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md);
+Slint is also available under the GNU GPL version 3, which modified versions can use instead.
 
 <a href="https://slint.dev"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" height="60"></a>

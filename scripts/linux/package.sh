@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds Gezik's portable Linux release (x86_64) in the gezik-linux container and packs it as
-# gezik-<short-sha>-linux-x64.tar.gz: the binary, its icon (gezik.png), LICENSE.md, THIRD-PARTY.md
+# gezik-<short-sha>-linux-x64.tar.gz: the binary, its icon (gezik.png), LICENSE, THIRD-PARTY.md
 # and README-linux.txt.
 #   docker build -t gezik-linux scripts/linux
 #   docker run --rm -v "$PWD:/src" -v gezik-target:/target -v gezik-cargo:/usr/local/cargo/registry \
@@ -28,7 +28,7 @@ glibcxx=$(objdump -p "$BIN" | grep -o 'GLIBCXX_[0-9.]*' | sort -uV | tail -1)
 stage=$(mktemp -d)
 mkdir "$stage/$NAME"
 install -m 0755 "$BIN" "$stage/$NAME/gezik"
-install -m 0644 LICENSE.md THIRD-PARTY.md crates/gezik/icons/gezik.png "$stage/$NAME/"
+install -m 0644 LICENSE THIRD-PARTY.md crates/gezik/icons/gezik.png "$stage/$NAME/"
 cat > "$stage/$NAME/README-linux.txt" <<EOF
 Gezik $SHA for Linux x86_64 (portable build, not an installer)
 
@@ -57,7 +57,7 @@ Needs
   harmless.
 
 No GPU or OpenGL is needed: Gezik draws with its software renderer.
-Licence: PolyForm Noncommercial 1.0.0 (LICENSE.md); third-party notices in THIRD-PARTY.md.
+Licence: GNU GPL version 3 (LICENSE), with an added permission for UnRAR (THIRD-PARTY.md); third-party notices in THIRD-PARTY.md.
 EOF
 
 mkdir -p "$OUT"

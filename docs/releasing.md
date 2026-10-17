@@ -29,7 +29,7 @@ artifacts (Actions ▸ the run ▸ Artifacts).
 
 | File | Contents |
 |---|---|
-| `gezik-<v>-windows-x64.zip` | `gezik.exe`, `LICENSE.md`, `THIRD-PARTY.md`, `README.md`. Settings in `%APPDATA%\gezik`. |
+| `gezik-<v>-windows-x64.zip` | `gezik.exe`, `LICENSE`, `THIRD-PARTY.md`, `README.md`. Settings in `%APPDATA%\gezik`. |
 | `gezik-<v>-windows-x64-portable.zip` | The same plus an empty `gezik-portable` file: settings go to `gezik-data\` next to `gezik.exe` (a USB stick, say). |
 | `gezik-<v>-macos-universal.dmg` | `Gezik.app` (arm64 + x86_64, ad-hoc signed), the licence files and a link to Applications. |
 | `gezik-<v>-macos-universal.app.tar.gz` | The same `Gezik.app` alone, for the automatic update (simpler to unpack than a disk image). |
