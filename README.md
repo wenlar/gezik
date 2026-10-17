@@ -125,14 +125,9 @@ cargo test
 
 ## License
 
-> [!NOTE]
-> Gezik is source-available and free for non-commercial use.
-
-Gezik is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
-You may use, modify and share it for any non-commercial purpose, including personal
-use, research, education and use by non-profit organizations. Commercial use is not
-permitted. When you share Gezik or a modified version, keep the license and the
-`Required Notice` line from `LICENSE.md`.
+Gezik is open source under the [Mozilla Public License 2.0](LICENSE). You may use, modify,
+share and sell it, also commercially. Files of Gezik you change and share must stay under the
+MPL 2.0 with their source available; they can be combined with code under other licences.
 
 Copyright Wenlar LLC.
 

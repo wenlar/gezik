@@ -89,7 +89,7 @@ jobs:
             $name = if ($kind -eq 'plain') { "gezik-$env:VERSION-windows-x64" } else { "gezik-$env:VERSION-windows-x64-portable" }
             $dir = "stage\$name"
             New-Item -ItemType Directory $dir | Out-Null
-            Copy-Item target\release\gezik.exe, LICENSE.md, THIRD-PARTY.md, README.md $dir
+            Copy-Item target\release\gezik.exe, LICENSE, THIRD-PARTY.md, README.md $dir
             if ($kind -eq 'portable') { New-Item -ItemType File "$dir\gezik-portable" | Out-Null }
             Compress-Archive -Path $dir -DestinationPath "dist\$name.zip"
           }
@@ -148,7 +148,7 @@ jobs:
         run: |
           mkdir -p stage/dmg
           scripts/macos/make-app.sh stage/gezik "$VERSION" stage/dmg
-          cp LICENSE.md THIRD-PARTY.md README.md stage/dmg/
+          cp LICENSE THIRD-PARTY.md README.md stage/dmg/
           ln -s /Applications stage/dmg/Applications
       # Before the dmg and the update tarball, so both carry the stapled ticket. Usually minutes;
       # a new team's first submissions can take hours, then the run fails within the job limit.

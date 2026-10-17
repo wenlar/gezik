@@ -1,6 +1,6 @@
 # Third-party code
 
-Gezik's own code is under the PolyForm Noncommercial License 1.0.0 (see `LICENSE.md`). The
+Gezik's own code is under the Mozilla Public License 2.0 (see `LICENSE`). The
 crates below are built into it for reading and writing archives, for converting pictures
 and text, and for reading and writing PDFs; each keeps its own licence.
 
