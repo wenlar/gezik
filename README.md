@@ -14,6 +14,13 @@ Windows · macOS · Linux
 
 <br>
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/list-dark.jpg">
+  <img src="docs/screenshots/list-light.jpg" alt="Gezik listing a Documents folder">
+</picture>
+
+<br>
+
 | Startup to window | Idle memory | 100,000-file folder | 20 tabs vs 1 |
 | :---: | :---: | :---: | :---: |
 | **32–37 ms** | **5.8 MB** | **13.1 MB** | **+0.4 MB** |
