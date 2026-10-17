@@ -8,7 +8,7 @@ Windows · macOS · Linux
 
 [![CI](https://github.com/wenlar/gezik/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/wenlar/gezik/actions/workflows/ci.yml)
 
-[Features](docs/features.md) · [Configuration](docs/configuration.md) · [Shortcuts](docs/shortcuts.md) · [Themes](docs/themes.md) · [Performance](docs/performance.md) · [License](#license)
+[Download](#download) · [Features](docs/features.md) · [Configuration](docs/configuration.md) · [Shortcuts](docs/shortcuts.md) · [Themes](docs/themes.md) · [Performance](docs/performance.md) · [License](#license)
 
 </div>
 
@@ -16,9 +16,9 @@ Windows · macOS · Linux
 
 | Startup to window | Idle memory | 100,000-file folder | 20 tabs vs 1 |
 | :---: | :---: | :---: | :---: |
-| **32–38 ms** | **5.1 MB** | **13.1 MB** | **+0.4 MB** |
+| **32–41 ms** | **5.8 MB** | **13.1 MB** | **+0.4 MB** |
 
-<sub>Release build, Windows 11, default 900×600 window. Method and full results in [Performance](docs/performance.md).</sub>
+<sub>Release build, Windows 11, default 900×600 window; startup and memory measured with 0.1.0-rc.7, the folder and tabs numbers before steps 12–17. Method and full results in [Performance](docs/performance.md).</sub>
 
 ## Goals
 
@@ -97,6 +97,18 @@ Updates: Gezik updates itself from its published GitHub Releases. Once a day at 
 
 → [Configuration](docs/configuration.md) · [Writing a theme](docs/themes.md) · [Keyboard shortcuts](docs/shortcuts.md)
 
+## Download
+
+Gezik is in pre-release. Get it from [Releases](https://github.com/wenlar/gezik/releases); it then updates itself (see Updates above).
+
+| OS | File | Notes |
+|---|---|---|
+| Windows x64 | `gezik-<v>-windows-x64.zip` | Signed by Wenlar LLC from 0.1.0-rc.7 (SmartScreen may still warn while the certificate is new: More info ▸ Run anyway). Unzip and run `gezik.exe`; the `-portable` zip keeps its settings next to it. |
+| macOS (Apple silicon and Intel) | `gezik-<v>-macos-universal.dmg` | Signed and notarized. Drag `Gezik.app` to Applications. |
+| Linux x64 | `gezik-<v>-linux-x64.AppImage` or `.tar.gz` | Make the AppImage executable (`chmod +x`); it needs FUSE. `README-linux.txt` in the archive lists what Gezik uses. |
+
+Check the files against `SHA256SUMS.txt` in the release.
+
 ## Build
 
 ```sh
@@ -120,6 +132,7 @@ cargo test
 | `crates/gezik-platform` | the parts that differ per OS (drives, icons, clipboard, trash, menus) |
 | `crates/gezik-i18n` | translations (`.po` catalogues, plural rules, the language in use; `gezik-lang` for translators) |
 | `crates/gezik` | the desktop app (Slint UI) |
+| `server/sync` | the cloud sync server, a Cloudflare Worker ([Cloud sync server](docs/cloud-sync-server.md)) |
 
 </details>
 

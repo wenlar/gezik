@@ -20,11 +20,11 @@ unless noted). Memory is Task Manager's "Memory" column (private working set):
 
 | Check | Result | Target |
 |---|---|---|
-| Startup to window | 32-38 ms | <= ~60 ms |
-| Idle memory, 900×600 | 5.1 MB | <= 7 MB |
-| Idle memory, 1280×800 | 5.5 MB | |
+| Startup to window | 32-41 ms | <= ~60 ms |
+| Idle memory, 900×600 | 5.8 MB | <= 7 MB |
+| Idle memory, 1280×800 | 6.4-6.5 MB | |
 | 100,000-file folder, after load | 13.1 MB | <= ~18 MB |
-| Sorting 100,000 names | 46-52 ms | <= 50 ms |
+| Sorting 100,000 names | 47-51 ms | <= 50 ms |
 | Scrolling CPU (100,000 files, 60 wheel steps) | ~300 ms with `max-fps = 120` | ~480 ms |
 | Grid, 1000 pictures, after paging through them | 22.9 MB | <= ~50 MB |
 | 1 vs 20 tabs | +0.4 MB | <= +2 MB |
@@ -40,6 +40,9 @@ After the second pane or extra windows close, a few hundred KB of freed but frag
 stay. Opening and closing the second pane again does not add to it; with five windows it
 rose a little per cycle in earlier runs (`windows.ps1 -Cycles 6`), and `windows.ps1` reports
 a FAIL against its 0.3 MB bound.
+
+Startup, idle memory and sorting were measured again on 2026-10-17 (0.1.0-rc.7); the other
+rows are from 2026-10-11, before steps 12-17, and wait for a run of their scripts.
 
 The numbers are the range of two or three runs of each script, each with a fresh config
 folder in `%TEMP%` (give `measure.ps1` one with `-Config`; its `state.toml` may set
