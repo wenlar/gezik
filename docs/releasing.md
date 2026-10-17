@@ -1,8 +1,8 @@
 # Releasing Gezik
 
-The packages are built by `.github/workflows/release.yml`. They are signed only once the
-signing secrets are set up ([Windows](#windows-signing), [macOS](#macos-signing)); until then
-Windows and macOS warn on first start, see [What users see](#what-users-see-without-signing).
+The packages are built by `.github/workflows/release.yml`. The Windows and macOS builds are
+signed ([Windows](#windows-signing), [macOS](#macos-signing)); builds made without the signing
+setup (a fork, a local build) are not, see [What users see](#what-users-see).
 
 ## Cutting a release
 
@@ -65,12 +65,15 @@ or a draft reaches no one. Gezik takes the file of its own kind (the zip, the po
 - Updates start with the first release that has the updater (0.1.0-rc.3): older ones are
   updated by hand once.
 
-## What users see without signing
+## What users see
 
-**Windows.** A downloaded zip carries the "from the internet" mark. On first start of
-`gezik.exe` SmartScreen says "Windows protected your PC". Click **More info**, then
-**Run anyway**. To avoid it for the whole folder: right-click the zip ▸ Properties ▸ tick
-**Unblock** before extracting, or in PowerShell `Unblock-File gezik.exe`.
+**Windows.** Since 0.1.0-rc.7 `gezik.exe` is signed by Wenlar LLC (see
+[Windows signing](#windows-signing)), so Windows names the publisher instead of "Unknown
+publisher". Until the certificate earns SmartScreen reputation through downloads, the first
+start of a downloaded copy may still say "Windows protected your PC": click **More info**, then
+**Run anyway**. An unsigned build always shows it; to avoid it for the whole folder,
+right-click the zip ▸ Properties ▸ tick **Unblock** before extracting, or in PowerShell
+`Unblock-File gezik.exe`.
 
 **macOS.** Since 0.1.0-rc.3 the app is signed with a Developer ID and notarized (see
 [macOS signing](#macos-signing)), so it opens without a warning. Builds made without the
@@ -86,11 +89,13 @@ app from a random read-only copy (App Translocation), where portable mode can't 
 
 `release.yml` signs `gezik.exe` with [Azure Artifact Signing](https://learn.microsoft.com/azure/trusted-signing/quickstart)
 (Wenlar LLC, a US company, is eligible) before zipping it, so `SHA256SUMS.txt` covers the
-signed file. Until the repository variables below exist, the two signing steps are skipped and
-the build stays unsigned (it is in 0.1.0-rc.3). Signing puts "Wenlar LLC" in place of "Unknown publisher" at once;
-SmartScreen's "Windows protected your PC" may still show until the certificate earns
-reputation through downloads. Once signed builds ship, update the Windows line of
-`docs/release-notes-unsigned.md` and [What users see](#what-users-see-without-signing).
+signed file. Without the repository variables below (a fork) the two signing steps are
+skipped and the build stays unsigned.
+
+The setup is done: account `wenlar-signing` (East US, Basic) in resource group `gezik-signing`,
+certificate profile `wenlar-public` (`CN=Wenlar LLC, O=Wenlar LLC, L=Sheridan, S=Wyoming, C=US`),
+app registration `gezik-release`. The certificates are short-lived; the service issues a new one
+for each signing and the timestamp keeps old signatures valid. To redo it elsewhere:
 
 One-time setup in the Azure portal:
 
@@ -104,7 +109,9 @@ One-time setup in the Azure portal:
    identity.
 4. Microsoft Entra ID ▸ App registrations ▸ new registration (e.g. `gezik-release`). In it,
    Certificates & secrets ▸ Federated credentials ▸ add **GitHub Actions**: organization
-   `wenlar`, repository `gezik`, entity **Environment**, name `release`.
+   `wenlar`, repository `gezik`, entity **Environment**, name `release`. The repository sends
+   GitHub's immutable OIDC subject, so the form also asks for the organization and repository
+   IDs (`gh api repos/wenlar/gezik --jq '.owner.id, .id'`).
 5. In the signing account's Access control (IAM), give that app the
    **Artifact Signing Certificate Profile Signer** role.
 6. In GitHub, Settings ▸ Secrets and variables ▸ Actions ▸ **Variables** (none of them is
