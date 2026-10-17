@@ -125,15 +125,13 @@ cargo test
 
 ## License
 
-Gezik is free software: you can redistribute it and/or modify it under the terms of the
-[GNU General Public License version 3](LICENSE) as published by the Free Software Foundation.
-It comes with no warranty. As an additional permission under section 7 of the licence,
-Gezik may be built with the UnRAR source code (see [THIRD-PARTY.md](THIRD-PARTY.md#unrar)).
+Gezik is open source under the [Mozilla Public License 2.0](LICENSE). You may use, modify,
+share and sell it, also commercially. Files of Gezik you change and share must stay under the
+MPL 2.0 with their source available; they can be combined with code under other licences.
 
 Copyright Wenlar LLC.
 
-Gezik's user interface is built with Slint. Gezik's own builds use it under the
-[Slint Royalty-free License](https://github.com/slint-ui/slint/blob/master/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md);
-Slint is also available under the GNU GPL version 3, which modified versions can use instead.
+Gezik's user interface is built with Slint, used under the
+[Slint Royalty-free License](https://github.com/slint-ui/slint/blob/master/LICENSES/LicenseRef-Slint-Royalty-free-2.0.md).
 
 <a href="https://slint.dev"><img src="https://raw.githubusercontent.com/slint-ui/slint/master/logo/MadeWithSlint-logo-whitebg.png" alt="Made with Slint" height="60"></a>

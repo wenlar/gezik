@@ -57,7 +57,7 @@ Needs
   harmless.
 
 No GPU or OpenGL is needed: Gezik draws with its software renderer.
-Licence: GNU GPL version 3 (LICENSE), with an added permission for UnRAR (THIRD-PARTY.md); third-party notices in THIRD-PARTY.md.
+Licence: Mozilla Public License 2.0 (LICENSE); third-party notices in THIRD-PARTY.md.
 EOF
 
 mkdir -p "$OUT"

@@ -1,6 +1,6 @@
 # Third-party code
 
-Gezik's own code is under the GNU General Public License version 3 (see `LICENSE`). The
+Gezik's own code is under the Mozilla Public License 2.0 (see `LICENSE`). The
 crates below are built into it for reading and writing archives, for converting pictures
 and text, and for reading and writing PDFs; each keeps its own licence.
 
@@ -77,13 +77,6 @@ of the WHATWG Encoding Standard (https://encoding.spec.whatwg.org/). Their licen
 > OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## UnRAR
-
-Additional permission under GNU GPL version 3 section 7: if you modify Gezik, or any covered
-work, by linking or combining it with the UnRAR source code (or a modified version of it),
-containing parts covered by the terms of the UnRAR licence, Wenlar LLC grants you additional
-permission to convey the resulting work. Corresponding Source for a non-source form of such a
-combination shall include the source code for the parts of UnRAR used as well as that of the
-covered work.
 
 RAR archives are read with the UnRAR source code by Alexander Roshal, which `unrar-ng-sys`
 compiles in. Gezik only extracts RAR archives; it does not create them. Paragraph 2 of the
