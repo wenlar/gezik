@@ -8,7 +8,7 @@ Windows · macOS · Linux
 
 [![CI](https://github.com/wenlar/gezik/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/wenlar/gezik/actions/workflows/ci.yml)
 
-[Download](#download) · [Features](docs/features.md) · [Configuration](docs/configuration.md) · [Shortcuts](docs/shortcuts.md) · [Themes](docs/themes.md) · [Performance](docs/performance.md) · [License](#license)
+[Website](https://gezik.app) · [Download](#download) · [Features](docs/features.md) · [Configuration](docs/configuration.md) · [Shortcuts](docs/shortcuts.md) · [Themes](docs/themes.md) · [Performance](docs/performance.md) · [License](#license)
 
 </div>
 
